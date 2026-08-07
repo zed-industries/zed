@@ -10,6 +10,7 @@ path = "src/language_core.rs"
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+syntax_token.workspace = true
 gpui_shared_string.workspace = true
 gpui_util.workspace = true
 log.workspace = true

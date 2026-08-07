@@ -19,8 +19,7 @@ use crate::{
     unified_diff_with_offsets,
 };
 pub use crate::{
-    Grammar, HighlightId, HighlightMap, Language, LanguageRegistry, diagnostic_set::DiagnosticSet,
-    proto,
+    Grammar, HighlightMap, Language, LanguageRegistry, diagnostic_set::DiagnosticSet, proto,
 };
 
 use anyhow::{Context as _, Result};
@@ -59,6 +58,7 @@ use std::{
     vec,
 };
 use sum_tree::TreeMap;
+use syntax_token::SyntaxTokenId;
 use text::operation_queue::OperationQueue;
 use text::*;
 pub use text::{
@@ -510,7 +510,7 @@ struct IndentSuggestion {
 struct BufferChunkHighlights<'a> {
     captures: SyntaxMapCaptures<'a>,
     next_capture: Option<SyntaxMapCapture<'a>>,
-    stack: Vec<(usize, HighlightId)>,
+    stack: Vec<(usize, SyntaxTokenId)>,
     highlight_maps: Vec<HighlightMap>,
 }
 
@@ -536,8 +536,15 @@ pub struct BufferChunks<'a> {
 pub struct Chunk<'a> {
     /// The text of the chunk.
     pub text: &'a str,
-    /// The syntax highlighting style of the chunk.
-    pub syntax_highlight_id: Option<HighlightId>,
+    /// The innermost syntax capture covering the chunk.
+    pub syntax_highlight_id: Option<SyntaxTokenId>,
+    /// Captures enclosing [`Self::syntax_highlight_id`], outermost first.
+    ///
+    /// A theme styles the innermost capture it defines, so a query that gives a
+    /// node several captures — `(type_identifier) @variable @type` — still
+    /// resolves to `variable` in a theme that does not define `type`. Empty
+    /// whenever the innermost capture is the only one, which is the common case.
+    pub syntax_fallbacks: SmallVec<[SyntaxTokenId; 3]>,
     /// The highlight style that has been applied to this chunk in
     /// the editor.
     pub highlight_style: Option<HighlightStyle>,
@@ -729,11 +736,28 @@ impl HighlightedTextBuilder {
                 let highlight_style = override_style.map_or(highlight_style, |override_style| {
                     highlight_style.highlight(override_style)
                 });
-                self.highlights.push((start..end, highlight_style));
+                self.push_highlight(start..end, highlight_style);
             } else if let Some(override_style) = override_style {
-                self.highlights.push((start..end, override_style));
+                self.push_highlight(start..end, override_style);
             }
         }
+    }
+
+    /// Appends a highlight, extending the previous one when it is adjacent and
+    /// identically styled.
+    ///
+    /// Chunk boundaries follow the grammar's captures, so a single visually
+    /// uniform span can arrive as several chunks. Merging here keeps the emitted
+    /// highlights independent of that granularity.
+    fn push_highlight(&mut self, range: Range<usize>, style: HighlightStyle) {
+        if let Some((last_range, last_style)) = self.highlights.last_mut()
+            && last_range.end == range.start
+            && *last_style == style
+        {
+            last_range.end = range.end;
+            return;
+        }
+        self.highlights.push((range, style));
     }
 
     fn highlighted_chunks<'a>(
@@ -5557,11 +5581,14 @@ impl<'a> Iterator for BufferChunks<'a> {
                 .min(next_capture_start)
                 .min(next_diagnostic_endpoint);
             let mut highlight_id = None;
+            let mut syntax_fallbacks = SmallVec::new();
             if let Some(highlights) = self.highlights.as_ref()
-                && let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last()
+                && let Some(((parent_capture_end, parent_highlight_id), enclosing)) =
+                    highlights.stack.split_last()
             {
                 chunk_end = chunk_end.min(*parent_capture_end);
                 highlight_id = Some(*parent_highlight_id);
+                syntax_fallbacks.extend(enclosing.iter().map(|(_, token)| *token));
             }
             let bit_start = chunk_start - self.chunks.offset();
             let bit_end = chunk_end - self.chunks.offset();
@@ -5583,6 +5610,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             Some(Chunk {
                 text: slice,
                 syntax_highlight_id: highlight_id,
+                syntax_fallbacks,
                 underline: self.underline,
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),

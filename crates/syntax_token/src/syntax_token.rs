@@ -6,7 +6,10 @@
 //! denotes a role rather than a position in some theme's style list, it stays
 //! valid when the active theme changes and means the same thing in every window.
 
-use std::{num::NonZeroU32, sync::Arc};
+use std::{
+    num::NonZeroU32,
+    sync::{Arc, LazyLock},
+};
 
 use collections::HashMap;
 use parking_lot::RwLock;
@@ -76,6 +79,21 @@ pub fn name_for(id: SyntaxTokenId) -> Option<Arc<str>> {
         .names_by_id
         .get(id.index())
         .cloned()
+}
+
+/// Identity for the caret position in a completion's snippet expansion.
+///
+/// Reserved names begin with `$`, which tree-sitter capture names and theme
+/// syntax keys never do, so these cannot collide with a real capture.
+pub fn tabstop_insert() -> SyntaxTokenId {
+    static ID: LazyLock<SyntaxTokenId> = LazyLock::new(|| intern("$tabstop.insert"));
+    *ID
+}
+
+/// Identity for a placeholder region in a completion's snippet expansion.
+pub fn tabstop_replace() -> SyntaxTokenId {
+    static ID: LazyLock<SyntaxTokenId> = LazyLock::new(|| intern("$tabstop.replace"));
+    *ID
 }
 
 /// Returns how many distinct names have been interned so far.

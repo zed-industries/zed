@@ -19,6 +19,7 @@ doctest = false
 
 [dependencies]
 gpui.workspace = true
+parking_lot.workspace = true
 syntax_token.workspace = true
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }

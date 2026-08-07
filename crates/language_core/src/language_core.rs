@@ -11,7 +11,7 @@ pub use grammar::{
     NEXT_GRAMMAR_ID, OutlineConfig, OverrideConfig, OverrideEntry, RedactionConfig,
     RunnableCapture, RunnableConfig, TextObject, TextObjectConfig,
 };
-pub use highlight_map::{HighlightId, HighlightMap};
+pub use highlight_map::HighlightMap;
 pub use language_config::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, DecreaseIndentConfig,
     JsxTagAutoCloseConfig, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
@@ -19,6 +19,7 @@ pub use language_config::{
     deserialize_regex, deserialize_regex_vec, regex_json_schema, regex_vec_json_schema,
     serialize_regex,
 };
+pub use syntax_token::SyntaxTokenId;
 
 pub mod code_label;
 pub mod language_name;

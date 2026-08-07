@@ -11,10 +11,11 @@ use gpui::{
     FocusHandle, Focusable, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
     prelude::*,
 };
-use language::{Buffer, HighlightId, LanguageAwareStyling};
+use language::{Buffer, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
 use project::{Location, Project, ProjectPath};
 use settings::{GoToDefinitionFallback, Settings as _};
+use syntax_token::SyntaxTokenId;
 use text::{Anchor, Point};
 use theme_settings::ThemeSettings;
 use ui::{Divider, FluentBuilder};
@@ -344,7 +345,7 @@ struct LocationMatch {
     anchor_range: Range<Anchor>,
     range: Range<usize>,
     display_text: String,
-    syntax_highlights: Vec<(Range<usize>, HighlightId)>,
+    syntax_highlights: Vec<(Range<usize>, SyntaxTokenId)>,
     match_range: Range<usize>,
     line_number: u32,
 }

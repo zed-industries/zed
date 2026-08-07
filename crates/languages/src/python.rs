@@ -27,6 +27,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use settings::{SemanticTokenRules, Settings};
+use syntax_token::SyntaxTokenId;
 use terminal::terminal_settings::TerminalSettings;
 
 use smol::lock::OnceCell;
@@ -254,13 +255,13 @@ fn label_for_python_symbol(
 fn highlight_id_for_completion(
     item_kind: CompletionItemKind,
     grammar: &Arc<language::Grammar>,
-) -> Option<Option<language::HighlightId>> {
+) -> Option<Option<SyntaxTokenId>> {
     match item_kind {
-        CompletionItemKind::METHOD => Some(grammar.highlight_id_for_name("function.method.call")),
-        CompletionItemKind::FUNCTION => Some(grammar.highlight_id_for_name("function.call")),
-        CompletionItemKind::CLASS => Some(grammar.highlight_id_for_name("type")),
-        CompletionItemKind::CONSTANT => Some(grammar.highlight_id_for_name("constant")),
-        CompletionItemKind::VARIABLE => Some(grammar.highlight_id_for_name("variable")),
+        CompletionItemKind::METHOD => Some(grammar.token_for_capture_name("function.method.call")),
+        CompletionItemKind::FUNCTION => Some(grammar.token_for_capture_name("function.call")),
+        CompletionItemKind::CLASS => Some(grammar.token_for_capture_name("type")),
+        CompletionItemKind::CONSTANT => Some(grammar.token_for_capture_name("constant")),
+        CompletionItemKind::VARIABLE => Some(grammar.token_for_capture_name("variable")),
         _ => None,
     }
 }

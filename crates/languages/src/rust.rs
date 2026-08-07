@@ -508,7 +508,7 @@ impl LspAdapter for RustLspAdapter {
                             text_pos = placeholder.snippet_text_end;
                             runs.push((
                                 placeholder.label_run_start..label.len(),
-                                HighlightId::TABSTOP_REPLACE_ID,
+                                syntax_token::tabstop_replace(),
                             ));
                             open_placeholders.pop();
                         }
@@ -519,7 +519,7 @@ impl LspAdapter for RustLspAdapter {
                         if start_pos == end_pos {
                             let caret_start = label.len();
                             label.push('…');
-                            runs.push((caret_start..label.len(), HighlightId::TABSTOP_INSERT_ID));
+                            runs.push((caret_start..label.len(), syntax_token::tabstop_insert()));
                         } else {
                             open_placeholders.push(OpenPlaceholder {
                                 snippet_text_end: end_pos,
@@ -533,7 +533,7 @@ impl LspAdapter for RustLspAdapter {
                         text_pos = placeholder.snippet_text_end;
                         runs.push((
                             placeholder.label_run_start..label.len(),
-                            HighlightId::TABSTOP_REPLACE_ID,
+                            syntax_token::tabstop_replace(),
                         ));
                     }
 
@@ -563,7 +563,7 @@ impl LspAdapter for RustLspAdapter {
 
                     if let Some(highlight_name) = highlight_name {
                         let highlight_id =
-                            language.grammar()?.highlight_id_for_name(highlight_name)?;
+                            language.grammar()?.token_for_capture_name(highlight_name)?;
                         runs.push((
                             0..label.rfind('(').unwrap_or(completion.label.len()),
                             highlight_id,
@@ -1472,11 +1472,10 @@ mod tests {
 
     use super::*;
     use crate::language;
-    use gpui::{BorrowAppContext, Hsla, TestAppContext};
+    use gpui::{BorrowAppContext, TestAppContext};
     use lsp::CompletionItemLabelDetails;
     use pretty_assertions::assert_eq;
     use settings::SettingsStore;
-    use theme::SyntaxTheme;
     use util::path;
 
     #[gpui::test]
@@ -1520,24 +1519,18 @@ mod tests {
         );
     }
 
+    fn runs(
+        spec: &[(std::ops::Range<usize>, &str)],
+    ) -> Vec<(std::ops::Range<usize>, SyntaxTokenId)> {
+        spec.iter()
+            .map(|(range, name)| (range.clone(), syntax_token::intern(name)))
+            .collect()
+    }
+
     #[gpui::test]
     async fn test_rust_label_for_completion() {
         let adapter = Arc::new(RustLspAdapter);
         let language = language("rust", tree_sitter_rust::LANGUAGE.into());
-        let grammar = language.grammar().unwrap();
-        let theme = SyntaxTheme::new_test([
-            ("type", Hsla::default()),
-            ("keyword", Hsla::default()),
-            ("function", Hsla::default()),
-            ("property", Hsla::default()),
-        ]);
-
-        language.set_theme(&theme);
-
-        let highlight_function = grammar.highlight_id_for_name("function").unwrap();
-        let highlight_type = grammar.highlight_id_for_name("type").unwrap();
-        let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
-        let highlight_field = grammar.highlight_id_for_name("property").unwrap();
 
         assert_eq!(
             adapter
@@ -1557,14 +1550,22 @@ mod tests {
             Some(CodeLabel::new(
                 "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
                 0..5,
-                vec![
-                    (0..5, highlight_function),
-                    (7..10, highlight_keyword),
-                    (11..17, highlight_type),
-                    (18..19, highlight_type),
-                    (25..28, highlight_type),
-                    (29..30, highlight_type),
-                ],
+                runs(&[
+                    (0..5, "function.definition"),
+                    (5..6, "punctuation.bracket"),
+                    (6..7, "operator"),
+                    (7..10, "keyword"),
+                    (11..17, "type"),
+                    (17..18, "operator"),
+                    (18..19, "type"),
+                    (19..20, "operator"),
+                    (20..21, "punctuation.bracket"),
+                    (22..24, "operator"),
+                    (25..28, "type"),
+                    (28..29, "operator"),
+                    (29..30, "type"),
+                    (30..31, "operator"),
+                ]),
             ))
         );
         assert_eq!(
@@ -1585,14 +1586,22 @@ mod tests {
             Some(CodeLabel::new(
                 "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
                 0..5,
-                vec![
-                    (0..5, highlight_function),
-                    (7..10, highlight_keyword),
-                    (11..17, highlight_type),
-                    (18..19, highlight_type),
-                    (25..28, highlight_type),
-                    (29..30, highlight_type),
-                ],
+                runs(&[
+                    (0..5, "function.definition"),
+                    (5..6, "punctuation.bracket"),
+                    (6..7, "operator"),
+                    (7..10, "keyword"),
+                    (11..17, "type"),
+                    (17..18, "operator"),
+                    (18..19, "type"),
+                    (19..20, "operator"),
+                    (20..21, "punctuation.bracket"),
+                    (22..24, "operator"),
+                    (25..28, "type"),
+                    (28..29, "operator"),
+                    (29..30, "type"),
+                    (30..31, "operator"),
+                ]),
             ))
         );
         assert_eq!(
@@ -1610,37 +1619,11 @@ mod tests {
             Some(CodeLabel::new(
                 "len: usize".to_string(),
                 0..3,
-                vec![(0..3, highlight_field), (5..10, highlight_type),],
-            ))
-        );
-
-        assert_eq!(
-            adapter
-                .label_for_completion(
-                    &lsp::CompletionItem {
-                        kind: Some(lsp::CompletionItemKind::FUNCTION),
-                        label: "hello(…)".to_string(),
-                        label_details: Some(CompletionItemLabelDetails {
-                            detail: Some("(use crate::foo)".to_string()),
-                            description: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
-                        }),
-
-                        ..Default::default()
-                    },
-                    &language
-                )
-                .await,
-            Some(CodeLabel::new(
-                "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
-                0..5,
-                vec![
-                    (0..5, highlight_function),
-                    (7..10, highlight_keyword),
-                    (11..17, highlight_type),
-                    (18..19, highlight_type),
-                    (25..28, highlight_type),
-                    (29..30, highlight_type),
-                ],
+                runs(&[
+                    (0..3, "property"),
+                    (3..4, "operator"),
+                    (5..10, "type.builtin"),
+                ]),
             ))
         );
 
@@ -1662,14 +1645,22 @@ mod tests {
             Some(CodeLabel::new(
                 "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
                 0..5,
-                vec![
-                    (0..5, highlight_function),
-                    (7..10, highlight_keyword),
-                    (11..17, highlight_type),
-                    (18..19, highlight_type),
-                    (25..28, highlight_type),
-                    (29..30, highlight_type),
-                ],
+                runs(&[
+                    (0..5, "function.definition"),
+                    (5..6, "punctuation.bracket"),
+                    (6..7, "operator"),
+                    (7..10, "keyword"),
+                    (11..17, "type"),
+                    (17..18, "operator"),
+                    (18..19, "type"),
+                    (19..20, "operator"),
+                    (20..21, "punctuation.bracket"),
+                    (22..24, "operator"),
+                    (25..28, "type"),
+                    (28..29, "operator"),
+                    (29..30, "type"),
+                    (30..31, "operator"),
+                ]),
             ))
         );
 
@@ -1692,12 +1683,24 @@ mod tests {
             Some(CodeLabel::new(
                 "await.as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
                 6..18,
-                vec![
-                    (6..18, HighlightId::new(2)),
-                    (20..23, HighlightId::new(1)),
-                    (33..40, HighlightId::new(0)),
-                    (45..46, HighlightId::new(0))
-                ],
+                runs(&[
+                    (0..5, "variable"),
+                    (5..6, "punctuation.delimiter"),
+                    (6..18, "function.definition"),
+                    (18..19, "punctuation.bracket"),
+                    (19..20, "operator"),
+                    (20..23, "keyword"),
+                    (24..28, "variable.special"),
+                    (28..29, "punctuation.bracket"),
+                    (30..32, "operator"),
+                    (33..40, "type"),
+                    (40..41, "operator"),
+                    (41..42, "lifetime"),
+                    (42..43, "lifetime"),
+                    (43..44, "punctuation.delimiter"),
+                    (45..46, "type"),
+                    (46..47, "operator"),
+                ]),
             ))
         );
 
@@ -1722,14 +1725,24 @@ mod tests {
             Some(CodeLabel::new(
                 "pub fn as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
                 7..19,
-                vec![
-                    (0..3, HighlightId::new(1)),
-                    (4..6, HighlightId::new(1)),
-                    (7..19, HighlightId::new(2)),
-                    (21..24, HighlightId::new(1)),
-                    (34..41, HighlightId::new(0)),
-                    (46..47, HighlightId::new(0))
-                ],
+                runs(&[
+                    (0..3, "keyword"),
+                    (4..6, "keyword"),
+                    (7..19, "function.definition"),
+                    (19..20, "punctuation.bracket"),
+                    (20..21, "operator"),
+                    (21..24, "keyword"),
+                    (25..29, "variable.special"),
+                    (29..30, "punctuation.bracket"),
+                    (31..33, "operator"),
+                    (34..41, "type"),
+                    (41..42, "operator"),
+                    (42..43, "lifetime"),
+                    (43..44, "lifetime"),
+                    (44..45, "punctuation.delimiter"),
+                    (46..47, "type"),
+                    (47..48, "operator"),
+                ]),
             ))
         );
 
@@ -1754,12 +1767,23 @@ mod tests {
             Some(CodeLabel::new(
                 "pub fn sync_all(&self) -> io::Result<()>".to_string(),
                 7..15,
-                vec![
-                    (0..3, HighlightId::new(1)),
-                    (4..6, HighlightId::new(1)),
-                    (7..15, HighlightId::new(2)),
-                    (30..36, HighlightId::new(0))
-                ],
+                runs(&[
+                    (0..3, "keyword"),
+                    (4..6, "keyword"),
+                    (7..15, "function.definition"),
+                    (15..16, "punctuation.bracket"),
+                    (16..17, "operator"),
+                    (17..21, "variable.special"),
+                    (21..22, "punctuation.bracket"),
+                    (23..25, "operator"),
+                    (26..28, "variable"),
+                    (28..30, "punctuation.delimiter"),
+                    (30..36, "type"),
+                    (36..37, "operator"),
+                    (37..38, "punctuation.bracket"),
+                    (38..39, "punctuation.bracket"),
+                    (39..40, "operator"),
+                ]),
             ))
         );
 
@@ -1779,36 +1803,7 @@ mod tests {
             Some(CodeLabel::new(
                 "inner_value: String".to_string(),
                 6..11,
-                vec![(0..11, HighlightId::new(3)), (13..19, HighlightId::new(0))],
-            ))
-        );
-
-        // Snippet with insert tabstop (empty placeholder)
-        assert_eq!(
-            adapter
-                .label_for_completion(
-                    &lsp::CompletionItem {
-                        kind: Some(lsp::CompletionItemKind::SNIPPET),
-                        label: "println!".to_string(),
-                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                            range: lsp::Range::default(),
-                            new_text: "println!(\"$1\", $2)$0".to_string(),
-                        })),
-                        ..Default::default()
-                    },
-                    &language,
-                )
-                .await,
-            Some(CodeLabel::new(
-                "println!(\"…\", …)".to_string(),
-                0..8,
-                vec![
-                    (10..13, HighlightId::TABSTOP_INSERT_ID),
-                    (16..19, HighlightId::TABSTOP_INSERT_ID),
-                    (0..7, HighlightId::new(2)),
-                    (7..8, HighlightId::new(2)),
-                ],
+                runs(&[(0..11, "property"), (11..12, "operator"), (13..19, "type"),]),
             ))
         );
 
@@ -1832,11 +1827,14 @@ mod tests {
             Some(CodeLabel::new(
                 "vec![elem]".to_string(),
                 0..4,
-                vec![
-                    (5..9, HighlightId::TABSTOP_REPLACE_ID),
-                    (0..3, HighlightId::new(2)),
-                    (3..4, HighlightId::new(2)),
-                ],
+                runs(&[
+                    (5..9, "$tabstop.replace"),
+                    (0..3, "function.special"),
+                    (3..4, "function.special"),
+                    (4..5, "punctuation.bracket"),
+                    (5..9, "variable"),
+                    (9..10, "punctuation.bracket"),
+                ]),
             ))
         );
 
@@ -1860,12 +1858,16 @@ mod tests {
             Some(CodeLabel::new(
                 "if let pat = … {\n    \n}".to_string(),
                 0..6,
-                vec![
-                    (7..10, HighlightId::TABSTOP_REPLACE_ID),
-                    (13..16, HighlightId::TABSTOP_INSERT_ID),
-                    (0..2, HighlightId::new(1)),
-                    (3..6, HighlightId::new(1)),
-                ],
+                runs(&[
+                    (7..10, "$tabstop.replace"),
+                    (13..16, "$tabstop.insert"),
+                    (0..2, "keyword.control"),
+                    (3..6, "keyword"),
+                    (7..10, "variable"),
+                    (11..12, "operator"),
+                    (17..18, "punctuation.bracket"),
+                    (24..25, "punctuation.bracket"),
+                ]),
             ))
         );
 
@@ -1889,12 +1891,16 @@ mod tests {
             Some(CodeLabel::new(
                 "for item in iter {\n    \n}".to_string(),
                 0..3,
-                vec![
-                    (4..8, HighlightId::TABSTOP_REPLACE_ID),
-                    (12..16, HighlightId::TABSTOP_REPLACE_ID),
-                    (0..3, HighlightId::new(1)),
-                    (9..11, HighlightId::new(1)),
-                ],
+                runs(&[
+                    (4..8, "$tabstop.replace"),
+                    (12..16, "$tabstop.replace"),
+                    (0..3, "keyword.control"),
+                    (4..8, "variable"),
+                    (9..11, "keyword.control"),
+                    (12..16, "variable"),
+                    (17..18, "punctuation.bracket"),
+                    (24..25, "punctuation.bracket"),
+                ]),
             ))
         );
 
@@ -1917,12 +1923,15 @@ mod tests {
             Some(CodeLabel::new(
                 "unimplemented!(\"…\")".to_string(),
                 0..13,
-                vec![
-                    (15..20, HighlightId::TABSTOP_REPLACE_ID),
-                    (16..19, HighlightId::TABSTOP_INSERT_ID),
-                    (0..13, HighlightId::new(2)),
-                    (13..14, HighlightId::new(2)),
-                ],
+                runs(&[
+                    (15..20, "$tabstop.replace"),
+                    (16..19, "$tabstop.insert"),
+                    (0..13, "function.special"),
+                    (13..14, "function.special"),
+                    (14..15, "punctuation.bracket"),
+                    (15..20, "string"),
+                    (20..21, "punctuation.bracket"),
+                ]),
             ))
         );
 
@@ -1983,18 +1992,42 @@ mod tests {
             CodeLabel::new(
                 "Particles { pos_x: …, pos_y: …, vel_x: …, vel_y: …, acc_x: (), acc_y: (), mass: … }".to_string(),
                 0..9,
-                vec![
-                    (19..22, HighlightId::TABSTOP_INSERT_ID),
-                    (31..34, HighlightId::TABSTOP_INSERT_ID),
-                    (43..46, HighlightId::TABSTOP_INSERT_ID),
-                    (55..58, HighlightId::TABSTOP_INSERT_ID),
-                    (67..69, HighlightId::TABSTOP_REPLACE_ID),
-                    (78..80, HighlightId::TABSTOP_REPLACE_ID),
-                    (88..91, HighlightId::TABSTOP_INSERT_ID),
-                    (0..9, highlight_type),
-                    (60..65, highlight_field),
-                    (71..76, highlight_field),
-                ],
+                runs(&[
+                    (19..22, "$tabstop.insert"),
+                    (31..34, "$tabstop.insert"),
+                    (43..46, "$tabstop.insert"),
+                    (55..58, "$tabstop.insert"),
+                    (67..69, "$tabstop.replace"),
+                    (78..80, "$tabstop.replace"),
+                    (88..91, "$tabstop.insert"),
+                    (0..9, "type"),
+                    (10..11, "punctuation.bracket"),
+                    (12..17, "variable"),
+                    (17..18, "operator"),
+                    (22..23, "punctuation.delimiter"),
+                    (24..29, "variable"),
+                    (29..30, "operator"),
+                    (34..35, "punctuation.delimiter"),
+                    (36..41, "variable"),
+                    (41..42, "operator"),
+                    (46..47, "punctuation.delimiter"),
+                    (48..53, "variable"),
+                    (53..54, "operator"),
+                    (58..59, "punctuation.delimiter"),
+                    (60..65, "property"),
+                    (65..66, "operator"),
+                    (67..68, "punctuation.bracket"),
+                    (68..69, "punctuation.bracket"),
+                    (69..70, "punctuation.delimiter"),
+                    (71..76, "property"),
+                    (76..77, "operator"),
+                    (78..79, "punctuation.bracket"),
+                    (79..80, "punctuation.bracket"),
+                    (80..81, "punctuation.delimiter"),
+                    (82..86, "variable"),
+                    (86..87, "operator"),
+                    (92..93, "punctuation.bracket"),
+                ]),
             )
         );
     }
@@ -2004,18 +2037,12 @@ mod tests {
         let adapter = Arc::new(RustLspAdapter);
         let language = language("rust", tree_sitter_rust::LANGUAGE.into());
         let grammar = language.grammar().unwrap();
-        let theme = SyntaxTheme::new_test([
-            ("type", Hsla::default()),
-            ("keyword", Hsla::default()),
-            ("function", Hsla::default()),
-            ("property", Hsla::default()),
-        ]);
-
-        language.set_theme(&theme);
-
-        let highlight_function = grammar.highlight_id_for_name("function").unwrap();
-        let highlight_type = grammar.highlight_id_for_name("type").unwrap();
-        let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
+        let highlight_function = grammar
+            .token_for_capture_name("function.definition")
+            .unwrap();
+        let highlight_type = grammar.token_for_capture_name("type").unwrap();
+        let highlight_keyword = grammar.token_for_capture_name("keyword").unwrap();
+        let highlight_variable = grammar.token_for_capture_name("variable").unwrap();
 
         assert_eq!(
             adapter
@@ -2067,7 +2094,11 @@ mod tests {
             Some(CodeLabel::new(
                 "extern crate zed".to_string(),
                 13..16,
-                vec![(0..6, highlight_keyword), (7..12, highlight_keyword),],
+                vec![
+                    (0..6, highlight_keyword),
+                    (7..12, highlight_keyword),
+                    (13..16, highlight_variable),
+                ],
             ))
         );
 

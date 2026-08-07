@@ -13,6 +13,7 @@ path = "src/lsp_locations.rs"
 doctest = false
 
 [dependencies]
+syntax_token.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 editor.workspace = true

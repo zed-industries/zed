@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use gpui::rgba;
-use language::build_highlight_map;
+use language::HighlightMap;
 use theme::SyntaxTheme;
 
 fn syntax_theme(highlight_names: &[&str]) -> SyntaxTheme {
@@ -115,6 +115,7 @@ static LARGE_CAPTURE_NAMES: &[&str] = &[
     "variable.parameter",
 ];
 
+/// Interning a grammar's capture names, which happens once per grammar load.
 fn bench_build_highlight_map(c: &mut Criterion) {
     let mut group = c.benchmark_group("build_highlight_map");
 
@@ -122,6 +123,35 @@ fn bench_build_highlight_map(c: &mut Criterion) {
         ("small_captures", SMALL_CAPTURE_NAMES as &[&str]),
         ("large_captures", LARGE_CAPTURE_NAMES as &[&str]),
     ] {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(capture_label),
+            &capture_names,
+            |b, capture_names| {
+                b.iter(|| {
+                    HighlightMap::from_capture_names(black_box(*capture_names).iter().copied())
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Resolving a token to a style, which happens for every highlighted span on
+/// every frame. This is the path that pays for theme-independent ids: it
+/// resolves through the capture name rather than indexing a precomputed slot.
+fn bench_style_lookup(c: &mut Criterion) {
+    let mut group = c.benchmark_group("style_lookup");
+
+    for (capture_label, capture_names) in [
+        ("small_captures", SMALL_CAPTURE_NAMES as &[&str]),
+        ("large_captures", LARGE_CAPTURE_NAMES as &[&str]),
+    ] {
+        let tokens = capture_names
+            .iter()
+            .map(|name| syntax_token::intern(name))
+            .collect::<Vec<_>>();
+
         for (theme_label, theme_keys) in [
             ("small_theme", SMALL_THEME_KEYS as &[&str]),
             ("large_theme", LARGE_THEME_KEYS as &[&str]),
@@ -129,9 +159,13 @@ fn bench_build_highlight_map(c: &mut Criterion) {
             let theme = syntax_theme(theme_keys);
             group.bench_with_input(
                 BenchmarkId::new(capture_label, theme_label),
-                &(capture_names, &theme),
-                |b, (capture_names, theme)| {
-                    b.iter(|| build_highlight_map(black_box(capture_names), black_box(theme)));
+                &(&tokens, &theme),
+                |b, (tokens, theme)| {
+                    b.iter(|| {
+                        for token in black_box(*tokens) {
+                            black_box(theme.get(*token));
+                        }
+                    });
                 },
             );
         }
@@ -140,5 +174,5 @@ fn bench_build_highlight_map(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_build_highlight_map);
+criterion_group!(benches, bench_build_highlight_map, bench_style_lookup);
 criterion_main!(benches);

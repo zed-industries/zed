@@ -34,6 +34,7 @@ test-support = [
 ]
 
 [dependencies]
+syntax_token.workspace = true
 aho-corasick.workspace = true
 anyhow.workspace = true
 askpass.workspace = true

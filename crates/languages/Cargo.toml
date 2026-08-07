@@ -19,6 +19,7 @@ load-grammars = [
 ]
 
 [dependencies]
+syntax_token.workspace = true
 anyhow.workspace = true
 async-compression.workspace = true
 async-fs.workspace = true

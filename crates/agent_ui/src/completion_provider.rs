@@ -15,7 +15,7 @@ use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{
     App, BackgroundExecutor, Entity, Focusable, Hsla, SharedString, Task, WeakEntity, Window,
 };
-use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
+use language::{Buffer, CodeLabel, CodeLabelBuilder};
 use lsp::CompletionContext;
 use multi_buffer::ToOffset as _;
 use ordered_float::OrderedFloat;
@@ -24,6 +24,7 @@ use project::{
     Completion, CompletionDisplayOptions, CompletionGroup, CompletionIntent, CompletionResponse,
     DiagnosticSummary, PathMatchCandidateSet, Project, ProjectPath, Symbol, WorktreeId,
 };
+use syntax_token::SyntaxTokenId;
 
 use rope::Point;
 use settings::Settings;
@@ -609,11 +610,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let new_text_len = new_text.len();
         let icon_path = skill_completion_icon_path(&skill, &uri, cx);
         let crease_text: SharedString = uri.name().into();
-        let source_highlight_id = cx
-            .theme()
-            .syntax()
-            .highlight_id("variable")
-            .map(HighlightId::new);
+        let source_highlight_id = Some(syntax_token::intern("variable"));
         let label = build_slash_item_label(&skill.name, Some(&skill.source), source_highlight_id);
         Completion {
             replace_range: source_range.clone(),
@@ -663,7 +660,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             directory.as_ref().map(|s| s.as_ref()),
             None,
             label_max_chars,
-            cx,
         );
 
         let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
@@ -739,7 +735,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             Some(&file_name),
             Some(symbol.range.start.0.row + 1),
             label_max_chars,
-            cx,
         );
 
         let uri = MentionUri::Symbol {
@@ -1453,11 +1448,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 // grouping no longer applies.
                 let show_section_headers = argument.is_none();
 
-                let source_highlight_id = cx
-                    .theme()
-                    .syntax()
-                    .highlight_id("variable")
-                    .map(HighlightId::new);
+                let source_highlight_id = Some(syntax_token::intern("variable"));
 
                 type SkillInfo = (
                     String,
@@ -2560,7 +2551,7 @@ pub fn extract_file_name_and_directory(
 
 fn build_slash_command_label(
     command: &AvailableCommand,
-    source_highlight_id: Option<HighlightId>,
+    source_highlight_id: Option<SyntaxTokenId>,
 ) -> CodeLabel {
     build_slash_item_label(&command.name, command.source.as_ref(), source_highlight_id)
 }
@@ -2572,7 +2563,7 @@ fn build_slash_command_label(
 fn build_slash_item_label(
     name: &Arc<str>,
     source: Option<&SharedString>,
-    source_highlight_id: Option<HighlightId>,
+    source_highlight_id: Option<SyntaxTokenId>,
 ) -> CodeLabel {
     let source = source.filter(|source| !source.is_empty());
     let Some(source) = source else {
@@ -2598,13 +2589,8 @@ fn build_code_label_for_path(
     directory: Option<&str>,
     line_number: Option<u32>,
     label_max_chars: usize,
-    cx: &App,
 ) -> CodeLabel {
-    let variable_highlight_id = cx
-        .theme()
-        .syntax()
-        .highlight_id("variable")
-        .map(HighlightId::new);
+    let variable_highlight_id = Some(syntax_token::intern("variable"));
     let mut label = CodeLabelBuilder::default();
 
     label.push_str(file, None);

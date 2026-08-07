@@ -1,12 +1,12 @@
 use crate::{
-    HighlightId, HighlightMap, LanguageConfig, LanguageConfigOverride, LanguageName,
-    LanguageQueries, language_config::BracketPairConfig,
+    HighlightMap, LanguageConfig, LanguageConfigOverride, LanguageName, LanguageQueries,
+    language_config::BracketPairConfig,
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui_shared_string::SharedString;
-use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+use syntax_token::SyntaxTokenId;
 use tree_sitter::Query;
 
 pub static NEXT_GRAMMAR_ID: AtomicUsize = AtomicUsize::new(0);
@@ -40,7 +40,7 @@ pub struct Grammar {
     pub injection_config: Option<InjectionConfig>,
     pub override_config: Option<OverrideConfig>,
     pub debug_variables_config: Option<DebugVariablesConfig>,
-    pub highlight_map: Mutex<HighlightMap>,
+    pub highlight_map: HighlightMap,
 }
 
 pub struct HighlightsConfig {
@@ -281,15 +281,15 @@ impl Grammar {
     }
 
     pub fn highlight_map(&self) -> HighlightMap {
-        self.highlight_map.lock().clone()
+        self.highlight_map.clone()
     }
 
-    pub fn highlight_id_for_name(&self, name: &str) -> Option<HighlightId> {
+    pub fn token_for_capture_name(&self, name: &str) -> Option<SyntaxTokenId> {
         self.highlights_config
             .as_ref()?
             .query
             .capture_index_for_name(name)
-            .and_then(|capture_id| self.highlight_map.lock().get(capture_id))
+            .and_then(|capture_id| self.highlight_map.get(capture_id))
     }
 
     pub fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {
@@ -383,6 +383,8 @@ impl Grammar {
             identifier_capture_indices.extend(query.capture_index_for_name(name));
         }
 
+        self.highlight_map =
+            HighlightMap::from_capture_names(query.capture_names().iter().copied());
         self.highlights_config = Some(HighlightsConfig {
             query,
             identifier_capture_indices,

@@ -5,12 +5,13 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
 };
 use gpui::{AnyElement, App, ElementId, HighlightStyle, Pixels, SharedString, Stateful, Window};
-use language::{Edit, HighlightId, LanguageAwareStyling, Point};
+use language::{Edit, LanguageAwareStyling, Point};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
     RowInfo, ToOffset,
 };
 use project::InlayId;
+use smallvec::SmallVec;
 use std::{
     any::TypeId,
     cmp::{self, Ordering},
@@ -20,6 +21,7 @@ use std::{
     usize,
 };
 use sum_tree::{Bias, Cursor, Dimensions, FilterCursor, SumTree, Summary, TreeMap};
+use syntax_token::SyntaxTokenId;
 use ui::IntoElement as _;
 use util::post_inc;
 
@@ -1402,7 +1404,8 @@ pub struct Chunk<'a> {
     /// The text of the chunk.
     pub text: &'a str,
     /// The syntax highlighting style of the chunk.
-    pub syntax_highlight_id: Option<HighlightId>,
+    pub syntax_highlight_id: Option<SyntaxTokenId>,
+    pub syntax_fallbacks: SmallVec<[SyntaxTokenId; 3]>,
     /// The highlight style that has been applied to this chunk in
     /// the editor.
     pub highlight_style: Option<HighlightStyle>,
@@ -1604,6 +1607,7 @@ impl<'a> Iterator for FoldChunks<'a> {
                 chars: chunk.chars,
                 newlines: chunk.newlines,
                 syntax_highlight_id: chunk.syntax_highlight_id,
+                syntax_fallbacks: chunk.syntax_fallbacks.clone(),
                 highlight_style: chunk.highlight_style,
                 diagnostic_severity: chunk.diagnostic_severity,
                 is_unnecessary: chunk.is_unnecessary,

@@ -12,6 +12,7 @@ workspace = true
 path = "src/language_extension.rs"
 
 [dependencies]
+syntax_token.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 collections.workspace = true

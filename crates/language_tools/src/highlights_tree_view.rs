@@ -1198,8 +1198,7 @@ fn build_highlight_entries(
                 continue;
             };
 
-            let theme_key = syntax_theme
-                .get_capture_name(highlight_id)
+            let theme_key = syntax_token::name_for(highlight_id)
                 .map(|theme_key| SharedString::from(theme_key.to_string()));
 
             let capture_name = grammars[capture.grammar_index]

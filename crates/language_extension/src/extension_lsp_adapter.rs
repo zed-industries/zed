@@ -9,7 +9,7 @@ use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
 use futures::{FutureExt, future::join_all, lock::OwnedMutexGuard};
 use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
-    BinaryStatus, CodeLabel, DynLspInstaller, HighlightId, Language, LanguageName,
+    BinaryStatus, CodeLabel, DynLspInstaller, Language, LanguageName,
     LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
 };
 use lsp::{
@@ -18,6 +18,7 @@ use lsp::{
 };
 use serde::Serialize;
 use serde_json::Value;
+use syntax_token::SyntaxTokenId;
 use util::{ResultExt, fs::make_file_executable, maybe, rel_path::RelPath};
 
 use crate::{LanguageServerRegistryProxy, LspAccess};
@@ -515,7 +516,7 @@ fn labels_from_extension(
 
 fn build_code_label(
     label: &extension::CodeLabel,
-    parsed_runs: &[(Range<usize>, HighlightId)],
+    parsed_runs: &[(Range<usize>, SyntaxTokenId)],
     language: &Arc<Language>,
 ) -> Option<CodeLabel> {
     let mut text = String::new();
@@ -554,7 +555,7 @@ fn build_code_label(
                     .grammar()
                     .zip(span.highlight_name.as_ref())
                     .and_then(|(grammar, highlight_name)| {
-                        grammar.highlight_id_for_name(highlight_name)
+                        grammar.token_for_capture_name(highlight_name)
                     })
                 {
                     let ix = text.len();
@@ -686,7 +687,7 @@ fn test_build_code_label() {
     );
     let code_runs = code_ranges
         .into_iter()
-        .map(|range| (range, HighlightId::new(0)))
+        .map(|range| (range, syntax_token::intern("variable")))
         .collect::<Vec<_>>();
 
     let label = build_code_label(
@@ -709,7 +710,7 @@ fn test_build_code_label() {
         marked_text_ranges("pqrs.tuv: «fn»(«Bcd»(«Efgh»)) -> «Ijklm»", false);
     let label_runs = label_ranges
         .into_iter()
-        .map(|range| (range, HighlightId::new(0)))
+        .map(|range| (range, syntax_token::intern("variable")))
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -725,7 +726,7 @@ fn test_build_code_label_with_invalid_ranges() {
     let (code, code_ranges) = marked_text_ranges("const «a»: «B» = '🏀'", false);
     let code_runs = code_ranges
         .into_iter()
-        .map(|range| (range, HighlightId::new(0)))
+        .map(|range| (range, syntax_token::intern("variable")))
         .collect::<Vec<_>>();
 
     // A span uses a code range that is invalid because it starts inside of

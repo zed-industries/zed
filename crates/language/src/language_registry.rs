@@ -29,7 +29,6 @@ use std::{
     sync::Arc,
 };
 use text::Rope;
-use theme::Theme;
 
 use util::{maybe, post_inc};
 
@@ -52,7 +51,6 @@ struct LanguageRegistryState {
         HashMap<LanguageServerName, Arc<dyn Fn() -> Arc<CachedLspAdapter> + 'static + Send + Sync>>,
     loading_languages: HashMap<LanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
     subscription: (watch::Sender<()>, watch::Receiver<()>),
-    theme: Option<Arc<Theme>>,
     version: usize,
     reload_count: usize,
 
@@ -115,7 +113,6 @@ impl LanguageRegistry {
                 all_lsp_adapters: Default::default(),
                 available_lsp_adapters: HashMap::default(),
                 subscription: watch::channel(),
-                theme: Default::default(),
                 version: 0,
                 reload_count: 0,
 
@@ -478,14 +475,6 @@ impl LanguageRegistry {
     /// Returns the number of times that the registry has been reloaded.
     pub fn reload_count(&self) -> usize {
         self.state.read().reload_count
-    }
-
-    pub fn set_theme(&self, theme: Arc<Theme>) {
-        let mut state = self.state.write();
-        state.theme = Some(theme.clone());
-        for language in &state.languages {
-            language.set_theme(theme.syntax());
-        }
     }
 
     pub fn set_language_server_download_dir(&mut self, path: impl Into<Arc<Path>>) {
@@ -860,9 +849,6 @@ impl LanguageRegistryState {
     }
 
     fn add(&mut self, language: Arc<Language>) {
-        if let Some(theme) = self.theme.as_ref() {
-            language.set_theme(theme.syntax());
-        }
         self.language_settings.languages.0.insert(
             language.name().0.to_string(),
             LanguageSettingsContent {

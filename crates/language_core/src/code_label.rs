@@ -1,5 +1,5 @@
-use crate::highlight_map::HighlightId;
 use std::ops::Range;
+use syntax_token::SyntaxTokenId;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum SymbolKind {
@@ -77,7 +77,7 @@ pub struct CodeLabel {
     /// The text to display.
     pub text: String,
     /// Syntax highlighting runs.
-    pub runs: Vec<(Range<usize>, HighlightId)>,
+    pub runs: Vec<(Range<usize>, SyntaxTokenId)>,
     /// The portion of the text that should be used in fuzzy filtering.
     pub filter_range: Range<usize>,
 }
@@ -87,7 +87,7 @@ pub struct CodeLabelBuilder {
     /// The text to display.
     text: String,
     /// Syntax highlighting runs.
-    runs: Vec<(Range<usize>, HighlightId)>,
+    runs: Vec<(Range<usize>, SyntaxTokenId)>,
     /// The portion of the text that should be used in fuzzy filtering.
     filter_range: Range<usize>,
 }
@@ -101,7 +101,7 @@ impl CodeLabel {
         text: String,
         label_len: usize,
         filter_text: Option<&str>,
-        runs: Vec<(Range<usize>, HighlightId)>,
+        runs: Vec<(Range<usize>, SyntaxTokenId)>,
     ) -> Self {
         assert!(label_len <= text.len());
         let filter_range = filter_text
@@ -113,7 +113,7 @@ impl CodeLabel {
     pub fn new(
         text: String,
         filter_range: Range<usize>,
-        runs: Vec<(Range<usize>, HighlightId)>,
+        runs: Vec<(Range<usize>, SyntaxTokenId)>,
     ) -> Self {
         assert!(
             text.get(filter_range.clone()).is_some(),
@@ -164,7 +164,7 @@ impl CodeLabelBuilder {
             .unwrap_or(0..self.text.len());
     }
 
-    pub fn push_str(&mut self, text: &str, highlight: Option<HighlightId>) {
+    pub fn push_str(&mut self, text: &str, highlight: Option<SyntaxTokenId>) {
         let start_index = self.text.len();
         self.text.push_str(text);
         if let Some(highlight) = highlight {

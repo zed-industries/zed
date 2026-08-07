@@ -904,7 +904,6 @@ mod tests {
         use collections::IndexMap;
         use gpui::{Hsla, Rgba, UpdateGlobal as _};
         use theme_settings::{HighlightStyleContent, ThemeStyleContent};
-        use ui::ActiveTheme as _;
 
         init_test(cx, |_| {});
 
@@ -936,15 +935,6 @@ mod tests {
                     });
                 });
             });
-        });
-        cx.update_editor(|editor, _window, cx| {
-            editor
-                .project
-                .as_ref()
-                .expect("editor should have a project")
-                .read(cx)
-                .languages()
-                .set_theme(cx.theme().clone());
         });
         cx.set_state("fn maˇin() {}");
         cx.run_until_parked();
@@ -996,15 +986,6 @@ mod tests {
                     });
                 });
             });
-        });
-        cx.update_editor(|editor, _window, cx| {
-            editor
-                .project
-                .as_ref()
-                .expect("editor should have a project")
-                .read(cx)
-                .languages()
-                .set_theme(cx.theme().clone());
         });
         cx.run_until_parked();
 

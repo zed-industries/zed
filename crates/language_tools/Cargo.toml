@@ -13,6 +13,7 @@ path = "src/language_tools.rs"
 doctest = false
 
 [dependencies]
+syntax_token.workspace = true
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true

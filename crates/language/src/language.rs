@@ -40,12 +40,7 @@ use futures::lock::OwnedMutexGuard;
 use gpui::{App, AsyncApp, Entity};
 use http_client::HttpClient;
 
-pub use language_core::{
-    SymbolKind,
-    highlight_map::{HighlightId, HighlightMap},
-};
-
-use futures::future::FutureExt as _;
+pub use futures::future::FutureExt as _;
 pub use language_core::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, BracketsConfig,
     BracketsPatternConfig, CodeLabel, CodeLabelBuilder, DebugVariablesConfig, DebuggerTextObject,
@@ -57,6 +52,7 @@ pub use language_core::{
     deserialize_regex, deserialize_regex_vec, regex_json_schema, regex_vec_json_schema,
     serialize_regex,
 };
+pub use language_core::{SymbolKind, highlight_map::HighlightMap};
 pub use language_registry::{
     LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
 };
@@ -82,6 +78,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
+pub use syntax_token::SyntaxTokenId;
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider};
 pub use text_diff::{
@@ -89,7 +86,6 @@ pub use text_diff::{
     text_diff_with_options, unified_diff, unified_diff_with_context, unified_diff_with_offsets,
     word_diff_ranges,
 };
-use theme::SyntaxTheme;
 pub use toolchain::{
     LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
     ToolchainMetadata, ToolchainScope,
@@ -1109,7 +1105,7 @@ impl Language {
         self: &'a Arc<Self>,
         text: &'a Rope,
         range: Range<usize>,
-    ) -> Vec<(Range<usize>, HighlightId)> {
+    ) -> Vec<(Range<usize>, SyntaxTokenId)> {
         let mut result = Vec::new();
         if let Some(grammar) = &self.grammar {
             let tree = parse_text(grammar, text, None);
@@ -1143,15 +1139,6 @@ impl Language {
         c.is_whitespace() || self.config.autoclose_before.contains(c)
     }
 
-    pub fn set_theme(&self, theme: &SyntaxTheme) {
-        if let Some(grammar) = self.grammar.as_ref()
-            && let Some(highlights_config) = &grammar.highlights_config
-        {
-            *grammar.highlight_map.lock() =
-                build_highlight_map(highlights_config.query.capture_names(), theme);
-        }
-    }
-
     pub fn grammar(&self) -> Option<&Arc<Grammar>> {
         self.grammar.as_ref()
     }
@@ -1178,15 +1165,6 @@ impl Language {
     pub fn config(&self) -> &LanguageConfig {
         &self.config
     }
-}
-
-#[inline]
-pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> HighlightMap {
-    HighlightMap::from_ids(
-        capture_names
-            .iter()
-            .map(|capture_name| theme.highlight_id(capture_name).map(HighlightId::new)),
-    )
 }
 
 impl LanguageScope {
@@ -1405,26 +1383,26 @@ impl CodeLabelExt for CodeLabel {
             let grammar = language?.grammar()?;
             use lsp::CompletionItemKind as Kind;
             match kind {
-                Kind::CLASS => grammar.highlight_id_for_name("type"),
-                Kind::CONSTANT => grammar.highlight_id_for_name("constant"),
-                Kind::CONSTRUCTOR => grammar.highlight_id_for_name("constructor"),
+                Kind::CLASS => grammar.token_for_capture_name("type"),
+                Kind::CONSTANT => grammar.token_for_capture_name("constant"),
+                Kind::CONSTRUCTOR => grammar.token_for_capture_name("constructor"),
                 Kind::ENUM => grammar
-                    .highlight_id_for_name("enum")
-                    .or_else(|| grammar.highlight_id_for_name("type")),
+                    .token_for_capture_name("enum")
+                    .or_else(|| grammar.token_for_capture_name("type")),
                 Kind::ENUM_MEMBER => grammar
-                    .highlight_id_for_name("variant")
-                    .or_else(|| grammar.highlight_id_for_name("property")),
-                Kind::FIELD => grammar.highlight_id_for_name("property"),
-                Kind::FUNCTION => grammar.highlight_id_for_name("function"),
-                Kind::INTERFACE => grammar.highlight_id_for_name("type"),
+                    .token_for_capture_name("variant")
+                    .or_else(|| grammar.token_for_capture_name("property")),
+                Kind::FIELD => grammar.token_for_capture_name("property"),
+                Kind::FUNCTION => grammar.token_for_capture_name("function"),
+                Kind::INTERFACE => grammar.token_for_capture_name("type"),
                 Kind::METHOD => grammar
-                    .highlight_id_for_name("function.method")
-                    .or_else(|| grammar.highlight_id_for_name("function")),
-                Kind::OPERATOR => grammar.highlight_id_for_name("operator"),
-                Kind::PROPERTY => grammar.highlight_id_for_name("property"),
-                Kind::STRUCT => grammar.highlight_id_for_name("type"),
-                Kind::VARIABLE => grammar.highlight_id_for_name("variable"),
-                Kind::KEYWORD => grammar.highlight_id_for_name("keyword"),
+                    .token_for_capture_name("function.method")
+                    .or_else(|| grammar.token_for_capture_name("function")),
+                Kind::OPERATOR => grammar.token_for_capture_name("operator"),
+                Kind::PROPERTY => grammar.token_for_capture_name("property"),
+                Kind::STRUCT => grammar.token_for_capture_name("type"),
+                Kind::VARIABLE => grammar.token_for_capture_name("variable"),
+                Kind::KEYWORD => grammar.token_for_capture_name("keyword"),
                 _ => None,
             }
         });
@@ -1432,7 +1410,7 @@ impl CodeLabelExt for CodeLabel {
         let label = &item.label;
         let label_length = label.len();
         let runs = highlight_id
-            .map(|highlight_id| vec![(0..label_length, highlight_id)])
+            .map(|token| vec![(0..label_length, token)])
             .unwrap_or_default();
         let text = if let Some(detail) = item.detail.as_deref().filter(|detail| detail != label) {
             format!("{label} {detail}")
@@ -1627,6 +1605,7 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, rgba};
     use pretty_assertions::assert_matches;
+    use theme::SyntaxTheme;
 
     #[test]
     fn test_highlight_map() {
@@ -1649,19 +1628,19 @@ mod tests {
             "variable.builtin.self",
         ];
 
-        let map = build_highlight_map(capture_names, &theme);
-        assert_eq!(
-            theme.get_capture_name(map.get(0).unwrap()),
-            Some("function")
-        );
-        assert_eq!(
-            theme.get_capture_name(map.get(1).unwrap()),
-            Some("function.async")
-        );
-        assert_eq!(
-            theme.get_capture_name(map.get(2).unwrap()),
-            Some("variable.builtin")
-        );
+        // A capture resolves to the longest prefix the theme defines, so
+        // `function.special` picks up `function` and `function.async.rust`
+        // picks up `function.async` rather than the shorter `function`.
+        let map = HighlightMap::from_capture_names(capture_names.iter().copied());
+        let color_of = |capture_index: u32| {
+            map.get(capture_index)
+                .and_then(|token| theme.get(token))
+                .and_then(|style| style.color)
+        };
+
+        assert_eq!(color_of(0), Some(rgba(0x100000ff).into()));
+        assert_eq!(color_of(1), Some(rgba(0x300000ff).into()));
+        assert_eq!(color_of(2), Some(rgba(0x500000ff).into()));
     }
 
     #[test]

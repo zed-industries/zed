@@ -13874,11 +13874,8 @@ fn resolve_word_completion(snapshot: &BufferSnapshot, completion: &mut Completio
         },
     ) {
         let end_offset = offset + chunk.text.len();
-        if let Some(highlight_id) = chunk.syntax_highlight_id {
-            completion
-                .label
-                .runs
-                .push((offset..end_offset, highlight_id));
+        if let Some(token) = chunk.syntax_highlight_id {
+            completion.label.runs.push((offset..end_offset, token));
         }
         offset = end_offset;
     }

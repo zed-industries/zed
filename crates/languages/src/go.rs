@@ -575,8 +575,8 @@ async fn get_cached_server_binary(container_dir: &Path) -> Option<LanguageServer
 
 fn adjust_runs(
     delta: usize,
-    mut runs: Vec<(Range<usize>, HighlightId)>,
-) -> Vec<(Range<usize>, HighlightId)> {
+    mut runs: Vec<(Range<usize>, SyntaxTokenId)>,
+) -> Vec<(Range<usize>, SyntaxTokenId)> {
     for (range, _) in &mut runs {
         range.start += delta;
         range.end += delta;
@@ -942,9 +942,8 @@ fn extract_subtest_name(input: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::language;
-    use gpui::{AppContext, Hsla, TestAppContext};
+    use gpui::{AppContext, TestAppContext};
     use task::TaskContext;
-    use theme::SyntaxTheme;
     use unindent::Unindent as _;
 
     fn go_language() -> Arc<Language> {
@@ -956,26 +955,18 @@ mod tests {
         )
     }
 
+    fn runs(
+        spec: &[(std::ops::Range<usize>, &str)],
+    ) -> Vec<(std::ops::Range<usize>, SyntaxTokenId)> {
+        spec.iter()
+            .map(|(range, name)| (range.clone(), syntax_token::intern(name)))
+            .collect()
+    }
+
     #[gpui::test]
     async fn test_go_label_for_completion() {
         let adapter = Arc::new(GoLspAdapter);
         let language = go_language();
-
-        let theme = SyntaxTheme::new_test([
-            ("type", Hsla::default()),
-            ("keyword", Hsla::default()),
-            ("function", Hsla::default()),
-            ("number", Hsla::default()),
-            ("property", Hsla::default()),
-        ]);
-        language.set_theme(&theme);
-
-        let grammar = language.grammar().unwrap();
-        let highlight_function = grammar.highlight_id_for_name("function").unwrap();
-        let highlight_type = grammar.highlight_id_for_name("type").unwrap();
-        let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
-        let highlight_number = grammar.highlight_id_for_name("number").unwrap();
-        let highlight_field = grammar.highlight_id_for_name("property").unwrap();
 
         assert_eq!(
             adapter
@@ -992,11 +983,16 @@ mod tests {
             Some(CodeLabel::new(
                 "Hello(a B) c.D".to_string(),
                 0..5,
-                vec![
-                    (0..5, highlight_function),
-                    (8..9, highlight_type),
-                    (13..14, highlight_type),
-                ]
+                runs(&[
+                    (0..5, "function"),
+                    (5..6, "punctuation.bracket"),
+                    (6..7, "variable"),
+                    (8..9, "type"),
+                    (9..10, "punctuation.bracket"),
+                    (11..12, "namespace"),
+                    (12..13, "punctuation.delimiter"),
+                    (13..14, "type"),
+                ])
             ))
         );
 
@@ -1016,11 +1012,18 @@ mod tests {
             Some(CodeLabel::new(
                 "one.two.Three() [3]interface{}".to_string(),
                 0..13,
-                vec![
-                    (8..13, highlight_function),
-                    (17..18, highlight_number),
-                    (19..28, highlight_keyword),
-                ],
+                runs(&[
+                    (7..8, "punctuation.delimiter"),
+                    (8..13, "function"),
+                    (13..14, "punctuation.bracket"),
+                    (14..15, "punctuation.bracket"),
+                    (16..17, "punctuation.bracket"),
+                    (17..18, "number"),
+                    (18..19, "punctuation.bracket"),
+                    (19..28, "keyword"),
+                    (28..29, "punctuation.bracket"),
+                    (29..30, "punctuation.bracket"),
+                ]),
             ))
         );
 
@@ -1040,7 +1043,13 @@ mod tests {
             Some(CodeLabel::new(
                 "two.Three a.Bcd".to_string(),
                 0..9,
-                vec![(4..9, highlight_field), (12..15, highlight_type)],
+                runs(&[
+                    (3..4, "punctuation.delimiter"),
+                    (4..9, "property"),
+                    (10..11, "namespace"),
+                    (11..12, "punctuation.delimiter"),
+                    (12..15, "type"),
+                ]),
             ))
         );
     }

@@ -25,6 +25,7 @@ use text::network::Network;
 use text::{BufferId, LineEnding};
 use text::{Point, ToPoint};
 use theme::ActiveTheme;
+use theme::SyntaxTheme;
 use unindent::Unindent as _;
 use util::rel_path::rel_path;
 use util::test::marked_text_offsets;
@@ -3418,9 +3419,6 @@ async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
         ("comment".to_string(), gpui::rgba(0xffffffff).into()),
         ("tag".to_string(), gpui::rgba(0xff0000ff).into()),
     ]);
-    markdown_language.set_theme(&syntax_theme);
-    markdown_inline_language.set_theme(&syntax_theme);
-    html_language.set_theme(&syntax_theme);
     let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
     language_registry.add(markdown_language.clone());
     language_registry.add(markdown_inline_language);
@@ -3442,10 +3440,12 @@ async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
     buffer.read_with(cx, |buffer, _cx| {
         let snapshot = buffer.snapshot();
         let highlighted_text = |capture_name: &str| {
-            let highlight_id = syntax_theme
-                .highlight_id(capture_name)
-                .map(HighlightId::new);
-            assert!(highlight_id.is_some(), "{capture_name} not in test theme");
+            let token = syntax_token::intern(capture_name);
+            assert!(
+                syntax_theme.get(token).is_some(),
+                "{capture_name} not in test theme"
+            );
+            let highlight_id = Some(token);
             let mut runs: Vec<String> = Vec::new();
             let mut previous_chunk_matched = false;
             let chunks = snapshot.chunks(
@@ -3878,9 +3878,10 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
                 }
             );
 
-            assert_eq!(hl.highlights.len(), 2);
-            assert_eq!(hl.highlights[0], ((18..24), insertion_style));
-            assert_eq!(hl.highlights[1], ((67..73), insertion_style));
+            assert_eq!(
+                ranges_styled_like(&hl, insertion_style),
+                vec![18..24, 67..73]
+            );
         },
     )
     .await;
@@ -3918,16 +3919,32 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
                 }
             );
 
-            assert_eq!(hl.highlights.len(), 6);
-            assert_eq!(hl.highlights[0], ((4..9), deletion_style));
-            assert_eq!(hl.highlights[1], ((9..13), insertion_style));
-            assert_eq!(hl.highlights[2], ((52..57), deletion_style));
-            assert_eq!(hl.highlights[3], ((57..61), insertion_style));
-            assert_eq!(hl.highlights[4], ((101..106), deletion_style));
-            assert_eq!(hl.highlights[5], ((106..110), insertion_style));
+            assert_eq!(
+                ranges_styled_like(&hl, deletion_style),
+                vec![4..9, 52..57, 101..106]
+            );
+            assert_eq!(
+                ranges_styled_like(&hl, insertion_style),
+                vec![9..13, 57..61, 106..110]
+            );
         },
     )
     .await;
+
+    /// Ranges carrying `style`'s background, ignoring any syntax styling merged
+    /// in. Edit previews highlight insertions and deletions by background color,
+    /// so the assertions stay meaningful whether or not syntax styles apply.
+    fn ranges_styled_like(
+        highlighted: &HighlightedText,
+        style: HighlightStyle,
+    ) -> Vec<Range<usize>> {
+        highlighted
+            .highlights
+            .iter()
+            .filter(|(_, candidate)| candidate.background_color == style.background_color)
+            .map(|(range, _)| range.clone())
+            .collect()
+    }
 
     async fn assert_preview_edits(
         text: &str,

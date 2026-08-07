@@ -42151,8 +42151,6 @@ fn setup_syntax_highlighting_with_theme(
     syntax: Arc<SyntaxTheme>,
     cx: &mut EditorTestContext,
 ) {
-    language.set_theme(&syntax);
-
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {

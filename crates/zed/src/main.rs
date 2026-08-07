@@ -61,7 +61,7 @@ use std::{
     sync::{Arc, LazyLock, OnceLock},
     time::Instant,
 };
-use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
+use theme::{ActiveTheme, ThemeRegistry};
 use theme_settings::load_user_theme;
 use util::{ResultExt, maybe};
 use uuid::Uuid;
@@ -818,14 +818,6 @@ fn main() {
                         client.reconnect(&cx.to_async());
                     }
                 }
-            }
-        })
-        .detach();
-        app_state.languages.set_theme(cx.theme().clone());
-        cx.observe_global::<GlobalTheme>({
-            let languages = app_state.languages.clone();
-            move |cx| {
-                languages.set_theme(cx.theme().clone());
             }
         })
         .detach();

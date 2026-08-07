@@ -1,40 +1,28 @@
-use std::{num::NonZeroU32, sync::Arc};
+use std::sync::Arc;
 
-#[derive(Clone, Debug)]
-pub struct HighlightMap(Arc<[Option<HighlightId>]>);
+use syntax_token::SyntaxTokenId;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HighlightId(NonZeroU32);
-
-impl HighlightId {
-    pub const TABSTOP_INSERT_ID: HighlightId = HighlightId(NonZeroU32::new(u32::MAX - 1).unwrap());
-    pub const TABSTOP_REPLACE_ID: HighlightId = HighlightId(NonZeroU32::new(u32::MAX - 2).unwrap());
-
-    pub fn new(capture_id: u32) -> Self {
-        Self(NonZeroU32::new(capture_id + 1).unwrap_or(NonZeroU32::MAX))
-    }
-}
-
-impl From<HighlightId> for usize {
-    fn from(value: HighlightId) -> Self {
-        value.0.get() as usize - 1
-    }
-}
+/// Maps a grammar's tree-sitter capture indices to canonical syntax token ids.
+///
+/// Built once when a grammar's highlights query is installed and never mutated
+/// afterwards. The mapping depends only on the query's capture names, so it is
+/// independent of any theme; a theme is consulted separately, at paint time, to
+/// style the resulting tokens.
+#[derive(Clone, Debug, Default)]
+pub struct HighlightMap(Arc<[SyntaxTokenId]>);
 
 impl HighlightMap {
-    #[inline]
-    pub fn from_ids(highlight_ids: impl IntoIterator<Item = Option<HighlightId>>) -> Self {
-        Self(highlight_ids.into_iter().collect())
+    pub fn from_capture_names<'a>(capture_names: impl IntoIterator<Item = &'a str>) -> Self {
+        Self(
+            capture_names
+                .into_iter()
+                .map(syntax_token::intern)
+                .collect(),
+        )
     }
 
     #[inline]
-    pub fn get(&self, capture_id: u32) -> Option<HighlightId> {
-        self.0.get(capture_id as usize).copied().flatten()
-    }
-}
-
-impl Default for HighlightMap {
-    fn default() -> Self {
-        Self(Arc::new([]))
+    pub fn get(&self, capture_id: u32) -> Option<SyntaxTokenId> {
+        self.0.get(capture_id as usize).copied()
     }
 }

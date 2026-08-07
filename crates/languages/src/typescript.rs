@@ -794,12 +794,12 @@ impl LspAdapter for TypeScriptLspAdapter {
         let label_len = item.label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
-            Kind::CLASS | Kind::INTERFACE | Kind::ENUM => grammar.highlight_id_for_name("type"),
-            Kind::CONSTRUCTOR => grammar.highlight_id_for_name("type"),
-            Kind::CONSTANT => grammar.highlight_id_for_name("constant"),
-            Kind::FUNCTION | Kind::METHOD => grammar.highlight_id_for_name("function"),
-            Kind::PROPERTY | Kind::FIELD => grammar.highlight_id_for_name("property"),
-            Kind::VARIABLE => grammar.highlight_id_for_name("variable"),
+            Kind::CLASS | Kind::INTERFACE | Kind::ENUM => grammar.token_for_capture_name("type"),
+            Kind::CONSTRUCTOR => grammar.token_for_capture_name("type"),
+            Kind::CONSTANT => grammar.token_for_capture_name("constant"),
+            Kind::FUNCTION | Kind::METHOD => grammar.token_for_capture_name("function"),
+            Kind::PROPERTY | Kind::FIELD => grammar.token_for_capture_name("property"),
+            Kind::VARIABLE => grammar.token_for_capture_name("variable"),
             _ => None,
         }?;
 
@@ -908,12 +908,11 @@ async fn get_cached_ts_server_binary(
 mod tests {
     use std::path::Path;
 
-    use gpui::{AppContext as _, BackgroundExecutor, Hsla, TestAppContext};
+    use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
     use project::FakeFs;
     use rope::Rope;
     use serde_json::json;
     use task::TaskTemplates;
-    use theme::SyntaxTheme;
     use unindent::Unindent;
     use util::{path, rel_path::rel_path};
 
@@ -924,7 +923,6 @@ mod tests {
     #[test]
     fn test_class_instantiation_highlighting() {
         let source = Rope::from("class Dog {}\nconst dog = new Dog();");
-        let theme = SyntaxTheme::new_test([("type", Hsla::blue()), ("type.class", Hsla::green())]);
 
         for language in [
             crate::language(
@@ -934,15 +932,20 @@ mod tests {
             crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
             crate::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into()),
         ] {
-            language.set_theme(&theme);
             let class_highlight = language
                 .grammar()
-                .and_then(|grammar| grammar.highlight_id_for_name("type.class"))
+                .and_then(|grammar| grammar.token_for_capture_name("type.class"))
                 .expect("type.class highlight should be defined");
 
+            let class_spans = language
+                .highlight_text(&source, 0..source.len())
+                .into_iter()
+                .filter(|(_, token)| *token == class_highlight)
+                .map(|(range, _)| range)
+                .collect::<Vec<_>>();
             assert_eq!(
-                language.highlight_text(&source, 0..source.len()),
-                vec![(6..9, class_highlight), (29..32, class_highlight)],
+                class_spans,
+                vec![6..9, 29..32],
                 "{} class instantiations should use the type.class highlight",
                 language.name()
             );

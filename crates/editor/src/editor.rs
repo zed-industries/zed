@@ -10395,9 +10395,11 @@ impl Editor {
         };
 
         for chunk in chunks {
-            let highlight = chunk
-                .syntax_highlight_id
-                .and_then(|id| style.syntax.get_capture_name(id));
+            let highlight = chunk.syntax_highlight_id.and_then(|id| {
+                style
+                    .syntax
+                    .capture_name_for_captures(id, &chunk.syntax_fallbacks)
+            });
 
             let mut chunk_lines = chunk.text.split('\n').peekable();
             while let Some(text) = chunk_lines.next() {
@@ -12169,12 +12171,12 @@ pub fn styled_runs_for_code_label<'a>(
             .iter()
             .enumerate()
             .flat_map(move |(ix, (range, highlight_id))| {
-                let style = if *highlight_id == language::HighlightId::TABSTOP_INSERT_ID {
+                let style = if *highlight_id == syntax_token::tabstop_insert() {
                     HighlightStyle {
                         color: Some(local_player.cursor),
                         ..Default::default()
                     }
-                } else if *highlight_id == language::HighlightId::TABSTOP_REPLACE_ID {
+                } else if *highlight_id == syntax_token::tabstop_replace() {
                     HighlightStyle {
                         background_color: Some(local_player.selection),
                         ..Default::default()
