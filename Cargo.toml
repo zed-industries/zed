@@ -201,6 +201,7 @@ members = [
     "crates/svg_preview",
     "crates/system_specs",
     "crates/syntax_theme",
+    "crates/syntax_token",
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
@@ -466,6 +467,7 @@ sum_tree = { path = "crates/sum_tree" }
 codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }
 syntax_theme = { path = "crates/syntax_theme" }
+syntax_token = { path = "crates/syntax_token" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }

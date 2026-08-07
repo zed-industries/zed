@@ -1,0 +1,17 @@
+[package]
+name = "syntax_token"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/syntax_token.rs"
+doctest = false
+
+[dependencies]
+collections.workspace = true
+parking_lot.workspace = true

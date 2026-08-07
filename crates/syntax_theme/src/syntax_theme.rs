@@ -8,6 +8,7 @@ use std::{
 use gpui::HighlightStyle;
 #[cfg(any(test, feature = "test-support"))]
 use gpui::Hsla;
+use syntax_token::SyntaxTokenId;
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct SyntaxTheme {
@@ -73,6 +74,19 @@ impl SyntaxTheme {
             .iter()
             .find(|(_, value)| **value == idx)
             .map(|(key, _)| key.as_ref())
+    }
+
+    /// Returns the style this theme gives `token`.
+    ///
+    /// Resolution goes through the token's capture name rather than a stored
+    /// slot index, so the same token yields each theme's own styling. Two themes
+    /// that define the same capture names in different orders assign them
+    /// different slots, which is why an index minted against one theme must
+    /// never be read against another.
+    pub fn style_for_token(&self, token: SyntaxTokenId) -> Option<HighlightStyle> {
+        let capture_name = syntax_token::name_for(token)?;
+        let highlight_index = self.highlight_id(&capture_name)?;
+        self.highlights.get(highlight_index as usize).copied()
     }
 
     pub fn highlight_id(&self, capture_name: &str) -> Option<u32> {
@@ -231,6 +245,45 @@ mod tests {
     use gpui::FontStyle;
 
     use super::*;
+
+    #[test]
+    fn token_resolves_to_each_themes_own_style() {
+        // Real theme files list their capture names in whatever order the author
+        // wrote them, so the same name lands on different slots in different
+        // themes. Resolution must follow the name, never the slot.
+        let dark = SyntaxTheme::new_test([("keyword", gpui::red()), ("string", gpui::green())]);
+        let light = SyntaxTheme::new_test([("string", gpui::blue()), ("keyword", gpui::yellow())]);
+
+        assert_ne!(
+            dark.highlight_id("keyword"),
+            light.highlight_id("keyword"),
+            "themes must disagree on slots for this test to be meaningful"
+        );
+
+        let keyword = syntax_token::intern("keyword");
+        assert_eq!(
+            dark.style_for_token(keyword).and_then(|style| style.color),
+            Some(gpui::red())
+        );
+        assert_eq!(
+            light.style_for_token(keyword).and_then(|style| style.color),
+            Some(gpui::yellow())
+        );
+    }
+
+    #[test]
+    fn token_falls_back_to_the_longest_prefix_the_theme_defines() {
+        let theme = SyntaxTheme::new_test([("function", gpui::red())]);
+
+        let method = syntax_token::intern("function.method");
+        assert_eq!(
+            theme.style_for_token(method).and_then(|style| style.color),
+            Some(gpui::red())
+        );
+
+        let unrelated = syntax_token::intern("comment.doc");
+        assert_eq!(theme.style_for_token(unrelated), None);
+    }
 
     #[test]
     fn test_syntax_theme_merge() {
