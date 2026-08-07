@@ -34,6 +34,7 @@ pub struct GitPanelSettings {
     pub show_count_badge: bool,
     pub starts_open: bool,
     pub commit_title_max_length: usize,
+    pub signoff_by_default: bool,
     pub entry_primary_click_action: GitPanelClickBehavior,
 }
 
@@ -83,6 +84,7 @@ impl Settings for GitPanelSettings {
             show_count_badge: git_panel.show_count_badge.unwrap(),
             starts_open: git_panel.starts_open.unwrap(),
             commit_title_max_length: git_panel.commit_title_max_length.unwrap(),
+            signoff_by_default: git_panel.signoff_by_default.unwrap(),
             entry_primary_click_action: git_panel.entry_primary_click_action.unwrap(),
         }
     }
