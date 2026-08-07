@@ -71,6 +71,7 @@ pub use runnable::{ResolvedRunnable, RunnableMatchCapture, RunnableRange, Runnab
 use semver::Version;
 use serde_json::Value;
 use settings::WorktreeId;
+use smallvec::SmallVec;
 use std::{
     ffi::OsStr,
     fmt::Debug,
@@ -81,7 +82,7 @@ use std::{
     str,
     sync::{Arc, LazyLock},
 };
-use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
+use syntax_map::{QueryCursorHandle, SyntaxMapCapture, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider};
 pub use text_diff::{
@@ -928,6 +929,12 @@ pub struct FakeLspAdapter {
     >,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapturedRange {
+    pub range: Range<usize>,
+    pub capture_ids: SmallVec<[u32; 4]>,
+}
+
 pub struct Language {
     pub(crate) id: LanguageId,
     pub(crate) config: LanguageConfig,
@@ -1110,27 +1117,74 @@ impl Language {
         text: &'a Rope,
         range: Range<usize>,
     ) -> Vec<(Range<usize>, HighlightId)> {
+        let Some(grammar) = &self.grammar else {
+            return Vec::new();
+        };
+        let highlight_map = grammar.highlight_map();
+        self.highlight_text_captures(text, range)
+            .into_iter()
+            .filter_map(|captured| {
+                let highlight_id = highlight_map.get_innermost(&captured.capture_ids)?;
+                Some((captured.range, highlight_id))
+            })
+            .collect()
+    }
+
+    pub fn highlight_text_captures(
+        self: &Arc<Self>,
+        text: &Rope,
+        range: Range<usize>,
+    ) -> Vec<CapturedRange> {
         let mut result = Vec::new();
-        if let Some(grammar) = &self.grammar {
-            let tree = parse_text(grammar, text, None);
-            let captures =
-                SyntaxSnapshot::single_tree_captures(range.clone(), text, &tree, self, |grammar| {
-                    grammar
-                        .highlights_config
-                        .as_ref()
-                        .map(|config| &config.query)
-                });
-            let highlight_maps = vec![grammar.highlight_map()];
-            let mut offset = 0;
-            for chunk in
-                BufferChunks::new(text, range, Some((captures, highlight_maps)), false, None)
+        let Some(grammar) = &self.grammar else {
+            return result;
+        };
+        let tree = parse_text(grammar, text, None);
+        let mut captures =
+            SyntaxSnapshot::single_tree_captures(range.clone(), text, &tree, self, |grammar| {
+                grammar
+                    .highlights_config
+                    .as_ref()
+                    .map(|config| &config.query)
+            });
+        let mut stack = Vec::<SyntaxMapCapture>::new();
+        let mut offset = range.start;
+        let mut next_capture = captures.next();
+        loop {
+            while stack
+                .last()
+                .is_some_and(|capture| capture.node.end_byte() <= offset)
             {
-                let end_offset = offset + chunk.text.len();
-                if let Some(highlight_id) = chunk.syntax_highlight_id {
-                    result.push((offset..end_offset, highlight_id));
-                }
-                offset = end_offset;
+                stack.pop();
             }
+            while let Some(capture) = next_capture.take() {
+                let capture_range = capture.node.byte_range();
+                if capture_range.start > offset {
+                    next_capture = Some(capture);
+                    break;
+                }
+                if capture_range.end > offset {
+                    stack.push(capture);
+                }
+                next_capture = captures.next();
+            }
+            let mut next_boundary = range.end;
+            if let Some(capture) = stack.last() {
+                next_boundary = next_boundary.min(capture.node.end_byte());
+            }
+            if let Some(capture) = &next_capture {
+                next_boundary = next_boundary.min(capture.node.start_byte());
+            }
+            if !stack.is_empty() && next_boundary > offset {
+                result.push(CapturedRange {
+                    range: offset - range.start..next_boundary - range.start,
+                    capture_ids: stack.iter().map(|capture| capture.index).collect(),
+                });
+            }
+            if next_boundary >= range.end {
+                break;
+            }
+            offset = next_boundary;
         }
         result
     }
@@ -1661,6 +1715,92 @@ mod tests {
         assert_eq!(
             theme.get_capture_name(map.get(2).unwrap()),
             Some("variable.builtin")
+        );
+    }
+
+    #[test]
+    fn test_highlight_text_captures_returns_nested_capture_stacks() {
+        let language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Rust".into(),
+                    ..LanguageConfig::default()
+                },
+                Some(tree_sitter_rust::LANGUAGE.into()),
+            )
+            .with_highlights_query(
+                r#"
+                (function_item) @function.definition
+                (identifier) @variable
+                "fn" @keyword
+                "#,
+            )
+            .unwrap(),
+        );
+
+        let code = "fn main() {}";
+        let captures = language.highlight_text_captures(&Rope::from(code), 0..code.len());
+
+        let grammar = language.grammar().unwrap();
+        let capture_names = grammar
+            .highlights_config
+            .as_ref()
+            .unwrap()
+            .query
+            .capture_names();
+        let named_captures = captures
+            .iter()
+            .map(|captured| {
+                (
+                    captured.range.clone(),
+                    captured
+                        .capture_ids
+                        .iter()
+                        .map(|&capture_id| capture_names[capture_id as usize])
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            named_captures,
+            vec![
+                (0..2, vec!["function.definition", "keyword"]),
+                (2..3, vec!["function.definition"]),
+                (3..7, vec!["function.definition", "variable"]),
+                (7..12, vec!["function.definition"]),
+            ],
+            "capture id stacks must be ordered outermost to innermost"
+        );
+
+        let theme = SyntaxTheme::new(
+            [
+                ("function", rgba(0x100000ff)),
+                ("keyword", rgba(0x200000ff)),
+            ]
+            .iter()
+            .map(|(name, color)| (name.to_string(), (*color).into())),
+        );
+        language.set_theme(&theme);
+        let highlight_map = grammar.highlight_map();
+        let resolved = captures
+            .iter()
+            .map(|captured| {
+                let highlight_id = highlight_map.get_innermost(&captured.capture_ids).unwrap();
+                (
+                    captured.range.clone(),
+                    theme.get_capture_name(highlight_id).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resolved,
+            vec![
+                (0..2, "keyword"),
+                (2..3, "function"),
+                (3..7, "function"),
+                (7..12, "function"),
+            ],
+            "an inner capture missing from the theme must fall back to its outer capture"
         );
     }
 

@@ -31,6 +31,13 @@ impl HighlightMap {
     pub fn get(&self, capture_id: u32) -> Option<HighlightId> {
         self.0.get(capture_id as usize).copied().flatten()
     }
+
+    pub fn get_innermost(&self, capture_ids: &[u32]) -> Option<HighlightId> {
+        capture_ids
+            .iter()
+            .rev()
+            .find_map(|&capture_id| self.get(capture_id))
+    }
 }
 
 impl Default for HighlightMap {
