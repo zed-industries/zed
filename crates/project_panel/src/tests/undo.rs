@@ -51,6 +51,7 @@ impl TestContext {
         });
         self.cx.run_until_parked();
     }
+
     async fn redo(&mut self) {
         self.panel.update_in(&mut self.cx, |panel, window, cx| {
             panel.redo(&Redo, window, cx);
@@ -58,7 +59,19 @@ impl TestContext {
         self.cx.run_until_parked();
     }
 
+    #[track_caller]
+    fn answer(&self, answer: &str) {
+        assert!(
+            self.cx.cx.has_pending_prompt(),
+            "should have pending prompt"
+        );
+
+        self.cx.cx.simulate_prompt_answer(answer);
+        self.cx.run_until_parked();
+    }
+
     /// Note this only works when every file has an extension
+    #[track_caller]
     fn assert_fs_state_is(&mut self, state: &[&str]) {
         let state: HashSet<_> = state
             .into_iter()
@@ -95,6 +108,7 @@ impl TestContext {
         );
     }
 
+    #[track_caller]
     fn assert_not_exists(&mut self, file: &str) {
         assert_eq!(
             find_project_entry(&self.panel, &format!("workspace/{file}"), &mut self.cx),
@@ -232,6 +246,7 @@ impl TestContext {
 
     async fn new_with_tree(cx: &mut gpui::TestAppContext, tree: Value) -> TestContext {
         project_panel_tests::init_test(cx);
+        cx.update(register_project_item::<Editor>);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/workspace", tree).await;
@@ -288,6 +303,7 @@ async fn create_undo_redo(cx: &mut gpui::TestAppContext) {
     cx.fs.write(Path::new(&path), b"Hello!").await.unwrap();
 
     cx.undo().await;
+    cx.answer("Trash");
     cx.assert_not_exists("c.txt");
 
     cx.redo().await;
@@ -298,7 +314,6 @@ async fn create_undo_redo(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn undo_create_prompts_before_trashing_dirty_file(cx: &mut gpui::TestAppContext) {
     let mut cx = TestContext::new(cx).await;
-    cx.update_app(|cx| register_project_item::<Editor>(cx));
 
     cx.create_file("c.txt").await;
     let workspace = cx
@@ -340,6 +355,7 @@ async fn create_dir_undo(cx: &mut gpui::TestAppContext) {
     cx.create_directory("new_dir").await;
     cx.assert_exists("new_dir");
     cx.undo().await;
+    cx.answer("Trash");
     cx.assert_not_exists("new_dir");
 }
 
@@ -404,6 +420,7 @@ async fn two_sequential_undos(cx: &mut gpui::TestAppContext) {
     cx.assert_fs_state_is(&["b.txt", "x.txt", "y.txt"]);
 
     cx.undo().await;
+    cx.answer("Trash");
     cx.assert_fs_state_is(&["b.txt", "x.txt"]);
 
     cx.undo().await;
@@ -431,6 +448,8 @@ async fn trash_undo_redo(cx: &mut gpui::TestAppContext) {
     cx.assert_fs_state_is(&["a.txt", "b.txt"]);
 
     cx.redo().await;
+    cx.answer("Trash");
+    cx.answer("Trash");
     cx.assert_fs_state_is(&[]);
 }
 
@@ -462,6 +481,7 @@ async fn trash_directory_undo_redo(cx: &mut gpui::TestAppContext) {
     );
 
     cx.redo().await;
+    cx.answer("Trash");
     cx.assert_fs_state_is(&["a.txt"]);
 }
 

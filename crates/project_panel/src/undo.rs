@@ -134,13 +134,16 @@ use crate::ProjectPanel;
 use anyhow::{Context, Result, anyhow};
 use fs::{TrashId, TrashRestoreError};
 use futures::channel::mpsc;
-use gpui::{AppContext, AsyncApp, IntoElement, SharedString, Styled, Task, WeakEntity};
+use gpui::{
+    AppContext, AsyncApp, IntoElement, PromptLevel, SharedString, Styled, Task, WeakEntity,
+};
 use markdown::{Markdown, MarkdownElement};
 use project::Project;
 use project::{ProjectPath, WorktreeId};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::VecDeque, sync::Arc};
 use ui::{App, TextSize};
+use util::markdown::MarkdownInlineCode;
 use util::{paths::PathStyle, rel_path::RelPath};
 use workspace::{
     Pane, SaveIntent, Workspace,
@@ -621,15 +624,16 @@ impl Inner {
             )
         });
 
+        let window_handles = cx.update(|cx| cx.windows());
+        let mut async_window_cx = window_handles
+            .into_iter()
+            .find_map(|window_handle| {
+                cx.update_window(window_handle, |_, window, cx| window.to_async(cx))
+                    .ok()
+            })
+            .with_context(|| format!("Failed to prompt before trashing `{name}`."))?;
+
         if let Some((pane, item)) = open_item {
-            let window_handles = cx.update(|cx| cx.windows());
-            let mut async_window_cx = window_handles
-                .into_iter()
-                .find_map(|window_handle| {
-                    cx.update_window(window_handle, |_, window, cx| window.to_async(cx))
-                        .ok()
-                })
-                .with_context(|| format!("Failed to prompt before trashing `{name}`."))?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
             if !Pane::save_item(
                 project,
@@ -642,6 +646,8 @@ impl Inner {
             {
                 return Ok(None);
             }
+        } else if !self.trash_prompt(&name, cx).await? {
+            return Ok(None);
         }
 
         let task = workspace.update(cx, |workspace, cx| {
@@ -745,5 +751,34 @@ impl Inner {
                 })
             })
             .ok();
+    }
+
+    /// Prompts the user to confirm whether they actually want to trash the
+    /// file.
+    ///
+    /// Returns `true` if the user confirms, `false` otherwise.
+    async fn trash_prompt(&self, name: &str, cx: &mut AsyncApp) -> Result<bool> {
+        let answer = self
+            .panel
+            .update_in(cx, |_panel, window, cx| {
+                window.prompt(
+                    PromptLevel::Info,
+                    &format!(
+                        // TODO!: Can't just call out "Undoing" here, as this will also get
+                        // called when "Redoing" a trash operation.
+                        "Undoing will move {} to the trash. Do you want to proceed?",
+                        MarkdownInlineCode(name)
+                    ),
+                    None,
+                    &["Trash", "Cancel"],
+                    cx,
+                )
+            })?
+            .await?;
+
+        match answer {
+            0 => Ok(true),
+            _ => Ok(false),
+        }
     }
 }
