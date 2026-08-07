@@ -100,6 +100,8 @@ pub struct BatchedTextRun {
     pub cell_count: usize,
     pub style: TextRun,
     pub font_size: AbsoluteLength,
+    // Preserves Alacritty's two-cell classification when constraining glyph paint width.
+    is_wide: bool,
 }
 
 impl BatchedTextRun {
@@ -108,6 +110,7 @@ impl BatchedTextRun {
         c: char,
         style: TextRun,
         font_size: AbsoluteLength,
+        is_wide: bool,
     ) -> Self {
         let mut text = String::with_capacity(100); // Pre-allocate for typical line length
         text.push(c);
@@ -117,11 +120,13 @@ impl BatchedTextRun {
             cell_count: 1,
             style,
             font_size,
+            is_wide,
         }
     }
 
-    fn can_append(&self, other_style: &TextRun) -> bool {
-        self.style.font == other_style.font
+    fn can_append(&self, other_style: &TextRun, is_wide: bool) -> bool {
+        self.is_wide == is_wide
+            && self.style.font == other_style.font
             && self.style.color == other_style.color
             && self.style.background_color == other_style.background_color
             && self.style.underline == other_style.underline
@@ -158,19 +163,22 @@ impl BatchedTextRun {
             origin.y + self.start_point.line as f32 * dimensions.line_height,
         );
 
-        window
-            .text_system()
-            .shape_line(
-                self.text.clone().into(),
-                self.font_size.to_pixels(window.rem_size()),
-                std::slice::from_ref(&self.style),
-                Some(dimensions.cell_width),
-            )
-            .paint(
+        let text_system = window.text_system().clone();
+        let font_size = self.font_size.to_pixels(window.rem_size());
+        let shaped_line = text_system.shape_line(
+            self.text.clone().into(),
+            font_size,
+            std::slice::from_ref(&self.style),
+            Some(dimensions.cell_width),
+        );
+
+        shaped_line
+            .paint_with_max_glyph_width(
                 pos,
                 dimensions.line_height,
                 gpui::TextAlign::Left,
                 None,
+                dimensions.cell_width * if self.is_wide { 2. } else { 1. },
                 window,
                 cx,
             )
@@ -547,7 +555,7 @@ impl TerminalElement {
 
                         // Try to batch with existing run
                         if let Some(ref mut batch) = current_batch {
-                            if batch.can_append(&cell_style)
+                            if batch.can_append(&cell_style, cell.is_wide_char())
                                 && batch.start_point.line == cell_point.line
                                 && batch.start_point.column + batch.cell_count as i32
                                     == cell_point.column
@@ -565,6 +573,7 @@ impl TerminalElement {
                                     cell.character(),
                                     cell_style,
                                     text_style.font_size,
+                                    cell.is_wide_char(),
                                 );
                                 if let Some(chars) = zero_width_chars {
                                     new_batch.append_zero_width_chars(chars);
@@ -578,6 +587,7 @@ impl TerminalElement {
                                 cell.character(),
                                 cell_style,
                                 text_style.font_size,
+                                cell.is_wide_char(),
                             );
                             if let Some(chars) = zero_width_chars {
                                 new_batch.append_zero_width_chars(chars);
@@ -2580,13 +2590,15 @@ mod tests {
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
-        let batch = BatchedTextRun::new_from_char(LayoutPoint::new(0, 0), 'a', style1, font_size);
+        let batch =
+            BatchedTextRun::new_from_char(LayoutPoint::new(0, 0), 'a', style1, font_size, false);
 
         // Should be able to append same style
-        assert!(batch.can_append(&style2));
+        assert!(batch.can_append(&style2, false));
+        assert!(!batch.can_append(&style2, true));
 
         // Should not be able to append different style
-        assert!(!batch.can_append(&style3));
+        assert!(!batch.can_append(&style3, false));
     }
 
     #[test]
@@ -2600,7 +2612,7 @@ mod tests {
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
         let mut batch =
-            BatchedTextRun::new_from_char(LayoutPoint::new(0, 0), 'a', style, font_size);
+            BatchedTextRun::new_from_char(LayoutPoint::new(0, 0), 'a', style, font_size, false);
 
         assert_eq!(batch.text, "a");
         assert_eq!(batch.cell_count, 1);
@@ -2630,7 +2642,7 @@ mod tests {
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
         let mut batch =
-            BatchedTextRun::new_from_char(LayoutPoint::new(0, 0), 'x', style, font_size);
+            BatchedTextRun::new_from_char(LayoutPoint::new(0, 0), 'x', style, font_size, false);
 
         assert_eq!(batch.text, "x");
         assert_eq!(batch.cell_count, 1);
@@ -2661,7 +2673,7 @@ mod tests {
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
         let mut batch =
-            BatchedTextRun::new_from_char(LayoutPoint::new(0, 0), 'x', style, font_size);
+            BatchedTextRun::new_from_char(LayoutPoint::new(0, 0), 'x', style, font_size, false);
 
         let combining = '\u{0301}';
         batch.append_zero_width_chars(&[combining]);

@@ -95,6 +95,7 @@ impl ShapedLine {
             line_height,
             align,
             align_width,
+            None,
             &self.decoration_runs,
             &[],
             window,
@@ -102,6 +103,31 @@ impl ShapedLine {
         )?;
 
         Ok(())
+    }
+
+    /// Paint the line while fitting glyphs whose natural advance exceeds the given width.
+    pub fn paint_with_max_glyph_width(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        align_width: Option<Pixels>,
+        max_glyph_width: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
+        paint_line(
+            origin,
+            &self.layout,
+            line_height,
+            align,
+            align_width,
+            Some(max_glyph_width),
+            &self.decoration_runs,
+            &[],
+            window,
+            cx,
+        )
     }
 
     /// Paint the background of the line to the window.
@@ -163,6 +189,7 @@ impl ShapedLine {
                         position: point(g.position.x - x_offset, g.position.y),
                         index: g.index - byte_index,
                         is_emoji: g.is_emoji,
+                        natural_advance: g.natural_advance,
                     })
                     .collect();
                 right_runs.push(ShapedRun {
@@ -291,6 +318,7 @@ impl WrappedLine {
             line_height,
             align,
             align_width,
+            None,
             &self.decoration_runs,
             &self.wrap_boundaries,
             window,
@@ -337,6 +365,7 @@ fn paint_line(
     line_height: Pixels,
     align: TextAlign,
     align_width: Option<Pixels>,
+    max_glyph_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
     window: &mut Window,
@@ -375,7 +404,6 @@ fn paint_line(
         let mut first_glyph_x = origin.x;
         for (run_ix, run) in layout.runs.iter().enumerate() {
             max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
-
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;
                 if glyph_ix == 0 && run_ix == 0 {
@@ -524,20 +552,24 @@ fn paint_line(
                 let content_mask = window.content_mask();
                 if max_glyph_bounds.intersects(&content_mask.bounds) {
                     let vertical_offset = point(px(0.0), glyph.position.y);
+                    let max_glyph_width =
+                        max_glyph_width.filter(|width| glyph.natural_advance > *width);
                     if glyph.is_emoji {
-                        window.paint_emoji(
+                        window.paint_emoji_with_max_width(
                             glyph_origin + baseline_offset + vertical_offset,
                             run.font_id,
                             glyph.id,
                             layout.font_size,
+                            max_glyph_width,
                         )?;
                     } else {
-                        window.paint_glyph(
+                        window.paint_glyph_with_max_width(
                             glyph_origin + baseline_offset + vertical_offset,
                             run.font_id,
                             glyph.id,
                             layout.font_size,
                             color,
+                            max_glyph_width,
                         )?;
                     }
                 }
@@ -764,11 +796,16 @@ mod tests {
     ) -> ShapedLine {
         let shaped_glyphs: Vec<ShapedGlyph> = glyphs
             .iter()
-            .map(|&(index, x)| ShapedGlyph {
+            .enumerate()
+            .map(|(glyph_index, &(index, x))| ShapedGlyph {
                 id: GlyphId(0),
                 position: point(px(x), px(0.0)),
                 index,
                 is_emoji: false,
+                natural_advance: px(glyphs
+                    .get(glyph_index + 1)
+                    .map_or(width, |(_, next_x)| *next_x)
+                    - x),
             })
             .collect();
 
@@ -861,18 +898,21 @@ mod tests {
                                 position: point(px(0.0), px(0.0)),
                                 index: 0,
                                 is_emoji: false,
+                                natural_advance: px(10.),
                             },
                             ShapedGlyph {
                                 id: GlyphId(0),
                                 position: point(px(10.0), px(0.0)),
                                 index: 1,
                                 is_emoji: false,
+                                natural_advance: px(10.),
                             },
                             ShapedGlyph {
                                 id: GlyphId(0),
                                 position: point(px(20.0), px(0.0)),
                                 index: 2,
                                 is_emoji: false,
+                                natural_advance: px(10.),
                             },
                         ],
                     },
@@ -884,18 +924,21 @@ mod tests {
                                 position: point(px(30.0), px(0.0)),
                                 index: 3,
                                 is_emoji: false,
+                                natural_advance: px(10.),
                             },
                             ShapedGlyph {
                                 id: GlyphId(0),
                                 position: point(px(40.0), px(0.0)),
                                 index: 4,
                                 is_emoji: false,
+                                natural_advance: px(10.),
                             },
                             ShapedGlyph {
                                 id: GlyphId(0),
                                 position: point(px(50.0), px(0.0)),
                                 index: 5,
                                 is_emoji: false,
+                                natural_advance: px(10.),
                             },
                         ],
                     },

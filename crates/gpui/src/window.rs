@@ -83,6 +83,26 @@ pub const DEFAULT_ADDITIONAL_WINDOW_SIZE: Size<Pixels> = Size {
     height: Pixels(750.),
 };
 
+/// Horizontally scales glyph bounds to fit within an allocated text cell width.
+fn fit_glyph_bounds_to_width(
+    mut bounds: Bounds<ScaledPixels>,
+    glyph_origin_x: ScaledPixels,
+    max_width: ScaledPixels,
+) -> Bounds<ScaledPixels> {
+    let right = bounds.origin.x + bounds.size.width;
+    let max_right = glyph_origin_x + max_width;
+    if bounds.origin.x >= glyph_origin_x && right <= max_right {
+        return bounds;
+    }
+
+    let horizontal_scale = (max_width.0 / bounds.size.width.0).min(1.);
+    bounds.size.width *= horizontal_scale;
+    let max_bearing = max_width.0 - bounds.size.width.0;
+    let bearing = (bounds.origin.x.0 - glyph_origin_x.0) * horizontal_scale;
+    bounds.origin.x = ScaledPixels(glyph_origin_x.0 + bearing.clamp(0., max_bearing));
+    bounds
+}
+
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
 pub enum DispatchPhase {
@@ -4181,6 +4201,18 @@ impl Window {
         font_size: Pixels,
         color: Hsla,
     ) -> Result<()> {
+        self.paint_glyph_with_max_width(origin, font_id, glyph_id, font_size, color, None)
+    }
+
+    pub(crate) fn paint_glyph_with_max_width(
+        &mut self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        color: Hsla,
+        max_width: Option<Pixels>,
+    ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
@@ -4220,10 +4252,17 @@ impl Window {
                     Ok(Some((size, Cow::Owned(bytes))))
                 })?
                 .expect("Callback above only errors or returns Some");
-            let bounds = Bounds {
+            let mut bounds = Bounds {
                 origin: integer_origin + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
+            if let Some(max_width) = max_width {
+                bounds = fit_glyph_bounds_to_width(
+                    bounds,
+                    integer_origin.x,
+                    ScaledPixels(max_width.0 * scale_factor),
+                );
+            }
             let content_mask = self.snapped_content_mask();
 
             if subpixel_rendering {
@@ -4285,6 +4324,17 @@ impl Window {
         glyph_id: GlyphId,
         font_size: Pixels,
     ) -> Result<()> {
+        self.paint_emoji_with_max_width(origin, font_id, glyph_id, font_size, None)
+    }
+
+    pub(crate) fn paint_emoji_with_max_width(
+        &mut self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        max_width: Option<Pixels>,
+    ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
@@ -4311,10 +4361,17 @@ impl Window {
                 })?
                 .expect("Callback above only errors or returns Some");
 
-            let bounds = Bounds {
+            let mut bounds = Bounds {
                 origin: integer_origin + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
+            if let Some(max_width) = max_width {
+                bounds = fit_glyph_bounds_to_width(
+                    bounds,
+                    integer_origin.x,
+                    ScaledPixels(max_width.0 * scale_factor),
+                );
+            }
             let content_mask = self.snapped_content_mask();
             let opacity = self.element_opacity();
 
@@ -6780,6 +6837,7 @@ pub fn outline(
 
 #[cfg(test)]
 mod tests {
+    use super::fit_glyph_bounds_to_width;
     use std::{
         cell::{Cell, RefCell},
         path::PathBuf,
@@ -6790,12 +6848,29 @@ mod tests {
         AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty,
         ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
         InputEvent as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
-        MouseMoveEvent, ParentElement, Pixels, Point, Render, StatefulInteractiveElement as _,
-        Styled, TestAppContext, Window, WindowAppearance, WindowOptions, canvas, div, point, px,
-        size,
+        MouseMoveEvent, ParentElement, Pixels, Point, Render, ScaledPixels,
+        StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
+        WindowOptions, canvas, div, point, px, size,
     };
 
     struct EmptyView;
+
+    #[test]
+    fn test_fit_glyph_bounds_to_width_accounts_for_bearing() {
+        for bearing in [-1., 3.] {
+            let fitted = fit_glyph_bounds_to_width(
+                Bounds {
+                    origin: point(ScaledPixels(bearing), ScaledPixels(0.)),
+                    size: size(ScaledPixels(10.), ScaledPixels(10.)),
+                },
+                ScaledPixels(0.),
+                ScaledPixels(10.),
+            );
+
+            assert!(fitted.origin.x >= ScaledPixels(0.));
+            assert!(fitted.origin.x + fitted.size.width <= ScaledPixels(10.));
+        }
+    }
 
     impl Render for EmptyView {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
