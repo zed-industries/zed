@@ -124,10 +124,7 @@ pub async fn get_recent_projects(
     fs: Arc<dyn fs::Fs>,
     db: &WorkspaceDb,
 ) -> Vec<RecentProjectEntry> {
-    let workspaces = db
-        .recent_project_workspaces(fs.as_ref())
-        .await
-        .unwrap_or_default();
+    let workspaces = db.recent_project_workspaces(fs).await.unwrap_or_default();
 
     let filtered: Vec<_> = workspaces
         .into_iter()
@@ -661,7 +658,7 @@ impl RecentProjects {
         cx.spawn_in(window, async move |this, cx| {
             let Some(fs) = fs else { return };
             let workspaces = db
-                .recent_project_workspaces(fs.as_ref())
+                .recent_project_workspaces(f)
                 .await
                 .log_err()
                 .unwrap_or_default();
@@ -2339,10 +2336,7 @@ impl RecentProjectsDelegate {
                     .await
                     .log_err()
                     .unwrap_or_default();
-                let workspaces = db
-                    .recent_project_workspaces(fs.as_ref())
-                    .await
-                    .unwrap_or_default();
+                let workspaces = db.recent_project_workspaces(fs).await.unwrap_or_default();
                 this.update_in(cx, move |picker, window, cx| {
                     Self::update_picker_after_recent_project_deletion(
                         picker, ix, workspaces, window, cx,

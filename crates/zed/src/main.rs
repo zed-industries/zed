@@ -1614,7 +1614,7 @@ pub(crate) async fn restorable_workspace_locations(
 
     match restore_behavior {
         workspace::RestoreOnStartupBehavior::LastWorkspace => {
-            workspace::last_opened_workspace_location(&db, app_state.fs.as_ref())
+            workspace::last_opened_workspace_location(&db, app_state.fs.clone())
                 .await
                 .map(|(workspace_id, location, paths)| {
                     vec![SessionWorkspace {

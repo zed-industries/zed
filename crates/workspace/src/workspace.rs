@@ -9628,7 +9628,7 @@ impl WorkspaceHandle for Entity<Workspace> {
 
 pub async fn last_opened_workspace_location(
     db: &WorkspaceDb,
-    fs: &dyn fs::Fs,
+    fs: Arc<dyn fs::Fs>,
 ) -> Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)> {
     db.last_workspace(fs)
         .await

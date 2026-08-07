@@ -2018,7 +2018,7 @@ impl WorkspaceDb {
     // out because they are restored separately by `last_session_workspace_locations`.
     pub async fn recent_project_workspaces_ungrouped(
         &self,
-        fs: &dyn Fs,
+        fs: Arc<dyn Fs>,
     ) -> Result<Vec<RecentWorkspace>> {
         let remote_connections = self.remote_connections()?;
         let mut result = Vec::new();
@@ -2042,8 +2042,8 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
-                let identity_paths = resolve_local_workspace_identity(fs, &paths)
+            if Self::all_paths_exist_with_a_directory(paths.paths(), &fs).await {
+                let identity_paths = resolve_local_workspace_identity(&fs, &paths)
                     .await
                     .or(identity_paths_hint)
                     .unwrap_or_else(|| paths.clone());
@@ -2063,7 +2063,7 @@ impl WorkspaceDb {
     // Returns the recent project workspaces suitable for recent-project UIs.
     // Entries are deduplicated by git worktree identity, but preserve the original
     // serialized paths for reopening.
-    pub async fn recent_project_workspaces(&self, fs: &dyn Fs) -> Result<Vec<RecentWorkspace>> {
+    pub async fn recent_project_workspaces(&self, fs: Arc<dyn Fs>) -> Result<Vec<RecentWorkspace>> {
         Ok(dedupe_recent_workspaces(
             self.recent_project_workspaces_ungrouped(fs).await?,
         ))
@@ -2169,7 +2169,7 @@ impl WorkspaceDb {
         Ok(())
     }
 
-    pub async fn last_workspace(&self, fs: &dyn Fs) -> Result<Option<RecentWorkspace>> {
+    pub async fn last_workspace(&self, fs: Arc<dyn Fs>) -> Result<Option<RecentWorkspace>> {
         Ok(self.recent_project_workspaces(fs).await?.into_iter().next())
     }
 
@@ -3853,7 +3853,7 @@ mod tests {
         assert_eq!(sessions[0].workspace_id, WorkspaceId(1));
         assert!(sessions[0].paths.is_empty());
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
         assert!(
             recents
                 .iter()
@@ -5446,7 +5446,7 @@ mod tests {
             .await
             .unwrap();
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
 
         assert_eq!(recents.len(), 1);
         assert_eq!(recents[0].workspace_id, WorkspaceId(2));
@@ -5473,7 +5473,7 @@ mod tests {
         })
         .await;
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
 
         assert_eq!(recents.len(), 1);
         assert_eq!(
@@ -5525,7 +5525,7 @@ mod tests {
         ))
         .await;
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
 
         assert_eq!(recents.len(), 1);
         assert_eq!(
@@ -5554,7 +5554,7 @@ mod tests {
             .await
             .unwrap();
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
 
         assert_eq!(recents.len(), 2);
         assert_eq!(recents[0].workspace_id, WorkspaceId(2));
@@ -5619,13 +5619,13 @@ mod tests {
             .await
             .unwrap();
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
         assert_eq!(recents.len(), 1);
 
         let deleted = db.delete_recent_workspace_group(&recents[0]).await.unwrap();
         assert_eq!(deleted, vec![WorkspaceId(2), WorkspaceId(1)]);
 
-        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recents = db.recent_project_workspaces(fs).await.unwrap();
         assert!(recents.is_empty());
     }
 
