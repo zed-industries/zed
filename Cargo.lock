@@ -10805,7 +10805,6 @@ dependencies = [
  "collections",
  "env_logger 0.11.8",
  "fs",
- "futures 0.3.32",
  "gpui",
  "gpui_platform",
  "html5ever 0.27.0",

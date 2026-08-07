@@ -5,7 +5,6 @@ mod path_range;
 mod selection;
 
 use base64::Engine as _;
-use futures::FutureExt as _;
 use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
@@ -1205,6 +1204,7 @@ impl Markdown {
             source: self.parsed_markdown.source.clone(),
             languages_by_name: self.parsed_markdown.languages_by_name.clone(),
             languages_by_path: self.parsed_markdown.languages_by_path.clone(),
+            fallback_code_block_language: self.parsed_markdown.fallback_code_block_language.clone(),
             code_block_highlights: self.parsed_markdown.code_block_highlights.clone(),
         });
 
@@ -1222,6 +1222,7 @@ impl Markdown {
                         mermaid_diagrams: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
                         footnote_definitions: HashMap::default(),
+                        fallback_code_block_language: None,
                         code_block_highlights: Arc::default(),
                     },
                     Default::default(),
@@ -1250,16 +1251,10 @@ impl Markdown {
             let mut images_by_source_offset = HashMap::default();
             let mut languages_by_name = TreeMap::default();
             let mut languages_by_path = TreeMap::default();
+            let mut fallback_code_block_language = None;
             if let Some(registry) = language_registry.as_ref() {
                 for name in language_names {
-                    let language = if !name.is_empty() {
-                        registry.language_for_name_or_extension(&name).left_future()
-                    } else if let Some(fallback) = &fallback {
-                        registry.language_for_name(fallback.as_ref()).right_future()
-                    } else {
-                        continue;
-                    };
-                    if let Ok(language) = language.await {
+                    if let Ok(language) = registry.language_for_name_or_extension(&name).await {
                         languages_by_name.insert(name, language);
                     }
                 }
@@ -1272,6 +1267,20 @@ impl Markdown {
                         languages_by_path.insert(path, language);
                     }
                 }
+
+                let has_untagged_code_block = events.iter().any(|(_, event)| {
+                    matches!(
+                        event,
+                        MarkdownEvent::Start(MarkdownTag::CodeBlock {
+                            kind: CodeBlockKind::Fenced,
+                            ..
+                        })
+                    )
+                });
+                if has_untagged_code_block && let Some(fallback) = &fallback {
+                    fallback_code_block_language =
+                        registry.language_for_name(fallback.as_ref()).await.ok();
+                }
             }
 
             let code_block_highlights = compute_code_block_highlights(
@@ -1280,6 +1289,7 @@ impl Markdown {
                 &mermaid_diagrams,
                 &languages_by_name,
                 &languages_by_path,
+                fallback_code_block_language.as_ref(),
                 previous_parse.as_ref(),
             );
 
@@ -1320,6 +1330,7 @@ impl Markdown {
                     mermaid_diagrams,
                     heading_slugs,
                     footnote_definitions,
+                    fallback_code_block_language,
                     code_block_highlights: Arc::new(code_block_highlights),
                 },
                 images_by_source_offset,
@@ -1467,6 +1478,7 @@ pub struct ParsedMarkdown {
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
+    pub(crate) fallback_code_block_language: Option<Arc<Language>>,
     pub(crate) code_block_highlights: Arc<CodeBlockHighlights>,
 }
 
@@ -1523,6 +1535,7 @@ struct PreviousParse {
     source: SharedString,
     languages_by_name: TreeMap<SharedString, Arc<Language>>,
     languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
+    fallback_code_block_language: Option<Arc<Language>>,
     code_block_highlights: Arc<CodeBlockHighlights>,
 }
 
@@ -1532,6 +1545,7 @@ fn compute_code_block_highlights(
     mermaid_diagrams: &BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
     languages_by_name: &TreeMap<SharedString, Arc<Language>>,
     languages_by_path: &TreeMap<Arc<str>, Arc<Language>>,
+    fallback_code_block_language: Option<&Arc<Language>>,
     previous_parse: Option<&PreviousParse>,
 ) -> CodeBlockHighlights {
     let mut code_block_highlights = CodeBlockHighlights::default();
@@ -1562,6 +1576,11 @@ fn compute_code_block_highlights(
                         previous_parse.and_then(|previous| {
                             previous.languages_by_path.get(&path_range.path).cloned()
                         }),
+                    ),
+                    CodeBlockKind::Fenced => (
+                        fallback_code_block_language.cloned(),
+                        previous_parse
+                            .and_then(|previous| previous.fallback_code_block_language.clone()),
                     ),
                     _ => (None, None),
                 };
@@ -2738,7 +2757,9 @@ impl Element for MarkdownElement {
                             }
 
                             let language = match kind {
-                                CodeBlockKind::Fenced => None,
+                                CodeBlockKind::Fenced => {
+                                    parsed_markdown.fallback_code_block_language.clone()
+                                }
                                 CodeBlockKind::FencedLang(language) => {
                                     parsed_markdown.languages_by_name.get(language).cloned()
                                 }
@@ -5068,6 +5089,70 @@ mod tests {
                 parsed.code_block_highlights.len(),
                 0,
                 "mermaid blocks must not be highlighted"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_fallback_language_highlights_untagged_code_blocks(cx: &mut TestAppContext) {
+        let language = language::rust_lang();
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(language.clone());
+
+        let source = "```\nfn main() {}\n```";
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                source.into(),
+                Some(language_registry),
+                Some(language.name()),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        markdown.read_with(cx, |markdown, _| {
+            let parsed = markdown.parsed_markdown();
+            let fallback = parsed
+                .fallback_code_block_language
+                .as_ref()
+                .expect("the fallback language must be resolved for untagged code blocks");
+            assert_eq!(fallback.name(), language.name());
+
+            let code_start = source.find("fn main").unwrap();
+            let cached = parsed
+                .code_block_highlights
+                .get(&code_start)
+                .expect("untagged code blocks must be highlighted with the fallback language");
+            assert!(!cached.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn test_no_fallback_language_without_untagged_code_blocks(cx: &mut TestAppContext) {
+        let language = language::rust_lang();
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(language.clone());
+
+        let source = "```rust\nfn main() {}\n```";
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                source.into(),
+                Some(language_registry),
+                Some(language.name()),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        markdown.read_with(cx, |markdown, _| {
+            assert_eq!(
+                markdown
+                    .parsed_markdown()
+                    .fallback_code_block_language
+                    .as_ref()
+                    .map(|language| language.name()),
+                None,
+                "The fallback language must not be loaded when no code block needs it"
             );
         });
     }
