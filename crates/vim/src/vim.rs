@@ -1266,6 +1266,17 @@ impl Vim {
             }
         }
 
+        // Multi-key bindings in Insert mode temporarily insert their pending keys
+        // and remove them only after the action runs. Refresh the selection anchors
+        // afterward so they re-attach to the remaining text.
+        if last_mode == Mode::Insert && matches!(self.mode, Mode::Normal | Mode::HelixNormal) {
+            cx.defer_in(window, |vim, _window, cx| {
+                vim.update_editor(cx, |_, editor, cx| {
+                    editor.refresh_selection_anchors(cx);
+                });
+            })
+        }
+
         if leave_selections {
             return;
         }

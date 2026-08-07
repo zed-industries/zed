@@ -1562,8 +1562,8 @@ fn render_completion_kind_letter(
         .flex_none()
         .w(IconSize::XSmall.rems())
         .text_center()
-        .text_size(rems_from_px(11.))
-        .line_height(rems_from_px(14.));
+        .text_size(rems_from_px(11_f32))
+        .line_height(rems_from_px(14_f32));
 
     let Some(kind) = kind else {
         return badge.into_any_element();
