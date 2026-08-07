@@ -449,7 +449,10 @@ impl<T: 'static> PromptEditor<T> {
                             .log_edit_event("inline assist", is_via_ssh);
                     });
                 }
-                let prompt = snapshot.text();
+                // History entries store the raw buffer text (see `Editor::text`),
+                // so compare against the buffer text rather than the display text,
+                // which may differ (e.g. fold placeholders for mention creases).
+                let prompt = snapshot.buffer_snapshot().text();
                 if self
                     .prompt_history_ix
                     .is_none_or(|ix| self.prompt_history[ix] != prompt)
@@ -1924,6 +1927,27 @@ mod tests {
         });
     }
 
+    fn move_down_history(
+        prompt_editor: &Entity<PromptEditor<TerminalCodegen>>,
+        cx: &mut VisualTestContext,
+    ) {
+        prompt_editor.update_in(cx, |editor, window, cx| {
+            editor.move_down(&MoveDown, window, cx);
+        });
+    }
+
+    fn assert_mentions(
+        prompt_editor: &Entity<PromptEditor<TerminalCodegen>>,
+        cx: &mut VisualTestContext,
+        expected: collections::HashSet<MentionUri>,
+    ) {
+        let mention_set = mention_set_for(prompt_editor, cx);
+        cx.read(|cx| {
+            assert_eq!(mention_set.read(cx).mentions(), expected);
+            assert_eq!(mention_set.read(cx).creases().len(), expected.len());
+        });
+    }
+
     #[gpui::test]
     async fn test_history_restores_file_context(cx: &mut TestAppContext) {
         init_test(cx);
@@ -2103,5 +2127,72 @@ mod tests {
             );
             assert_eq!(mention_set.read(cx).creases().len(), 1);
         });
+    }
+
+    #[gpui::test]
+    async fn test_history_switches_between_contexts_without_stale_mentions(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                "a.txt": "contents of a",
+                "b.txt": "contents of b",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let prompt_editor = build_terminal_prompt_editor(&workspace, cx);
+
+        let draft = "draft without context";
+        let prompt_a = "Use [@a.txt](file:///project/a.txt)";
+        let prompt_b = "Use [@b.txt](file:///project/b.txt)";
+        set_prompt_text(&prompt_editor, draft, cx);
+        push_history(&prompt_editor, prompt_a, cx);
+        push_history(&prompt_editor, prompt_b, cx);
+
+        // Up to the newest history entry: b.
+        move_up_history(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), prompt_b);
+        assert_mentions(
+            &prompt_editor,
+            cx,
+            collections::HashSet::from_iter([MentionUri::File {
+                abs_path: PathBuf::from("/project/b.txt"),
+            }]),
+        );
+
+        // Up to the older entry: a. b's context must not linger.
+        move_up_history(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), prompt_a);
+        assert_mentions(
+            &prompt_editor,
+            cx,
+            collections::HashSet::from_iter([MentionUri::File {
+                abs_path: PathBuf::from("/project/a.txt"),
+            }]),
+        );
+
+        // Down back to b: a's context must not linger.
+        move_down_history(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), prompt_b);
+        assert_mentions(
+            &prompt_editor,
+            cx,
+            collections::HashSet::from_iter([MentionUri::File {
+                abs_path: PathBuf::from("/project/b.txt"),
+            }]),
+        );
+
+        // Down to the pending draft: no context may linger.
+        move_down_history(&prompt_editor, cx);
+        assert_eq!(prompt_text(&prompt_editor, cx), draft);
+        assert_mentions(&prompt_editor, cx, collections::HashSet::default());
     }
 }
