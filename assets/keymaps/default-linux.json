@@ -1012,7 +1012,7 @@
     },
   },
   {
-    "context": "GitPanel && ChangesList && !GitBranchSelector",
+    "context": "GitPanel && ChangesList && !GitBranchSelector && !GitRepositorySelector",
     "bindings": {
       "left": "git_panel::CollapseSelectedEntry",
       "right": "git_panel::ExpandSelectedEntry",
@@ -1511,6 +1511,8 @@
     "context": "NotebookEditor && notebook_mode == command",
     "bindings": {
       "enter": "notebook::EnterEditMode",
+      "d d": "notebook::DeleteCell",
+      "backspace": "notebook::DeleteCell",
       "down": "menu::SelectNext",
       "up": "menu::SelectPrevious",
     },
