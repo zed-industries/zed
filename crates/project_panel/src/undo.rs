@@ -135,7 +135,7 @@ use anyhow::{Context, Result, anyhow};
 use fs::{TrashId, TrashRestoreError};
 use futures::channel::mpsc;
 use gpui::{
-    AppContext, AsyncApp, IntoElement, PromptLevel, SharedString, Styled, Task, WeakEntity,
+    AppContext, AsyncApp, Entity, IntoElement, PromptLevel, SharedString, Styled, Task, WeakEntity,
 };
 use markdown::{Markdown, MarkdownElement};
 use project::Project;
@@ -603,50 +603,17 @@ impl Inner {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
-        let (name, open_item) = workspace.update(cx, |workspace, cx| {
+        let name = workspace.update(cx, |workspace, cx| {
             let project = workspace.project().read(cx);
             let path_style = project.path_style(cx);
 
-            let open_item = workspace.panes().iter().find_map(|pane| {
-                pane.read(cx).items().find_map(|item| {
-                    (item.is_dirty(cx)
-                        && item
-                            .project_path(cx)
-                            .iter()
-                            .any(|item_path| item_path == project_path))
-                    .then(|| (pane.clone(), item.boxed_clone()))
-                })
-            });
-
-            (
-                project_path_display(project, project_path, path_style, cx),
-                open_item,
-            )
+            project_path_display(project, project_path, path_style, cx)
         });
 
-        let window_handles = cx.update(|cx| cx.windows());
-        let mut async_window_cx = window_handles
-            .into_iter()
-            .find_map(|window_handle| {
-                cx.update_window(window_handle, |_, window, cx| window.to_async(cx))
-                    .ok()
-            })
-            .with_context(|| format!("Failed to prompt before trashing `{name}`."))?;
-
-        if let Some((pane, item)) = open_item {
-            let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
-            if !Pane::save_item(
-                project,
-                pane,
-                item.as_ref(),
-                SaveIntent::Close,
-                &mut async_window_cx,
-            )
+        if !self
+            .confirm_trash(project_path, &name, &workspace, cx)
             .await?
-            {
-                return Ok(None);
-            }
-        } else if !self.trash_prompt(&name, cx).await? {
+        {
             return Ok(None);
         }
 
@@ -751,6 +718,52 @@ impl Inner {
                 })
             })
             .ok();
+    }
+
+    /// Prompts the user to confirm whether they really want to trash the file.
+    /// In the case the file has unsaved changes, the prompt will ask whether
+    /// the user wants to save or discard these changes.
+    ///
+    /// Returns `true` if the user confirmed they want to trash the file,
+    /// `false` otherwise.
+    async fn confirm_trash(
+        &self,
+        project_path: &ProjectPath,
+        name: &str,
+        workspace: &Entity<Workspace>,
+        cx: &mut AsyncApp,
+    ) -> Result<bool> {
+        let open_item = workspace.update(cx, |workspace, cx| {
+            workspace.panes().iter().find_map(|pane| {
+                pane.read(cx).items().find_map(|item| {
+                    (item.is_dirty(cx)
+                        && item
+                            .project_path(cx)
+                            .iter()
+                            .any(|item_path| item_path == project_path))
+                    .then(|| (pane.clone(), item.boxed_clone()))
+                })
+            })
+        });
+
+        let Some((pane, item)) = open_item else {
+            return self.trash_prompt(name, cx).await;
+        };
+        let mut async_window_cx = self
+            .panel
+            .update_in(cx, |_panel, window, cx| window.to_async(cx))?;
+        let project = self
+            .panel
+            .read_with(cx, |panel, _cx| panel.project.clone())?;
+
+        Pane::save_item(
+            project,
+            pane,
+            item.as_ref(),
+            SaveIntent::Close,
+            &mut async_window_cx,
+        )
+        .await
     }
 
     /// Prompts the user to confirm whether they actually want to trash the

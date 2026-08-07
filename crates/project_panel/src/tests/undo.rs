@@ -316,35 +316,31 @@ async fn undo_create_prompts_before_trashing_dirty_file(cx: &mut gpui::TestAppCo
     let mut cx = TestContext::new(cx).await;
 
     cx.create_file("c.txt").await;
-    let workspace = cx
+
+    // After `c.txt` is created, it should now be open in the editor, so we'll
+    // simulate inserting some content into the file, without saving, in order
+    // to make it dirty.
+    let editor = cx
         .panel
         .read_with(&cx.cx, |panel, _| panel.workspace.upgrade())
-        .expect("workspace should still exist");
-    let editor = workspace
+        .expect("workspace should still exist")
         .read_with(&cx.cx, |workspace, cx| {
             workspace.active_item_as::<Editor>(cx)
         })
         .expect("created file should be open in an editor");
+
     editor.update_in(&mut cx.cx, |editor, window, cx| {
         editor.handle_input("unsaved changes", window, cx);
     });
     assert!(editor.read_with(&cx.cx, |editor, cx| editor.is_dirty(cx)));
 
-    cx.panel.update_in(&mut cx.cx, |panel, window, cx| {
-        panel.undo(&Undo, window, cx);
-    });
-    cx.cx.run_until_parked();
-    cx.cx.simulate_prompt_answer("Cancel");
-    cx.cx.run_until_parked();
+    cx.undo().await;
+    cx.answer("Cancel");
     cx.assert_exists("c.txt");
     assert!(editor.read_with(&cx.cx, |editor, cx| editor.is_dirty(cx)));
 
-    cx.panel.update_in(&mut cx.cx, |panel, window, cx| {
-        panel.undo(&Undo, window, cx);
-    });
-    cx.cx.run_until_parked();
-    cx.cx.simulate_prompt_answer("Don't Save");
-    cx.cx.run_until_parked();
+    cx.undo().await;
+    cx.answer("Don't Save");
     cx.assert_not_exists("c.txt");
 }
 
