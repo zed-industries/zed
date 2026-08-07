@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::sync::Arc;
 
-use ::fs::{CopyOptions, Fs, RealFs, RemoveOptions, copy_recursive};
+use ::fs::{CopyOptions, Fs, RealFs, RecursiveCopyOptions, RemoveOptions, copy_recursive};
 use anyhow::{Context as _, Result, anyhow, bail};
 use clap::Parser;
 use cloud_api_types::ExtensionProvides;
@@ -265,9 +265,12 @@ async fn copy_extension_resources(
             fs.as_ref(),
             &extension_path.join("icons"),
             &output_icons_dir,
-            CopyOptions {
-                overwrite: true,
-                ignore_if_exists: false,
+            RecursiveCopyOptions {
+                copy_options: CopyOptions {
+                    overwrite: true,
+                    ignore_if_exists: false,
+                },
+                ..Default::default()
             },
         )
         .await
@@ -287,9 +290,12 @@ async fn copy_extension_resources(
                     &extension_path.join(language_path),
                     &output_languages_dir
                         .join(language_path.file_name().context("invalid language path")?),
-                    CopyOptions {
-                        overwrite: true,
-                        ignore_if_exists: false,
+                    RecursiveCopyOptions {
+                        copy_options: CopyOptions {
+                            overwrite: true,
+                            ignore_if_exists: false,
+                        },
+                        ..Default::default()
                     },
                 )
                 .await
@@ -318,9 +324,12 @@ async fn copy_extension_resources(
                         fs.as_ref(),
                         &extension_path.join(schema_path),
                         &output_dir.join(schema_path),
-                        CopyOptions {
-                            overwrite: true,
-                            ignore_if_exists: false,
+                        RecursiveCopyOptions {
+                            copy_options: CopyOptions {
+                                overwrite: true,
+                                ignore_if_exists: false,
+                            },
+                            ..Default::default()
                         },
                     )
                     .await
@@ -348,9 +357,12 @@ async fn copy_extension_resources(
                     fs.as_ref(),
                     &extension_path.join(&snippets_path),
                     &output_dir.join(&snippets_path),
-                    CopyOptions {
-                        overwrite: true,
-                        ignore_if_exists: false,
+                    RecursiveCopyOptions {
+                        copy_options: CopyOptions {
+                            overwrite: true,
+                            ignore_if_exists: false,
+                        },
+                        ..Default::default()
                     },
                 )
                 .await

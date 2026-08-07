@@ -5,6 +5,7 @@ pub use fs_watcher::requires_poll_watcher;
 use parking_lot::Mutex;
 use slotmap::{KeyData, SlotMap};
 use std::ffi::OsString;
+use std::ops::Deref;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
 use util::maybe;
@@ -276,6 +277,34 @@ pub struct CreateOptions {
 pub struct CopyOptions {
     pub overwrite: bool,
     pub ignore_if_exists: bool,
+}
+
+pub trait CopyFilter: Sync {
+    fn should_copy(&self, path: &Path) -> bool;
+}
+
+#[derive(Copy, Clone, Default)]
+pub struct NoFilter;
+
+impl CopyFilter for NoFilter {
+    fn should_copy(&self, _path: &Path) -> bool {
+        true
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct RecursiveCopyOptions<F = NoFilter> {
+    pub copy_options: CopyOptions,
+    pub filter: F,
+}
+
+impl Default for RecursiveCopyOptions {
+    fn default() -> Self {
+        Self {
+            copy_options: CopyOptions::default(),
+            filter: NoFilter,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Default)]
@@ -3388,13 +3417,13 @@ impl Fs for FakeFs {
     }
 }
 
-pub async fn copy_recursive<'a>(
+pub async fn copy_recursive<'a, F: CopyFilter>(
     fs: &'a dyn Fs,
     source: &'a Path,
     target: &'a Path,
-    options: CopyOptions,
+    options: RecursiveCopyOptions<F>,
 ) -> Result<()> {
-    for (item, is_dir) in read_dir_items(fs, source).await? {
+    for (item, is_dir) in read_dir_items(fs, source, &options.filter).await? {
         let Ok(item_relative_path) = item.strip_prefix(source) else {
             continue;
         };
@@ -3404,14 +3433,16 @@ pub async fn copy_recursive<'a>(
             target.join(item_relative_path)
         };
         if is_dir {
-            if !options.overwrite && fs.metadata(&target_item).await.is_ok_and(|m| m.is_some()) {
-                if options.ignore_if_exists {
+            if !options.copy_options.overwrite
+                && fs.metadata(&target_item).await.is_ok_and(|m| m.is_some())
+            {
+                if options.copy_options.ignore_if_exists {
                     continue;
                 } else {
                     anyhow::bail!("{target_item:?} already exists");
                 }
             }
-            let _ = fs
+            if let Err(error) = fs
                 .remove_dir(
                     &target_item,
                     RemoveOptions {
@@ -3419,27 +3450,36 @@ pub async fn copy_recursive<'a>(
                         ignore_if_not_exists: true,
                     },
                 )
-                .await;
+                .await
+            {
+                log::error!("failed to remove target directory {target_item:?}: {error:#}");
+            }
             fs.create_dir(&target_item).await?;
         } else {
-            fs.copy_file(&item, &target_item, options).await?;
+            fs.copy_file(&item, &target_item, options.copy_options)
+                .await?;
         }
     }
     Ok(())
 }
 
-/// Recursively reads all of the paths in the given directory.
+/// Recursively reads all of the paths in the given directory that match the filter.
 ///
-/// Returns a vector of tuples of (path, is_dir).
-pub async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<(PathBuf, bool)>> {
+/// Returns a vector of tuples of (path, is_dir). Rejected directories are not traversed.
+pub async fn read_dir_items<'a, F: CopyFilter>(
+    fs: &'a dyn Fs,
+    source: &'a Path,
+    filter: &'a F,
+) -> Result<Vec<(PathBuf, bool)>> {
     let mut items = Vec::new();
-    read_recursive(fs, source, &mut items).await?;
+    read_recursive(fs, source, filter, &mut items).await?;
     Ok(items)
 }
 
-fn read_recursive<'a>(
+fn read_recursive<'a, F: CopyFilter>(
     fs: &'a dyn Fs,
     source: &'a Path,
+    filter: &'a F,
     output: &'a mut Vec<(PathBuf, bool)>,
 ) -> BoxFuture<'a, Result<()>> {
     use futures::future::FutureExt;
@@ -3450,12 +3490,16 @@ fn read_recursive<'a>(
             .await?
             .with_context(|| format!("path does not exist: {source:?}"))?;
 
+        if !filter.should_copy(source) {
+            return Ok(());
+        }
+
         if metadata.is_dir {
             output.push((source.to_path_buf(), true));
             let mut children = fs.read_dir(source).await?;
             while let Some(child_path) = children.next().await {
                 if let Ok(child_path) = child_path {
-                    read_recursive(fs, &child_path, output).await?;
+                    read_recursive(fs, &child_path, filter, output).await?;
                 }
             }
         } else {

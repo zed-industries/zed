@@ -391,7 +391,7 @@ impl DevContainerManifest {
             return Err(DevContainerError::ResourceFetchFailed);
         }
 
-        let items = fs::read_dir_items(&*self.fs, &source_path)
+        let items = fs::read_dir_items(&*self.fs, &source_path, &fs::NoFilter)
             .await
             .map_err(|e| {
                 log::error!(
