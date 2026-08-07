@@ -72,8 +72,8 @@ impl ProjectPanelDb {
             conn.with_savepoint("project_panel_save_expanded_entries", || {
                 for (worktree_root_path, paths) in &entries {
                     let worktree_root_str = worktree_root_path.to_string_lossy();
-                    let serialized = serde_json::to_string(paths)
-                        .context("serializing expanded paths")?;
+                    let serialized =
+                        serde_json::to_string(paths).context("serializing expanded paths")?;
                     conn.exec_bound(sql!(
                         INSERT INTO project_panel_collapse_state
                             (workspace_id, worktree_root_path, expanded_paths)
@@ -86,9 +86,7 @@ impl ProjectPanelDb {
                         serialized.as_str(),
                     ))
                     .with_context(|| {
-                        format!(
-                            "saving collapse state for worktree {worktree_root_str}"
-                        )
+                        format!("saving collapse state for worktree {worktree_root_str}")
                     })?;
                 }
                 Ok(())
@@ -136,7 +134,10 @@ mod tests {
             loaded.get(&worktree_b).cloned().unwrap(),
             vec!["".to_string()]
         );
-        assert_eq!(loaded.get(&worktree_c).cloned().unwrap(), Vec::<String>::new());
+        assert_eq!(
+            loaded.get(&worktree_c).cloned().unwrap(),
+            Vec::<String>::new()
+        );
 
         // Saving with a subset of worktrees should upsert only those
         // worktrees, leaving rows for the others untouched. This guarantees

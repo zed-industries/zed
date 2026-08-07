@@ -112,9 +112,10 @@ struct State {
     unfolded_dir_ids: HashSet<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     /// Saved set of expanded relative paths per worktree absolute path, loaded
-    /// from the database on panel construction. When a worktree first appears
-    /// in `expanded_dir_ids`, the matching paths are resolved to entry IDs and
-    /// the entry for that worktree is cleared from this map.
+    /// from the database on panel construction. Paths are resolved to entry
+    /// IDs by `resolve_pending_expanded_paths` on every update, and drop out
+    /// of this map once they resolve (or are found to no longer exist), so
+    /// what remains is the set still waiting on the worktree to scan them.
     pending_expanded_paths: HashMap<Arc<Path>, Vec<String>>,
 }
 
@@ -188,6 +189,11 @@ pub struct ProjectPanel {
     /// scheduled save.
     worktree_entries_changed_since_last_save: bool,
     _save_collapse_state_task: Task<()>,
+    /// Scans requested on behalf of a saved expanded path, keyed by the
+    /// directory being loaded. Keeping the tasks here both keeps them running
+    /// and records which directories have already been asked for, so one that
+    /// takes several updates to load isn't requested once per update.
+    pending_dir_loads: HashMap<ProjectEntryId, Task<()>>,
 }
 
 struct UpdateVisibleEntriesTask {
@@ -709,14 +715,8 @@ impl ProjectPanel {
                         let settings = ProjectPanelSettings::get_global(cx);
                         if settings.auto_reveal_entries {
                             let skip_ignored = !settings.auto_reveal_ignored_entries;
-                            this.reveal_entry(
-                                project.clone(),
-                                *entry_id,
-                                skip_ignored,
-                                window,
-                                cx,
-                            )
-                            .ok();
+                            this.reveal_entry(project.clone(), *entry_id, skip_ignored, window, cx)
+                                .ok();
                         }
                     }
                     project::Event::ActiveEntryChanged(None) => {
@@ -790,8 +790,7 @@ impl ProjectPanel {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
                     }
-                    project::Event::WorktreeAdded(_)
-                    | project::Event::WorktreeOrderChanged => {
+                    project::Event::WorktreeAdded(_) | project::Event::WorktreeOrderChanged => {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
                     }
@@ -892,16 +891,15 @@ impl ProjectPanel {
 
             let restore_collapse_state =
                 ProjectPanelSettings::get_global(cx).restore_collapse_state;
-            let pending_expanded_paths = if restore_collapse_state
-                && let Some(workspace_id) = workspace.database_id()
-            {
-                let db = persistence::ProjectPanelDb::global(cx);
-                db.expanded_entries(workspace_id)
-                    .log_err()
-                    .unwrap_or_default()
-            } else {
-                Default::default()
-            };
+            let pending_expanded_paths =
+                if restore_collapse_state && let Some(workspace_id) = workspace.database_id() {
+                    let db = persistence::ProjectPanelDb::global(cx);
+                    db.expanded_entries(workspace_id)
+                        .log_err()
+                        .unwrap_or_default()
+                } else {
+                    Default::default()
+                };
 
             let mut this = Self {
                 project: project.clone(),
@@ -949,6 +947,7 @@ impl ProjectPanel {
                 last_scheduled_expanded_paths: None,
                 worktree_entries_changed_since_last_save: false,
                 _save_collapse_state_task: Task::ready(()),
+                pending_dir_loads: HashMap::default(),
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -4331,16 +4330,29 @@ impl ProjectPanel {
 
         let visible_worktrees: Vec<_> = project
             .visible_worktrees(cx)
-            .map(|worktree| worktree.read(cx).snapshot())
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                // A worktree that hasn't finished its initial scan is still
+                // filling in entries, so a saved expanded path that doesn't
+                // resolve yet may simply not have been scanned.
+                (worktree.snapshot(), worktree.completed_scan_id() >= 1)
+            })
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
 
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
-            let new_state = cx
+            let (new_state, dirs_to_load) = cx
                 .background_spawn(async move {
-                    for worktree_snapshot in visible_worktrees {
+                    let mut dirs_to_load = Vec::new();
+                    for (worktree_snapshot, initial_scan_complete) in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
+                        Self::resolve_pending_expanded_paths(
+                            &mut new_state,
+                            &worktree_snapshot,
+                            initial_scan_complete,
+                            &mut dirs_to_load,
+                        );
 
                         let mut new_entry_parent_id = None;
                         let mut new_entry_kind = EntryKind::Dir;
@@ -4531,29 +4543,12 @@ impl ProjectPanel {
                                 match new_state.expanded_dir_ids.entry(worktree_id) {
                                     hash_map::Entry::Occupied(e) => e.into_mut(),
                                     hash_map::Entry::Vacant(e) => {
-                                        // The first time a worktree's root entry becomes
-                                        // available, seed its expanded entries from any saved
-                                        // collapse state for this worktree. Worktrees with no
-                                        // saved state fall back to the legacy default of
-                                        // auto-expanding the root entry.
+                                        // Worktrees with saved collapse state already had their
+                                        // entry seeded by `resolve_pending_expanded_paths`, so
+                                        // reaching here means there is none: fall back to the
+                                        // legacy default of auto-expanding the root entry.
                                         let mut initial = Vec::new();
-                                        if let Some(saved_paths) = new_state
-                                            .pending_expanded_paths
-                                            .remove(worktree_abs_path)
-                                        {
-                                            for saved_path in saved_paths {
-                                                let Ok(rel_path) = RelPath::unix(&saved_path) else {
-                                                    continue;
-                                                };
-                                                if let Some(entry) =
-                                                    worktree_snapshot.entry_for_path(rel_path)
-                                                {
-                                                    initial.push(entry.id);
-                                                }
-                                            }
-                                            initial.sort();
-                                            initial.dedup();
-                                        } else if let Some(entry) = worktree_snapshot.root_entry() {
+                                        if let Some(entry) = worktree_snapshot.root_entry() {
                                             initial.push(entry.id);
                                         }
                                         e.insert(initial).as_slice()
@@ -4599,11 +4594,12 @@ impl ProjectPanel {
                             new_state.max_width_item_index = Some(visited_worktrees_length + index);
                         }
                     }
-                    new_state
+                    (new_state, dirs_to_load)
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
                 this.state = new_state;
+                this.load_dirs_for_pending_expanded_paths(dirs_to_load, cx);
                 if let Some((worktree_id, entry_id)) = new_selected_entry {
                     this.selection = Some(SelectedEntry {
                         worktree_id,
@@ -4647,11 +4643,130 @@ impl ProjectPanel {
         };
     }
 
+    /// Resolves this worktree's saved expanded paths against its current
+    /// entries, seeding `expanded_dir_ids` with the ones that resolve.
+    ///
+    /// Resolution is incremental rather than one-shot, because a saved path
+    /// may be unresolvable at the moment the worktree first appears:
+    ///
+    /// * The worktree's initial scan may still be running, so deeper entries
+    ///   simply don't exist in the snapshot yet.
+    /// * The contents of a gitignored directory are never scanned until
+    ///   something asks for them, so a saved path underneath one can never
+    ///   resolve on its own no matter how long we wait.
+    ///
+    /// Paths that don't resolve stay in `pending_expanded_paths` so later
+    /// passes retry them, and any that sit under an unloaded directory push
+    /// that directory onto `dirs_to_load` so the caller can request a scan.
+    /// A path is only abandoned once the initial scan has completed and
+    /// nothing is left to load underneath it, which means it no longer exists.
+    fn resolve_pending_expanded_paths(
+        state: &mut State,
+        worktree_snapshot: &worktree::Snapshot,
+        initial_scan_complete: bool,
+        dirs_to_load: &mut Vec<(WorktreeId, ProjectEntryId)>,
+    ) {
+        let hash_map::Entry::Occupied(mut pending) = state
+            .pending_expanded_paths
+            .entry(worktree_snapshot.abs_path().clone())
+        else {
+            return;
+        };
+
+        let worktree_id = worktree_snapshot.id();
+        let mut resolved = Vec::new();
+        let mut unresolved = Vec::new();
+        for saved_path in pending.get() {
+            let Ok(rel_path) = RelPath::from_unix_str(saved_path) else {
+                continue;
+            };
+            if let Some(entry) = worktree_snapshot.entry_for_path(rel_path) {
+                resolved.push(entry.id);
+                // Expanding a directory by hand loads its children; a
+                // restored expansion has to do the same or the directory
+                // renders as open but empty.
+                if entry.kind.is_unloaded() {
+                    dirs_to_load.push((worktree_id, entry.id));
+                }
+                continue;
+            }
+
+            // `ancestors` walks deepest-first, so this is the closest ancestor
+            // the worktree currently knows anything about.
+            match rel_path
+                .ancestors()
+                .find_map(|ancestor| worktree_snapshot.entry_for_path(ancestor))
+            {
+                Some(entry) if entry.kind.is_unloaded() => {
+                    dirs_to_load.push((worktree_id, entry.id));
+                    unresolved.push(saved_path.clone());
+                }
+                Some(entry) if entry.kind == EntryKind::PendingDir => {
+                    unresolved.push(saved_path.clone());
+                }
+                _ if !initial_scan_complete => unresolved.push(saved_path.clone()),
+                _ => {}
+            }
+        }
+
+        if unresolved.is_empty() {
+            pending.remove();
+        } else {
+            *pending.get_mut() = unresolved;
+        }
+
+        match state.expanded_dir_ids.entry(worktree_id) {
+            hash_map::Entry::Occupied(mut e) => {
+                let expanded_dir_ids = e.get_mut();
+                expanded_dir_ids.extend(resolved);
+                expanded_dir_ids.sort();
+                expanded_dir_ids.dedup();
+            }
+            hash_map::Entry::Vacant(e) => {
+                resolved.sort();
+                resolved.dedup();
+                e.insert(resolved);
+            }
+        }
+    }
+
+    /// Asks the project to scan directories that saved expanded paths are
+    /// waiting on. This is what makes restoring an expansion inside a
+    /// gitignored directory possible: those directories are left unloaded
+    /// until something explicitly opts into scanning them, exactly as
+    /// `expand_entry` does when the user expands one by hand.
+    fn load_dirs_for_pending_expanded_paths(
+        &mut self,
+        dirs_to_load: Vec<(WorktreeId, ProjectEntryId)>,
+        cx: &mut Context<Self>,
+    ) {
+        for (worktree_id, entry_id) in dirs_to_load {
+            // Each directory only needs asking once: a successful scan turns
+            // it into a loaded directory, so it won't come back around.
+            let hash_map::Entry::Vacant(slot) = self.pending_dir_loads.entry(entry_id) else {
+                continue;
+            };
+            let Some(task) = self.project.update(cx, |project, cx| {
+                project.expand_entry(worktree_id, entry_id, cx)
+            }) else {
+                continue;
+            };
+            slot.insert(cx.background_spawn(async move {
+                task.await.log_err();
+            }));
+        }
+    }
+
     /// Collects the currently expanded directory paths grouped by worktree
     /// absolute path. The empty relative path (`""`) represents the worktree
     /// root entry itself. Returns `None` before any worktree has been seen,
     /// to avoid a redundant write to the database during panel construction
     /// when the visible entries task has not yet populated `expanded_dir_ids`.
+    ///
+    /// Saved paths that haven't resolved yet are folded back in, so a save
+    /// that happens while a worktree is still scanning (or while a gitignored
+    /// directory is still being loaded) cannot persist a truncated set and
+    /// destroy state the user never collapsed.
     fn current_expanded_paths(
         &self,
         cx: &App,
@@ -4674,7 +4789,11 @@ impl ProjectPanel {
                     paths.push(entry.path.as_unix_str().to_owned());
                 }
             }
+            if let Some(pending) = self.state.pending_expanded_paths.get(&abs_path) {
+                paths.extend(pending.iter().cloned());
+            }
             paths.sort();
+            paths.dedup();
             result.insert(abs_path, paths);
         }
         Some(result)
@@ -4713,8 +4832,8 @@ impl ProjectPanel {
     /// 2. Otherwise build the path payload and compare it (this catches
     ///    renames, where entry ids stay the same but paths change).
     fn schedule_save_collapse_state(&mut self, cx: &mut Context<Self>) {
-        let ids_unchanged = self.last_scheduled_expanded_dir_ids.as_ref()
-            == Some(&self.state.expanded_dir_ids);
+        let ids_unchanged =
+            self.last_scheduled_expanded_dir_ids.as_ref() == Some(&self.state.expanded_dir_ids);
         if ids_unchanged && !self.worktree_entries_changed_since_last_save {
             return;
         }
