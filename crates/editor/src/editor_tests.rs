@@ -38643,6 +38643,192 @@ async fn test_next_prev_reference(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_selecting_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    let (buffer_ids, buffers) = cx.multibuffer(|multi_buffer, cx| {
+        let buffer_ids = multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>();
+        let buffers = buffer_ids
+            .iter()
+            .map(|buffer_id| multi_buffer.buffer(*buffer_id).unwrap())
+            .collect::<Vec<_>>();
+        (buffer_ids, buffers)
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let second_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[1]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([second_buffer_start..second_buffer_start]);
+        });
+        editor.fold_buffer(buffer_ids[0], cx);
+
+        let first_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        let folded_buffer_position =
+            first_buffer_start.to_display_point(&editor.display_snapshot(cx));
+        editor.begin_selection(folded_buffer_position, false, 3, window, cx);
+        editor.end_selection(window, cx);
+
+        assert!(!editor.is_buffer_folded(buffer_ids[0], cx));
+        let display_snapshot = editor.display_snapshot(cx);
+        let selection_head = editor.selections.newest::<Point>(&display_snapshot).head();
+        let selected_buffer_id = display_snapshot
+            .buffer_snapshot()
+            .point_to_buffer_point(selection_head)
+            .unwrap()
+            .0
+            .remote_id();
+        assert_eq!(selected_buffer_id, buffer_ids[0]);
+
+        editor.delete(&Delete, window, cx);
+        editor.handle_input("X", window, cx);
+
+        assert_eq!(buffers[0].read(cx).text(), "Xbeta\n");
+        assert_eq!(buffers[1].read(cx).text(), "gamma\ndelta\n");
+    });
+}
+
+#[gpui::test]
+async fn test_additive_selection_in_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    let (buffer_ids, buffers) = cx.multibuffer(|multi_buffer, cx| {
+        let buffer_ids = multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>();
+        let buffers = buffer_ids
+            .iter()
+            .map(|buffer_id| multi_buffer.buffer(*buffer_id).unwrap())
+            .collect::<Vec<_>>();
+        (buffer_ids, buffers)
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let second_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[1]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        let second_buffer_position =
+            second_buffer_start.to_display_point(&editor.display_snapshot(cx));
+        editor.begin_selection(second_buffer_position, false, 1, window, cx);
+        editor.end_selection(window, cx);
+        editor.fold_buffer(buffer_ids[0], cx);
+
+        let first_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        let folded_buffer_position =
+            first_buffer_start.to_display_point(&editor.display_snapshot(cx));
+        editor.begin_selection(folded_buffer_position, true, 1, window, cx);
+        editor.end_selection(window, cx);
+
+        assert!(!editor.is_buffer_folded(buffer_ids[0], cx));
+
+        let display_snapshot = editor.display_snapshot(cx);
+        let selections = editor.selections.all::<Point>(&display_snapshot);
+        assert_eq!(selections.len(), 2);
+        assert!(
+            selections.iter().all(|selection| selection.is_empty()),
+            "adding a cursor must not select the folded buffer's contents: {selections:?}"
+        );
+
+        editor.insert("X", window, cx);
+
+        assert_eq!(buffers[0].read(cx).text(), "Xalpha\nbeta\n");
+        assert_eq!(buffers[1].read(cx).text(), "Xgamma\ndelta\n");
+    });
+}
+
+#[gpui::test]
+async fn test_editing_selection_in_buffer_folded_afterwards_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    let (buffer_ids, buffers) = cx.multibuffer(|multi_buffer, cx| {
+        let buffer_ids = multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>();
+        let buffers = buffer_ids
+            .iter()
+            .map(|buffer_id| multi_buffer.buffer(*buffer_id).unwrap())
+            .collect::<Vec<_>>();
+        (buffer_ids, buffers)
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let first_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([first_buffer_start..first_buffer_start]);
+        });
+        editor.fold_buffer(buffer_ids[0], cx);
+        assert!(editor.is_buffer_folded(buffer_ids[0], cx));
+
+        editor.insert("X", window, cx);
+
+        assert!(!editor.is_buffer_folded(buffer_ids[0], cx));
+        assert_eq!(buffers[0].read(cx).text(), "Xalpha\nbeta\n");
+        assert_eq!(buffers[1].read(cx).text(), "gamma\ndelta\n");
+    });
+}
+
+#[gpui::test]
 async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

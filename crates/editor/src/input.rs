@@ -1962,6 +1962,8 @@ impl Editor {
             return;
         }
 
+        self.unfold_buffers_with_selections(cx);
+
         let text: Arc<str> = text.into();
         self.transact(window, cx, |this, window, cx| {
             let old_selections = this.selections.all_adjusted(&this.display_snapshot(cx));

@@ -1267,8 +1267,31 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = display_map.buffer_snapshot();
         let position = display_map.clip_point(position, Bias::Left);
+
+        // Expand a collapsed buffer before selecting in it, additive clicks included.
+        // Anchors resolve through the display map, and a collapsed buffer is one
+        // replacement block, so both ends of a cursor placed here would round-trip back
+        // out to the edges of the whole folded region. That stores a selection spanning
+        // the entire buffer, and the next keystroke would replace all of its text.
+        let folded_buffer_id = display_map
+            .buffer_snapshot()
+            .point_to_buffer_point(position.to_point(&display_map))
+            .map(|(buffer, _)| buffer.remote_id())
+            .filter(|buffer_id| self.is_buffer_folded(*buffer_id, cx));
+
+        // Expanding a buffer only inserts rows at and below its fold row, so `position`
+        // still denotes the same row in the new snapshot, which now holds the first line
+        // of the buffer that was clicked.
+        let (display_map, position) = if let Some(buffer_id) = folded_buffer_id {
+            self.unfold_buffer(buffer_id, cx);
+            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let position = display_map.clip_point(position, Bias::Left);
+            (display_map, position)
+        } else {
+            (display_map, position)
+        };
+        let buffer = display_map.buffer_snapshot();
 
         let start;
         let end;
