@@ -1819,6 +1819,33 @@ async fn test_fold_with_unindented_multiline_block_comment_includes_closing_brac
 }
 
 #[gpui::test]
+async fn test_fold_excludes_ambiguous_closing_delimiter(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Markdown pairs `*` with itself, so `**bold**` starts with a bracket `end` even though
+    // it closes nothing, and must not be pulled onto the folded heading's line.
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+    cx.set_state(indoc! {"
+        ˇ# Heading
+          content
+        **bold**
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at(MultiBufferRow(0), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                # Heading⋯
+                **bold**
+            "},
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_fold_preserves_top_level_comments_between_python_classes(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
