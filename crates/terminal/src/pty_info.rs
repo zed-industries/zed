@@ -35,7 +35,12 @@ impl ProcessIdGetter {
         // Zero pid means no foreground process group is set on the PTY yet.
         // Avoid killing the current process by returning a zero pid.
         let pid = unsafe { libc::tcgetpgrp(self.handle) };
-        if pid > 0 {
+        // The event loop may close this file descriptor before the `Terminal`
+        // is dropped, allowing a newer terminal to reuse the same descriptor.
+        // A foreground group belongs to this PTY only when it is in the
+        // session led by the child that was originally spawned for it.
+        let session_id = unsafe { libc::tcgetsid(self.handle) };
+        if pid > 0 && session_id == self.fallback_pid as libc::pid_t {
             return Some(Pid::from_u32(pid as u32));
         }
 
