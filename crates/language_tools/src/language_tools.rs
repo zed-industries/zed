@@ -2,6 +2,7 @@ mod highlights_tree_view;
 mod key_context_view;
 pub mod lsp_button;
 pub mod lsp_log_view;
+mod resource_monitor;
 mod syntax_tree_view;
 
 #[cfg(test)]
@@ -20,6 +21,7 @@ pub fn init(cx: &mut App) {
     lsp_log_view::init(false, cx);
     syntax_tree_view::init(cx);
     key_context_view::init(cx);
+    resource_monitor::init(cx);
 }
 
 fn get_or_create_tool<T>(
