@@ -1891,6 +1891,9 @@ impl PlatformWindow for WaylandWindow {
 
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let state = self.borrow();
+        if !state.active {
+            return;
+        }
         state.client.update_ime_position(bounds);
     }
 
