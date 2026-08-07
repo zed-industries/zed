@@ -331,7 +331,7 @@ impl Render for BufferSearchBar {
                         query_focus.clone(),
                     ))
                     .when(!narrow_mode, |this| {
-                        this.child(div().ml_2().min_w(rems_from_px(40.)).child(
+                        this.child(div().ml_2().min_w(rems_from_px(40_f32)).child(
                             Label::new(match_text).size(LabelSize::Small).color(
                                 if self.active_match_index.is_some() {
                                     Color::Default
