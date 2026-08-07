@@ -135,7 +135,7 @@ use anyhow::{Context, Result, anyhow};
 use fs::{TrashId, TrashRestoreError};
 use futures::channel::mpsc;
 use gpui::{
-    AppContext, AsyncApp, Entity, IntoElement, PromptLevel, SharedString, Styled, Task, WeakEntity,
+    AppContext, AsyncApp, IntoElement, PromptLevel, SharedString, Styled, Task, WeakEntity,
 };
 use markdown::{Markdown, MarkdownElement};
 use project::Project;
@@ -172,6 +172,54 @@ impl Operation {
                 };
                 Change::Trashed(project_path.worktree_id, trash_id)
             }
+            Operation::Batch(operations) => {
+                let mut trash_paths = Vec::new();
+
+                for operation in &operations {
+                    operation.trash_paths(&mut trash_paths);
+                }
+
+                if !trash_paths.is_empty()
+                    && !undo_manager.confirm_batch_trash(trash_paths, cx).await?
+                {
+                    return Ok(None);
+                }
+
+                let mut changes = Vec::new();
+
+                for operation in operations {
+                    changes.push(Box::pin(operation.execute_confirmed(undo_manager, cx)).await?);
+                }
+
+                Change::Batched(changes)
+            }
+            operation => {
+                return operation
+                    .execute_confirmed(undo_manager, cx)
+                    .await
+                    .map(Some);
+            }
+        };
+
+        Ok(Some(change))
+    }
+
+    /// Same as [`Self::execute`], but assumes the operation has already been
+    /// confirmed in order to avoid showing confirmation modals to the user.
+    ///
+    /// Useful in scenarios where undoing a batch of operations would lead to
+    /// multiple files being trashed, in which case we only ask the user once
+    /// whether they'd like to trash the files, and then execute each trash
+    /// operation without confirming each file one by one.
+    async fn execute_confirmed(self, undo_manager: &Inner, cx: &mut AsyncApp) -> Result<Change> {
+        let change = match self {
+            Operation::Trash(project_path) => {
+                let trash_id = undo_manager
+                    .trash_without_confirmation(&project_path, cx)
+                    .await?;
+
+                Change::Trashed(project_path.worktree_id, trash_id)
+            }
             Operation::Rename(from, to) => {
                 undo_manager.rename(&from, &to, cx).await?;
                 Change::Renamed(from, to)
@@ -184,18 +232,26 @@ impl Operation {
                 let mut changes = Vec::new();
 
                 for operation in operations {
-                    let Some(change) = Box::pin(operation.execute(undo_manager, cx)).await? else {
-                        return Ok(None);
-                    };
-
-                    changes.push(change);
+                    changes.push(Box::pin(operation.execute_confirmed(undo_manager, cx)).await?);
                 }
 
                 Change::Batched(changes)
             }
         };
 
-        Ok(Some(change))
+        Ok(change)
+    }
+
+    fn trash_paths<'a>(&'a self, paths: &mut Vec<&'a ProjectPath>) {
+        match self {
+            Operation::Trash(path) => paths.push(path),
+            Operation::Batch(operations) => {
+                for operation in operations {
+                    operation.trash_paths(paths);
+                }
+            }
+            Operation::Rename(..) | Operation::Restore(..) => {}
+        }
     }
 }
 
@@ -609,12 +665,32 @@ impl Inner {
             project_path_display(project, project_path, path_style, cx)
         });
 
-        if !self
-            .confirm_trash(project_path, &name, &workspace, cx)
-            .await?
-        {
+        if !self.confirm_trash(project_path, &name, cx).await? {
             return Ok(None);
         }
+
+        self.trash_without_confirmation(project_path, cx)
+            .await
+            .map(Some)
+    }
+
+    /// Same as [`Self::trash`] but proceeds without confirming if the user
+    /// wishes to trash the file.
+    async fn trash_without_confirmation(
+        &self,
+        project_path: &ProjectPath,
+        cx: &mut AsyncApp,
+    ) -> Result<TrashId> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Err(anyhow!("Failed to obtain workspace."));
+        };
+
+        let name = workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().read(cx);
+            let path_style = project.path_style(cx);
+
+            project_path_display(project, project_path, path_style, cx)
+        });
 
         let task = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
@@ -630,7 +706,7 @@ impl Inner {
         })?;
 
         match task.await {
-            Ok(trash_id) => Ok(Some(trash_id)),
+            Ok(trash_id) => Ok(trash_id),
             Err(err) => Err(err).context(format!("Failed to trash `{name}`.")),
         }
     }
@@ -729,10 +805,9 @@ impl Inner {
         &self,
         project_path: &ProjectPath,
         name: &str,
-        workspace: &Entity<Workspace>,
         cx: &mut AsyncApp,
     ) -> Result<bool> {
-        let open_item = workspace.update(cx, |workspace, cx| {
+        let open_item = self.workspace.update(cx, |workspace, cx| {
             workspace.panes().iter().find_map(|pane| {
                 pane.read(cx).items().find_map(|item| {
                     (item.is_dirty(cx)
@@ -743,11 +818,12 @@ impl Inner {
                     .then(|| (pane.clone(), item.boxed_clone()))
                 })
             })
-        });
+        })?;
 
         let Some((pane, item)) = open_item else {
-            return self.trash_prompt(name, cx).await;
+            return self.trash_prompt(&[name], 0, cx).await;
         };
+
         let mut async_window_cx = self
             .panel
             .update_in(cx, |_panel, window, cx| window.to_async(cx))?;
@@ -765,21 +841,95 @@ impl Inner {
         .await
     }
 
+    /// Prompts the user to confirm whether they really want to trash all of the
+    /// provided `trash_paths`.
+    ///
+    /// Meant to be used when executing a batch of operations that will lead to
+    /// one or more paths being trashed.
+    ///
+    /// Returns `true` if the user confirmed they want to trash the files,
+    /// `false` otherwise.
+    async fn confirm_batch_trash(
+        &self,
+        trash_paths: Vec<&ProjectPath>,
+        cx: &mut AsyncApp,
+    ) -> Result<bool> {
+        let (names, dirty_buffers) = self.workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().read(cx);
+            let path_style = project.path_style(cx);
+            let dirty_buffers = project
+                .dirty_buffers(cx)
+                .filter(|dirty_path| trash_paths.contains(&dirty_path))
+                .count();
+            let names = trash_paths
+                .iter()
+                .map(|project_path| project_path_display(project, project_path, path_style, cx))
+                .collect::<Vec<_>>();
+
+            (names, dirty_buffers)
+        })?;
+
+        self.trash_prompt(&names, dirty_buffers, cx).await
+    }
+
     /// Prompts the user to confirm whether they actually want to trash the
     /// file.
     ///
     /// Returns `true` if the user confirms, `false` otherwise.
-    async fn trash_prompt(&self, name: &str, cx: &mut AsyncApp) -> Result<bool> {
+    async fn trash_prompt<S>(
+        &self,
+        names: &[S],
+        dirty_buffers: usize,
+        cx: &mut AsyncApp,
+    ) -> Result<bool>
+    where
+        S: AsRef<str>,
+    {
+        let mut prompt = match names {
+            [name] => format!(
+                "Do you want to trash {}?",
+                MarkdownInlineCode(name.as_ref())
+            ),
+            _ => {
+                const CUTOFF_POINT: usize = 10;
+                let mut listed_names = names
+                    .iter()
+                    .take(CUTOFF_POINT)
+                    .map(|name| MarkdownInlineCode(name.as_ref()).to_string())
+                    .collect::<Vec<_>>();
+                let omitted_count = names.len().saturating_sub(CUTOFF_POINT);
+                if omitted_count == 1 {
+                    listed_names.push(".. 1 file not shown".into());
+                } else if omitted_count > 1 {
+                    listed_names.push(format!(".. {omitted_count} files not shown"));
+                }
+
+                format!(
+                    "Do you want to trash {} files?\n{}",
+                    names.len(),
+                    listed_names.join("\n")
+                )
+            }
+        };
+        match dirty_buffers {
+            0 => {}
+            1 if names.len() == 1 => {
+                prompt.push_str("\n\nIt has unsaved changes, which will be lost.");
+            }
+            1 => {
+                prompt.push_str("\n\n1 of these has unsaved changes, which will be lost.");
+            }
+            dirty_buffers => {
+                prompt.push_str(&format!(
+                    "\n\n{dirty_buffers} of these have unsaved changes, which will be lost."
+                ));
+            }
+        }
+
         let answer = self
             .panel
             .update_in(cx, |_panel, window, cx| {
-                window.prompt(
-                    PromptLevel::Info,
-                    &format!("Do you want to trash {}?", MarkdownInlineCode(name)),
-                    None,
-                    &["Trash", "Cancel"],
-                    cx,
-                )
+                window.prompt(PromptLevel::Info, &prompt, None, &["Trash", "Cancel"], cx)
             })?
             .await?;
 
