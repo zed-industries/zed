@@ -1309,9 +1309,11 @@ impl ConversationView {
             // Fall back to dedicated mode/model selectors
             config_options_view = None;
             model_selector = connection.model_selector(&session_id).map(|selector| {
+                let fs = self.project.read(cx).fs().clone();
                 cx.new(|cx| {
                     ModelSelectorPopover::new(
                         selector,
+                        fs,
                         PopoverMenuHandle::default(),
                         self.focus_handle(cx),
                         window,

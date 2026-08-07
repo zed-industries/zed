@@ -222,6 +222,7 @@ pub struct AgentSettings {
     pub compaction_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub favorite_models: Vec<LanguageModelSelection>,
+    pub collapsed_model_groups: Vec<String>,
     pub default_profile: AgentProfileId,
     pub profiles: IndexMap<AgentProfileId, AgentProfileSettings>,
 
@@ -282,6 +283,13 @@ impl AgentSettings {
         self.favorite_models
             .iter()
             .map(|sel| SharedString::from(format!("{}/{}", sel.provider.0, sel.model)))
+            .collect()
+    }
+
+    pub fn collapsed_model_group_names(&self) -> HashSet<SharedString> {
+        self.collapsed_model_groups
+            .iter()
+            .map(|group| SharedString::from(group.clone()))
             .collect()
     }
 }
@@ -782,6 +790,7 @@ impl Settings for AgentSettings {
             compaction_model: agent.compaction_model,
             inline_alternatives: agent.inline_alternatives.unwrap_or_default(),
             favorite_models: agent.favorite_models,
+            collapsed_model_groups: agent.collapsed_model_groups,
             default_profile: AgentProfileId(agent.default_profile.unwrap()),
             profiles: agent
                 .profiles

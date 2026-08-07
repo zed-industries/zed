@@ -21,6 +21,7 @@ mod language_model_selector;
 mod mention_set;
 mod message_editor;
 mod mode_selector;
+mod model_picker_sections;
 mod model_selector;
 mod model_selector_popover;
 mod profile_selector;
@@ -991,6 +992,7 @@ mod tests {
             compaction_model: None,
             inline_alternatives: vec![],
             favorite_models: vec![],
+            collapsed_model_groups: vec![],
             default_profile: AgentProfileId::default(),
             profiles: Default::default(),
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
