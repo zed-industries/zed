@@ -5233,6 +5233,7 @@ fn panels_page() -> SettingsPage {
                 title: "Auto Reveal Ignored Entries",
                 description: "Whether `Auto Reveal Entries` should also unfold ignored ancestors (for example gitignored directories) when revealing an active entry. Has no effect when Auto Reveal Entries is off.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("project_panel.auto_reveal_ignored_entries"),
                     pick: |settings_content| {
                         settings_content
@@ -5255,6 +5256,7 @@ fn panels_page() -> SettingsPage {
                 title: "Restore Collapse State",
                 description: "Whether to save and restore the collapsed state of worktree roots and directories in the project panel across sessions.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("project_panel.restore_collapse_state"),
                     pick: |settings_content| {
                         settings_content

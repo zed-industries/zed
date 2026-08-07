@@ -11971,3 +11971,210 @@ async fn test_collapse_state_save_follows_rename(cx: &mut TestAppContext) {
         "rename should update the persisted path even though the entry id is unchanged",
     );
 }
+
+#[gpui::test]
+async fn test_restores_saved_collapse_state_inside_gitignored_dir(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            ".gitignore": "/ignored\n",
+            "ignored": {
+                "nested": {
+                    "deep.txt": "",
+                },
+            },
+            "visible": {
+                "g.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let panel_db = cx.update(|cx| crate::persistence::ProjectPanelDb::global(cx));
+    let mut entries: collections::HashMap<Arc<Path>, Vec<String>> = Default::default();
+    entries.insert(
+        Arc::from(Path::new(path!("/root"))),
+        vec![
+            "".to_string(),
+            "ignored".to_string(),
+            "ignored/nested".to_string(),
+        ],
+    );
+    panel_db
+        .save_expanded_entries(workspace_id, entries)
+        .await
+        .unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // The contents of a gitignored directory are never scanned until
+    // something asks for them, so restoring this state is only possible if
+    // the panel opts into loading `ignored` and then `ignored/nested`.
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > .git",
+            "    v ignored",
+            "        v nested",
+            "              deep.txt",
+            "    > visible",
+            "      .gitignore",
+        ],
+        "expansions saved inside a gitignored directory should be restored",
+    );
+
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut saved_paths = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    saved_paths.sort();
+    assert_eq!(
+        saved_paths,
+        vec![
+            "".to_string(),
+            "ignored".to_string(),
+            "ignored/nested".to_string()
+        ],
+        "restoring must not save a truncated set back over the state it just read",
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_state_is_not_truncated_while_worktree_is_scanning(
+    cx: &mut TestAppContext,
+) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root1"),
+        json!({
+            "a": { "b": { "c.txt": "" } },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/root2"),
+        json!({
+            "x": { "y": { "z.txt": "" } },
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let panel_db = cx.update(|cx| crate::persistence::ProjectPanelDb::global(cx));
+    let mut entries: collections::HashMap<Arc<Path>, Vec<String>> = Default::default();
+    entries.insert(
+        Arc::from(Path::new(path!("/root1"))),
+        vec!["".to_string(), "a".to_string(), "a/b".to_string()],
+    );
+    entries.insert(
+        Arc::from(Path::new(path!("/root2"))),
+        vec!["".to_string(), "x".to_string(), "x/y".to_string()],
+    );
+    panel_db
+        .save_expanded_entries(workspace_id, entries)
+        .await
+        .unwrap();
+
+    // Only root1 is present when the panel is built. root2 is added without
+    // awaiting its scan, so the panel sees it while its entries are still
+    // being filled in - the situation `Project::test` normally hides by
+    // waiting for the scan to finish before the panel exists.
+    let project = Project::test(fs.clone(), [path!("/root1").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let _worktree = project.update(cx, |project, cx| {
+        project.create_worktree(path!("/root2"), true, cx)
+    });
+
+    // Drive the panel far enough to update and save, but deliberately not far
+    // enough to guarantee root2 has finished scanning.
+    for _ in 0..20 {
+        cx.executor().tick();
+    }
+    cx.executor().advance_clock(Duration::from_millis(200));
+    for _ in 0..20 {
+        cx.executor().tick();
+    }
+
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut saved_paths = saved
+        .get(Path::new(path!("/root2")))
+        .cloned()
+        .unwrap_or_default();
+    saved_paths.sort();
+    assert_eq!(
+        saved_paths,
+        vec!["".to_string(), "x".to_string(), "x/y".to_string()],
+        "a save while the worktree is still scanning must not drop paths that simply haven't been scanned yet",
+    );
+
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "    v a",
+            "        v b",
+            "              c.txt",
+            "v root2",
+            "    v x",
+            "        v y",
+            "              z.txt",
+        ],
+        "both worktrees should end up fully restored",
+    );
+
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut saved_paths = saved
+        .get(Path::new(path!("/root2")))
+        .cloned()
+        .unwrap_or_default();
+    saved_paths.sort();
+    assert_eq!(
+        saved_paths,
+        vec!["".to_string(), "x".to_string(), "x/y".to_string()],
+        "the restored state should still be intact once scanning completes",
+    );
+}
