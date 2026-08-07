@@ -22,15 +22,15 @@ Key insight: "LLMs use statistical algorithms to guess what should come next. Th
 
 When given text to humanize:
 
-1. **Identify AI patterns** - Scan for the 24 patterns listed below
-2. **Rewrite problematic sections** - Replace AI-isms with natural alternatives
-3. **Preserve meaning** - Keep the core message intact
-4. **Add soul** - Don't just remove bad patterns; inject actual personality
-5. **Final audit pass** - Ask "What makes this obviously AI generated?" then revise again
+1. Identify concrete AI-writing patterns from the list below
+2. Rewrite only the affected sections
+3. Preserve factual claims and the core message
+4. Add natural rhythm or point of view where the context supports it
+5. Run a final pass for remaining tells
 
 ---
 
-## PERSONALITY AND SOUL
+## Voice
 
 Avoiding AI patterns is only half the job. Sterile, voiceless writing is just as obvious as slop.
 
@@ -319,11 +319,11 @@ Avoiding AI patterns is only half the job. Sterile, voiceless writing is just as
    - Varies sentence structure
    - Uses specific details over vague claims
    - Uses simple constructions (is/are/has) where appropriate
-5. **Draft humanized version**
-6. **Ask:** "What makes this still obviously AI generated?"
-7. **List** remaining tells (if any)
-8. **Revise** based on the audit
-9. **Present final version**
+5. Draft a humanized version
+6. Ask: "What makes this still obviously AI generated?"
+7. List remaining tells, if any
+8. Revise based on the audit
+9. Present the final version
 
 ## Output Format
 
@@ -346,45 +346,7 @@ What still reads as AI-generated:
 - [Brief summary of transformations applied]
 ```
 
----
-
-## Full Example
-
-**Input (AI-heavy):**
-
-> Great question! Here is an essay on this topic. I hope this helps!
->
-> AI-assisted coding serves as an enduring testament to the transformative potential of large language models, marking a pivotal moment in the evolution of software development. In today's rapidly evolving technological landscape, these groundbreaking tools—nestled at the intersection of research and practice—are reshaping how engineers ideate, iterate, and deliver, underscoring their vital role in modern workflows.
-
-**Draft Rewrite:**
-
-> AI coding assistants speed up some tasks. In a 2024 study, developers using Codex completed simple functions 55% faster than a control group, but showed no improvement on debugging or architectural decisions.
->
-> The tools are good at boilerplate: config files, test scaffolding, repetitive refactors. They are bad at knowing when they are wrong.
-
-**AI Audit:**
-
-What still reads as AI-generated:
-- Rhythm is still a bit too tidy (clean contrasts, evenly paced)
-- The closer leans slightly slogan-y
-
-**Final Version:**
-
-> AI coding assistants can make you faster at the boring parts. Not everything. Definitely not architecture.
->
-> They're great at boilerplate: config files, test scaffolding, repetitive refactors. They're also great at sounding right while being wrong. I've accepted suggestions that compiled, passed lint, and still missed the point because I stopped paying attention.
->
-> If you don't have tests, you're basically guessing.
-
-**Changes Made:**
-
-- Removed chatbot artifacts ("Great question!", "I hope this helps!")
-- Removed significance inflation ("testament", "pivotal moment", "evolving landscape")
-- Removed promotional language ("groundbreaking", "nestled")
-- Removed em dashes
-- Removed copula avoidance ("serves as") → used direct statements
-- Added first-person voice and opinion
-- Varied sentence rhythm
+For a complete worked example, read `examples.md`.
 
 ---
 
