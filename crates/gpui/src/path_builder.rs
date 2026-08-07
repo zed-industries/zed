@@ -357,12 +357,9 @@ impl PathBuilder {
                             ctrl2: lyon::math::point(ctrl2.x, ctrl2.y),
                             to,
                         };
-                        cubic.for_each_quadratic_bezier(
-                            crate::scene::PATH_FLATTEN_TOLERANCE,
-                            &mut |quadratic| {
-                                output.curve_to(quadratic.to.into(), quadratic.ctrl.into());
-                            },
-                        );
+                        cubic.for_each_quadratic_bezier(PATH_FLATTEN_TOLERANCE, &mut |quadratic| {
+                            output.curve_to(quadratic.to.into(), quadratic.ctrl.into());
+                        });
                     }
                     current = to;
                 }
@@ -414,12 +411,9 @@ impl PathBuilder {
                         // Cubics are approximated by quadratic chains (the
                         // shader evaluates quadratics); this is the only
                         // approximation baked into a built fill path.
-                        cubic.for_each_quadratic_bezier(
-                            crate::scene::PATH_FLATTEN_TOLERANCE,
-                            &mut |quadratic| {
-                                output.curve_to(quadratic.to.into(), quadratic.ctrl.into());
-                            },
-                        );
+                        cubic.for_each_quadratic_bezier(PATH_FLATTEN_TOLERANCE, &mut |quadratic| {
+                            output.curve_to(quadratic.to.into(), quadratic.ctrl.into());
+                        });
                     }
                 }
                 Event::End { .. } => {
@@ -435,13 +429,17 @@ impl PathBuilder {
     }
 }
 
+/// Maximum deviation (in pixels, before display scaling) allowed of the
+/// cubic-to-quadratic conversion in `PathBuilder`, the only approximation
+/// baked into a built fill path. See `docs/trapezoid_path_rendering.md` for
+/// the measurements behind the value.
+const PATH_FLATTEN_TOLERANCE: f32 = 0.25;
+
 /// Resolution scale passed to tiny-skia's stroker and dasher, whose
 /// approximation error is about `0.25 / scale` in input units. Strokes are
 /// expanded once in logical pixels and repainted at any display scale, so
 /// 2.0 keeps the error within [`PATH_FLATTEN_TOLERANCE`] device pixels up
 /// to 2x displays.
-///
-/// [`PATH_FLATTEN_TOLERANCE`]: crate::scene::PATH_FLATTEN_TOLERANCE
 const STROKE_RESOLUTION_SCALE: f32 = 2.0;
 
 /// Convert a lyon path into a tiny-skia path for stroke expansion.

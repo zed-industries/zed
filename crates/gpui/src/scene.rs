@@ -47,11 +47,6 @@ pub struct Scene {
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
     pub paths: Vec<PaintedPath>,
-    /// The GPU image of `paths`, rebuilt by `finish`: every path's paint
-    /// row, curves, tiles, and tile-curve entries concatenated in draw
-    /// order with all indices globalized. Renderers upload these buffers
-    /// verbatim; batches address `path_tiles` through
-    /// [`PrimitiveBatch::Paths`]' `tile_range`.
     pub path_paints: Vec<PathPaint>,
     pub path_curves: Vec<PathCurve>,
     pub path_tiles: Vec<PathTile>,
@@ -177,27 +172,23 @@ impl Scene {
         self.surfaces.sort_by_key(|surface| surface.order);
     }
 
-    /// Concatenate every path's tiles, curves, entries, and paint row into
-    /// the flat buffers renderers upload verbatim, globalizing the
-    /// path-local indices as they are copied. This is the one place the
-    /// path-local and scene-global index domains meet; it runs after
-    /// `paths` is sorted, so `path_tiles` is in draw order like `quads`.
     fn flatten_paths(&mut self) {
         self.path_paints.clear();
         self.path_curves.clear();
         self.path_tiles.clear();
         self.path_tile_curves.clear();
+
         for path in &self.paths {
             if path.tiles.is_empty() {
                 continue;
             }
+
             let paint = self.path_paints.len() as u32;
             let curve_base = self.path_curves.len() as u32;
             let entry_base = self.path_tile_curves.len() as u32;
             self.path_paints.push(path.paint);
             self.path_curves.extend_from_slice(&path.curves);
-            // Adding the base leaves each entry's high flag bit intact:
-            // binning guarantees curve indices stay below it.
+
             self.path_tile_curves
                 .extend(path.tile_curves.iter().map(|entry| TileCurve {
                     curve: entry.curve + curve_base,
@@ -536,9 +527,8 @@ pub enum PrimitiveBatch {
     Shadows(Range<usize>),
     Quads(Range<usize>),
     Paths {
-        /// This batch's range in [`Scene::paths`].
         range: Range<usize>,
-        /// The corresponding instance range in [`Scene::path_tiles`].
+        /// The range in [`Scene::path_tiles`] corresponding to this batch.
         tile_range: Range<usize>,
     },
     Underlines(Range<usize>),
@@ -844,32 +834,11 @@ impl From<PaintSurface> for Primitive {
     }
 }
 
-/// Maximum deviation (in pixels, before display scaling) allowed of the
-/// cubic-to-quadratic conversion in `PathBuilder`, the only approximation
-/// baked into a built fill path. See `docs/trapezoid_path_rendering.md` for
-/// the measurements behind the value.
-pub(crate) const PATH_FLATTEN_TOLERANCE: f32 = 0.25;
-
-/// A filled path in logical pixels: closed contours of quadratic Bézier
-/// segments (lines are degenerate quadratics). Contours are closed
-/// implicitly: starting a new contour (or painting the path) treats an
-/// open contour as if it ended with a closing line segment.
-///
-/// A `Path` is pure geometry — paint-time facts (display scale, clip,
-/// color) arrive as [`Path::painted`] arguments. Building a path
-/// decomposes each segment into xy-monotone curves the moment it is
-/// appended; `painted` bins those curves into the device-space
-/// [`PaintedPath`] a scene renders.
+/// A filled path made up of a series of closed quadratic Bezier segments.
 #[derive(Clone, Debug)]
 pub struct Path {
-    /// Conservative bounds of the geometry (the union of every segment's
-    /// control polygon).
     pub bounds: Bounds<Pixels>,
-    /// The rule mapping winding numbers to coverage when the path is
-    /// filled.
     pub fill_rule: FillRule,
-    /// The geometry, as each segment's xy-monotone decomposition, grown as
-    /// the path is built; consumed by [`Path::painted`].
     monotone_curves: Vec<MonotoneCurve>,
     start: Point<Pixels>,
     current: Point<Pixels>,
@@ -914,7 +883,7 @@ impl Path {
     /// Paint this path: scale the geometry into device pixels, clip it to
     /// `content_mask`, and bin it into tiles, once. The built path is left
     /// untouched and can be painted again (at any scale).
-    pub fn painted(
+    pub(crate) fn painted(
         &self,
         scale_factor: f32,
         content_mask: ContentMask<Pixels>,
@@ -968,10 +937,7 @@ impl Path {
         }
     }
 
-    /// Draw a quadratic Bézier from the current point to the given point,
-    /// using the given control point. The curve is stored exactly; a built
-    /// path stays resolution-independent, and rendering evaluates the true
-    /// curve at every display scale.
+    /// Draw a curve from the current point to the given point, using the given control point.
     pub fn curve_to(&mut self, to: Point<Pixels>, ctrl: Point<Pixels>) {
         if to == self.current && ctrl == self.current {
             return;
@@ -982,8 +948,6 @@ impl Path {
 
     /// Close the current contour with a straight line back to its start.
     pub fn close(&mut self) {
-        // Only segment-pushing calls move `current` away from `start`, so
-        // the inequality also proves the open contour is non-empty.
         if self.current != self.start {
             let start = self.start;
             self.line_to(start);
@@ -992,16 +956,13 @@ impl Path {
     }
 
     fn push_segment(&mut self, p0: Point<Pixels>, ctrl: Point<Pixels>, p1: Point<Pixels>) {
-        // The control point is included so the bounds stay conservative;
-        // the curve is contained in its control polygon's hull.
         for position in [p0, ctrl, p1] {
             self.bounds = self.bounds.union(&Bounds {
                 origin: position,
                 size: Default::default(),
             });
         }
-        // Decomposition is per-segment independent, so it happens the
-        // moment a segment arrives and can never go stale.
+
         decompose_quadratic(
             &mut self.monotone_curves,
             point(p0.x.0, p0.y.0),

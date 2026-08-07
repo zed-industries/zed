@@ -79,11 +79,8 @@ struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState<Shadow>,
     quad_pipeline: PipelineState<Quad>,
     path_tile_pipeline: PipelineState<PathTile>,
-    /// Concatenated per-tile curve lists, bound at `t2`.
     path_tile_curves: StructuredBuffer<TileCurve>,
-    /// Device-space curves of the whole scene, bound at `t3`.
     path_curves: StructuredBuffer<PathCurve>,
-    /// Per-path paint rows, bound at `t4`.
     path_paints: StructuredBuffer<PathPaint>,
     underline_pipeline: PipelineState<Underline>,
     mono_sprites: PipelineState<MonochromeSprite>,
@@ -603,6 +600,7 @@ impl DirectXRenderer {
         let devices = self.devices.as_ref().context("devices missing")?;
         self.pipelines.shadow_pipeline.draw_range(
             &devices.device_context,
+            &[],
             self.globals
                 .batch_params_buffer
                 .as_ref()
@@ -619,6 +617,7 @@ impl DirectXRenderer {
         let devices = self.devices.as_ref().context("devices missing")?;
         self.pipelines.quad_pipeline.draw_range(
             &devices.device_context,
+            &[],
             self.globals
                 .batch_params_buffer
                 .as_ref()
@@ -638,7 +637,7 @@ impl DirectXRenderer {
             self.pipelines.path_curves.view.clone(),
             self.pipelines.path_paints.view.clone(),
         ];
-        self.pipelines.path_tile_pipeline.draw_range_with_buffers(
+        self.pipelines.path_tile_pipeline.draw_range(
             &devices.device_context,
             &curve_buffers,
             self.globals
@@ -657,6 +656,7 @@ impl DirectXRenderer {
         let devices = self.devices.as_ref().context("devices missing")?;
         self.pipelines.underline_pipeline.draw_range(
             &devices.device_context,
+            &[],
             self.globals
                 .batch_params_buffer
                 .as_ref()
@@ -984,7 +984,6 @@ struct GlobalParams {
     _pad: [u32; 3],
 }
 
-/// A resizable GPU buffer of `T`, mirroring HLSL's `StructuredBuffer<T>`.
 struct StructuredBuffer<T> {
     label: &'static str,
     buffer: ID3D11Buffer,
@@ -1079,32 +1078,6 @@ impl<T> PipelineState<T> {
     fn draw_range(
         &self,
         device_context: &ID3D11DeviceContext,
-        batch_params_buffer: &ID3D11Buffer,
-        first_instance: u32,
-        instance_count: u32,
-    ) -> Result<()> {
-        update_batch_start(device_context, batch_params_buffer, first_instance)?;
-        set_pipeline_state(
-            device_context,
-            slice::from_ref(&self.instances.view),
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            &self.vertex,
-            &self.fragment,
-            &self.blend_state,
-        );
-        unsafe {
-            device_context.DrawInstanced(4, instance_count, 0, 0);
-        }
-        Ok(())
-    }
-
-    /// Draw as [`PipelineState::draw_range`], additionally binding `buffers`
-    /// to consecutive shader resource slots starting at `t2`. Pipelines whose
-    /// instances index side tables need more than the one instance buffer `t1`
-    /// holds.
-    fn draw_range_with_buffers(
-        &self,
-        device_context: &ID3D11DeviceContext,
         buffers: &[Option<ID3D11ShaderResourceView>],
         batch_params_buffer: &ID3D11Buffer,
         first_instance: u32,
@@ -1120,8 +1093,10 @@ impl<T> PipelineState<T> {
             &self.blend_state,
         );
         unsafe {
-            device_context.VSSetShaderResources(2, Some(buffers));
-            device_context.PSSetShaderResources(2, Some(buffers));
+            if !buffers.is_empty() {
+                device_context.VSSetShaderResources(2, Some(buffers));
+                device_context.PSSetShaderResources(2, Some(buffers));
+            }
             device_context.DrawInstanced(4, instance_count, 0, 0);
         }
         Ok(())

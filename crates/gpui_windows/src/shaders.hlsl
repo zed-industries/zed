@@ -958,15 +958,6 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 **
 */
 
-// One xy-monotone quadratic curve of a path's boundary, stored downward
-// (p0.y <= p1.y), with its polynomial coefficients precomputed on the CPU:
-// x(t) = ax*t^2 + bx*t + p0.x and y(t) = ay*t^2 + by*t + p0.y. Uploading
-// the coefficients keeps this shader and the CPU binning consuming
-// bit-identical values (and line curves' quadratic coefficients exactly
-// zero, so their solves take monotone_quadratic_root's linear branch).
-// `sign` is +1 if the contour ran downward through the curve and -1 if
-// upward; `sx` is sign(p1.x - p0.x) in stored orientation, or 0 for a
-// vertical curve.
 struct PathCurve {
     float2 p0;
     float2 p1;
@@ -978,20 +969,8 @@ struct PathCurve {
     float sx;
 };
 
-// Side length of a path tile in device pixels; mirrors `TILE_SIZE` in
-// path_winding.rs.
 static const float PATH_TILE_SIZE = 16.0;
 
-// One tile of a filled path: a screen-aligned quad whose every pixel
-// resolves its own winding number from `backdrop` (the winding at `corner`,
-// the tile's top-left, counting crossings strictly left of it) plus the
-// curves listed for the tile. Boundaries may pass exactly through the
-// corner; every discrete gate here and in the CPU binning is half-open in
-// a consistent direction, so a tie lands on exactly one side. The tile's
-// rectangle is derived, not stored: it spans `run` grid cells rightward
-// from the corner, one cell tall, and the content-mask clip distances trim
-// whatever the mask cuts off. Indices are scene-global, rebased by
-// Scene::finish.
 struct PathTile {
     uint paint;
     uint curve_start;
@@ -1001,8 +980,6 @@ struct PathTile {
     uint run;
 };
 
-// Per-path paint data shared by every tile of one path, indexed by
-// PathTile.paint.
 struct PathPaint {
     Bounds bounds;
     Bounds content_mask;
@@ -1010,10 +987,6 @@ struct PathPaint {
     uint even_odd;
 };
 
-// One element of a tile's curve list: which curve (low bits), whether its
-// crossing of the tile's downward leg counts (high bit of `curve`), and the
-// height of that crossing, solved once on the CPU. Everything
-// per-(tile, curve) the fragment loop would otherwise re-derive per pixel.
 struct TileCurve {
     uint curve;
     float leg_y;
@@ -1064,8 +1037,8 @@ PathTileVertexOutput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id:
     return output;
 }
 
-// Stable quadratic solve for a*t^2 + b*t + c = 0, returning the root within
-// [0, 1]. The curves are monotone, so at most one root lies in range.
+// Solve for a*t^2 + b*t + c = 0, returning the root within [0, 1].
+// The curves are monotone, so at most one root lies in range.
 float monotone_quadratic_root(float a, float b, float c) {
     if (abs(a) < 1e-6) {
         return abs(b) < 1e-12 ? 0.0 : saturate(-c / b);
@@ -1079,8 +1052,7 @@ float monotone_quadratic_root(float a, float b, float c) {
     return saturate(root0_in_range ? root0 : root1);
 }
 
-// Antiderivative of (ax*t^2 + bx*t + cx) * (2*ay*t + by), the pixel-local
-// area integrand expressed in the curve parameter.
+// Antiderivative of (ax*t^2 + bx*t + cx) * (2*ay*t + by).
 float coverage_integral(float ax, float bx, float cx, float ay, float by, float t) {
     float c3 = 0.5 * ax * ay;
     float c2 = (ax * by + 2.0 * bx * ay) / 3.0;
@@ -1089,7 +1061,7 @@ float coverage_integral(float ax, float bx, float cx, float ay, float by, float 
     return (((c3 * t + c2) * t + c1) * t + c0) * t;
 }
 
-// Exact area of the part of the pixel column [px, px+1] left of a
+    // Exact area of the part of the pixel column [px, px+1] left of a
 // downward-monotone quadratic curve over the window [ya, yb]:
 //     integral over [ya, yb] of clamp(x(y) - px, 0, 1) dy
 // Specialized to its one call site: the caller guarantees the window lies

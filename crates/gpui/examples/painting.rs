@@ -301,6 +301,62 @@ impl PaintingViewer {
         self.lines.clear();
         cx.notify();
     }
+
+    /// Fill the canvas with a deterministic scribble — random walks with
+    /// momentum, mimicking hand-drawn loops. Mostly diagonal strokes: the
+    /// tile pipeline's worst case, reproducible across builds for
+    /// before/after captures.
+    fn stress_scribble(&mut self, cx: &mut Context<Self>) {
+        self.lines.clear();
+        let mut state: u32 = 0x9E3779B9;
+        let mut random = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as f32 / u32::MAX as f32
+        };
+        for _ in 0..30 {
+            let mut x = 40.0 + random() * 860.0;
+            let mut y = 80.0 + random() * 440.0;
+            let mut angle = random() * std::f32::consts::TAU;
+            let mut points = Vec::with_capacity(121);
+            points.push(point(px(x), px(y)));
+            for _ in 0..120 {
+                angle += (random() - 0.5) * 1.2;
+                x += angle.cos() * 12.0;
+                y += angle.sin() * 12.0;
+                if !(40.0..=900.0).contains(&x) {
+                    angle = std::f32::consts::PI - angle;
+                    x = x.clamp(40.0, 900.0);
+                }
+                if !(80.0..=520.0).contains(&y) {
+                    angle = -angle;
+                    y = y.clamp(80.0, 520.0);
+                }
+                points.push(point(px(x), px(y)));
+            }
+            self.lines.push(points);
+        }
+        cx.notify();
+    }
+
+    /// Fill the canvas with an axis-aligned grid of strokes — the regime
+    /// where per-tile extents could shrink dead rows, complementing the
+    /// diagonal scribble stress.
+    fn stress_grid(&mut self, cx: &mut Context<Self>) {
+        self.lines.clear();
+        for i in 0..55 {
+            let y = 80.0 + i as f32 * 8.0;
+            self.lines
+                .push(vec![point(px(40.0), px(y)), point(px(900.0), px(y))]);
+        }
+        for i in 0..108 {
+            let x = 40.0 + i as f32 * 8.0;
+            self.lines
+                .push(vec![point(px(x), px(80.0)), point(px(x), px(520.0))]);
+        }
+        cx.notify();
+    }
 }
 
 fn button(
@@ -349,6 +405,8 @@ impl Render for PaintingViewer {
                                 cx,
                                 move |this, _| this.dashed = !dashed,
                             ))
+                            .child(button("Scribble", cx, |this, cx| this.stress_scribble(cx)))
+                            .child(button("Grid", cx, |this, cx| this.stress_grid(cx)))
                             .child(button("Clear", cx, |this, cx| this.clear(cx))),
                     ),
             )
