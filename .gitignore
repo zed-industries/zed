@@ -60,3 +60,6 @@ crates/docs_preprocessor/actions.json
 .nixos-test-history
 
 .local*
+
+# graphify knowledge-graph output/cache (generated, not source)
+graphify-out/
