@@ -381,6 +381,56 @@ pub fn border_style_methods(input: TokenStream) -> TokenStream {
     output.into()
 }
 
+pub fn outline_style_methods(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let visibility = input.method_visibility;
+
+    let mut methods = Vec::new();
+
+    for outline_style_prefix in outline_prefixes() {
+        methods.push(generate_custom_value_setter(
+            visibility.clone(),
+            outline_style_prefix.prefix,
+            quote! { AbsoluteLength },
+            &outline_style_prefix.fields,
+            outline_style_prefix.doc_string_prefix,
+        ));
+
+        for outline_style_suffix in outline_suffixes() {
+            methods.push(generate_predefined_setter(
+                visibility.clone(),
+                outline_style_prefix.prefix,
+                outline_style_suffix.suffix,
+                &outline_style_prefix.fields,
+                &outline_style_suffix.width_tokens,
+                false,
+                &format!(
+                    "{prefix}\n\n{suffix}",
+                    prefix = outline_style_prefix.doc_string_prefix,
+                    suffix = outline_style_suffix.doc_string_suffix,
+                ),
+            ));
+        }
+    }
+
+    let output = quote! {
+        /// Sets the outline color of the element.
+        /// [Docs](https://tailwindcss.com/docs/outline-color)
+        #visibility fn outline_color<C>(mut self, outline_color: C) -> Self
+        where
+            C: Into<gpui::Hsla>,
+            Self: Sized,
+        {
+            self.style().outline_color = Some(outline_color.into());
+            self
+        }
+
+        #(#methods)*
+    };
+
+    output.into()
+}
+
 pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as StyleableMacroInput);
     let visibility = input.method_visibility;
@@ -523,6 +573,18 @@ struct BorderStylePrefix {
 }
 
 struct BorderStyleSuffix {
+    suffix: &'static str,
+    width_tokens: TokenStream2,
+    doc_string_suffix: &'static str,
+}
+
+struct OutlineStylePrefix {
+    prefix: &'static str,
+    fields: Vec<TokenStream2>,
+    doc_string_prefix: &'static str,
+}
+
+struct OutlineStyleSuffix {
     suffix: &'static str,
     width_tokens: TokenStream2,
     doc_string_suffix: &'static str,
@@ -1412,6 +1474,51 @@ fn border_suffixes() -> Vec<BorderStyleSuffix> {
             suffix: "32",
             width_tokens: quote! { px(32.) },
             doc_string_suffix: "32px",
+        },
+    ]
+}
+
+fn outline_prefixes() -> Vec<OutlineStylePrefix> {
+    vec![
+        OutlineStylePrefix {
+            prefix: "outline",
+            fields: vec![quote! { outline_width }],
+            doc_string_prefix: "Sets the outline width of the element. The outline is drawn outside the element's box and does not affect layout. [Docs](https://tailwindcss.com/docs/outline-width)",
+        },
+        OutlineStylePrefix {
+            prefix: "outline_offset",
+            fields: vec![quote! { outline_offset }],
+            doc_string_prefix: "Sets the space between the outline and the element's border edge. [Docs](https://tailwindcss.com/docs/outline-offset)",
+        },
+    ]
+}
+
+fn outline_suffixes() -> Vec<OutlineStyleSuffix> {
+    vec![
+        OutlineStyleSuffix {
+            suffix: "0",
+            width_tokens: quote! { px(0.) },
+            doc_string_suffix: "0px",
+        },
+        OutlineStyleSuffix {
+            suffix: "1",
+            width_tokens: quote! { px(1.) },
+            doc_string_suffix: "1px",
+        },
+        OutlineStyleSuffix {
+            suffix: "2",
+            width_tokens: quote! { px(2.) },
+            doc_string_suffix: "2px",
+        },
+        OutlineStyleSuffix {
+            suffix: "4",
+            width_tokens: quote! { px(4.) },
+            doc_string_suffix: "4px",
+        },
+        OutlineStyleSuffix {
+            suffix: "8",
+            width_tokens: quote! { px(8.) },
+            doc_string_suffix: "8px",
         },
     ]
 }
