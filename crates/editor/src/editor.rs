@@ -6247,9 +6247,32 @@ impl Editor {
 
         let display_snapshot = self.display_snapshot(cx);
 
+        // Align on x pixels rather than byte columns. `Point::column` is a byte
+        // offset, so a row containing multi-byte characters reports a larger
+        // column than it occupies on screen and receives too few (or too many)
+        // padding spaces. Measuring where the cursor actually renders keeps
+        // rows aligned regardless of how many bytes, code points or grapheme
+        // clusters precede it. Same reasoning as the columnar selection fix in
+        // `Editor::update_selection` (#57097).
+        let text_layout_details = self.text_layout_details(window, cx);
+        let font_id = text_layout_details
+            .text_system
+            .resolve_font(&text_layout_details.editor_style.text.font());
+        let font_size = text_layout_details
+            .editor_style
+            .text
+            .font_size
+            .to_pixels(text_layout_details.rem_size);
+        // Padding is always inserted as spaces, so the accumulated shift for a
+        // row is exactly `space_count * space_width`.
+        let space_width = text_layout_details
+            .text_system
+            .em_layout_width(font_id, font_size);
+
         struct CursorData {
             anchor: Anchor,
             point: Point,
+            x: Pixels,
         }
         let cursor_data: Vec<CursorData> = self
             .selections
@@ -6261,9 +6284,14 @@ impl Editor {
                 } else {
                     selection.tail()
                 };
+                let point = anchor.to_point(&display_snapshot.buffer_snapshot());
                 CursorData {
                     anchor: anchor,
-                    point: anchor.to_point(&display_snapshot.buffer_snapshot()),
+                    point,
+                    x: display_snapshot.x_for_display_point(
+                        point.to_display_point(&display_snapshot),
+                        &text_layout_details,
+                    ),
                 }
             })
             .collect();
@@ -6276,14 +6304,14 @@ impl Editor {
             .map(|(_, group)| group.count())
             .collect();
         let max_columns = rows_anchors_count.iter().max().copied().unwrap_or(0);
-        let mut rows_column_offset = vec![0; rows_anchors_count.len()];
+        let mut rows_x_offset = vec![Pixels::ZERO; rows_anchors_count.len()];
         let mut edits = Vec::new();
 
         for column_idx in 0..max_columns {
             let mut cursor_index = 0;
 
-            // Calculate target_column => position that the selections will go
-            let mut target_column = 0;
+            // Calculate target_x => horizontal position the selections will go
+            let mut target_x = Pixels::ZERO;
             for (row_idx, cursor_count) in rows_anchors_count.iter().enumerate() {
                 // Skip rows that don't have this column
                 if column_idx >= *cursor_count {
@@ -6291,10 +6319,9 @@ impl Editor {
                     continue;
                 }
 
-                let point = &cursor_data[cursor_index + column_idx].point;
-                let adjusted_column = point.column + rows_column_offset[row_idx];
-                if adjusted_column > target_column {
-                    target_column = adjusted_column;
+                let adjusted_x = cursor_data[cursor_index + column_idx].x + rows_x_offset[row_idx];
+                if adjusted_x > target_x {
+                    target_x = adjusted_x;
                 }
                 cursor_index += cursor_count;
             }
@@ -6308,15 +6335,18 @@ impl Editor {
                     continue;
                 }
 
-                let point = &cursor_data[cursor_index + column_idx].point;
-                let spaces_needed = target_column - point.column - rows_column_offset[row_idx];
+                let cursor = &cursor_data[cursor_index + column_idx];
+                let gap = target_x - cursor.x - rows_x_offset[row_idx];
+                let spaces_needed = if space_width > Pixels::ZERO {
+                    (gap / space_width).round().max(0.) as usize
+                } else {
+                    0
+                };
                 if spaces_needed > 0 {
-                    let anchor = cursor_data[cursor_index + column_idx]
-                        .anchor
-                        .bias_left(&display_snapshot);
-                    edits.push((anchor..anchor, " ".repeat(spaces_needed as usize)));
+                    let anchor = cursor.anchor.bias_left(&display_snapshot);
+                    edits.push((anchor..anchor, " ".repeat(spaces_needed)));
                 }
-                rows_column_offset[row_idx] += spaces_needed;
+                rows_x_offset[row_idx] += space_width * spaces_needed as f32;
 
                 cursor_index += *cursor_count;
             }

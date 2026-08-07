@@ -42035,6 +42035,93 @@ async fn test_align_selections_multicolumn(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_align_selections_multibyte(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Control: pure ASCII, where byte offsets and rendered columns agree. If
+    // this case ever fails, the harness is wrong rather than the alignment.
+    let before = indoc!(
+        r#"
+            aa ˇx
+            bbb ˇx
+        "#
+    );
+    let after = indoc!(
+        r#"
+            aa  ˇx
+            bbb ˇx
+        "#
+    );
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // A 2-byte character before the cursor. "ãa " is 4 bytes but 3 columns, so
+    // aligning on byte offsets sees both rows as equally wide and inserts
+    // nothing, leaving them visually misaligned.
+    let before = indoc!(
+        r#"
+            ãa ˇx
+            bbb ˇx
+        "#
+    );
+    let after = indoc!(
+        r#"
+            ãa  ˇx
+            bbb ˇx
+        "#
+    );
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // The reported case: a 3-byte arrow on both rows and a 2-byte pi on one.
+    // "a ← 1  " is 9 bytes / 7 columns and "bc ← π  " is 11 bytes / 8 columns,
+    // so aligning on bytes overshoots the first row by a column.
+    let before = indoc!(
+        r#"
+            a ← 1  ˇ# one
+            bc ← π  ˇ# two
+        "#
+    );
+    let after = indoc!(
+        r#"
+            a ← 1   ˇ# one
+            bc ← π  ˇ# two
+        "#
+    );
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // Rows that already line up must be left alone. Byte offsets make "ãa " look
+    // one wider than "bb ", so the previous behaviour padded the second row and
+    // pulled apart cursors that were already aligned.
+    let before = indoc!("ãa ˇx\nbb ˇx\n");
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(before);
+
+    // Several cursors per row, with a multi-byte character before the first.
+    // Exercises the running per-row offset across more than one column.
+    let before = indoc!("a ˇxx ˇy\nãã ˇx ˇy\n");
+    let after = indoc!("a  ˇxx ˇy\nãã ˇx  ˇy\n");
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // Tabs have the same problem for the same reason: "a\t" is two bytes but
+    // renders out to the tab stop, so byte offsets treat it as no wider than
+    // "bb" and no padding is inserted.
+    let before = "a\tˇx\nbbˇx\n";
+    let after = "a\tˇx\nbb  ˇx\n";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+}
+
+#[gpui::test]
 async fn test_custom_fallback_highlights(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
