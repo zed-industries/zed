@@ -4056,9 +4056,24 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // If tail following is active and the entry is not yet expanded, we'll
+        // want to anchor the list's scroll position, to prevent it from
+        // automatically scrolling to the end of the compaction context element,
+        // which would feel off, as we assume the user is trying to read it from
+        // top to bottom.
+        if self.list_state.is_following_tail()
+            && !self
+                .entry_view_state
+                .read(cx)
+                .is_compaction_expanded(entry_ix)
+        {
+            self.list_state.pause_following_tail();
+        }
+
         self.entry_view_state.update(cx, |state, _cx| {
             state.toggle_compaction_expansion(entry_ix);
         });
+        self.list_state.remeasure_items(entry_ix..entry_ix + 1);
         self.refresh_thread_search(window, cx);
         cx.notify();
     }
