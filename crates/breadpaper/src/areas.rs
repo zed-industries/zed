@@ -757,7 +757,7 @@ mod tests {
                 .any(|skill| skill.file == onboarding.skill)
         );
         assert_eq!(manifest.surfaces.len(), 1);
-        assert_eq!(manifest.surfaces[0].open, "_weekly/site/index.html");
+        assert_eq!(manifest.surfaces[0].open, "weekly/site/index.html");
         // Every shipped file must have a bundled asset behind it.
         for file in shipped_files(manifest) {
             assert!(
@@ -774,8 +774,8 @@ mod tests {
         scaffold_vault(dir.path()).unwrap();
         assert!(dir.path().join("areas/Timeline.md").is_file());
         assert!(dir.path().join("skills/timeline/week-review.md").is_file());
-        assert!(dir.path().join("_weekly/site/index.html").is_file());
-        assert!(dir.path().join("_weekly/site/data.js").is_file());
+        assert!(dir.path().join("weekly/site/index.html").is_file());
+        assert!(dir.path().join("weekly/site/data.js").is_file());
         assert!(installed_manifest_path(dir.path(), TIMELINE_AREA_ID).is_file());
         // Claude Code bridges are generated for every skill so a `claude`
         // session opened in the vault can invoke them via `/<skill-id>`.
@@ -882,7 +882,7 @@ mod tests {
             vec!["skills/timeline/week-review.md".to_string()]
         );
         assert!(plan.delete.contains(&"areas/Timeline.md".to_string()));
-        assert!(plan.delete.contains(&"_weekly/site/index.html".to_string()));
+        assert!(plan.delete.contains(&"weekly/site/index.html".to_string()));
 
         let outcome = delete_area(dir.path(), TIMELINE_AREA_ID).unwrap();
         assert_eq!(
@@ -891,7 +891,7 @@ mod tests {
         );
         assert!(skill_path.is_file());
         assert!(!dir.path().join("areas/Timeline.md").is_file());
-        assert!(!dir.path().join("_weekly/site").exists());
+        assert!(!dir.path().join("weekly/site").exists());
         // The generated bridges are unmodified, so removal deletes them and
         // prunes the now-empty `.claude` tree.
         assert!(!dir.path().join(".claude").exists());

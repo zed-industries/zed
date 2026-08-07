@@ -1,9 +1,9 @@
 # Wrap Today
 
-Close out **today's** daily note. Read what you planned and did, pull the day's commits, scan the last few days for multi-day context, offer unfinished tasks to the backlog, then append an AI review with suggestions to today's note. Append-only — it never rewrites what you wrote.
+Close out **today's** daily note. Read what you planned and did, pull the day's commits, scan the last few days for multi-day context, reconcile finished tasks, offer unfinished tasks to the backlog, then append an AI review with suggestions to today's note. It never rewrites your prose — the only edit it makes to what you wrote is flipping a task checkbox you confirm.
 
 **Reads:** today's daily note, the prior few daily notes, the backlog file, git commits, GitHub (`gh`) / GitLab (`glab`) as available.
-**Writes (append-only):** today's daily note, the backlog file.
+**Writes:** today's daily note (append the review; check off confirmed tasks), the backlog file.
 
 > **Note paths and filenames are vault-configured.** Read `.breadpaper/config.toml` first: `[daily]` / `[weekly]` set each note kind's `dir` and moment-style `filename` format, and `[backlog]` sets `file`. This skill's examples use the defaults (`daily/YYYY-MM-DD.md`, `weekly/GGGG-[W]WW.md`, `backlog.md`); when the config — or the vault's existing notes — use different names, follow those silently. That's configuration, not a doc mismatch worth reporting.
 
@@ -31,7 +31,17 @@ Deduplicate. Keep repo, short SHA / ref, and message.
 
 Read the previous 2–3 daily notes so the review isn't myopic — catch carried-over tasks, ongoing threads, and multi-day projects. Note anything that has lingered.
 
-## 5. Offer unfinished tasks to the backlog
+## 5. Reconcile finished tasks
+
+Some tasks probably got done today but were never checked off. Cross-reference the unchecked (`- [ ]`) tasks from the note against what actually happened — the commits from step 3 and the decisions/notes captured in step 2.
+
+1. For each unchecked task, judge whether the day's commits or captured notes show it was finished.
+2. If any look done, list them (with the evidence — the commit or note that suggests completion) and ask the user to confirm which to mark done. Default to **none**; only mark what the user explicitly confirms. If nothing looks finished, skip this step silently.
+3. For each confirmed task, flip its box in place (`- [ ]` → `- [x]`) in today's note. This checkbox flip is the **only** edit this skill makes to your own text — leave the task wording and everything else untouched.
+
+A task marked done here is no longer "unfinished," so it drops out of the step 6 backlog offer.
+
+## 6. Offer unfinished tasks to the backlog
 
 The vault keeps a holding pen — the configured backlog file, `backlog.md` by default — with the sections `## Soon`, `## Someday`, and `## Completed` (the Backlog panel in the bottom dock renders it). Unfinished tasks shouldn't die in today's note:
 
@@ -40,9 +50,9 @@ The vault keeps a holding pen — the configured backlog file, `backlog.md` by d
 3. **Deduplicate before appending:** skip any chosen task whose text already appears in `backlog.md` — compare whitespace-insensitively and ignore any ` ✅ YYYY-MM-DD` completion suffix — in **any** section, `## Completed` included. Report skips as "already in backlog: …".
 4. Append the remaining tasks as `- [ ] <task text>` at the end of the matching section. Create `backlog.md` or a missing section heading if needed — never rewrite, reorder, or delete anything already in the file.
 
-Never move a task without the user's answer, and never edit the tasks inside the daily note itself — the note stays append-only.
+Never move a task without the user's answer. Apart from the confirmed checkbox flips in step 5, never edit the tasks inside the daily note — don't rewrite their wording, and don't touch anything else you already wrote.
 
-## 6. Append the review
+## 7. Append the review
 
 Append (never overwrite) a `# Daily Closure` section at the end of today's note:
 
@@ -63,8 +73,8 @@ Append (never overwrite) a `# Daily Closure` section at the end of today's note:
 - One or two concrete, actionable nudges (don't pad)
 ```
 
-Keep it short and factual. Base "carried forward" on the unchecked tasks plus anything the recent-days scan shows lingering. Suffix each task that moved in step 5 with `→ backlog (Soon)` (or `(Someday)`) so the note records where it went; tasks that were skipped as duplicates get `→ already in backlog`.
+Keep it short and factual. Base "carried forward" on the still-unchecked tasks (those you marked done in step 5 belong under `## Done`, not here) plus anything the recent-days scan shows lingering. Suffix each task that moved in step 6 with `→ backlog (Soon)` (or `(Someday)`) so the note records where it went; tasks that were skipped as duplicates get `→ already in backlog`.
 
 ## Output
 
-Show the user the review and confirm it was appended to today's note, including which tasks (if any) moved to the backlog.
+Show the user the review and confirm it was appended to today's note, including which tasks (if any) were marked done in place and which moved to the backlog.

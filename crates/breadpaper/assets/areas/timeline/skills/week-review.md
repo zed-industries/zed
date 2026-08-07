@@ -1,9 +1,9 @@
 # Week Review
 
-Review the previous week's daily notes, GitHub activity, and GitLab (SPI) activity, then produce a summary organized by project, write it to the weekly markdown file, and append a structured entry to the dashboard data (`_weekly/site/data.js`).
+Review the previous week's daily notes, GitHub activity, and GitLab (SPI) activity, then produce a summary organized by project, write it to the weekly markdown file, and append a structured entry to the dashboard data (`weekly/site/data.js`).
 
 **Reads:** the daily and weekly notes, the backlog file, GitHub (`gh`), GitLab (`glab`).
-**Writes (append-only):** the weekly `.md` file, `_weekly/site/data.js`, the backlog file.
+**Writes (append-only):** the weekly `.md` file, `weekly/site/data.js`, the backlog file.
 
 > **Note paths and filenames are vault-configured.** Read `.breadpaper/config.toml` first: `[daily]` / `[weekly]` set each note kind's `dir` and moment-style `filename` format, and `[backlog]` sets `file`. This skill's examples use the defaults (`daily/YYYY-MM-DD.md`, `weekly/GGGG-[W]WW.md`, `backlog.md`); when the config — or the vault's existing notes — use different names, follow those silently. That's configuration, not a doc mismatch worth reporting.
 
@@ -90,7 +90,7 @@ Append (never overwrite) a `# AI Week Review` section at the end of the weekly f
 
 Keep it short and factual. Tag each PR/MR with `[GitHub]` or `[GitLab]`. No commentary unless asked.
 
-## 8. Append to the dashboard (`_weekly/site/data.js`)
+## 8. Append to the dashboard (`weekly/site/data.js`)
 
 The dashboard reads `window.WEEKS` (an array, newest last). Append **one new week object** immediately before the closing `];` of the `window.WEEKS` array. Never rewrite existing entries — new weeks carry their MRs inline with `src` tags.
 
@@ -128,8 +128,8 @@ Schema (match this exactly):
 Rules:
 - Put **every** PR/MR in `prs.created` or `prs.reviewed` with an explicit `src: "github"` or `src: "gitlab"`. `status` applies to `created` entries only.
 - The dashboard computes stats, sparklines, and warnings from this data. It infers **lingering projects** and **carried-over goals** across weeks automatically — you only need accurate `projects` (with `goal` flags), `tasks`, `goals`, and `prs`. Keep project names stable across weeks so lingering detection works (the page canonicalizes common variants, but consistency helps).
-- After editing, verify the file still parses: `node -e "global.window={};require('./_weekly/site/data.js');console.log(window.WEEKS.length,'weeks')"`.
+- After editing, verify the file still parses: `node -e "global.window={};require('./weekly/site/data.js');console.log(window.WEEKS.length,'weeks')"`.
 
 ## Output
 
-Show the user the markdown review (§7). Mention which tasks (if any) moved to the backlog, that the dashboard entry was appended, and that they can open `_weekly/site/index.html` to view it.
+Show the user the markdown review (§7). Mention which tasks (if any) moved to the backlog, that the dashboard entry was appended, and that they can open `weekly/site/index.html` to view it.

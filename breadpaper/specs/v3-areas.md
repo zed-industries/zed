@@ -29,7 +29,7 @@ This realizes VISION Milestone 2 ("Areas & Skills framework") in its first concr
 2. The BreadPaper left-dock panel shows an **"Areas"** section listing each enabled Area beneath the existing Timeline navigator.
 3. Clicking an Area entry opens its explainer doc (e.g. `areas/Timeline.md`) **rendered in viewing mode**, not as a raw editable buffer.
 4. Each Area entry expands to list its **skills**; clicking a skill opens the skill file in viewing mode (its plain-language description + body).
-5. Clicking the Timeline Area's **dashboard** surface opens the weekly progress page (`_weekly/site/index.html`).
+5. Clicking the Timeline Area's **dashboard** surface opens the weekly progress page (`weekly/site/index.html`).
 6. An **Add Area** affordance lists catalog Areas not yet installed and, on add, materializes the Area's files and registers it — the new entry appears in the Areas section without a restart.
 7. A **Remove Area** action **prompts** the user to choose between *deactivate (keep all files)* and *deactivate and delete the Area's shipped files* — and the destructive path **never** deletes user-authored notes (`daily/`, `weekly/` note content).
 8. Removing the Timeline Area does **not** break the Timeline navigator or daily/weekly note creation (they are core, not Area-owned).
@@ -95,16 +95,16 @@ doc     = "areas/Timeline.md"        # vault-relative path the explainer is mate
 # Folders/files created in the vault on install. create-if-missing; never clobber.
 [[scaffold]]
 kind = "dir"
-path = "_weekly/site"
+path = "weekly/site"
 
 [[scaffold]]
 kind   = "file"
-path   = "_weekly/site/index.html"   # vault-relative destination
+path   = "weekly/site/index.html"   # vault-relative destination
 source = "assets/index.html"         # path within the catalog package
 
 [[scaffold]]
 kind   = "file"
-path   = "_weekly/site/data.js"
+path   = "weekly/site/data.js"
 source = "assets/data.seed.js"       # seed feed; the skill appends to it thereafter
 
 # Skills the Area contributes. Materialized to `file`; listed in the panel + explainer.
@@ -114,13 +114,13 @@ name    = "Week Review"
 file    = "skills/timeline/week-review.md"   # vault-relative destination
 summary = "Aggregate the week's notes + PRs/MRs, append a review, feed the dashboard."
 reads   = ["daily/**", "weekly/**", "mcp:github", "mcp:gitlab"]   # declared; not yet enforced
-writes  = ["weekly/<week>.md (append)", "_weekly/site/data.js (append)"]
+writes  = ["weekly/<week>.md (append)", "weekly/site/data.js (append)"]
 
 # Non-skill surfaces the Area exposes in the panel (e.g. a dashboard to open).
 [[surface]]
 kind = "dashboard"
 name = "Weekly Dashboard"
-open = "_weekly/site/index.html"     # opened in the system browser (§7.4)
+open = "weekly/site/index.html"     # opened in the system browser (§7.4)
 ```
 
 Rules:
@@ -143,7 +143,7 @@ After installing Timeline, the vault contains:
   skills/
     timeline/
       week-review.md               # the Week Review skill
-  _weekly/
+  weekly/
     site/
       index.html                   # dashboard viewer
       data.js                      # dashboard feed (appended to by the skill)
@@ -209,10 +209,10 @@ Removal always **asks** (the user's chosen model). A confirmation dialog offers 
 | Choice | Effect |
 |---|---|
 | **Deactivate (keep all files)** | Set `enabled = false` in the registry, drop the Areas-panel entry, stop surfacing its skills. **Nothing on disk is deleted.** Fully reversible via Add. |
-| **Deactivate and delete Area files** | Also delete the files the installed `manifest.toml` records as Area-owned — the explainer doc, skill files, and scaffolded static assets (e.g. `_weekly/site/`). |
+| **Deactivate and delete Area files** | Also delete the files the installed `manifest.toml` records as Area-owned — the explainer doc, skill files, and scaffolded static assets (e.g. `weekly/site/`). |
 
 Guardrails on the destructive path:
-- **User notes are never deleted.** Only files the Area *shipped* (recorded in its installed manifest) are candidates. `daily/` and `weekly/` **note files** authored by the user are out of scope by construction — the Timeline Area owns `_weekly/site/*` and `skills/timeline/*`, not the weekly `.md` notes.
+- **User notes are never deleted.** Only files the Area *shipped* (recorded in its installed manifest) are candidates. `daily/` and `weekly/` **note files** authored by the user are out of scope by construction — the Timeline Area owns `weekly/site/*` and `skills/timeline/*`, not the weekly `.md` notes.
 - **Modified-since-install files are preserved, not deleted.** Before deleting a shipped file, compare it against the catalog source (hash/content). If it differs (the user or their LLM edited it), **keep it** and report it in the result ("kept 1 modified file: `skills/timeline/week-review.md`"). This protects the "everything is editable" edits from silent loss.
 - The dialog **lists exactly what will be deleted** before confirming.
 - Either way, the `[[areas.installed]]` entry is removed from (or disabled in) the registry so the panel no longer shows it.
@@ -236,7 +236,7 @@ Guardrails on the destructive path:
 The Timeline Area is **additive** — the Timeline navigator and daily/weekly create-if-missing stay core and always-on. The Area contributes only the **Week Review skill**, the **weekly dashboard**, and the **explainer doc**.
 
 ### 7.1 Manifest (catalog)
-As in §5.2 (`id = "timeline"`), with one skill (`week-review`), a `dashboard` surface, and scaffold entries for `_weekly/site/index.html` + `_weekly/site/data.js`.
+As in §5.2 (`id = "timeline"`), with one skill (`week-review`), a `dashboard` surface, and scaffold entries for `weekly/site/index.html` + `weekly/site/data.js`.
 
 ### 7.2 The Week Review skill (`skills/timeline/week-review.md`)
 Ported from the author's working `.claude/commands/week-review.md` (reference vault). Its behavior, verbatim in intent:
@@ -245,13 +245,13 @@ Ported from the author's working `.claude/commands/week-review.md` (reference va
 - Collects GitHub PRs (`gh search prs …`) and GitLab MRs (`glab api …`, host `gitlab.spimageworks.com`), dedups.
 - Groups work by project, sets the `goal` flag, picks 2–3 highlights.
 - **Appends** (never overwrites) a `# AI Week Review` section to the weekly `.md`.
-- **Appends one week object** to `window.WEEKS` in `_weekly/site/data.js` (schema fixed by the dashboard), then verifies the file still parses.
+- **Appends one week object** to `window.WEEKS` in `weekly/site/data.js` (schema fixed by the dashboard), then verifies the file still parses.
 
-Its manifest `writes` declaration (`weekly/<week>.md (append)`, `_weekly/site/data.js (append)`) and `reads` (`daily/**`, `weekly/**`, `mcp:github`, `mcp:gitlab`) mirror this exactly — the append-only, augmentation-not-replacement contract (VISION principle 2).
+Its manifest `writes` declaration (`weekly/<week>.md (append)`, `weekly/site/data.js (append)`) and `reads` (`daily/**`, `weekly/**`, `mcp:github`, `mcp:gitlab`) mirror this exactly — the append-only, augmentation-not-replacement contract (VISION principle 2).
 
 ### 7.3 The dashboard
-- `_weekly/site/index.html` — the self-computing static viewer (reads `window.WEEKS`, derives stats, sparklines, lingering-project and carried-over-goal warnings). Shipped as an asset; **not** regenerated by BreadPaper.
-- `_weekly/site/data.js` — seeded with an empty (or single-example) `window.WEEKS` array on install; the Week Review skill appends to it each week. This is the reference implementation of VISION's "dashboards as an output type" (§7.2) — *structured feed → static HTML that computes its own analytics.*
+- `weekly/site/index.html` — the self-computing static viewer (reads `window.WEEKS`, derives stats, sparklines, lingering-project and carried-over-goal warnings). Shipped as an asset; **not** regenerated by BreadPaper.
+- `weekly/site/data.js` — seeded with an empty (or single-example) `window.WEEKS` array on install; the Week Review skill appends to it each week. This is the reference implementation of VISION's "dashboards as an output type" (§7.2) — *structured feed → static HTML that computes its own analytics.*
 - Exposed as a `dashboard` surface row in the panel; clicking it opens `index.html` in the system browser (§7.4).
 
 ### 7.4 The explainer doc (`areas/Timeline.md`)
@@ -260,7 +260,7 @@ The doc opened in viewing mode when the Area is clicked. Content outline (to be 
 - **What it adds** — the Week Review skill and the weekly progress dashboard (the daily/weekly navigator itself is always-on, not part of this Area).
 - **Skills available** — *Week Review*: what it reads (daily notes, GitHub/GitLab), what it writes (appends to the weekly note + the dashboard feed), append-only and safe.
 - **The dashboard** — how to open it, what its warnings mean (time-sinks, lingering projects, carried-over goals).
-- **How to run a review / where the files live** — pointers to `skills/timeline/week-review.md` and `_weekly/site/`.
+- **How to run a review / where the files live** — pointers to `skills/timeline/week-review.md` and `weekly/site/`.
 
 ## 8. Implementation notes (for engineering)
 

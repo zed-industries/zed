@@ -8,16 +8,16 @@ doc     = "areas/Timeline.md"
 # Folders/files created in the vault on install. create-if-missing; never clobber.
 [[scaffold]]
 kind = "dir"
-path = "_weekly/site"
+path = "weekly/site"
 
 [[scaffold]]
 kind   = "file"
-path   = "_weekly/site/index.html"
+path   = "weekly/site/index.html"
 source = "assets/index.html"
 
 [[scaffold]]
 kind   = "file"
-path   = "_weekly/site/data.js"
+path   = "weekly/site/data.js"
 source = "assets/data.seed.js"
 
 [[skill]]
@@ -26,7 +26,7 @@ name    = "Week Review"
 file    = "skills/timeline/week-review.md"
 summary = "Aggregate the week's notes + PRs/MRs, append a review, feed the dashboard."
 reads   = ["daily/**", "weekly/**", "backlog.md", "mcp:github", "mcp:gitlab"]
-writes  = ["weekly/<week>.md (append)", "_weekly/site/data.js (append)", "backlog.md (append)"]
+writes  = ["weekly/<week>.md (append)", "weekly/site/data.js (append)", "backlog.md (append)"]
 
 [[skill]]
 id      = "wrap-today"
@@ -55,7 +55,7 @@ writes  = ["daily/**", "weekly/**", ".breadpaper/state/onboarded/timeline"]
 [[surface]]
 kind = "dashboard"
 name = "Weekly Dashboard"
-open = "_weekly/site/index.html"
+open = "weekly/site/index.html"
 
 # The skill BreadPaper auto-launches when this Area is added (V5).
 [onboarding]

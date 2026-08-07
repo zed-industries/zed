@@ -74,10 +74,10 @@ backlog are never duplicated.
 
 ## The weekly dashboard
 
-`_weekly/site/index.html` — click **Weekly Dashboard** in the Areas section
+`weekly/site/index.html` — click **Weekly Dashboard** in the Areas section
 to open it in your browser. It computes per-week stats, sparklines, goal
 completion, and warnings (time sinks, carry-overs, lingering projects) from
-the feed in `_weekly/site/data.js`. It starts empty; each Week Review appends
+the feed in `weekly/site/data.js`. It starts empty; each Week Review appends
 one entry.
 
 ## Make it yours
