@@ -236,6 +236,22 @@ fn is_unit<T: 'static>(_: &T) -> bool {
     TypeId::of::<T>() == TypeId::of::<()>()
 }
 
+fn deserialize_params<T: DeserializeOwned + 'static>(params: Value) -> serde_json::Result<T> {
+    if TypeId::of::<T>() == TypeId::of::<()>() {
+        serde_json::from_value(Value::Null)
+    } else {
+        serde_json::from_value(params)
+    }
+}
+
+fn deserialize_result<T: DeserializeOwned + 'static>(result: &str) -> serde_json::Result<T> {
+    if TypeId::of::<T>() == TypeId::of::<()>() {
+        serde_json::from_str("null")
+    } else {
+        serde_json::from_str(result)
+    }
+}
+
 /// Language server protocol RPC request message.
 ///
 /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
@@ -256,9 +272,9 @@ where
 struct AnyResponse<'a> {
     jsonrpc: &'a str,
     id: RequestId,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<Error>,
-    #[serde(borrow)]
+    #[serde(borrow, skip_serializing_if = "Option::is_none")]
     result: Option<&'a RawValue>,
 }
 
@@ -1209,12 +1225,12 @@ impl LanguageServer {
     fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
         F: 'static + FnMut(Params, &mut AsyncApp) + Send,
-        Params: DeserializeOwned,
+        Params: DeserializeOwned + 'static,
     {
         let prev_handler = self.notification_handlers.lock().insert(
             method,
             Box::new(move |_, params, cx| {
-                if let Some(params) = serde_json::from_value(params).log_err() {
+                if let Some(params) = deserialize_params(params).log_err() {
                     f(params, cx);
                 }
             }),
@@ -1243,7 +1259,7 @@ impl LanguageServer {
             method,
             Box::new(move |id, params, cx| {
                 if let Some(id) = id {
-                    match serde_json::from_value(params) {
+                    match deserialize_params(params) {
                         Ok(params) => {
                             let response = f(params, cx);
                             let task = cx.foreground_executor().spawn({
@@ -1467,7 +1483,7 @@ impl LanguageServer {
                         executor
                             .spawn(async move {
                                 let response = match result {
-                                    Ok(response) => match serde_json::from_str(&response) {
+                                    Ok(response) => match deserialize_result(&response) {
                                         Ok(deserialized) => Ok(deserialized),
                                         Err(error) => {
                                             log::error!("failed to deserialize response from language server: {}. response from language server: {:?}", error, response);
@@ -2242,6 +2258,86 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_unit_params_request_with_empty_object_params(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: Vec::new(),
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+
+        enum DiagnosticRefreshWithRawParams {}
+
+        impl request::Request for DiagnosticRefreshWithRawParams {
+            type Params = Value;
+            type Result = ();
+            const METHOD: &'static str = request::WorkspaceDiagnosticRefresh::METHOD;
+        }
+
+        let (refresh_tx, refresh_rx) = async_channel::unbounded();
+        server
+            .on_request::<request::WorkspaceDiagnosticRefresh, _, _>(move |(), _| {
+                let refresh_tx = refresh_tx.clone();
+                async move {
+                    refresh_tx.try_send(()).unwrap();
+                    Ok(())
+                }
+            })
+            .detach();
+
+        for params in [serde_json::json!({}), Value::Null] {
+            let response = fake
+                .request::<DiagnosticRefreshWithRawParams>(params, DEFAULT_LSP_REQUEST_TIMEOUT)
+                .await;
+            assert_eq!(response.into_response().unwrap(), ());
+            assert_eq!(refresh_rx.recv().await, Ok(()));
+        }
+    }
+
+    #[gpui::test]
+    async fn test_unit_result_response_with_empty_object(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: Vec::new(),
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+
+        enum ShutdownWithRawResult {}
+
+        impl request::Request for ShutdownWithRawResult {
+            type Params = Value;
+            type Result = Value;
+            const METHOD: &'static str = request::Shutdown::METHOD;
+        }
+
+        fake.set_request_handler::<ShutdownWithRawResult, _, _>(|_, _| async move {
+            Ok(serde_json::json!({}))
+        });
+
+        let response = server
+            .request::<request::Shutdown>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await;
+        assert_eq!(response.into_response().unwrap(), ());
+    }
+
+    #[gpui::test]
     fn test_deserialize_string_digit_id() {
         let json = r#"{"jsonrpc":"2.0","id":"2","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
         let notification = serde_json::from_str::<NotificationOrRequest>(json)
@@ -2266,6 +2362,24 @@ mod tests {
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Int(2);
         assert_eq!(notification.id, Some(expected_id));
+    }
+
+    #[test]
+    fn test_serialize_error_response_has_no_result() {
+        let response = AnyResponse {
+            jsonrpc: JSON_RPC_VERSION,
+            id: RequestId::Int(0),
+            error: Some(Error {
+                code: -32601,
+                message: "Unrecognized method".to_string(),
+                data: None,
+            }),
+            result: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&response).unwrap(),
+            "{\"jsonrpc\":\"2.0\",\"id\":0,\"error\":{\"code\":-32601,\"message\":\"Unrecognized method\",\"data\":null}}"
+        );
     }
 
     #[test]
