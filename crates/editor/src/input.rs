@@ -558,6 +558,15 @@ impl Editor {
                         let end = selection.end;
                         let selection_is_empty = start == end;
                         let language_scope = buffer.language_scope_at(start);
+                        let logical_indent_language_scope = buffer
+                            .language_scope_at(Point::new(start_point.row, existing_indent.len));
+                        let (logical_indent, reset_auto_indent) = logical_indent_for_newline(
+                            &start_point,
+                            &buffer,
+                            logical_indent_language_scope.as_ref(),
+                            existing_indent,
+                        );
+                        existing_indent = logical_indent;
                         let (delimiter, newline_config) = if let Some(language) = &language_scope {
                             let needs_extra_newline = NewlineConfig::insert_extra_newline_brackets(
                                 &buffer,
@@ -727,7 +736,9 @@ impl Editor {
                                 (
                                     start,
                                     new_text,
-                                    *prevent_auto_indent || !apply_syntax_indent,
+                                    *prevent_auto_indent
+                                        || reset_auto_indent
+                                        || !apply_syntax_indent,
                                 )
                             }
                         };
@@ -2617,6 +2628,57 @@ fn documentation_delimiter_for_newline(
     } else {
         None
     }
+}
+
+fn logical_indent_for_newline(
+    start_point: &Point,
+    buffer: &MultiBufferSnapshot,
+    language: Option<&LanguageScope>,
+    existing_indent: IndentSize,
+) -> (IndentSize, bool) {
+    let row = MultiBufferRow(start_point.row);
+    let line_len = buffer.line_len(row);
+    let line = buffer
+        .text_for_range(Point::new(start_point.row, 0)..Point::new(start_point.row, line_len))
+        .collect::<String>();
+
+    if start_point.column == line_len && line.trim().is_empty() {
+        return (IndentSize::spaces(0), true);
+    }
+
+    let Some(language) = language else {
+        return (existing_indent, false);
+    };
+
+    let leading_whitespace_len = line
+        .bytes()
+        .take_while(|byte| matches!(byte, b' ' | b'\t'))
+        .count();
+    let line_content = &line[leading_whitespace_len..];
+    let Some(end_tag) = language::comment_or_string_end_tag(language, line_content) else {
+        return (existing_indent, false);
+    };
+    if start_point.column < (leading_whitespace_len + end_tag.len()) as u32 {
+        return (existing_indent, false);
+    }
+
+    let syntax_range = Point::new(start_point.row, leading_whitespace_len as u32)..*start_point;
+    let Some((node, node_range)) = buffer.syntax_ancestor(syntax_range) else {
+        return (existing_indent, false);
+    };
+    if !node.kind().contains("comment") && !node.kind().contains("string") {
+        return (existing_indent, false);
+    }
+
+    let opening_point = node_range.start.to_point(buffer);
+    if opening_point.row >= start_point.row {
+        return (existing_indent, false);
+    }
+
+    (
+        buffer.indent_size_for_line(MultiBufferRow(opening_point.row)),
+        true,
+    )
 }
 
 fn list_delimiter_for_newline(
