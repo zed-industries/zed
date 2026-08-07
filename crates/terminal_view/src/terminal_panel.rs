@@ -87,8 +87,11 @@ pub fn init(cx: &mut App) {
                 let Some(panel) = workspace.panel::<TerminalPanel>(cx) else {
                     return;
                 };
+                // Taken from the borrow this handler already holds. Reading the workspace entity
+                // back out of `cx` here is the double-lease panic described on `terminal_with_id`.
+                let editor_panes: Vec<Entity<Pane>> = workspace.panes().to_vec();
                 let Some((pane, index, terminal_view, in_dock)) =
-                    panel.read(cx).terminal_with_id(&action.id, cx)
+                    panel.read(cx).terminal_with_id(&action.id, &editor_panes, cx)
                 else {
                     return;
                 };
@@ -722,14 +725,18 @@ impl TerminalPanel {
     ///
     /// The dock is searched first, since that is where all but a deliberately torn-off terminal
     /// lives, and a terminal can only be in one pane.
+    ///
+    /// The editor's panes are handed in rather than read back off `self.workspace`: the only
+    /// caller is an action running against `&mut Workspace`, so gpui has that entity leased out,
+    /// and reading it again from in here is a double-lease panic — which in a release build takes
+    /// the process with it before anything reaches the log.
     fn terminal_with_id(
         &self,
         id: &str,
+        editor_panes: &[Entity<Pane>],
         cx: &App,
     ) -> Option<(Entity<Pane>, usize, Entity<TerminalView>, bool)> {
-        let workspace = self.workspace.upgrade()?;
         let dock_panes: Vec<Entity<Pane>> = self.center.panes().into_iter().cloned().collect();
-        let editor_panes: Vec<Entity<Pane>> = workspace.read(cx).panes().to_vec();
 
         let matching = |pane: &Entity<Pane>| {
             pane.read(cx)
@@ -746,7 +753,7 @@ impl TerminalPanel {
                 return Some((pane.clone(), index, terminal_view, true));
             }
         }
-        for pane in &editor_panes {
+        for pane in editor_panes {
             if let Some((index, terminal_view)) = matching(pane) {
                 return Some((pane.clone(), index, terminal_view, false));
             }
