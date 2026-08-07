@@ -67,9 +67,12 @@ use settings::Settings;
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
-        MimeType::DataTable(_) => 7,
-        MimeType::Html(_) => 6,
-        MimeType::Json(_) => 5,
+        MimeType::DataTable(_) => 8,
+        MimeType::Html(_) => 7,
+        MimeType::Json(_) => 6,
+        // Rank SVG above raster images so a kernel that offers both is shown
+        // as the scalable version.
+        MimeType::Svg(_) => 5,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
         MimeType::Markdown(_) => 2,
@@ -422,6 +425,13 @@ impl Output {
                     display_id,
                 },
                 Err(error) => Output::Message(format!("Failed to load image: {}", error)),
+            },
+            Some(MimeType::Svg(data)) => match ImageView::from_svg(data, cx) {
+                Ok(view) => Output::Image {
+                    content: cx.new(|_| view),
+                    display_id,
+                },
+                Err(error) => Output::Message(format!("Failed to render SVG: {}", error)),
             },
             Some(MimeType::DataTable(data)) => Output::Table {
                 content: cx.new(|cx| TableView::new(data, window, cx)),
