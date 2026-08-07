@@ -312,7 +312,22 @@ async fn create_undo_redo(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn undo_create_prompts_before_trashing_dirty_file(cx: &mut gpui::TestAppContext) {
+async fn undo_create_cancel_trash(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+
+    cx.create_file("c.txt").await;
+
+    cx.undo().await;
+    cx.answer("Cancel");
+    cx.assert_exists("c.txt");
+
+    cx.undo().await;
+    cx.answer("Trash");
+    cx.assert_not_exists("c.txt");
+}
+
+#[gpui::test]
+async fn undo_create_dirty_file(cx: &mut gpui::TestAppContext) {
     let mut cx = TestContext::new(cx).await;
 
     cx.create_file("c.txt").await;

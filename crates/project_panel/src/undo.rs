@@ -588,12 +588,11 @@ impl Inner {
         })
     }
 
-    /// Trashes the specified `project_path`.
+    /// Trashes the specified `project_path` after prompting the user for
+    /// confirmation. If the path has unsaved changes, the prompt also lets the
+    /// user save or discard them.
     ///
-    /// In case the `project_path` has unsaved changes, the user will be
-    /// prompted on whether they'd like to save these changes, as well as
-    /// providing an option to just cancel the trashing, in which case,
-    /// `Ok(None)` is returned.
+    /// Returns `Ok(None)` if the user cancels the operation.
     async fn trash(
         &self,
         project_path: &ProjectPath,
@@ -776,12 +775,7 @@ impl Inner {
             .update_in(cx, |_panel, window, cx| {
                 window.prompt(
                     PromptLevel::Info,
-                    &format!(
-                        // TODO!: Can't just call out "Undoing" here, as this will also get
-                        // called when "Redoing" a trash operation.
-                        "Undoing will move {} to the trash. Do you want to proceed?",
-                        MarkdownInlineCode(name)
-                    ),
+                    &format!("Do you want to trash {}?", MarkdownInlineCode(name)),
                     None,
                     &["Trash", "Cancel"],
                     cx,
