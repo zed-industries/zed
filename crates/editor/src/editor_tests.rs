@@ -3,7 +3,7 @@ use crate::{
     JoinLines,
     code_context_menus::CodeContextMenu,
     edit_prediction_tests::FakeEditPredictionDelegate,
-    element::{StickyHeader, header_jump_data},
+    element::{BreadcrumbListing, StickyHeader, header_jump_data},
     linked_editing_ranges::LinkedEditingRanges,
     mouse_context_menu::MenuPosition,
     runnables::RunnableTasks,
@@ -323,6 +323,369 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
         editor.end_transaction_at(now, cx);
         editor.undo(&Undo, window, cx);
         assert_eq!(editor.text(cx), "12cde6");
+    });
+}
+
+/// Keystroke-dispatched `OpenBreadcrumbNavigation` opens the parent directory listing with the
+/// current file preselected. Drives the real action path (not a method call on the editor).
+#[gpui::test]
+async fn test_open_breadcrumb_navigation_via_keystroke(cx: &mut TestAppContext) {
+    use breadcrumbs::Breadcrumbs;
+    use gpui::KeyBinding;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use util::path;
+    use workspace::Workspace;
+
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "ctrl-shift-b",
+            OpenBreadcrumbNavigation,
+            Some("Editor"),
+        )]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "main.rs": "fn main() {}",
+                "lib.rs": "fn lib() {}",
+            },
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let workspace_window =
+        cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = workspace_window.root(cx).unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace_window, cx);
+    let editor = cx.update(|window, cx| {
+        cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx))
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.toolbar().update(cx, |toolbar, cx| {
+                let breadcrumbs = cx.new(|_| Breadcrumbs::new());
+                toolbar.add_item(breadcrumbs, window, cx);
+            });
+        });
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+    // Draw so EditorElement registers actions and the breadcrumb strip paints.
+    cx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+    cx.run_until_parked();
+
+    cx.simulate_keystrokes("ctrl-shift-b");
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, cx| {
+        let menu = editor
+            .breadcrumb_navigation_menu()
+            .expect("keystroke OpenBreadcrumbNavigation must open a menu entity");
+        let menu = menu.read(cx);
+        match menu.listing() {
+            BreadcrumbListing::Directory {
+                worktree_id: id,
+                path,
+            } => {
+                assert_eq!(*id, worktree_id);
+                assert_eq!(path.as_unix_str(), "src");
+            }
+            other => panic!("opens parent directory listing, got {other:?}"),
+        }
+        let names = menu.entry_names();
+        assert_eq!(
+            names.iter().map(|n| n.as_ref()).collect::<Vec<_>>(),
+            vec!["lib.rs", "main.rs"],
+        );
+        let selected = menu.selected_index().expect("current file preselected");
+        assert_eq!(names[selected].as_ref(), "main.rs");
+    });
+}
+
+/// Single-file worktree (`zed some_file.rs`): action opens Symbols; empty outline falls through.
+#[gpui::test]
+async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppContext) {
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use util::path;
+    use workspace::Workspace;
+
+    static OUTLINE_TOGGLED: AtomicBool = AtomicBool::new(false);
+    fn outline_toggle_for_test(_: gpui::AnyView, _: &mut gpui::Window, _: &mut gpui::App) {
+        OUTLINE_TOGGLED.store(true, Ordering::SeqCst);
+    }
+    let _ = zed_actions::outline::TOGGLE_OUTLINE.set(outline_toggle_for_test);
+    OUTLINE_TOGGLED.store(false, Ordering::SeqCst);
+
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "solo.rs": "fn main() {}",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root/solo.rs").as_ref()], cx).await;
+    project.update(cx, |project, cx| {
+        assert!(
+            project
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .is_single_file(),
+            "fixture must be a single-file worktree"
+        );
+    });
+
+    let workspace_window =
+        cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = workspace_window.root(cx).unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/solo.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace_window, cx);
+    let editor = cx.update(|window, cx| {
+        cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx))
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+    cx.run_until_parked();
+
+    // File-segment click path: open symbols listing for the singleton.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_or_toggle_breadcrumb_listing(
+            crate::element::BreadcrumbSegmentTarget::Symbol {
+                buffer_id,
+                item: None,
+            },
+            window,
+            cx,
+        );
+    });
+    // No language/outline: async load empties, falls through to outline picker, dismisses menu.
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.breadcrumb_navigation_menu().is_none(),
+            "empty outline must dismiss the symbols menu (fall through)"
+        );
+    });
+    assert!(
+        OUTLINE_TOGGLED.load(Ordering::SeqCst),
+        "empty outline must invoke the outline picker fallthrough"
+    );
+
+    // Action path: same Symbols listing for non-navigable singleton.
+    OUTLINE_TOGGLED.store(false, Ordering::SeqCst);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_breadcrumb_navigation_action(&OpenBreadcrumbNavigation, window, cx);
+    });
+    // Before load settles, a Symbols menu is attached.
+    editor.read_with(cx, |editor, cx| {
+        let menu = editor
+            .breadcrumb_navigation_menu()
+            .expect("single-file OpenBreadcrumbNavigation opens symbols listing");
+        assert!(
+            matches!(
+                menu.read(cx).listing(),
+                BreadcrumbListing::Symbols { parent: None, .. }
+            ),
+            "single-file action opens top-level symbols listing"
+        );
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.breadcrumb_navigation_menu().is_none(),
+            "still falls through once empty outline resolves"
+        );
+    });
+    assert!(OUTLINE_TOGGLED.load(Ordering::SeqCst));
+}
+
+/// Symbols listing waits for a delayed LSP document-symbol response (no-cache async load).
+#[gpui::test]
+async fn test_open_breadcrumb_symbols_shows_rows_after_delayed_lsp(cx: &mut TestAppContext) {
+    use futures::channel::oneshot;
+    use settings::DocumentSymbols;
+    use std::sync::Mutex;
+
+    init_test(cx, |_| {});
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.document_symbols = Some(DocumentSymbols::On);
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_symbol_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let (respond_tx, respond_rx) = oneshot::channel::<()>();
+    let respond_rx = Mutex::new(Some(respond_rx));
+    cx.lsp
+        .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(move |_, _| {
+            let rx = respond_rx.lock().unwrap().take();
+            async move {
+                if let Some(rx) = rx {
+                    let _ = rx.await;
+                }
+                #[allow(deprecated)]
+                Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                    lsp::DocumentSymbol {
+                        name: "delayed_fn".into(),
+                        detail: None,
+                        kind: lsp::SymbolKind::FUNCTION,
+                        tags: None,
+                        deprecated: None,
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 20)),
+                        selection_range: lsp::Range::new(
+                            lsp::Position::new(0, 3),
+                            lsp::Position::new(0, 13),
+                        ),
+                        children: None,
+                    },
+                ])))
+            }
+        });
+
+    cx.set_state("fn delayed_fn() {ˇ}");
+    // Fire the debounced document-symbol refresh; keep the oneshot closed so the
+    // response cannot land until we assert the empty loading state.
+    cx.executor()
+        .advance_clock(crate::LSP_REQUEST_DEBOUNCE_TIMEOUT + std::time::Duration::from_millis(100));
+
+    let buffer_id = cx.update_editor(|editor, _window, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .read(cx)
+            .remote_id()
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.open_breadcrumb_navigation(
+            BreadcrumbListing::Symbols {
+                buffer_id,
+                parent: None,
+            },
+            window,
+            cx,
+        );
+    });
+    // Assert the empty/loading state without parking: parking would advance the
+    // fake clock to the LSP request timeout while the oneshot is still closed.
+    cx.update_editor(|editor, _window, cx| {
+        let menu = editor
+            .breadcrumb_navigation_menu()
+            .expect("symbols menu opens while LSP is in flight");
+        let menu = menu.read(cx);
+        assert!(
+            matches!(menu.listing(), BreadcrumbListing::Symbols { .. }),
+            "listing is symbols"
+        );
+        assert!(
+            menu.entry_names().is_empty(),
+            "rows stay empty until the delayed LSP response lands; got {:?}",
+            menu.entry_names()
+        );
+    });
+
+    respond_tx.send(()).ok();
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, _window, cx| {
+        let menu = editor
+            .breadcrumb_navigation_menu()
+            .expect("menu remains open after LSP response");
+        assert_eq!(
+            menu.read(cx)
+                .entry_names()
+                .iter()
+                .map(|n| n.as_ref())
+                .collect::<Vec<_>>(),
+            vec!["fn delayed_fn"],
+            "rows appear once the delayed document-symbol response lands"
+        );
+    });
+}
+
+/// Multibuffer editors fall through to the outline toggle; they must not start path navigation.
+#[gpui::test]
+fn test_open_breadcrumb_navigation_on_multibuffer_does_not_start_navigation(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let buffer_a = cx.new(|cx| language::Buffer::local("fn a() {}", cx));
+    let buffer_b = cx.new(|cx| language::Buffer::local("fn b() {}", cx));
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_a,
+            [Point::new(0, 0)..Point::new(0, 9)],
+            0,
+            cx,
+        );
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_b,
+            [Point::new(0, 0)..Point::new(0, 9)],
+            0,
+            cx,
+        );
+        multi_buffer
+    });
+    let editor = cx.add_window(|window, cx| build_editor(multi_buffer, window, cx));
+
+    _ = editor.update(cx, |editor, window, cx| {
+        assert!(
+            editor.buffer().read(cx).as_singleton().is_none(),
+            "fixture must be a multibuffer"
+        );
+        editor.open_breadcrumb_navigation_action(&OpenBreadcrumbNavigation, window, cx);
+        assert!(
+            editor.breadcrumb_navigation_menu().is_none(),
+            "multibuffer OpenBreadcrumbNavigation must not open a nav menu"
+        );
     });
 }
 

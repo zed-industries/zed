@@ -1,10 +1,11 @@
 use collections::HashMap;
 use git::{repository::RepoPath, status::GitSummary};
-use std::{collections::BTreeMap, ops::Deref, path::Path};
+use std::{collections::BTreeMap, ops::Deref, path::Path, sync::Arc};
 use sum_tree::Cursor;
 use text::Bias;
+use util::paths::{SortMode, SortOrder};
 use util::rel_path::RelPath;
-use worktree::{Entry, PathProgress, PathTarget, Traversal};
+use worktree::{Entry, PathProgress, PathTarget, ProjectEntryId, Traversal};
 
 use super::{RepositoryId, RepositorySnapshot, StatusEntry};
 
@@ -249,4 +250,70 @@ impl AsRef<Entry> for GitEntry {
     fn as_ref(&self) -> &Entry {
         &self.entry
     }
+}
+
+/// Options for [`worktree_child_listing`].
+///
+/// Settings-gated, sorted, filtered, git-aware one-level directory children.
+/// Breadcrumb directory dropdowns use this today; the project panel's flattened-tree
+/// assembly is the intended follow-up consumer (do not refactor the panel pipeline here).
+#[derive(Clone, Copy, Debug)]
+pub struct WorktreeChildListingOptions {
+    pub sort_mode: SortMode,
+    pub sort_order: SortOrder,
+    pub hide_gitignore: bool,
+    pub hide_hidden: bool,
+    /// When false, git status colors are omitted (summaries are zeroed) but ignored-dimming
+    /// still works via [`WorktreeChildListingEntry::is_ignored`].
+    pub git_status_enabled: bool,
+}
+
+/// One child of a worktree path produced by [`worktree_child_listing`].
+#[derive(Clone, Debug)]
+pub struct WorktreeChildListingEntry {
+    pub path: Arc<RelPath>,
+    pub id: ProjectEntryId,
+    pub is_dir: bool,
+    pub is_ignored: bool,
+    pub git_summary: GitSummary,
+}
+
+/// Settings-gated, sorted, filtered, git-aware direct children of `parent_path`.
+///
+/// Shared assembly for reusable one-level listings. Breadcrumbs use this for directory
+/// menus; the project panel's full tree pipeline should adopt it later.
+pub fn worktree_child_listing(
+    worktree_snapshot: &worktree::Snapshot,
+    repo_snapshots: &HashMap<RepositoryId, RepositorySnapshot>,
+    parent_path: &RelPath,
+    options: WorktreeChildListingOptions,
+) -> Vec<WorktreeChildListingEntry> {
+    let mut entries = ChildEntriesGitIter::new(repo_snapshots, worktree_snapshot, parent_path)
+        .filter(|entry| !options.hide_gitignore || !entry.is_ignored)
+        .filter(|entry| !options.hide_hidden || !entry.is_hidden)
+        .map(|entry| entry.to_owned())
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| {
+        util::paths::compare_rel_paths_by(
+            (&*a.path, a.is_file()),
+            (&*b.path, b.is_file()),
+            options.sort_mode,
+            options.sort_order,
+        )
+    });
+
+    entries
+        .into_iter()
+        .map(|entry| WorktreeChildListingEntry {
+            path: entry.path.clone(),
+            id: entry.id,
+            is_dir: entry.is_dir(),
+            is_ignored: entry.is_ignored,
+            git_summary: if options.git_status_enabled {
+                entry.git_summary
+            } else {
+                GitSummary::UNCHANGED
+            },
+        })
+        .collect()
 }

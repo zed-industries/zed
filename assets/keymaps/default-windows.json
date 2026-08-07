@@ -112,6 +112,7 @@
       "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
+      "ctrl-alt-shift-o": "editor::OpenBreadcrumbNavigation",
       "ctrl-'": "editor::ToggleSelectedDiffHunks",
       "ctrl-\"": "editor::ExpandAllDiffHunks",
       "ctrl-i": "editor::ShowSignatureHelp",

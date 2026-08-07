@@ -268,6 +268,7 @@ TBD: Centered layout related settings
 ```json [settings]
   // Editor toolbar related settings
   "toolbar": {
+    // Path and symbol segments are clickable.
     "breadcrumbs": true, // Whether to show breadcrumbs.
     "quick_actions": true, // Whether to show quick action buttons.
     "selections_menu": true, // Whether to show the Selections menu

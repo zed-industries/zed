@@ -102,6 +102,7 @@ pub use editor_settings::{
     ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
     ui_scrollbar_settings_from_raw,
 };
+use element::{BreadcrumbListing, BreadcrumbNavigationMenu};
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
@@ -260,7 +261,7 @@ use ui::{
     prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
 };
 use ui_input::ErasedEditor;
-use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
+use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc, rel_path::RelPath};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
     OpenTerminal, Pane, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection,
@@ -1125,6 +1126,13 @@ pub struct Editor {
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
+    /// Open breadcrumb navigation session (one async-populating menu entity).
+    breadcrumb_navigation_menu: Option<Entity<BreadcrumbNavigationMenu>>,
+    _breadcrumb_navigation_menu_subscription: Option<Subscription>,
+    /// Listing dismissed by the current mouse gesture: the menu's mouse-down-out fires before
+    /// the anchor segment's click, so without this the click would instantly reopen the menu
+    /// it just closed and a segment re-click could never toggle it shut.
+    breadcrumb_listing_dismissed_by_gesture: Option<BreadcrumbListing>,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: TypeIdHashMap<Box<dyn Addon>>,
@@ -2445,6 +2453,9 @@ impl Editor {
             in_project_search: false,
             previous_search_ranges: None,
             breadcrumb_header: None,
+            breadcrumb_navigation_menu: None,
+            _breadcrumb_navigation_menu_subscription: None,
+            breadcrumb_listing_dismissed_by_gesture: None,
             focused_block: None,
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: Default::default(),
@@ -10978,6 +10989,200 @@ impl Editor {
             unnecessary_code_fade: settings.unnecessary_code_fade,
             show_underlines: self.diagnostics_enabled(),
         }
+    }
+
+    /// Open breadcrumb navigation menu entity, if any.
+    pub(crate) fn breadcrumb_navigation_menu(&self) -> Option<&Entity<BreadcrumbNavigationMenu>> {
+        self.breadcrumb_navigation_menu.as_ref()
+    }
+
+    /// Open or switch the single breadcrumb navigation menu to `listing`.
+    pub(crate) fn open_breadcrumb_navigation(
+        &mut self,
+        listing: BreadcrumbListing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let active_file_path = self.active_project_path(cx).map(|path| path.path);
+        let workspace = self.workspace().map(|workspace| workspace.downgrade());
+        let Some(workspace) = workspace else {
+            return;
+        };
+
+        if let Some(menu) = self.breadcrumb_navigation_menu.clone() {
+            menu.update(cx, |menu, cx| {
+                menu.set_listing(listing, false, window, cx);
+            });
+            cx.emit(EditorEvent::BreadcrumbsChanged);
+            cx.notify();
+            return;
+        }
+
+        let editor = cx.entity().downgrade();
+        let menu = BreadcrumbNavigationMenu::new(
+            editor,
+            workspace,
+            listing,
+            active_file_path,
+            false,
+            window,
+            cx,
+        );
+        let subscription = cx.subscribe_in(
+            &menu,
+            window,
+            |this, menu, _: &gpui::DismissEvent, window, cx| {
+                // Restore editor focus only when the menu owned it; a dismissal caused by
+                // clicking into another pane must not steal that pane's focus back.
+                let menu_had_focus = menu.focus_handle(cx).contains_focused(window, cx);
+                // Cleared by the next open_or_toggle (take); effects run before the
+                // gesture's mouse-up, so a frame-scoped clear would fire too early.
+                this.breadcrumb_listing_dismissed_by_gesture =
+                    Some(menu.read(cx).listing().clone());
+                this.breadcrumb_navigation_menu = None;
+                this._breadcrumb_navigation_menu_subscription = None;
+                if menu_had_focus {
+                    window.focus(&this.focus_handle, cx);
+                }
+                cx.emit(EditorEvent::BreadcrumbsChanged);
+                cx.notify();
+            },
+        );
+        self.breadcrumb_navigation_menu = Some(menu);
+        self._breadcrumb_navigation_menu_subscription = Some(subscription);
+        cx.emit(EditorEvent::BreadcrumbsChanged);
+        cx.notify();
+    }
+
+    /// Segment click: toggle if the same listing is already open, otherwise open/switch.
+    pub(crate) fn open_or_toggle_breadcrumb_listing(
+        &mut self,
+        target: element::BreadcrumbSegmentTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let listing = match target {
+            element::BreadcrumbSegmentTarget::Directory {
+                worktree_id, path, ..
+            } => BreadcrumbListing::Directory { worktree_id, path },
+            element::BreadcrumbSegmentTarget::Symbol { buffer_id, item } => {
+                BreadcrumbListing::Symbols {
+                    buffer_id,
+                    parent: item,
+                }
+            }
+        };
+
+        if self.breadcrumb_listing_dismissed_by_gesture.take() == Some(listing.clone()) {
+            return;
+        }
+
+        if let Some(menu) = self.breadcrumb_navigation_menu.clone()
+            && menu.read(cx).listing() == &listing
+        {
+            self.dismiss_breadcrumb_navigation(window, cx);
+            return;
+        }
+
+        self.open_breadcrumb_navigation(listing, window, cx);
+    }
+
+    pub(crate) fn dismiss_breadcrumb_navigation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(menu) = self.breadcrumb_navigation_menu.take() {
+            self._breadcrumb_navigation_menu_subscription = None;
+            if menu.focus_handle(cx).contains_focused(window, cx) {
+                window.focus(&self.focus_handle, cx);
+            }
+            cx.emit(EditorEvent::BreadcrumbsChanged);
+            cx.notify();
+        }
+    }
+
+    /// Map buffer-local outline items into multibuffer anchor space.
+    pub(crate) fn map_text_outline_items(
+        &self,
+        text_items: &[OutlineItem<text::Anchor>],
+        multi_buffer_snapshot: &MultiBufferSnapshot,
+    ) -> Vec<OutlineItem<Anchor>> {
+        text_items
+            .iter()
+            .filter_map(|item| {
+                crate::document_symbols::text_outline_item_to_multibuffer(
+                    item,
+                    multi_buffer_snapshot,
+                )
+            })
+            .collect()
+    }
+
+    /// Opens breadcrumb navigation for the active file.
+    pub fn open_breadcrumb_navigation_action(
+        &mut self,
+        _: &OpenBreadcrumbNavigation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let toggle_outline = |window: &mut Window, cx: &mut Context<Self>| {
+            if let Some(callback) = zed_actions::outline::TOGGLE_OUTLINE.get() {
+                callback(cx.entity().to_any_view(), window, cx);
+            }
+        };
+
+        // No breadcrumb strip → nothing to anchor the menu on; use the outline picker.
+        if !EditorSettings::get_global(cx).toolbar.breadcrumbs {
+            toggle_outline(window, cx);
+            return;
+        }
+
+        let Some(buffer) = self.buffer().read(cx).as_singleton() else {
+            toggle_outline(window, cx);
+            return;
+        };
+        let buffer_id = buffer.read(cx).remote_id();
+
+        let project_path = self.active_project_path(cx);
+        let is_navigable = project_path.as_ref().is_some_and(|project_path| {
+            let is_single_file = self
+                .project()
+                .and_then(|project| {
+                    project
+                        .read(cx)
+                        .worktree_for_id(project_path.worktree_id, cx)
+                })
+                .is_some_and(|worktree| worktree.read(cx).is_single_file());
+            !is_single_file
+        });
+
+        if is_navigable && let Some(project_path) = project_path {
+            let parent_path = project_path
+                .path
+                .parent()
+                .map(|parent| parent.into_arc())
+                .unwrap_or_else(|| RelPath::empty().into_arc());
+            self.open_breadcrumb_navigation(
+                BreadcrumbListing::Directory {
+                    worktree_id: project_path.worktree_id,
+                    path: parent_path,
+                },
+                window,
+                cx,
+            );
+            return;
+        }
+
+        // Non-navigable singleton: open symbols at the file segment (async; empty → outline picker).
+        self.open_breadcrumb_navigation(
+            BreadcrumbListing::Symbols {
+                buffer_id,
+                parent: None,
+            },
+            window,
+            cx,
+        );
     }
 
     fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<HighlightedText>> {

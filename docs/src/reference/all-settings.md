@@ -1683,6 +1683,8 @@ When trusted, project settings are synchronized automatically, language and MCP 
 
 Each option controls displaying of a particular toolbar element. If all elements are hidden, the editor toolbar is not displayed.
 
+When breadcrumbs are enabled, path and symbol segments are clickable with project-panel-consistent listings; use {#action editor::OpenBreadcrumbNavigation} to open navigation from the keyboard.
+
 ## Use System Tabs
 
 - Description: Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).

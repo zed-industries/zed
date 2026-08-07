@@ -3,7 +3,7 @@ use std::ops::Range;
 use collections::HashMap;
 use futures::FutureExt;
 use futures::future::join_all;
-use gpui::{App, Context, HighlightStyle, Task};
+use gpui::{App, Context, HighlightStyle, Task, Window};
 use itertools::Itertools as _;
 use language::language_settings::LanguageSettings;
 use language::{Buffer, OutlineItem};
@@ -17,7 +17,8 @@ use unicode_segmentation::UnicodeSegmentation as _;
 use util::maybe;
 
 use crate::display_map::DisplaySnapshot;
-use crate::{Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT};
+use crate::scroll::Autoscroll;
+use crate::{Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, SelectionEffects};
 
 impl Editor {
     /// Returns all document outline items for a buffer, using LSP or
@@ -93,37 +94,7 @@ impl Editor {
                 item.range.start.cmp(&cursor_text_anchor, buffer).is_le()
                     && item.range.end.cmp(&cursor_text_anchor, buffer).is_ge()
             })
-            .filter_map(|item| {
-                let range_start = multi_buffer_snapshot.anchor_in_buffer(item.range.start)?;
-                let range_end = multi_buffer_snapshot.anchor_in_buffer(item.range.end)?;
-                let source_range_for_text_start =
-                    multi_buffer_snapshot.anchor_in_buffer(item.source_range_for_text.start)?;
-                let source_range_for_text_end =
-                    multi_buffer_snapshot.anchor_in_buffer(item.source_range_for_text.end)?;
-                Some(OutlineItem {
-                    depth: item.depth,
-                    range: range_start..range_end,
-                    selection_range: multi_buffer_snapshot
-                        .anchor_in_buffer(item.selection_range.start)?
-                        ..multi_buffer_snapshot.anchor_in_buffer(item.selection_range.end)?,
-                    source_range_for_text: source_range_for_text_start..source_range_for_text_end,
-                    text: item.text.clone(),
-                    highlight_ranges: item.highlight_ranges.clone(),
-                    name_ranges: item.name_ranges.clone(),
-                    body_range: item.body_range.as_ref().and_then(|r| {
-                        Some(
-                            multi_buffer_snapshot.anchor_in_buffer(r.start)?
-                                ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
-                        )
-                    }),
-                    annotation_range: item.annotation_range.as_ref().and_then(|r| {
-                        Some(
-                            multi_buffer_snapshot.anchor_in_buffer(r.start)?
-                                ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
-                        )
-                    }),
-                })
-            })
+            .filter_map(|item| text_outline_item_to_multibuffer(item, multi_buffer_snapshot))
             .collect::<Vec<_>>();
 
         let mut prev_depth = None;
@@ -134,6 +105,24 @@ impl Editor {
         });
 
         Some((buffer.remote_id(), symbols))
+    }
+
+    /// Move the cursor to `item` and scroll it into view (symbol breadcrumb confirm).
+    pub(crate) fn navigate_to_outline_item(
+        &mut self,
+        item: &OutlineItem<Anchor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.change_selections(
+            SelectionEffects::scroll(Autoscroll::center()),
+            window,
+            cx,
+            |s| {
+                s.select_ranges([item.selection_range.start..item.selection_range.start]);
+            },
+        );
+        window.focus(&self.focus_handle, cx);
     }
 
     /// Fetches document symbols from the LSP for buffers that have the setting
@@ -241,6 +230,42 @@ fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
     LanguageSettings::for_buffer(buffer, cx)
         .document_symbols
         .lsp_enabled()
+}
+
+/// Lifts a buffer-local outline item's anchors into the multibuffer's anchor space, dropping
+/// the item if any of its anchors don't resolve (e.g. the buffer has no excerpts anymore).
+pub(crate) fn text_outline_item_to_multibuffer(
+    item: &OutlineItem<text::Anchor>,
+    multi_buffer_snapshot: &MultiBufferSnapshot,
+) -> Option<OutlineItem<Anchor>> {
+    let range_start = multi_buffer_snapshot.anchor_in_buffer(item.range.start)?;
+    let range_end = multi_buffer_snapshot.anchor_in_buffer(item.range.end)?;
+    let source_range_for_text_start =
+        multi_buffer_snapshot.anchor_in_buffer(item.source_range_for_text.start)?;
+    let source_range_for_text_end =
+        multi_buffer_snapshot.anchor_in_buffer(item.source_range_for_text.end)?;
+    Some(OutlineItem {
+        depth: item.depth,
+        range: range_start..range_end,
+        selection_range: multi_buffer_snapshot.anchor_in_buffer(item.selection_range.start)?
+            ..multi_buffer_snapshot.anchor_in_buffer(item.selection_range.end)?,
+        source_range_for_text: source_range_for_text_start..source_range_for_text_end,
+        text: item.text.clone(),
+        highlight_ranges: item.highlight_ranges.clone(),
+        name_ranges: item.name_ranges.clone(),
+        body_range: item.body_range.as_ref().and_then(|r| {
+            Some(
+                multi_buffer_snapshot.anchor_in_buffer(r.start)?
+                    ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
+            )
+        }),
+        annotation_range: item.annotation_range.as_ref().and_then(|r| {
+            Some(
+                multi_buffer_snapshot.anchor_in_buffer(r.start)?
+                    ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
+            )
+        }),
+    })
 }
 
 /// Finds where the symbol name appears in the buffer and returns combined
@@ -788,27 +813,26 @@ mod tests {
                 Point::new(1, 7)
             );
 
-            // Verify all highlight ranges are valid byte boundaries in the text
-            for (range, _style) in &symbol.highlight_ranges {
+            // search_start lands inside the 2-byte 'α'. Pin concrete byte ranges so this
+            // cannot pass with an empty loop: name is "test" at 3..7 inside "fn test".
+            assert_eq!(symbol.text, "fn test");
+            assert_eq!(symbol.text.len(), 7);
+            assert_eq!(symbol.name_ranges, vec![3..7]);
+            assert_eq!(&symbol.text[3..7], "test");
+            let highlight_ranges: Vec<std::ops::Range<usize>> = symbol
+                .highlight_ranges
+                .iter()
+                .map(|(range, _)| range.clone())
+                .collect();
+            for range in &highlight_ranges {
                 assert!(
-                    symbol.text.is_char_boundary(range.start),
-                    "highlight range start {} is not a char boundary in {:?}",
-                    range.start,
+                    symbol.text.is_char_boundary(range.start)
+                        && symbol.text.is_char_boundary(range.end)
+                        && range.end <= symbol.text.len(),
+                    "invalid highlight range {range:?} in {:?}",
                     symbol.text
                 );
-                assert!(
-                    symbol.text.is_char_boundary(range.end),
-                    "highlight range end {} is not a char boundary in {:?}",
-                    range.end,
-                    symbol.text
-                );
-                assert!(
-                    range.end <= symbol.text.len(),
-                    "highlight range end {} exceeds text length {} for {:?}",
-                    range.end,
-                    symbol.text.len(),
-                    symbol.text
-                );
+                let _ = &symbol.text[range.clone()];
             }
         });
     }

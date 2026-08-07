@@ -140,6 +140,7 @@
       "ctrl-shift-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
+      "cmd-alt-shift-o": "editor::OpenBreadcrumbNavigation",
       "cmd-'": "editor::ToggleSelectedDiffHunks",
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "git::Blame",
