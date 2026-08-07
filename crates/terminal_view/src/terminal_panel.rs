@@ -17,6 +17,8 @@ use gpui::{
 };
 use itertools::Itertools;
 use project::{Fs, Project};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
@@ -52,6 +54,18 @@ actions!(
     ]
 );
 
+/// Activates the terminal with the given id, wherever it is.
+///
+/// The id is the `ZED_TERMINAL_ID` that terminal exported into itself, so a tool that can read a
+/// shell's environment can name the terminal it means. Unlike `pane::ActivateItem`, which takes a
+/// tab position, this survives tabs being dragged, closed, split off into another pane, or
+/// respawned when a remote project reconnects.
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = terminal_panel)]
+pub struct ActivateTerminal {
+    pub id: String,
+}
+
 pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
@@ -67,6 +81,24 @@ pub fn init(cx: &mut App) {
                     if !workspace.toggle_panel_focus::<TerminalPanel>(window, cx) {
                         workspace.close_panel::<TerminalPanel>(window, cx);
                     }
+                }
+            });
+            workspace.register_action(|workspace, action: &ActivateTerminal, window, cx| {
+                let Some(panel) = workspace.panel::<TerminalPanel>(cx) else {
+                    return;
+                };
+                let Some((pane, index, terminal_view, in_dock)) =
+                    panel.read(cx).terminal_with_id(&action.id, cx)
+                else {
+                    return;
+                };
+                if in_dock {
+                    panel.update(cx, |panel, cx| {
+                        panel.activate_terminal_view(&pane, index, true, window, cx)
+                    });
+                    workspace.focus_panel::<TerminalPanel>(window, cx);
+                } else {
+                    workspace.activate_item(&terminal_view, true, true, window, cx);
                 }
             });
         },
@@ -682,6 +714,44 @@ impl TerminalPanel {
                 }
             })
             .detach_and_log_err(cx);
+    }
+
+    /// Where the terminal named `id` is, if it is anywhere: the pane holding it, its position in
+    /// that pane, the view itself, and whether that pane belongs to the terminal dock rather than
+    /// the editor area — the two are revealed differently.
+    ///
+    /// The dock is searched first, since that is where all but a deliberately torn-off terminal
+    /// lives, and a terminal can only be in one pane.
+    fn terminal_with_id(
+        &self,
+        id: &str,
+        cx: &App,
+    ) -> Option<(Entity<Pane>, usize, Entity<TerminalView>, bool)> {
+        let workspace = self.workspace.upgrade()?;
+        let dock_panes: Vec<Entity<Pane>> = self.center.panes().into_iter().cloned().collect();
+        let editor_panes: Vec<Entity<Pane>> = workspace.read(cx).panes().to_vec();
+
+        let matching = |pane: &Entity<Pane>| {
+            pane.read(cx)
+                .items()
+                .enumerate()
+                .filter_map(|(index, item)| Some((index, item.act_as::<TerminalView>(cx)?)))
+                .find(|(_, terminal_view)| {
+                    terminal_view.read(cx).terminal().read(cx).zed_terminal_id() == Some(id)
+                })
+        };
+
+        for pane in &dock_panes {
+            if let Some((index, terminal_view)) = matching(pane) {
+                return Some((pane.clone(), index, terminal_view, true));
+            }
+        }
+        for pane in &editor_panes {
+            if let Some((index, terminal_view)) = matching(pane) {
+                return Some((pane.clone(), index, terminal_view, false));
+            }
+        }
+        None
     }
 
     fn terminals_for_task(

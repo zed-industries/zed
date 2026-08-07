@@ -662,12 +662,48 @@ const DEBUG_TERMINAL_HEIGHT: Pixels = px(30.);
 const DEBUG_CELL_WIDTH: Pixels = px(5.);
 const DEBUG_LINE_HEIGHT: Pixels = px(5.);
 
+/// The name a terminal answers to, exported into the terminal itself.
+///
+/// A tool outside Zed can see a shell's environment (on Linux, `/proc/<pid>/environ`) but has no
+/// way to say *which* terminal that shell belongs to: tab position is the only handle Zed offers,
+/// and it moves when tabs are dragged, closed, or respawned on reconnect. Exporting a name the
+/// process carries makes the terminal addressable by something that cannot drift, which is what
+/// [`crate::terminal_panel::ActivateTerminal`] takes.
+pub const ZED_TERMINAL_ID_VAR: &str = "ZED_TERMINAL_ID";
+
+/// How a name already minted for a remote terminal reaches the builder.
+///
+/// A remote terminal's name has to be settled *before* its command is built, because the name
+/// travels inside the invocation that reaches the far side. The builder would otherwise mint a
+/// second one, and the terminal Zed thinks it is holding would answer to a different name than
+/// the shell that is actually running. The builder takes this key back out of the environment,
+/// so it never reaches a shell and never lands in [`CopyTemplate`].
+pub const REMOTE_TERMINAL_ID_VAR: &str = "__ZED_REMOTE_TERMINAL_ID";
+
+static NEXT_TERMINAL_ID: AtomicU64 = AtomicU64::new(1);
+
+/// A name no other live terminal shares. The process id is what keeps two Zed instances on one
+/// machine from both handing out `1`.
+pub fn new_terminal_id() -> String {
+    format!(
+        "{}-{}",
+        std::process::id(),
+        NEXT_TERMINAL_ID.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 /// Inserts Zed-specific environment variables for terminal sessions.
 /// Used by both local terminals and remote terminals (via SSH).
+///
+/// `terminal_id` is inserted rather than defaulted, so a terminal duplicated from another one's
+/// [`CopyTemplate`] — which carries the original's environment — is renamed rather than ending up
+/// as a second terminal claiming the first one's name.
 pub fn insert_zed_terminal_env(
     env: &mut HashMap<String, String>,
     version: &impl std::fmt::Display,
+    terminal_id: &str,
 ) {
+    env.insert(ZED_TERMINAL_ID_VAR.to_string(), terminal_id.to_string());
     env.insert("ZED_TERM".to_string(), "true".to_string());
     env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
     env.insert("TERM".to_string(), "xterm-256color".to_string());
@@ -984,6 +1020,7 @@ impl TerminalBuilder {
         let term = new_term(&config, terminal_bounds, events_tx, alternate_scroll);
 
         let terminal = Terminal {
+            zed_terminal_id: None,
             task: None,
             terminal_type: TerminalType::DisplayOnly,
             subprocess: None,
@@ -1088,7 +1125,13 @@ impl TerminalBuilder {
                     .or_insert_with(|| "en_US.UTF-8".to_string());
             }
 
-            insert_zed_terminal_env(&mut env, &version);
+            // Taken back out rather than read: this key is how a remote terminal's already-minted
+            // name gets here, and it must not survive into the spawned shell or into the template
+            // a duplicated terminal is built from.
+            let terminal_id = env
+                .remove(REMOTE_TERMINAL_ID_VAR)
+                .unwrap_or_else(new_terminal_id);
+            insert_zed_terminal_env(&mut env, &version, &terminal_id);
 
             #[derive(Default)]
             struct ShellParams {
@@ -1257,6 +1300,7 @@ impl TerminalBuilder {
 
             let no_task = task.is_none();
             let terminal = Terminal {
+                zed_terminal_id: Some(terminal_id),
                 task,
                 terminal_type,
                 subprocess,
@@ -1459,6 +1503,10 @@ enum TerminalType {
 }
 
 pub struct Terminal {
+    /// The name this terminal exported into itself as `ZED_TERMINAL_ID`, and the one
+    /// [`crate::terminal_panel::ActivateTerminal`] matches against. `None` for display-only
+    /// terminals, which have no process and so nothing to be pointed at.
+    zed_terminal_id: Option<String>,
     terminal_type: TerminalType,
     /// Set for non-PTY terminals (see [`HeadlessTerminal`]); owns the spawned
     /// subprocess and the task pumping its output into the grid.
@@ -2970,6 +3018,11 @@ impl Terminal {
         }
     }
 
+    /// The name this terminal exported into itself as `ZED_TERMINAL_ID`.
+    pub fn zed_terminal_id(&self) -> Option<&str> {
+        self.zed_terminal_id.as_deref()
+    }
+
     pub fn vi_mode_enabled(&self) -> bool {
         self.vi_mode_enabled
     }
@@ -3378,6 +3431,23 @@ mod tests {
     use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::StdRng};
     use task::{Shell, ShellBuilder};
+
+    #[test]
+    fn test_zed_terminal_id_is_exported_and_replaced() {
+        let mut env = HashMap::default();
+
+        let first = new_terminal_id();
+        insert_zed_terminal_env(&mut env, &"test", &first);
+        assert_eq!(env.get(ZED_TERMINAL_ID_VAR), Some(&first));
+
+        // A duplicated terminal is built from the original's `CopyTemplate`, which carries the
+        // original's environment. The name has to be replaced rather than kept, or two live
+        // terminals answer to one name and `ActivateTerminal` picks whichever it meets first.
+        let second = new_terminal_id();
+        assert_ne!(first, second, "every terminal gets a name of its own");
+        insert_zed_terminal_env(&mut env, &"test", &second);
+        assert_eq!(env.get(ZED_TERMINAL_ID_VAR), Some(&second));
+    }
 
     #[test]
     fn test_init_command_startup_marker_commands_do_not_contain_marker() {
