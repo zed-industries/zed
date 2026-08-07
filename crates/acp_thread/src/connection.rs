@@ -462,7 +462,7 @@ pub trait AgentModelSelector: 'static {
     ///
     /// # Returns
     /// A task resolving to `Ok(())` on success or an error.
-    fn select_model(&self, model_id: AgentModelId, cx: &mut App) -> Task<Result<()>>;
+    fn select_model(&self, model_id: AgentModelId, save_to_settings: bool, cx: &mut App) -> Task<Result<()>>;
 
     /// Retrieves the currently selected model for a specific session (thread).
     ///
@@ -1116,7 +1116,7 @@ mod test_support {
             Task::ready(Ok(AgentModelList::Flat(vec![model])))
         }
 
-        fn select_model(&self, model_id: AgentModelId, _cx: &mut App) -> Task<Result<()>> {
+        fn select_model(&self, model_id: AgentModelId, _save_to_settings: bool, _cx: &mut App) -> Task<Result<()>> {
             self.selected_model.lock().id = model_id;
             Task::ready(Ok(()))
         }
