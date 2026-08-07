@@ -636,7 +636,7 @@ impl Render for MergeConflictIndicator {
         let border_color = cx.theme().colors().text_accent.opacity(0.2);
 
         h_flex()
-            .h(rems_from_px(22.))
+            .h(rems_from_px(22_f32))
             .rounded_sm()
             .border_1()
             .border_color(border_color)

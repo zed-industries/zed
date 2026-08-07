@@ -56,7 +56,7 @@ const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 const TOAST_DURATION: Duration = Duration::from_secs(5);
 
 fn panel_row_height() -> Rems {
-    rems_from_px(26.)
+    rems_from_px(26_f32)
 }
 
 actions!(
@@ -2132,9 +2132,7 @@ impl CollabPanel {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let mut finder = ContactFinder::new(self.user_store.clone(), window, cx);
-                    finder.set_query(self.filter_editor.read(cx).text(cx), window, cx);
-                    finder
+                    ContactFinder::new(self.user_store.clone(), window, cx)
                 });
             });
         }
