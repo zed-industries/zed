@@ -270,8 +270,10 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     // This can be driven by the `language_servers` setting once we have a way for
     // extensions to provide their own default value for that setting.
     let tailwind_languages = [
+        "Angular",
         "Astro",
         "CSS",
+        "Django",
         "ERB",
         "HTML+ERB",
         "HEEx",
