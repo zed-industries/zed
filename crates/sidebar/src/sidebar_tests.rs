@@ -1158,6 +1158,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             // Expanded project header
             ListEntry::ProjectHeader {
                 key: ProjectGroupKey::new(None, expanded_path.clone()),
+                workspaces: Arc::from([workspace.clone()]),
                 label: "expanded-project".into(),
                 highlight_positions: Vec::new(),
                 has_running_threads: false,
@@ -1305,6 +1306,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             // Collapsed project header
             ListEntry::ProjectHeader {
                 key: ProjectGroupKey::new(None, collapsed_path.clone()),
+                workspaces: Arc::from([]),
                 label: "collapsed-project".into(),
                 highlight_positions: Vec::new(),
                 has_running_threads: false,
@@ -6669,6 +6671,11 @@ async fn test_threadless_workspace_shows_new_thread_with_worktree_chip(cx: &mut 
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(project_b.clone(), window, cx);
     });
+    let workspace_ids = multi_workspace.read_with(cx, |mw, _| {
+        mw.workspaces()
+            .map(|workspace| workspace.entity_id())
+            .collect::<HashSet<_>>()
+    });
     let sidebar = setup_sidebar(&multi_workspace, cx);
 
     // Only save a thread for workspace A.
@@ -6676,6 +6683,27 @@ async fn test_threadless_workspace_shows_new_thread_with_worktree_chip(cx: &mut 
 
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
     cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _| {
+        let headers = sidebar
+            .contents
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ListEntry::ProjectHeader { workspaces, .. } => Some(workspaces),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(headers.len(), 1, "expected one project header");
+        assert_eq!(
+            headers[0]
+                .iter()
+                .map(|workspace| workspace.entity_id())
+                .collect::<HashSet<_>>(),
+            workspace_ids,
+            "project header should cache both open workspaces"
+        );
+    });
 
     // Workspace A's thread appears normally. Workspace B (threadless)
     // appears as a "New Thread" button with its worktree chip.
@@ -8312,9 +8340,11 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     let sidebar = setup_sidebar(&multi_workspace, cx);
     let main_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
-    let _worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.test_add_workspace(worktree_project.clone(), window, cx)
-    });
+    let worktree_workspace_id = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(worktree_project.clone(), window, cx)
+        })
+        .entity_id();
 
     // Save a thread for the main project.
     save_thread_metadata(
@@ -8400,6 +8430,17 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         1,
         "linked worktree workspace should be removed after archiving its last thread"
     );
+    sidebar.read_with(cx, |sidebar, _| {
+        assert!(
+            sidebar.contents.entries.iter().all(|entry| match entry {
+                ListEntry::ProjectHeader { workspaces, .. } => workspaces
+                    .iter()
+                    .all(|workspace| workspace.entity_id() != worktree_workspace_id),
+                _ => true,
+            }),
+            "project headers should not cache a removed workspace"
+        );
+    });
 
     multi_workspace.read_with(cx, |mw, _| {
         assert_eq!(
