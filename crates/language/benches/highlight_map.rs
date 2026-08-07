@@ -1,6 +1,7 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use gpui::rgba;
-use language::HighlightMap;
+use language::{HighlightMap, Language};
+use rope::Rope;
 use theme::SyntaxTheme;
 
 fn syntax_theme(highlight_names: &[&str]) -> SyntaxTheme {
@@ -174,5 +175,45 @@ fn bench_style_lookup(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_build_highlight_map, bench_style_lookup);
+/// Iterating highlighted chunks, which happens for every visible span on every
+/// frame. Each chunk carries the captures enclosing it so a theme can fall back
+/// to a more general one, so this covers the cost of building that list.
+fn bench_highlighted_chunks(c: &mut Criterion) {
+    let queries = grammars::load_queries("rust");
+    let Some(highlights) = queries.highlights.as_deref() else {
+        return;
+    };
+    let language = std::sync::Arc::new(
+        Language::new(
+            grammars::load_config("rust"),
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_highlights_query(highlights)
+        .expect("rust highlights query should compile"),
+    );
+
+    let source = Rope::from(SAMPLE.repeat(32).as_str());
+    let mut group = c.benchmark_group("highlighted_chunks");
+    group.bench_function("rust_source", |b| {
+        b.iter(|| black_box(language.highlight_text(black_box(&source), 0..source.len())));
+    });
+    group.finish();
+}
+
+static SAMPLE: &str = r#"
+pub fn resolve(theme: &SyntaxTheme, token: SyntaxTokenId) -> Option<HighlightStyle> {
+    let name = syntax_token::name_for(token)?;
+    match theme.highlight_id(&name) {
+        Some(index) => theme.styles.get(index as usize).copied(),
+        None => None,
+    }
+}
+"#;
+
+criterion_group!(
+    benches,
+    bench_build_highlight_map,
+    bench_style_lookup,
+    bench_highlighted_chunks
+);
 criterion_main!(benches);

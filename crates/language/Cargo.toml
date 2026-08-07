@@ -83,6 +83,7 @@ diffy = "0.4.2"
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
+rope.workspace = true
 ctor.workspace = true
 grammars.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
