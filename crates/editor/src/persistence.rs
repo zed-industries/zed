@@ -378,6 +378,14 @@ VALUES {placeholders};
         folds: Vec<(usize, usize, String, String)>,
     ) -> Result<()> {
         log::debug!("Saving folds for file {path:?} in workspace {workspace_id:?}");
+        // `start` is part of file_folds' primary key, so folds that resolve
+        // to the same start offset (e.g. after anchors are re-resolved
+        // against externally-modified content) would otherwise violate the
+        // UNIQUE constraint. Keep the last occurrence for each start.
+        let mut deduped = std::collections::BTreeMap::new();
+        for fold in folds {
+            deduped.insert(fold.0, fold);
+        }
         self.write(move |conn| {
             // Clear existing folds for this file
             conn.exec_bound(sql!(
@@ -385,7 +393,7 @@ VALUES {placeholders};
             ))?((workspace_id, path.as_ref()))?;
 
             // Insert each fold (matches breakpoints pattern)
-            for (start, end, start_fp, end_fp) in folds {
+            for (start, end, start_fp, end_fp) in deduped.into_values() {
                 conn.exec_bound(sql!(
                     INSERT INTO file_folds (workspace_id, path, start, end, start_fingerprint, end_fingerprint)
                     VALUES (?1, ?2, ?3, ?4, ?5, ?6);
@@ -613,5 +621,31 @@ mod tests {
         assert_eq!(retrieved_b.len(), 1);
         assert_eq!(retrieved_a[0].0, 10); // file_a's fold
         assert_eq!(retrieved_b[0].0, 30); // file_b's fold
+    }
+
+    #[gpui::test]
+    async fn test_save_file_folds_with_duplicate_start_offsets(cx: &mut gpui::TestAppContext) {
+        // Regression test: folds_did_change can produce multiple fold ranges
+        // that resolve to the same `start` offset (e.g. after anchors are
+        // re-resolved against externally-modified buffer content). Since
+        // `start` is part of file_folds' primary key, saving such a batch
+        // must not fail with a UNIQUE constraint violation.
+        let db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
+        let editor_db = cx.update(|cx| EditorDb::global(cx));
+
+        let file_path: Arc<Path> = Arc::from(Path::new("/tmp/test_duplicate_start.rs"));
+        let folds = vec![
+            (100, 150, "first".to_string(), "first_end".to_string()),
+            (100, 200, "second".to_string(), "second_end".to_string()),
+        ];
+
+        editor_db
+            .save_file_folds(workspace_id, file_path.clone(), folds)
+            .await
+            .unwrap();
+
+        let retrieved = editor_db.get_file_folds(workspace_id, &file_path).unwrap();
+        assert_eq!(retrieved.len(), 1);
     }
 }
