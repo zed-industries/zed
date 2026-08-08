@@ -1,5 +1,5 @@
 use edit_prediction_types::{
-    EditPredictionDelegate, EditPredictionIconSet, EditPredictionRequestTrigger,
+    DelayMs, EditPredictionDelegate, EditPredictionIconSet, EditPredictionRequestTrigger,
     PredictedCursorPosition,
 };
 use futures::StreamExt;
@@ -1797,7 +1797,7 @@ impl EditPredictionDelegate for FakeEditPredictionDelegate {
         &mut self,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        _debounce: bool,
+        _debounce_duration: Option<DelayMs>,
         _trigger: edit_prediction_types::EditPredictionRequestTrigger,
         _cx: &mut gpui::Context<Self>,
     ) {
@@ -1876,7 +1876,7 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
         &mut self,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        _debounce: bool,
+        _debounce_duration: Option<DelayMs>,
         _trigger: edit_prediction_types::EditPredictionRequestTrigger,
         _cx: &mut gpui::Context<Self>,
     ) {

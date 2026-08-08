@@ -7,15 +7,13 @@ use crate::{
 };
 use anyhow::Result;
 use edit_prediction_types::{
-    EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
-    EditPredictionRequestTrigger, interpolate_edits,
+    DelayMs, EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason,
+    EditPredictionIconSet, EditPredictionRequestTrigger, interpolate_edits,
 };
 use gpui::{App, Context, Entity, Task, TaskExt};
 use icons::IconName;
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToPointUtf16};
 use std::{ops::Range, sync::Arc, time::Duration};
-
-pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub struct CopilotEditPredictionDelegate {
     completion: Option<(CopilotEditPrediction, EditPreview)>,
@@ -77,15 +75,15 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         &mut self,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
-        debounce: bool,
+        debounce_duration: Option<DelayMs>,
         _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         let copilot = self.copilot.clone();
         self.pending_refresh = Some(cx.spawn(async move |this, cx| {
-            if debounce {
+            if let Some(debounce_duration) = debounce_duration.filter(|delay| delay.0 != 0) {
                 cx.background_executor()
-                    .timer(COPILOT_DEBOUNCE_TIMEOUT)
+                    .timer(Duration::from_millis(debounce_duration.0))
                     .await;
             }
 
@@ -250,12 +248,14 @@ mod tests {
     use lsp::Uri;
     use project::Project;
     use serde_json::json;
-    use settings::{AllLanguageSettingsContent, SettingsStore};
+    use settings::{AllLanguageSettingsContent, DelayMs, SettingsStore};
     use std::future::Future;
     use util::{
         path,
         test::{TextRangeMarker, marked_text_ranges_by},
     };
+
+    const COPILOT_TEST_DEBOUNCE: Duration = Duration::from_millis(75);
 
     #[gpui::test(iterations = 10)]
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -318,7 +318,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.context_menu_visible());
             assert!(editor.has_active_edit_prediction());
@@ -367,7 +367,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_edit_prediction());
@@ -399,7 +399,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, window, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_edit_prediction());
@@ -424,7 +424,7 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
         });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.editor(|editor, _, cx| {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
@@ -532,7 +532,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
 
@@ -579,7 +579,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
 
@@ -662,7 +662,7 @@ mod tests {
         cx.update_editor(|editor, window, cx| {
             editor.show_edit_prediction(&Default::default(), window, cx)
         });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
@@ -670,7 +670,7 @@ mod tests {
 
             editor.backspace(&Default::default(), window, cx);
         });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.run_until_parked();
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
@@ -679,7 +679,7 @@ mod tests {
 
             editor.backspace(&Default::default(), window, cx);
         });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.run_until_parked();
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
@@ -760,7 +760,7 @@ mod tests {
             });
             editor.show_edit_prediction(&Default::default(), window, cx);
         });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         _ = editor.update_in(cx, |editor, _, _| {
             assert!(editor.has_active_edit_prediction());
         });
@@ -829,7 +829,7 @@ mod tests {
         );
 
         // Ensure the new suggestion is displayed when the debounce timeout expires.
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         _ = editor.update(cx, |editor, _| {
             assert!(editor.has_active_edit_prediction());
         });
@@ -906,7 +906,7 @@ mod tests {
         cx.update_editor(|editor, window, cx| {
             editor.show_edit_prediction(&Default::default(), window, cx)
         });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_edit_prediction());
@@ -936,7 +936,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_edit_prediction());
@@ -966,7 +966,7 @@ mod tests {
                 },
             }],
         );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         cx.update_editor(|editor, _, cx| {
             assert!(editor.context_menu_visible());
             assert!(editor.has_active_edit_prediction());
@@ -1081,7 +1081,7 @@ mod tests {
             );
         });
 
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         assert!(copilot_requests.try_recv().is_err());
 
         _ = editor.update(cx, |editor, window, cx| {
@@ -1097,7 +1097,7 @@ mod tests {
             );
         });
 
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        executor.advance_clock(COPILOT_TEST_DEBOUNCE);
         assert!(copilot_requests.try_recv().is_ok());
     }
 
@@ -1165,7 +1165,18 @@ mod tests {
             cx.set_global(store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
-                store.update_user_settings(cx, |settings| f(&mut settings.project.all_languages));
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .copilot
+                        .get_or_insert_default()
+                        .prediction_debounce =
+                        Some(DelayMs(COPILOT_TEST_DEBOUNCE.as_millis() as u64));
+                    f(&mut settings.project.all_languages);
+                });
             });
         });
     }

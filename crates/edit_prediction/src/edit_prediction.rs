@@ -25,7 +25,7 @@ use copilot::{Copilot, Reinstall};
 use credentials_provider::CredentialsProvider;
 use db::kvp::{Dismissable, KeyValueStore};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
-use edit_prediction_types::EditPredictionRequestTrigger;
+use edit_prediction_types::{DelayMs, EditPredictionRequestTrigger};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use futures::{
     AsyncReadExt as _, FutureExt as _, StreamExt as _,
@@ -2305,6 +2305,7 @@ impl EditPredictionStore {
         project: Entity<Project>,
         buffer: Entity<Buffer>,
         position: language::Anchor,
+        debounce_duration: Option<DelayMs>,
         trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
@@ -2314,29 +2315,30 @@ impl EditPredictionStore {
 
         let trigger = predict_edits_request_trigger_from_editor_trigger(trigger);
 
-        self.queue_prediction_refresh(project.clone(), buffer.entity_id(), cx, move |this, cx| {
-            let Some(request_task) = this
-                .update(cx, |this, cx| {
-                    this.request_prediction_internal(
-                        project.clone(),
-                        buffer.clone(),
-                        position,
-                        trigger,
-                        cx,
-                    )
-                })
-                .log_err()
-            else {
-                return Task::ready(anyhow::Ok(None));
-            };
+        self.queue_prediction_refresh(project.clone(), buffer.entity_id(), debounce_duration, cx, move |this, cx| {
+                let Some(request_task) = this
+                    .update(cx, |this, cx| {
+                        this.request_prediction_internal(
+                            project.clone(),
+                            buffer.clone(),
+                            position,
+                            trigger,
+                            cx,
+                        )
+                    })
+                    .log_err()
+                else {
+                    return Task::ready(anyhow::Ok(None));
+                };
 
-            cx.spawn(async move |_cx| {
-                request_task.await.map(|prediction_result| {
-                    prediction_result
-                        .map(|prediction_result| (prediction_result, buffer.entity_id()))
+                cx.spawn(async move |_cx| {
+                    request_task.await.map(|prediction_result| {
+                        prediction_result
+                            .map(|prediction_result| (prediction_result, buffer.entity_id()))
+                    })
                 })
-            })
-        })
+            },
+        )
     }
 
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
@@ -2509,6 +2511,7 @@ impl EditPredictionStore {
         &mut self,
         project: Entity<Project>,
         throttle_entity: EntityId,
+        debounce_duration: Option<DelayMs>,
         cx: &mut Context<Self>,
         do_refresh: impl FnOnce(
             WeakEntity<Self>,
@@ -2537,6 +2540,12 @@ impl EditPredictionStore {
         let throttle_at_enqueue = project_state.last_edit_prediction_refresh;
 
         let task = cx.spawn(async move |this, cx| {
+            if let Some(debounce_duration) = debounce_duration.filter(|delay| delay.0 != 0) {
+                cx.background_executor()
+                    .timer(Duration::from_millis(debounce_duration.0))
+                    .await;
+            }
+
             let throttle_wait = this
                 .update(cx, |this, cx| {
                     let project_state = this.get_or_init_project(&project, cx);
