@@ -619,6 +619,17 @@ pub mod agent {
         pub base_ref: SharedString,
     }
 
+    /// Opens a new agent thread to fix an editor diagnostic.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct FixDiagnosticWithAgent {
+        pub path: SharedString,
+        /// The one-based line containing the diagnostic.
+        pub line: u32,
+        pub message: SharedString,
+    }
+
     /// A single merge conflict region extracted from a file.
     #[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema)]
     pub struct ConflictContent {
