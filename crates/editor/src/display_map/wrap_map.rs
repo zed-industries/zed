@@ -7,7 +7,7 @@ use super::{
 
 use futures_lite::future::yield_now;
 use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
-use language::{LanguageAwareStyling, Point};
+use language::{LanguageAwareStyling, Point, language_settings::SoftWrapIndent};
 use multi_buffer::RowInfo;
 use std::{cmp, collections::VecDeque, mem, ops::Range, sync::LazyLock, time::Duration};
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
@@ -35,6 +35,7 @@ pub struct WrapMap {
     interpolated_edits: WrapPatch,
     edits_since_sync: WrapPatch,
     wrap_width: Option<Pixels>,
+    soft_wrap_indent: SoftWrapIndent,
     background_task: Option<Task<()>>,
     font_with_size: (Font, Pixels),
 }
@@ -123,6 +124,7 @@ impl WrapMap {
             let mut this = Self {
                 font_with_size: (font, font_size),
                 wrap_width: None,
+                soft_wrap_indent: SoftWrapIndent::default(),
                 pending_edits: Default::default(),
                 interpolated_edits: Default::default(),
                 edits_since_sync: Default::default(),
@@ -192,6 +194,22 @@ impl WrapMap {
     }
 
     #[ztracing::instrument(skip_all)]
+    pub fn set_soft_wrap_indent(&mut self, indent: SoftWrapIndent, cx: &mut Context<Self>) -> bool {
+        if indent == self.soft_wrap_indent {
+            return false;
+        }
+
+        self.soft_wrap_indent = indent;
+        self.rewrap(cx);
+        true
+    }
+
+    #[ztracing::instrument(skip_all)]
+    fn indent_adjustment(&self) -> gpui::IndentAdjustment {
+        indent_adjustment_for(self.soft_wrap_indent, self.snapshot.tab_snapshot.tab_size)
+    }
+
+    #[ztracing::instrument(skip_all)]
     fn rewrap(&mut self, cx: &mut Context<Self>) {
         self.background_task.take();
         self.interpolated_edits.clear();
@@ -216,14 +234,22 @@ impl WrapMap {
                     tab_snapshot,
                     &tab_edits,
                     wrap_width,
+                    self.indent_adjustment(),
                     &mut line_wrapper,
                 ));
                 self.snapshot = new_snapshot;
                 self.edits_since_sync = self.edits_since_sync.compose(&edits);
             } else {
+                let indent_adjustment = self.indent_adjustment();
                 let task = cx.background_spawn(async move {
                     let edits = new_snapshot
-                        .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
+                        .update(
+                            tab_snapshot,
+                            &tab_edits,
+                            wrap_width,
+                            indent_adjustment,
+                            &mut line_wrapper,
+                        )
                         .await;
                     (new_snapshot, edits)
                 });
@@ -310,16 +336,24 @@ impl WrapMap {
                     tab_snapshot,
                     &tab_edits,
                     wrap_width,
+                    self.indent_adjustment(),
                     &mut line_wrapper,
                 ));
                 self.snapshot = snapshot;
                 self.edits_since_sync = self.edits_since_sync.compose(&wrap_edits);
             } else {
+                let indent_adjustment = self.indent_adjustment();
                 let update_task = cx.background_spawn(async move {
                     let mut edits = Patch::default();
                     for (tab_snapshot, tab_edits) in pending_edits {
                         let wrap_edits = snapshot
-                            .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
+                            .update(
+                                tab_snapshot,
+                                &tab_edits,
+                                wrap_width,
+                                indent_adjustment,
+                                &mut line_wrapper,
+                            )
                             .await;
                         edits = edits.compose(&wrap_edits);
                     }
@@ -464,6 +498,7 @@ impl WrapSnapshot {
         new_tab_snapshot: TabSnapshot,
         tab_edits: &[TabEdit],
         wrap_width: Pixels,
+        indent_adjustment: gpui::IndentAdjustment,
         line_wrapper: &mut LineWrapper,
     ) -> WrapPatch {
         #[derive(Debug)]
@@ -557,7 +592,9 @@ impl WrapSnapshot {
                     }
 
                     let mut prev_boundary_ix = 0;
-                    for boundary in line_wrapper.wrap_line(&line_fragments, wrap_width) {
+                    for boundary in
+                        line_wrapper.wrap_line(&line_fragments, wrap_width, indent_adjustment)
+                    {
                         let wrapped = &line[prev_boundary_ix..boundary.ix];
                         push_isomorphic(&mut edit_transforms, TextSummary::from(wrapped));
                         edit_transforms.push(Transform::wrap(boundary.next_indent));
@@ -791,7 +828,7 @@ impl WrapSnapshot {
         let (.., item) = self.transforms.find::<WrapPoint, _>(
             (),
             &WrapPoint::new(row + WrapRow(1), 0),
-            Bias::Right,
+            Bias::Left,
         );
         item.and_then(|transform| {
             if transform.is_isomorphic() {
@@ -1186,6 +1223,18 @@ impl Iterator for WrapRows<'_> {
     }
 }
 
+fn indent_adjustment_for(
+    indent: SoftWrapIndent,
+    tab_size: std::num::NonZeroU32,
+) -> gpui::IndentAdjustment {
+    match indent {
+        SoftWrapIndent::None => gpui::IndentAdjustment::NoIndent,
+        SoftWrapIndent::Same => gpui::IndentAdjustment::SameIndent,
+        SoftWrapIndent::ExtraOne => gpui::IndentAdjustment::ExtraColumns(tab_size.get()),
+        SoftWrapIndent::ExtraTwo => gpui::IndentAdjustment::ExtraColumns(tab_size.get() * 2),
+    }
+}
+
 impl Transform {
     #[ztracing::instrument(skip_all)]
     fn isomorphic(summary: TextSummary) -> Self {
@@ -1379,6 +1428,141 @@ mod tests {
     use theme::LoadThemes;
 
     #[gpui::test]
+    async fn test_soft_wrap_indent(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let text = "fn main() {\n    let x = 1;\n    let y = 2;\n}";
+        let text_system = cx.read(|cx| cx.text_system().clone());
+        let tab_size = 4.try_into().unwrap();
+        let font = test_font();
+        let _font_id = text_system.resolve_font(&font);
+        let font_size = px(14.0);
+
+        // Wrap width small enough to wrap "    let x = 1;"
+        let soft_wrapping = Some(font_size * 8.0);
+
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
+        let tabs_snapshot = tab_map.set_max_expansion_column(32);
+        let (wrap_map, _) = cx.update(|cx| {
+            WrapMap::new(
+                tabs_snapshot.clone(),
+                font.clone(),
+                font_size,
+                soft_wrapping,
+                cx,
+            )
+        });
+
+        // Test None
+        wrap_map.update(cx, |map, cx| {
+            map.set_soft_wrap_indent(language::language_settings::SoftWrapIndent::None, cx)
+        });
+        let wrap_snapshot = wrap_map.update(cx, |map, _cx| map.snapshot.clone());
+        assert_eq!(
+            wrap_snapshot.text(),
+            "fn main() {\n    let x = \n1;\n    let y = \n2;\n}"
+        );
+
+        // Test Same
+        wrap_map.update(cx, |map, cx| {
+            map.set_soft_wrap_indent(language::language_settings::SoftWrapIndent::Same, cx)
+        });
+        let wrap_snapshot = wrap_map.update(cx, |map, _cx| map.snapshot.clone());
+        assert_eq!(
+            wrap_snapshot.text(),
+            "fn main() {\n    let x = \n    1;\n    let y = \n    2;\n}"
+        );
+
+        // Test ExtraOne
+        wrap_map.update(cx, |map, cx| {
+            map.set_soft_wrap_indent(language::language_settings::SoftWrapIndent::ExtraOne, cx)
+        });
+        let wrap_snapshot = wrap_map.update(cx, |map, _cx| map.snapshot.clone());
+        assert_eq!(
+            wrap_snapshot.text(),
+            "fn main() {\n    let x = \n        1;\n    let y = \n        2;\n}"
+        );
+
+        // Test ExtraTwo
+        wrap_map.update(cx, |map, cx| {
+            map.set_soft_wrap_indent(language::language_settings::SoftWrapIndent::ExtraTwo, cx)
+        });
+        let wrap_snapshot = wrap_map.update(cx, |map, _cx| map.snapshot.clone());
+        assert_eq!(
+            wrap_snapshot.text(),
+            "fn main() {\n    let x = \n            1;\n    let y = \n            2;\n}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_soft_wrap_indent_returns_some_for_zero_indent(cx: &mut gpui::TestAppContext) {
+        // Regression test for a bug where soft_wrap_indent() returned None
+        // instead of Some(0) for continuation rows with zero indent.
+        //
+        // When indent=0, the wrap transform's output lands exactly on
+        // WrapPoint(row+1, 0). Bias::Right skipped past it onto the next text
+        // item (returning None), Bias::Left stops on it.
+        init_test(cx);
+
+        let text = "    hello world and more text here";
+        let text_system = cx.read(|cx| cx.text_system().clone());
+        let tab_size = 4.try_into().unwrap();
+        let font = test_font();
+        let _font_id = text_system.resolve_font(&font);
+        let font_size = px(14.0);
+
+        // Narrow enough to force a wrap within the line.
+        let soft_wrapping = Some(font_size * 8.0);
+
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
+        let tabs_snapshot = tab_map.set_max_expansion_column(32);
+        let (wrap_map, _) = cx.update(|cx| {
+            WrapMap::new(
+                tabs_snapshot.clone(),
+                font.clone(),
+                font_size,
+                soft_wrapping,
+                cx,
+            )
+        });
+
+        // Set indent to None - continuation lines start at column 0.
+        wrap_map.update(cx, |map, cx| {
+            map.set_soft_wrap_indent(language::language_settings::SoftWrapIndent::None, cx);
+        });
+
+        let wrap_snapshot = wrap_map.update(cx, |map, _cx| map.snapshot.clone());
+
+        // Verify wrapping occurred (more than 1 row in output).
+        let wrapped_text = wrap_snapshot.text();
+        let wrap_row_count = wrapped_text.lines().count();
+        assert!(
+            wrap_row_count > 1,
+            "Expected text to wrap, but got a single row: {:?}",
+            wrapped_text,
+        );
+
+        // The continuation row (WrapRow 1) should report Some(0), not None.
+        // This was the exact bug: Bias::Right caused this to return None.
+        let indent = wrap_snapshot.soft_wrap_indent(WrapRow(0));
+        assert_eq!(
+            indent,
+            Some(0),
+            "soft_wrap_indent should return Some(0) for a zero-indent continuation row, not None"
+        );
+    }
+
+    #[gpui::test]
     async fn test_prev_row_boundary(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
@@ -1490,7 +1674,13 @@ mod tests {
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
         let mut line_wrapper = text_system.line_wrapper(font.clone(), font_size);
-        let expected_text = wrap_text(&tabs_snapshot, wrap_width, &mut line_wrapper);
+        let mut indent_adjustment = gpui::IndentAdjustment::default();
+        let expected_text = wrap_text(
+            &tabs_snapshot,
+            wrap_width,
+            indent_adjustment,
+            &mut line_wrapper,
+        );
 
         let (wrap_map, _) =
             cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, wrap_width, cx));
@@ -1527,8 +1717,22 @@ mod tests {
                     } else {
                         Some(px(rng.random_range(0.0..=1000.0)))
                     };
-                    log::info!("Setting wrap width to {:?}", wrap_width);
-                    wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                    let soft_wrap_indent = match rng.random_range(0..=3) {
+                        0 => SoftWrapIndent::None,
+                        1 => SoftWrapIndent::Same,
+                        2 => SoftWrapIndent::ExtraOne,
+                        _ => SoftWrapIndent::ExtraTwo,
+                    };
+                    indent_adjustment = indent_adjustment_for(soft_wrap_indent, tab_size);
+                    log::info!(
+                        "Setting wrap width to {:?}, indent to {:?}",
+                        wrap_width,
+                        soft_wrap_indent
+                    );
+                    wrap_map.update(cx, |map, cx| {
+                        map.set_wrap_width(wrap_width, cx);
+                        map.set_soft_wrap_indent(soft_wrap_indent, cx);
+                    });
                 }
                 20..=39 => {
                     for (fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
@@ -1573,7 +1777,12 @@ mod tests {
             let (tabs_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
             log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
-            let expected_text = wrap_text(&tabs_snapshot, wrap_width, &mut line_wrapper);
+            let expected_text = wrap_text(
+                &tabs_snapshot,
+                wrap_width,
+                indent_adjustment,
+                &mut line_wrapper,
+            );
             let (mut snapshot, wrap_edits) =
                 wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot.clone(), tab_edits, cx));
             snapshot.check_invariants();
@@ -1690,6 +1899,7 @@ mod tests {
     fn wrap_text(
         tab_snapshot: &TabSnapshot,
         wrap_width: Option<Pixels>,
+        indent_adjustment: gpui::IndentAdjustment,
         line_wrapper: &mut LineWrapper,
     ) -> String {
         if let Some(wrap_width) = wrap_width {
@@ -1700,12 +1910,17 @@ mod tests {
                 }
 
                 let mut prev_ix = 0;
-                for boundary in line_wrapper.wrap_line(&[LineFragment::text(line)], wrap_width) {
+                for boundary in line_wrapper.wrap_line(
+                    &[LineFragment::text(line)],
+                    wrap_width,
+                    indent_adjustment,
+                ) {
                     wrapped_text.push_str(&line[prev_ix..boundary.ix]);
                     wrapped_text.push('\n');
                     wrapped_text.push_str(&" ".repeat(boundary.next_indent as usize));
                     prev_ix = boundary.ix;
                 }
+
                 wrapped_text.push_str(&line[prev_ix..]);
             }
 
