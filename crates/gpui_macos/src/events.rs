@@ -492,6 +492,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             },
             key,
             key_char,
+            layout_key: None,
         }
     }
 }

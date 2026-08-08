@@ -130,6 +130,7 @@ impl KeystrokeInput {
             modifiers,
             key: "".to_string(),
             key_char: None,
+            layout_key: None,
         })
     }
 

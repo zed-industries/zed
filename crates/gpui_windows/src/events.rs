@@ -1557,6 +1557,7 @@ fn parse_normal_key(
             modifiers,
             key,
             key_char,
+            layout_key: None,
         },
         prefer_character_input,
     ))

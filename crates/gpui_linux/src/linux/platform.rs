@@ -15,6 +15,8 @@ use std::{
 
 use anyhow::{Context as _, anyhow};
 use calloop::{LoopSignal, channel::Sender};
+#[cfg(any(feature = "wayland", feature = "x11"))]
+use collections::HashMap;
 use futures::channel::oneshot;
 use gpui_util::{ResultExt as _, new_std_command};
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -41,6 +43,12 @@ pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
+
+#[cfg(feature = "wayland")]
+pub(super) fn xkb_keycode_from_wayland(keycode: u32) -> Keycode {
+    const XKB_KEYCODE_OFFSET: u32 = 8;
+    Keycode::from(keycode + XKB_KEYCODE_OFFSET)
+}
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 const FILE_PICKER_PORTAL_MISSING: &str =
@@ -941,57 +949,266 @@ pub(super) fn log_cursor_icon_warning(message: impl std::fmt::Display) {
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-fn guess_ascii(keycode: Keycode, shift: bool) -> Option<char> {
-    let c = match (keycode.raw(), shift) {
-        (24, _) => 'q',
-        (25, _) => 'w',
-        (26, _) => 'e',
-        (27, _) => 'r',
-        (28, _) => 't',
-        (29, _) => 'y',
-        (30, _) => 'u',
-        (31, _) => 'i',
-        (32, _) => 'o',
-        (33, _) => 'p',
-        (34, false) => '[',
-        (34, true) => '{',
-        (35, false) => ']',
-        (35, true) => '}',
-        (38, _) => 'a',
-        (39, _) => 's',
-        (40, _) => 'd',
-        (41, _) => 'f',
-        (42, _) => 'g',
-        (43, _) => 'h',
-        (44, _) => 'j',
-        (45, _) => 'k',
-        (46, _) => 'l',
-        (47, false) => ';',
-        (47, true) => ':',
-        (48, false) => '\'',
-        (48, true) => '"',
-        (49, false) => '`',
-        (49, true) => '~',
-        (51, false) => '\\',
-        (51, true) => '|',
-        (52, _) => 'z',
-        (53, _) => 'x',
-        (54, _) => 'c',
-        (55, _) => 'v',
-        (56, _) => 'b',
-        (57, _) => 'n',
-        (58, _) => 'm',
-        (59, false) => ',',
-        (59, true) => '>',
-        (60, false) => '.',
-        (60, true) => '<',
-        (61, false) => '/',
-        (61, true) => '?',
+struct UsKeyboardStates {
+    unshifted: State,
+    shifted: State,
+    modifier_masks: ModifierMasks,
+}
 
-        _ => return None,
-    };
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl UsKeyboardStates {
+    fn new() -> Option<Self> {
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_names(
+            &context,
+            "",
+            "pc105",
+            "us",
+            "",
+            None,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )?;
+        let unshifted = State::new(&keymap);
+        let mut shifted = State::new(&keymap);
+        let shift_index = keymap.mod_get_index(xkb::MOD_NAME_SHIFT);
+        if shift_index == xkb::MOD_INVALID {
+            return None;
+        }
+        shifted.update_mask(1 << shift_index, 0, 0, 0, 0, 0);
+        let modifier_masks = ModifierMasks::new(&keymap);
+        Some(Self {
+            unshifted,
+            shifted,
+            modifier_masks,
+        })
+    }
 
-    Some(c)
+    fn binding_keysym(&self, keycode: Keycode, shifted: bool) -> Keysym {
+        let state = if shifted {
+            &self.shifted
+        } else {
+            &self.unshifted
+        };
+        state.key_get_one_sym(keycode)
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+thread_local! {
+    static US_KEYBOARD_STATES: Option<UsKeyboardStates> = UsKeyboardStates::new();
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+#[derive(Clone, Copy)]
+struct ModifierMasks {
+    shift: xkb::ModMask,
+    control: xkb::ModMask,
+    alt: xkb::ModMask,
+    logo: xkb::ModMask,
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl ModifierMasks {
+    fn new(keymap: &xkb::Keymap) -> Self {
+        let mask = |name| {
+            let index = keymap.mod_get_index(name);
+            (index != xkb::MOD_INVALID)
+                .then(|| 1_u32.checked_shl(index))
+                .flatten()
+                .unwrap_or_default()
+        };
+        Self {
+            shift: mask(xkb::MOD_NAME_SHIFT),
+            control: mask(xkb::MOD_NAME_CTRL),
+            alt: mask(xkb::MOD_NAME_ALT),
+            logo: mask(xkb::MOD_NAME_LOGO),
+        }
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) struct LinuxKeystrokeMapper {
+    use_us_layout_for_bindings: bool,
+    modifier_masks: ModifierMasks,
+    us_keycodes_by_active_keycode: HashMap<Keycode, Keycode>,
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl LinuxKeystrokeMapper {
+    pub(super) fn new(state: &State) -> Self {
+        let keymap = state.get_keymap();
+        let modifier_masks = ModifierMasks::new(&keymap);
+        let mut us_keycodes_by_active_keycode = HashMap::default();
+        US_KEYBOARD_STATES.with(|states| {
+            let Some(us_keymap) = states.as_ref().map(|states| states.unshifted.get_keymap())
+            else {
+                return;
+            };
+            keymap.key_for_each(|keymap, active_keycode| {
+                let Some(key_name) = keymap.key_get_name(active_keycode) else {
+                    return;
+                };
+                if let Some(us_keycode) = us_keymap.key_by_name(key_name) {
+                    us_keycodes_by_active_keycode.insert(active_keycode, us_keycode);
+                }
+            });
+        });
+
+        Self {
+            use_us_layout_for_bindings: use_us_layout_for_bindings(state),
+            modifier_masks,
+            us_keycodes_by_active_keycode,
+        }
+    }
+
+    pub(super) fn update_layout(&mut self, use_us_layout_for_bindings: bool) {
+        self.use_us_layout_for_bindings = use_us_layout_for_bindings;
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn remove_consumed_modifiers(
+    state: &State,
+    keycode: Keycode,
+    keysym: Keysym,
+    modifier_masks: ModifierMasks,
+    modifiers: &mut gpui::Modifiers,
+) {
+    let consumed_modifiers = state.key_get_consumed_mods(keycode);
+    let is_consumed = |mask| mask != 0 && consumed_modifiers & mask != 0;
+
+    if modifiers.shift
+        && is_consumed(modifier_masks.shift)
+        && !keysym_is_cased(keysym)
+        && keysym != Keysym::ISO_Left_Tab
+    {
+        modifiers.shift = false;
+    }
+    if modifiers.control && is_consumed(modifier_masks.control) {
+        modifiers.control = false;
+    }
+    if modifiers.alt && is_consumed(modifier_masks.alt) {
+        modifiers.alt = false;
+    }
+    if modifiers.platform && is_consumed(modifier_masks.logo) {
+        modifiers.platform = false;
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+/// Uses positional US binding identities when the active layout's ordinary
+/// levels do not provide the complete ASCII alphabet.
+pub(super) fn use_us_layout_for_bindings(state: &State) -> bool {
+    let keymap = state.get_keymap();
+    let layout = state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE);
+    let mut latin_letters = 0_u32;
+    keymap.key_for_each(|keymap, keycode| {
+        for level in 0..keymap.num_levels_for_key(keycode, layout).min(2) {
+            for keysym in keymap.key_get_syms_by_level(keycode, layout, level) {
+                if let Some(letter) = keysym.key_char().filter(char::is_ascii_alphabetic) {
+                    let index = u32::from(letter.to_ascii_lowercase()) - u32::from(b'a');
+                    latin_letters |= 1 << index;
+                }
+            }
+        }
+    });
+
+    // Looking only at the ordinary levels keeps AltGr-only Latin characters
+    // from making a non-Latin layout character-oriented. Layouts with a
+    // complete ASCII alphabet retain their own character positions, including
+    // Dvorak, Colemak, and extended-Latin layouts.
+    const COMPLETE_ASCII_ALPHABET: u32 = (1 << 26) - 1;
+    latin_letters != COMPLETE_ASCII_ALPHABET
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn printable_char_from_keysym(keysym: Keysym) -> Option<char> {
+    keysym
+        .key_char()
+        .filter(|character| !character.is_control())
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn keysym_has_printable_identity(keysym: Keysym) -> bool {
+    dead_key_text(keysym).is_some() || printable_char_from_keysym(keysym).is_some()
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn keysym_is_cased(keysym: Keysym) -> bool {
+    printable_char_from_keysym(keysym)
+        .is_some_and(|character| character.to_lowercase().ne(character.to_uppercase()))
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn printable_key_from_keysym(keysym: Keysym) -> Option<String> {
+    if let Some(dead_key) = dead_key_text(keysym) {
+        return Some(dead_key.to_owned());
+    }
+
+    let character = printable_char_from_keysym(keysym)?;
+    if character == ' ' {
+        Some("space".to_owned())
+    } else if character.to_lowercase().ne(character.to_uppercase()) {
+        Some(character.to_lowercase().collect())
+    } else {
+        Some(character.to_string())
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) fn key_from_keysym(keysym: Keysym) -> String {
+    if let Some(key) = printable_key_from_keysym(keysym) {
+        return key;
+    }
+
+    let name = xkb::keysym_get_name(keysym).to_lowercase();
+    let name = name.strip_prefix("kp_").unwrap_or(&name);
+    match name {
+        "return" => "enter".to_owned(),
+        "prior" => "pageup".to_owned(),
+        "next" => "pagedown".to_owned(),
+        "iso_left_tab" => "tab".to_owned(),
+        "xf86back" => "back".to_owned(),
+        "xf86forward" => "forward".to_owned(),
+        "xf86cut" => "cut".to_owned(),
+        "xf86copy" => "copy".to_owned(),
+        "xf86paste" => "paste".to_owned(),
+        "xf86new" => "new".to_owned(),
+        "xf86open" => "open".to_owned(),
+        "xf86save" => "save".to_owned(),
+        name => name.to_owned(),
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn binding_keysym(
+    keycode: Keycode,
+    layout_keysym: Keysym,
+    mapper: &LinuxKeystrokeMapper,
+    shift: bool,
+) -> (Keysym, Option<Keycode>) {
+    if !keysym_has_printable_identity(layout_keysym) {
+        return (layout_keysym, None);
+    }
+
+    if mapper.use_us_layout_for_bindings {
+        let us_keysym = US_KEYBOARD_STATES.with(|states| {
+            let us_keycode = mapper
+                .us_keycodes_by_active_keycode
+                .get(&keycode)
+                .copied()?;
+            states
+                .as_ref()
+                .map(|states| (states.binding_keysym(us_keycode, shift), us_keycode))
+        });
+        if let Some((keysym, us_keycode)) =
+            us_keysym.filter(|(keysym, _)| keysym_has_printable_identity(*keysym))
+        {
+            return (keysym, Some(us_keycode));
+        }
+    }
+
+    (layout_keysym, None)
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -999,113 +1216,44 @@ pub(super) fn keystroke_from_xkb(
     state: &State,
     mut modifiers: gpui::Modifiers,
     keycode: Keycode,
+    mapper: &LinuxKeystrokeMapper,
 ) -> gpui::Keystroke {
     let key_utf32 = state.key_get_utf32(keycode);
     let key_utf8 = state.key_get_utf8(keycode);
-    let key_sym = state.key_get_one_sym(keycode);
+    let layout_keysym = state.key_get_one_sym(keycode);
+    let (key_sym, us_keycode) = binding_keysym(keycode, layout_keysym, mapper, modifiers.shift);
+    let key = key_from_keysym(key_sym);
+    let layout_key = (mapper.use_us_layout_for_bindings && layout_keysym != key_sym)
+        .then(|| printable_key_from_keysym(layout_keysym))
+        .flatten()
+        .filter(|layout_key| layout_key != &key)
+        .map(String::into_boxed_str);
 
-    let key = match key_sym {
-        Keysym::Return => "enter".to_owned(),
-        Keysym::Prior => "pageup".to_owned(),
-        Keysym::Next => "pagedown".to_owned(),
-        Keysym::ISO_Left_Tab => "tab".to_owned(),
-        Keysym::KP_Prior => "pageup".to_owned(),
-        Keysym::KP_Next => "pagedown".to_owned(),
-        Keysym::XF86_Back => "back".to_owned(),
-        Keysym::XF86_Forward => "forward".to_owned(),
-        Keysym::XF86_Cut => "cut".to_owned(),
-        Keysym::XF86_Copy => "copy".to_owned(),
-        Keysym::XF86_Paste => "paste".to_owned(),
-        Keysym::XF86_New => "new".to_owned(),
-        Keysym::XF86_Open => "open".to_owned(),
-        Keysym::XF86_Save => "save".to_owned(),
-
-        Keysym::comma => ",".to_owned(),
-        Keysym::period => ".".to_owned(),
-        Keysym::less => "<".to_owned(),
-        Keysym::greater => ">".to_owned(),
-        Keysym::slash => "/".to_owned(),
-        Keysym::question => "?".to_owned(),
-
-        Keysym::semicolon => ";".to_owned(),
-        Keysym::colon => ":".to_owned(),
-        Keysym::apostrophe => "'".to_owned(),
-        Keysym::quotedbl => "\"".to_owned(),
-
-        Keysym::bracketleft => "[".to_owned(),
-        Keysym::braceleft => "{".to_owned(),
-        Keysym::bracketright => "]".to_owned(),
-        Keysym::braceright => "}".to_owned(),
-        Keysym::backslash => "\\".to_owned(),
-        Keysym::bar => "|".to_owned(),
-
-        Keysym::grave => "`".to_owned(),
-        Keysym::asciitilde => "~".to_owned(),
-        Keysym::exclam => "!".to_owned(),
-        Keysym::at => "@".to_owned(),
-        Keysym::numbersign => "#".to_owned(),
-        Keysym::dollar => "$".to_owned(),
-        Keysym::percent => "%".to_owned(),
-        Keysym::asciicircum => "^".to_owned(),
-        Keysym::ampersand => "&".to_owned(),
-        Keysym::asterisk => "*".to_owned(),
-        Keysym::parenleft => "(".to_owned(),
-        Keysym::parenright => ")".to_owned(),
-        Keysym::minus => "-".to_owned(),
-        Keysym::underscore => "_".to_owned(),
-        Keysym::equal => "=".to_owned(),
-        Keysym::plus => "+".to_owned(),
-        Keysym::space => "space".to_owned(),
-        Keysym::BackSpace => "backspace".to_owned(),
-        Keysym::Tab => "tab".to_owned(),
-        Keysym::Delete => "delete".to_owned(),
-        Keysym::Escape => "escape".to_owned(),
-
-        Keysym::Left => "left".to_owned(),
-        Keysym::Right => "right".to_owned(),
-        Keysym::Up => "up".to_owned(),
-        Keysym::Down => "down".to_owned(),
-        Keysym::Home => "home".to_owned(),
-        Keysym::End => "end".to_owned(),
-        Keysym::Insert => "insert".to_owned(),
-
-        _ => {
-            let name = xkb::keysym_get_name(key_sym).to_lowercase();
-            if key_sym.is_keypad_key() {
-                name.replace("kp_", "")
-            } else if let Some(key) = key_utf8.chars().next()
-                && key_utf8.len() == 1
-                && key.is_ascii()
-            {
-                if key.is_ascii_graphic() {
-                    key_utf8.to_lowercase()
-                // map ctrl-a to `a`
-                // ctrl-0..9 may emit control codes like ctrl-[, but
-                // we don't want to map them to `[`
-                } else if key_utf32 <= 0x1f
-                    && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
-                {
-                    ((key_utf32 as u8 + 0x40) as char)
-                        .to_ascii_lowercase()
-                        .to_string()
+    if let Some(us_keycode) = us_keycode {
+        US_KEYBOARD_STATES.with(|states| {
+            if let Some(states) = states {
+                let state = if modifiers.shift {
+                    &states.shifted
                 } else {
-                    name
-                }
-            } else if let Some(key_en) = guess_ascii(keycode, modifiers.shift) {
-                String::from(key_en)
-            } else {
-                name
+                    &states.unshifted
+                };
+                remove_consumed_modifiers(
+                    state,
+                    us_keycode,
+                    key_sym,
+                    states.modifier_masks,
+                    &mut modifiers,
+                );
             }
-        }
-    };
-
-    if modifiers.shift {
-        // we only include the shift for upper-case letters by convention,
-        // so don't include for numbers and symbols, but do include for
-        // tab/enter, etc.
-        if key.chars().count() == 1 && key.to_lowercase() == key.to_uppercase() {
-            modifiers.shift = false;
-        }
+        });
+    } else {
+        remove_consumed_modifiers(
+            state,
+            keycode,
+            key_sym,
+            mapper.modifier_masks,
+            &mut modifiers,
+        );
     }
 
     // Ignore control characters (and DEL) for the purposes of key_char
@@ -1116,6 +1264,7 @@ pub(super) fn keystroke_from_xkb(
         modifiers,
         key,
         key_char,
+        layout_key,
     }
 }
 
@@ -1125,38 +1274,43 @@ pub(super) fn keystroke_from_xkb(
  */
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub fn keystroke_underlying_dead_key(keysym: Keysym) -> Option<String> {
+    dead_key_text(keysym).map(str::to_owned)
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn dead_key_text(keysym: Keysym) -> Option<&'static str> {
     match keysym {
-        Keysym::dead_grave => Some("`".to_owned()),
-        Keysym::dead_acute => Some("´".to_owned()),
-        Keysym::dead_circumflex => Some("^".to_owned()),
-        Keysym::dead_tilde => Some("~".to_owned()),
-        Keysym::dead_macron => Some("¯".to_owned()),
-        Keysym::dead_breve => Some("˘".to_owned()),
-        Keysym::dead_abovedot => Some("˙".to_owned()),
-        Keysym::dead_diaeresis => Some("¨".to_owned()),
-        Keysym::dead_abovering => Some("˚".to_owned()),
-        Keysym::dead_doubleacute => Some("˝".to_owned()),
-        Keysym::dead_caron => Some("ˇ".to_owned()),
-        Keysym::dead_cedilla => Some("¸".to_owned()),
-        Keysym::dead_ogonek => Some("˛".to_owned()),
-        Keysym::dead_iota => Some("ͅ".to_owned()),
-        Keysym::dead_voiced_sound => Some("゙".to_owned()),
-        Keysym::dead_semivoiced_sound => Some("゚".to_owned()),
-        Keysym::dead_belowdot => Some("̣̣".to_owned()),
-        Keysym::dead_hook => Some("̡".to_owned()),
-        Keysym::dead_horn => Some("̛".to_owned()),
-        Keysym::dead_stroke => Some("̶̶".to_owned()),
-        Keysym::dead_abovecomma => Some("̓̓".to_owned()),
-        Keysym::dead_abovereversedcomma => Some("ʽ".to_owned()),
-        Keysym::dead_doublegrave => Some("̏".to_owned()),
-        Keysym::dead_belowring => Some("˳".to_owned()),
-        Keysym::dead_belowmacron => Some("̱".to_owned()),
-        Keysym::dead_belowcircumflex => Some("ꞈ".to_owned()),
-        Keysym::dead_belowtilde => Some("̰".to_owned()),
-        Keysym::dead_belowbreve => Some("̮".to_owned()),
-        Keysym::dead_belowdiaeresis => Some("̤".to_owned()),
-        Keysym::dead_invertedbreve => Some("̯".to_owned()),
-        Keysym::dead_belowcomma => Some("̦".to_owned()),
+        Keysym::dead_grave => Some("`"),
+        Keysym::dead_acute => Some("´"),
+        Keysym::dead_circumflex => Some("^"),
+        Keysym::dead_tilde => Some("~"),
+        Keysym::dead_macron => Some("¯"),
+        Keysym::dead_breve => Some("˘"),
+        Keysym::dead_abovedot => Some("˙"),
+        Keysym::dead_diaeresis => Some("¨"),
+        Keysym::dead_abovering => Some("˚"),
+        Keysym::dead_doubleacute => Some("˝"),
+        Keysym::dead_caron => Some("ˇ"),
+        Keysym::dead_cedilla => Some("¸"),
+        Keysym::dead_ogonek => Some("˛"),
+        Keysym::dead_iota => Some("ͅ"),
+        Keysym::dead_voiced_sound => Some("゙"),
+        Keysym::dead_semivoiced_sound => Some("゚"),
+        Keysym::dead_belowdot => Some("̣̣"),
+        Keysym::dead_hook => Some("̡"),
+        Keysym::dead_horn => Some("̛"),
+        Keysym::dead_stroke => Some("̶̶"),
+        Keysym::dead_abovecomma => Some("̓̓"),
+        Keysym::dead_abovereversedcomma => Some("ʽ"),
+        Keysym::dead_doublegrave => Some("̏"),
+        Keysym::dead_belowring => Some("˳"),
+        Keysym::dead_belowmacron => Some("̱"),
+        Keysym::dead_belowcircumflex => Some("ꞈ"),
+        Keysym::dead_belowtilde => Some("̰"),
+        Keysym::dead_belowbreve => Some("̮"),
+        Keysym::dead_belowdiaeresis => Some("̤"),
+        Keysym::dead_invertedbreve => Some("̯"),
+        Keysym::dead_belowcomma => Some("̦"),
         Keysym::dead_currency => None,
         Keysym::dead_lowline => None,
         Keysym::dead_aboveverticalline => None,
@@ -1172,8 +1326,8 @@ pub fn keystroke_underlying_dead_key(keysym: Keysym) -> Option<String> {
         Keysym::dead_O => None,
         Keysym::dead_u => None,
         Keysym::dead_U => None,
-        Keysym::dead_small_schwa => Some("ə".to_owned()),
-        Keysym::dead_capital_schwa => Some("Ə".to_owned()),
+        Keysym::dead_small_schwa => Some("ə"),
+        Keysym::dead_capital_schwa => Some("Ə"),
         Keysym::dead_greek => None,
         _ => None,
     }
@@ -1260,6 +1414,387 @@ mod tests {
             zero,
             Point::new(px(5.0), px(5.1))
         ),);
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    mod keyboard {
+        use super::super::*;
+        use gpui::{KeybindingKeystroke, Keystroke, Modifiers};
+
+        fn keymap(layout: &str, variant: &str, options: Option<String>) -> xkb::Keymap {
+            let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            xkb::Keymap::new_from_names(
+                &context,
+                "",
+                "pc105",
+                layout,
+                variant,
+                options,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+            .expect("test keymap should compile")
+        }
+
+        fn modifier_mask(keymap: &xkb::Keymap, modifiers: &[&str]) -> xkb::ModMask {
+            modifiers.iter().fold(0, |mask, modifier| {
+                let index = keymap.mod_get_index(*modifier);
+                assert_ne!(index, xkb::MOD_INVALID, "missing XKB modifier {modifier}");
+                mask | 1 << index
+            })
+        }
+
+        fn keystroke(
+            keymap: &xkb::Keymap,
+            layout: xkb::LayoutIndex,
+            key_name: &str,
+            xkb_modifiers: &[&str],
+            modifiers: Modifiers,
+        ) -> Keystroke {
+            let mut state = xkb::State::new(keymap);
+            state.update_mask(modifier_mask(keymap, xkb_modifiers), 0, 0, 0, 0, layout);
+            let keycode = keymap.key_by_name(key_name).expect("test key should exist");
+            let mapper = LinuxKeystrokeMapper::new(&state);
+            keystroke_from_xkb(&state, modifiers, keycode, &mapper)
+        }
+
+        #[test]
+        fn normalizes_printable_keys_from_layout_semantics() {
+            struct Case {
+                name: &'static str,
+                layout: &'static str,
+                variant: &'static str,
+                group: xkb::LayoutIndex,
+                key_name: &'static str,
+                xkb_modifiers: &'static [&'static str],
+                modifiers: Modifiers,
+                expected_key: &'static str,
+                expected_key_char: Option<&'static str>,
+                expected_layout_key: Option<&'static str>,
+                expected_modifiers: Modifiers,
+            }
+
+            let cases = [
+                Case {
+                    name: "issue 14053 Russian slash position",
+                    layout: "us,ru",
+                    variant: "",
+                    group: 1,
+                    key_name: "AB10",
+                    xkb_modifiers: &[xkb::MOD_NAME_CTRL],
+                    modifiers: Modifiers::control(),
+                    expected_key: "/",
+                    expected_key_char: Some("."),
+                    expected_layout_key: Some("."),
+                    expected_modifiers: Modifiers::control(),
+                },
+                Case {
+                    name: "Russian letter uses US binding identity",
+                    layout: "us,ru",
+                    variant: "",
+                    group: 1,
+                    key_name: "AB03",
+                    xkb_modifiers: &[xkb::MOD_NAME_CTRL],
+                    modifiers: Modifiers::control(),
+                    expected_key: "c",
+                    expected_key_char: None,
+                    expected_layout_key: Some("с"),
+                    expected_modifiers: Modifiers::control(),
+                },
+                Case {
+                    name: "Russian shifted punctuation uses US binding identity",
+                    layout: "us,ru",
+                    variant: "",
+                    group: 1,
+                    key_name: "AE04",
+                    xkb_modifiers: &[xkb::MOD_NAME_CTRL, xkb::MOD_NAME_SHIFT],
+                    modifiers: Modifiers::control_shift(),
+                    expected_key: "$",
+                    expected_key_char: Some(";"),
+                    expected_layout_key: Some(";"),
+                    expected_modifiers: Modifiers::control(),
+                },
+                Case {
+                    name: "Russian Ctrl Shift letter keeps semantic Shift",
+                    layout: "us,ru",
+                    variant: "",
+                    group: 1,
+                    key_name: "AB01",
+                    xkb_modifiers: &[xkb::MOD_NAME_CTRL, xkb::MOD_NAME_SHIFT],
+                    modifiers: Modifiers::control_shift(),
+                    expected_key: "z",
+                    expected_key_char: None,
+                    expected_layout_key: Some("я"),
+                    expected_modifiers: Modifiers::control_shift(),
+                },
+                Case {
+                    name: "German AltGr remains layout resolved",
+                    layout: "de",
+                    variant: "",
+                    group: 0,
+                    key_name: "AD01",
+                    xkb_modifiers: &["Mod5"],
+                    modifiers: Modifiers::none(),
+                    expected_key: "@",
+                    expected_key_char: Some("@"),
+                    expected_layout_key: None,
+                    expected_modifiers: Modifiers::none(),
+                },
+                Case {
+                    name: "French AZERTY shortcuts follow characters",
+                    layout: "fr",
+                    variant: "",
+                    group: 0,
+                    key_name: "AD01",
+                    xkb_modifiers: &[],
+                    modifiers: Modifiers::none(),
+                    expected_key: "a",
+                    expected_key_char: Some("a"),
+                    expected_layout_key: None,
+                    expected_modifiers: Modifiers::none(),
+                },
+                Case {
+                    name: "Dvorak shortcuts follow characters",
+                    layout: "us",
+                    variant: "dvorak",
+                    group: 0,
+                    key_name: "AD01",
+                    xkb_modifiers: &[],
+                    modifiers: Modifiers::none(),
+                    expected_key: "'",
+                    expected_key_char: Some("'"),
+                    expected_layout_key: None,
+                    expected_modifiers: Modifiers::none(),
+                },
+                Case {
+                    name: "plain US typing preserves produced text",
+                    layout: "us",
+                    variant: "",
+                    group: 0,
+                    key_name: "AC01",
+                    xkb_modifiers: &[],
+                    modifiers: Modifiers::none(),
+                    expected_key: "a",
+                    expected_key_char: Some("a"),
+                    expected_layout_key: None,
+                    expected_modifiers: Modifiers::none(),
+                },
+            ];
+
+            for case in cases {
+                let keymap = keymap(case.layout, case.variant, None);
+                let keystroke = keystroke(
+                    &keymap,
+                    case.group,
+                    case.key_name,
+                    case.xkb_modifiers,
+                    case.modifiers,
+                );
+                assert_eq!(keystroke.key, case.expected_key, "{}", case.name);
+                assert_eq!(
+                    keystroke.key_char.as_deref(),
+                    case.expected_key_char,
+                    "{}",
+                    case.name
+                );
+                assert_eq!(
+                    keystroke.layout_key.as_deref(),
+                    case.expected_layout_key,
+                    "{}",
+                    case.name
+                );
+                assert_eq!(
+                    keystroke.modifiers, case.expected_modifiers,
+                    "{}",
+                    case.name
+                );
+            }
+        }
+
+        #[test]
+        fn dead_key_keeps_binding_identity_separate_from_text() {
+            let keymap = keymap("us", "intl", None);
+            let keystroke = keystroke(&keymap, 0, "AC11", &[], Modifiers::none());
+            assert_eq!(keystroke.key, "´");
+            assert_eq!(keystroke.key_char, None);
+        }
+
+        #[test]
+        fn named_key_on_custom_level_is_not_replaced_by_printable_identity() {
+            let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let source = r#"
+                xkb_keymap {
+                    xkb_keycodes { include "evdev+aliases(qwerty)" };
+                    xkb_types { include "complete" };
+                    xkb_compat { include "complete" };
+                    xkb_symbols {
+                        include "pc+us+inet(evdev)"
+                        key <AC02> {
+                            type[Group1] = "FOUR_LEVEL",
+                            symbols[Group1] = [ s, S, Left, Left ]
+                        };
+                        key <AC03> {
+                            type[Group1] = "TWO_LEVEL",
+                            symbols[Group1] = [ d, Home ]
+                        };
+                    };
+                    xkb_geometry { include "pc(pc105)" };
+                };
+            "#;
+            let keymap = xkb::Keymap::new_from_string(
+                &context,
+                source.to_owned(),
+                xkb::KEYMAP_FORMAT_TEXT_V1,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+            .expect("custom test keymap should compile");
+            let level_three_key = keystroke(&keymap, 0, "AC02", &["Mod5"], Modifiers::none());
+            assert_eq!(level_three_key.key, "left");
+            assert_eq!(level_three_key.key_char, None);
+
+            let shifted_named_key = keystroke(
+                &keymap,
+                0,
+                "AC03",
+                &[xkb::MOD_NAME_SHIFT],
+                Modifiers::shift(),
+            );
+            assert_eq!(shifted_named_key.key, "home");
+            assert_eq!(shifted_named_key.key_char, None);
+            assert_eq!(shifted_named_key.modifiers, Modifiers::none());
+        }
+
+        #[test]
+        fn normalizes_named_non_text_keys_generically() {
+            let keymap = keymap("us", "", None);
+            let cases = [
+                ("RTRN", "enter"),
+                ("LEFT", "left"),
+                ("HOME", "home"),
+                ("END", "end"),
+                ("ESC", "escape"),
+                ("TAB", "tab"),
+                ("BKSP", "backspace"),
+                ("FK01", "f1"),
+            ];
+
+            for (key_name, expected_key) in cases {
+                let keystroke = keystroke(&keymap, 0, key_name, &[], Modifiers::none());
+                assert_eq!(keystroke.key, expected_key, "{key_name}");
+                assert_eq!(keystroke.key_char, None, "{key_name}");
+            }
+
+            let shift_tab = keystroke(
+                &keymap,
+                0,
+                "TAB",
+                &[xkb::MOD_NAME_SHIFT],
+                Modifiers::shift(),
+            );
+            assert_eq!(shift_tab.key, "tab");
+            assert_eq!(shift_tab.modifiers, Modifiers::shift());
+        }
+
+        #[test]
+        fn switching_layouts_recomputes_binding_identity() {
+            let keymap = keymap("us,ru", "", None);
+            let us = keystroke(&keymap, 0, "AB10", &[], Modifiers::none());
+            let russian = keystroke(&keymap, 1, "AB10", &[], Modifiers::none());
+
+            assert_eq!((us.key.as_str(), us.key_char.as_deref()), ("/", Some("/")));
+            assert_eq!(
+                (russian.key.as_str(), russian.key_char.as_deref()),
+                ("/", Some("."))
+            );
+        }
+
+        #[test]
+        fn physical_fallback_does_not_match_unrelated_ascii_binding() {
+            let keymap = keymap("us,ru", "", None);
+            let typed = keystroke(
+                &keymap,
+                1,
+                "AB10",
+                &[xkb::MOD_NAME_CTRL],
+                Modifiers::control(),
+            );
+            let slash = KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-/").unwrap());
+            let period = KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-.").unwrap());
+
+            assert!(typed.should_match(&slash));
+            assert!(!typed.should_match(&period));
+        }
+
+        #[test]
+        fn non_ascii_layout_binding_remains_matchable() {
+            let keymap = keymap("us,ru", "", None);
+            let typed = keystroke(
+                &keymap,
+                1,
+                "AB03",
+                &[xkb::MOD_NAME_CTRL],
+                Modifiers::control(),
+            );
+            let latin = KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-c").unwrap());
+            let cyrillic = KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-с").unwrap());
+
+            assert!(typed.should_match(&latin));
+            assert!(typed.should_match(&cyrillic));
+        }
+
+        #[test]
+        fn reference_layout_maps_keycodes_by_xkb_key_name() {
+            let standard_keymap = keymap("us,ru", "", None);
+            let mut replaced_ab10 = false;
+            let mut replaced_ad01 = false;
+            let source = standard_keymap
+                .get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1)
+                .lines()
+                .map(|line| {
+                    let trimmed = line.trim_start();
+                    if trimmed.starts_with("<AB10>") && trimmed.ends_with("= 61;") {
+                        replaced_ab10 = true;
+                        line.replace("= 61;", "= 24;")
+                    } else if trimmed.starts_with("<AD01>") && trimmed.ends_with("= 24;") {
+                        replaced_ad01 = true;
+                        line.replace("= 24;", "= 61;")
+                    } else {
+                        line.to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(replaced_ab10 && replaced_ad01);
+
+            let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let keymap = xkb::Keymap::new_from_string(
+                &context,
+                source,
+                xkb::KEYMAP_FORMAT_TEXT_V1,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+            .expect("test keymap with swapped keycodes should compile");
+            let typed = keystroke(
+                &keymap,
+                1,
+                "AB10",
+                &[xkb::MOD_NAME_CTRL],
+                Modifiers::control(),
+            );
+
+            assert_eq!(typed.key, "/");
+            assert_eq!(typed.layout_key.as_deref(), Some("."));
+        }
+
+        #[cfg(feature = "wayland")]
+        #[test]
+        fn wayland_and_x11_normalize_to_the_same_xkb_keycode_once() {
+            let keymap = keymap("us", "", None);
+            let x11_keycode = keymap.key_by_name("AB10").expect("slash key should exist");
+            let wayland_keycode = xkb_keycode_from_wayland(x11_keycode.raw() - 8);
+
+            assert_eq!(wayland_keycode, x11_keycode);
+            assert_ne!(xkb_keycode_from_wayland(x11_keycode.raw()), x11_keycode);
+        }
     }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]

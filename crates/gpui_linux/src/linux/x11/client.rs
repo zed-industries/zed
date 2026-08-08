@@ -49,11 +49,12 @@ use super::{
 };
 
 use crate::linux::{
-    DEFAULT_CURSOR_ICON_NAME, LinuxClient, capslock_from_xkb, cursor_style_to_icon_names,
-    get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
-    keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb, open_uri_internal,
+    DEFAULT_CURSOR_ICON_NAME, LinuxClient, LinuxKeystrokeMapper, capslock_from_xkb,
+    cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance, key_from_keysym,
+    keystroke_from_xkb, keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb,
+    open_uri_internal,
     platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
-    reveal_path_internal,
+    reveal_path_internal, use_us_layout_for_bindings,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
@@ -193,6 +194,7 @@ pub struct X11ClientState {
     pub(crate) mouse_focused_window: Option<xproto::Window>,
     pub(crate) keyboard_focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
+    keystroke_mapper: LinuxKeystrokeMapper,
     keyboard_layout: LinuxKeyboardLayout,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
@@ -438,6 +440,7 @@ impl X11Client {
             .layout_get_name(layout_idx)
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
+        let keystroke_mapper = LinuxKeystrokeMapper::new(&xkb_state);
 
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
             .context("Failed to create resource database")?;
@@ -536,6 +539,7 @@ impl X11Client {
             mouse_focused_window: None,
             keyboard_focused_window: None,
             xkb: xkb_state,
+            keystroke_mapper,
             keyboard_layout,
             ximc,
             xim_handler,
@@ -1006,6 +1010,7 @@ impl X11Client {
                         state.xkb_device_id,
                     )
                 };
+                state.keystroke_mapper = LinuxKeystrokeMapper::new(&xkb_state);
                 state.xkb = xkb_state;
                 drop(state);
                 self.handle_keyboard_layout_change();
@@ -1022,6 +1027,12 @@ impl X11Client {
                     event.latched_group as u32,
                     event.locked_group.into(),
                 );
+                if new_layout != old_layout {
+                    let use_us_layout_for_bindings = use_us_layout_for_bindings(&state.xkb);
+                    state
+                        .keystroke_mapper
+                        .update_layout(use_us_layout_for_bindings);
+                }
                 let modifiers = modifiers_from_xkb(&state.xkb);
                 let capslock = capslock_from_xkb(&state.xkb);
                 if state.last_modifiers_changed_event == modifiers
@@ -1060,7 +1071,12 @@ impl X11Client {
 
                 let keystroke = {
                     let code = event.detail.into();
-                    let mut keystroke = keystroke_from_xkb(&key_event_state, modifiers, code);
+                    let mut keystroke = keystroke_from_xkb(
+                        &key_event_state,
+                        modifiers,
+                        code,
+                        &state.keystroke_mapper,
+                    );
                     let keysym = key_event_state.key_get_one_sym(code);
 
                     if keysym.is_modifier_key() {
@@ -1074,7 +1090,8 @@ impl X11Client {
                                 state.pre_edit_text.take();
                                 keystroke.key_char = compose_state.utf8();
                                 if let Some(keysym) = compose_state.keysym() {
-                                    keystroke.key = xkbc::keysym_get_name(keysym);
+                                    keystroke.key = key_from_keysym(keysym);
+                                    keystroke.layout_key = None;
                                 }
                             }
                             xkbc::Status::Composing => {
@@ -1123,7 +1140,12 @@ impl X11Client {
 
                 let keystroke = {
                     let code = event.detail.into();
-                    let keystroke = keystroke_from_xkb(&key_event_state, modifiers, code);
+                    let keystroke = keystroke_from_xkb(
+                        &key_event_state,
+                        modifiers,
+                        code,
+                        &state.keystroke_mapper,
+                    );
                     let keysym = key_event_state.key_get_one_sym(code);
 
                     if keysym.is_modifier_key() {
@@ -1436,6 +1458,7 @@ impl X11Client {
                     &state.xkb,
                     state.modifiers,
                     event.detail.into(),
+                    &state.keystroke_mapper,
                 ));
                 let (mut ximc, mut xim_handler) = state.take_xim()?;
                 drop(state);
@@ -2857,6 +2880,7 @@ mod tests {
             &key_event_state,
             modifiers_from_state(xproto::KeyButMask::SHIFT),
             keycode,
+            &LinuxKeystrokeMapper::new(&key_event_state),
         );
 
         // Assert Shift+9 produces "(" on US layout.
