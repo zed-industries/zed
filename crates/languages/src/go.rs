@@ -1222,6 +1222,138 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_go_subtest_with_wrapped_callback_detection(cx: &mut TestAppContext) {
+        let language = go_language();
+
+        let wrapped_callback_subtest = r#"
+        package main
+
+        import "testing"
+
+        func withFixture(fn func(t *testing.T)) func(t *testing.T) {
+            return func(t *testing.T) {
+                fn(t)
+            }
+        }
+
+        func TestExample(t *testing.T) {
+            t.Run("subtest with setup wrapper", withFixture(func(t *testing.T) {
+                // test code
+            }))
+        }
+        "#;
+
+        let buffer = cx.new(|cx| {
+            crate::Buffer::local(wrapped_callback_subtest, cx).with_language(language.clone(), cx)
+        });
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot
+                .runnable_ranges(0..wrapped_callback_subtest.len())
+                .collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            tag_strings.contains(&"go-subtest".to_string()),
+            "Should find go-subtest tag, found: {:?}",
+            tag_strings
+        );
+
+        // Wrapper whose callback takes no arguments; the returned
+        // `func(*testing.T)` is only visible in the wrapper's signature.
+        let plain_callback_subtest = r#"
+        package main
+
+        import "testing"
+
+        func TestExample(t *testing.T) {
+            runCtor := func(fn func()) func(t *testing.T) {
+                return func(t *testing.T) {
+                    fn()
+                }
+            }
+
+            t.Run("subtest with plain callback", runCtor(func() {
+                // test code
+            }))
+        }
+        "#;
+
+        let buffer = cx.new(|cx| {
+            crate::Buffer::local(plain_callback_subtest, cx).with_language(language.clone(), cx)
+        });
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot
+                .runnable_ranges(0..plain_callback_subtest.len())
+                .collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            tag_strings.contains(&"go-subtest".to_string()),
+            "Should find go-subtest tag, found: {:?}",
+            tag_strings
+        );
+
+        // A `.Run` call whose second argument is a call with no inline func
+        // literal must not be tagged as a subtest.
+        let unrelated_run_call = r#"
+        package main
+
+        import "testing"
+
+        func TestExample(t *testing.T) {
+            group.Run("not a subtest", newTask())
+        }
+        "#;
+
+        let buffer = cx.new(|cx| {
+            crate::Buffer::local(unrelated_run_call, cx).with_language(language.clone(), cx)
+        });
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot
+                .runnable_ranges(0..unrelated_run_call.len())
+                .collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            !tag_strings.contains(&"go-subtest".to_string()),
+            "Should NOT find go-subtest tag, found: {:?}",
+            tag_strings
+        );
+    }
+
+    #[gpui::test]
     async fn test_go_test_templates_run_arg_is_shell_escaped(cx: &mut TestAppContext) {
         let templates = cx
             .update(|cx| GoContextProvider.associated_tasks(None, cx))
