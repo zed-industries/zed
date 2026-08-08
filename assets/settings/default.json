@@ -2472,6 +2472,9 @@
     "google": {
       "api_url": "https://generativelanguage.googleapis.com",
     },
+    "litellm": {
+      "api_url": "http://localhost:4000/v1",
+    },
     "ollama": {
       "api_url": "http://localhost:11434",
     },

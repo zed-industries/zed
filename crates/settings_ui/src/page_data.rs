@@ -8180,6 +8180,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                     "google",
                     "gpt",
                     "grok",
+                    "litellm",
                     "llama",
                     "llm",
                     "lm studio",
