@@ -988,6 +988,15 @@
     // Default width of the collaboration panel.
     "default_width": 240,
   },
+  "worktree_panel": {
+    // Whether to show the worktree panel button in the status bar.
+    "button": true,
+    // Where to dock the worktree panel. Can be 'left' or 'right'.
+    // When unset, the worktree panel docks on the same side as the git panel.
+    // "dock": "left",
+    // Default width of the worktree panel.
+    "default_width": 360,
+  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,

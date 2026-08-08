@@ -985,3 +985,19 @@ pub mod git_panel {
         ]
     );
 }
+
+pub mod worktree_panel {
+    use gpui::actions;
+
+    actions!(
+        worktree_panel,
+        [
+            /// Toggles focus on the worktree panel.
+            ToggleFocus,
+            /// Expands every worktree in the worktree panel.
+            ExpandAllWorktrees,
+            /// Collapses every worktree in the worktree panel.
+            CollapseAllWorktrees,
+        ]
+    );
+}

@@ -43,8 +43,9 @@ mod conflict_view;
 mod diff_multibuffer;
 pub mod git_graph;
 pub mod git_panel;
-mod git_panel_settings;
+pub(crate) mod git_panel_settings;
 pub mod git_picker;
+mod git_status_list_item;
 mod git_runtime_diagnostics;
 pub mod multi_diff_view;
 pub mod picker_prompt;
@@ -56,6 +57,9 @@ pub mod staged_diff;
 pub mod stash_picker;
 pub mod text_diff_view;
 pub mod unstaged_diff;
+pub mod worktree_diff_view;
+pub mod worktree_panel;
+mod worktree_panel_settings;
 
 pub use blame_ui::GitBlameStatus;
 pub use conflict_view::MergeConflictIndicator;
@@ -111,6 +115,7 @@ pub fn init(cx: &mut App) {
         branch_diff::BranchDiff::register(workspace, cx);
         CommitModal::register(workspace);
         git_panel::register(workspace);
+        worktree_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
 
