@@ -932,6 +932,13 @@ impl Markdown {
         &self.source
     }
 
+    pub fn search_snapshot(&self) -> (SharedString, Vec<Range<usize>>) {
+        (
+            self.parsed_markdown.source.clone(),
+            searchable_source_ranges(&self.parsed_markdown.events),
+        )
+    }
+
     pub fn first_code_block_language(&self) -> Option<Arc<Language>> {
         self.parsed_markdown.events.iter().find_map(|(_, event)| {
             let MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, .. }) = event else {
@@ -1450,6 +1457,37 @@ pub struct ParsedMarkdown {
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
+}
+
+fn searchable_source_ranges(events: &[(Range<usize>, MarkdownEvent)]) -> Vec<Range<usize>> {
+    let mut searchable_ranges: Vec<Range<usize>> = Vec::new();
+
+    for (range, event) in events {
+        if !matches!(
+            event,
+            MarkdownEvent::Text
+                | MarkdownEvent::SubstitutedText(_)
+                | MarkdownEvent::Code
+                | MarkdownEvent::SubstitutedCode(_)
+                | MarkdownEvent::Html
+                | MarkdownEvent::InlineHtml
+                | MarkdownEvent::FootnoteReference(_)
+                | MarkdownEvent::SoftBreak
+                | MarkdownEvent::HardBreak
+        ) {
+            continue;
+        }
+
+        if let Some(previous_range) = searchable_ranges.last_mut()
+            && range.start <= previous_range.end
+        {
+            previous_range.end = previous_range.end.max(range.end);
+        } else {
+            searchable_ranges.push(range.clone());
+        }
+    }
+
+    searchable_ranges
 }
 
 impl ParsedMarkdown {
@@ -4461,6 +4499,35 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+
+    #[test]
+    fn searchable_source_ranges_exclude_link_destinations() {
+        let source = concat!(
+            "([#61784](https://github.com/zed-industries/zed/pull/61784))\n",
+            "([#61784](https://github.com/zed-industries/zed/pull/61784))\n",
+            "([#61784](https://github.com/zed-industries/zed/pull/61784))",
+        );
+        let parsed = parse_markdown_with_options(source, true, true, true);
+        let searchable_ranges = searchable_source_ranges(&parsed.events);
+        let occurrences = source
+            .match_indices("61784")
+            .map(|(start, occurrence)| start..start + occurrence.len())
+            .collect::<Vec<_>>();
+
+        assert_eq!(occurrences.len(), 6);
+        assert_eq!(
+            occurrences
+                .iter()
+                .filter(
+                    |occurrence| searchable_ranges.iter().any(|searchable_range| {
+                        searchable_range.start <= occurrence.start
+                            && occurrence.end <= searchable_range.end
+                    })
+                )
+                .count(),
+            3
+        );
+    }
 
     struct TestWindow;
 

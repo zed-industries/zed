@@ -1802,8 +1802,18 @@ impl SearchableItem for MarkdownPreviewView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Self::Match>> {
-        let source = self.markdown.read(cx).source().to_string();
-        cx.background_spawn(async move { query.search_str(&source) })
+        let (source, searchable_ranges) = self.markdown.read(cx).search_snapshot();
+        cx.background_spawn(async move {
+            query
+                .search_str(&source)
+                .into_iter()
+                .filter(|matched| {
+                    searchable_ranges
+                        .iter()
+                        .any(|range| range.start <= matched.start && matched.end <= range.end)
+                })
+                .collect()
+        })
     }
 
     fn active_match_index(
