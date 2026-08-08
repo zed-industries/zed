@@ -55,5 +55,8 @@
     "save": "none",
     // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
     // "tags": []
+    // Hooks that cause this task to run automatically on certain events:
+    // * `create_worktree` — run this task after creating a new git worktree (e.g. to install dependencies or copy untracked config files into it)
+    // "hooks": ["create_worktree"]
   },
 ]

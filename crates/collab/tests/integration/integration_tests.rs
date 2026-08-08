@@ -2307,10 +2307,11 @@ async fn test_propagate_saves_and_fs_changes(
     let rust = Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -2318,10 +2319,11 @@ async fn test_propagate_saves_and_fs_changes(
     let javascript = Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -3473,7 +3475,7 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project.delete_entry(dir_entry.id, false, cx).unwrap()
+            project.delete_entry(dir_entry.id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -3501,7 +3503,7 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project.delete_entry(entry.id, false, cx).unwrap()
+            project.delete_entry(entry.id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -4130,10 +4132,11 @@ async fn test_collaborating_with_diagnostics(
     client_a.language_registry().add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -4846,10 +4849,11 @@ async fn test_prettier_formatting_buffer(
     client_a.language_registry().add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
