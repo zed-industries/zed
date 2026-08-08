@@ -1051,6 +1051,17 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE bookmarks ADD COLUMN label TEXT NOT NULL DEFAULT "";
         ),
+        sql!(
+            CREATE TABLE recently_opened_files (
+                workspace_id INTEGER NOT NULL,
+                abs_path TEXT NOT NULL,
+                opened_at INTEGER NOT NULL,
+                PRIMARY KEY(workspace_id, abs_path),
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+            );
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -2655,7 +2666,78 @@ VALUES {placeholders};"#
             DELETE FROM trusted_worktrees
         }
     }
+
+    /// Records `abs_path` as opened just now in `workspace_id`, and prunes the
+    /// workspace's history down to the most recent [`MAX_RECENTLY_OPENED_FILES`]
+    /// entries. Upserts on (workspace_id, abs_path), so reopening a file just
+    /// bumps its timestamp rather than creating a duplicate row.
+    ///
+    /// Timestamps are computed here (millisecond-precision, via `chrono`)
+    /// rather than with SQLite's `CURRENT_TIMESTAMP`, which only has
+    /// second-resolution and would tie-break arbitrarily under rapid
+    /// successive opens (e.g. tabbing through several files quickly).
+    pub async fn record_recently_opened_file(
+        &self,
+        workspace_id: WorkspaceId,
+        abs_path: PathBuf,
+    ) -> Result<()> {
+        let opened_at = Utc::now().timestamp_millis();
+        self.upsert_recently_opened_file(workspace_id, abs_path, opened_at)
+            .await?;
+        self.prune_recently_opened_files(workspace_id).await
+    }
+
+    /// Returns up to [`MAX_RECENTLY_OPENED_FILES`] absolute paths previously
+    /// recorded for `workspace_id`, most recently opened first.
+    pub fn recently_opened_files(&self, workspace_id: WorkspaceId) -> Result<Vec<PathBuf>> {
+        let mut paths = self.recently_opened_files_query(workspace_id)?;
+        paths.truncate(MAX_RECENTLY_OPENED_FILES);
+        Ok(paths)
+    }
+
+    // `INSERT OR REPLACE` (rather than `ON CONFLICT DO UPDATE`) deletes and
+    // re-inserts the conflicting row, which gives it a fresh (larger) rowid.
+    // Combined with `ORDER BY opened_at DESC, rowid DESC` below, this keeps
+    // ordering fully deterministic even when several files are opened within
+    // the same millisecond (millisecond precision alone isn't enough under
+    // rapid successive opens).
+    query! {
+        async fn upsert_recently_opened_file(workspace_id: WorkspaceId, abs_path: PathBuf, opened_at: i64) -> Result<()> {
+            INSERT OR REPLACE INTO recently_opened_files (workspace_id, abs_path, opened_at)
+            VALUES (?1, ?2, ?3)
+        }
+    }
+
+    query! {
+        fn recently_opened_files_query(workspace_id: WorkspaceId) -> Result<Vec<PathBuf>> {
+            SELECT abs_path
+            FROM recently_opened_files
+            WHERE workspace_id = ?1
+            ORDER BY opened_at DESC, rowid DESC
+            LIMIT 100
+        }
+    }
+
+    // Keeps only the MAX_RECENTLY_OPENED_FILES most recent rows for this workspace.
+    // The LIMIT here must stay in sync with `recently_opened_files_query` above.
+    query! {
+        async fn prune_recently_opened_files(workspace_id: WorkspaceId) -> Result<()> {
+            DELETE FROM recently_opened_files
+            WHERE workspace_id = ?1
+            AND abs_path NOT IN (
+                SELECT abs_path FROM recently_opened_files
+                WHERE workspace_id = ?1
+                ORDER BY opened_at DESC, rowid DESC
+                LIMIT 100
+            )
+        }
+    }
 }
+
+/// Keep in sync with the `LIMIT 100` literals in `recently_opened_files_query`
+/// and `prune_recently_opened_files` above (`query!`-generated SQL can't
+/// reference a Rust const directly).
+const MAX_RECENTLY_OPENED_FILES: usize = 100;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RecentWorkspace {
@@ -3046,6 +3128,91 @@ mod tests {
         );
         assert_eq!(loaded_breakpoints[4].state, hit_condition_breakpoint.state);
         assert_eq!(loaded_breakpoints[4].path, Arc::from(path));
+    }
+
+    #[gpui::test]
+    async fn test_recently_opened_files_orders_by_recency() {
+        zlog::init_test();
+
+        let db = WorkspaceDb::open_test_db("test_recently_opened_files_orders_by_recency").await;
+        let id = db.next_id().await.unwrap();
+
+        db.record_recently_opened_file(id, PathBuf::from("/tmp/first.rs"))
+            .await
+            .unwrap();
+        db.record_recently_opened_file(id, PathBuf::from("/tmp/second.rs"))
+            .await
+            .unwrap();
+        db.record_recently_opened_file(id, PathBuf::from("/tmp/third.rs"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            db.recently_opened_files(id).unwrap(),
+            vec![
+                PathBuf::from("/tmp/third.rs"),
+                PathBuf::from("/tmp/second.rs"),
+                PathBuf::from("/tmp/first.rs"),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_recently_opened_files_upsert_deduplicates() {
+        zlog::init_test();
+
+        let db = WorkspaceDb::open_test_db("test_recently_opened_files_upsert_deduplicates").await;
+        let id = db.next_id().await.unwrap();
+
+        db.record_recently_opened_file(id, PathBuf::from("/tmp/first.rs"))
+            .await
+            .unwrap();
+        db.record_recently_opened_file(id, PathBuf::from("/tmp/second.rs"))
+            .await
+            .unwrap();
+        // Reopening first.rs should move it to the front, not duplicate it.
+        db.record_recently_opened_file(id, PathBuf::from("/tmp/first.rs"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            db.recently_opened_files(id).unwrap(),
+            vec![
+                PathBuf::from("/tmp/first.rs"),
+                PathBuf::from("/tmp/second.rs")
+            ],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_recently_opened_files_prune_keeps_most_recent() {
+        zlog::init_test();
+
+        let db =
+            WorkspaceDb::open_test_db("test_recently_opened_files_prune_keeps_most_recent").await;
+        let id = db.next_id().await.unwrap();
+
+        // Bypass `record_recently_opened_file`'s wall-clock timestamp so ordering
+        // is deterministic regardless of how fast this loop runs.
+        for i in 0..(MAX_RECENTLY_OPENED_FILES + 5) {
+            db.upsert_recently_opened_file(
+                id,
+                PathBuf::from(format!("/tmp/file-{i}.rs")),
+                i as i64,
+            )
+            .await
+            .unwrap();
+        }
+        db.prune_recently_opened_files(id).await.unwrap();
+
+        let remaining = db.recently_opened_files(id).unwrap();
+        assert_eq!(remaining.len(), MAX_RECENTLY_OPENED_FILES);
+        // Highest timestamps (most recently inserted) should survive; oldest 5 pruned.
+        assert_eq!(
+            remaining[0],
+            PathBuf::from(format!("/tmp/file-{}.rs", MAX_RECENTLY_OPENED_FILES + 4))
+        );
+        assert!(!remaining.contains(&PathBuf::from("/tmp/file-0.rs")));
     }
 
     #[gpui::test]
