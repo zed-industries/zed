@@ -2335,6 +2335,41 @@ fn test_autoindent_multi_line_insertion(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_autoindent_edit_before_insertion(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = "
+            fn a() {
+                    b();
+            }
+        "
+        .unindent();
+
+        // Insert a new line above a line that is over-indented. Only the newly added line should
+        // be auto-formatted. The rest of the text should remain the same as before the operation.
+        let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
+        buffer.edit_before(
+            [(Point::new(1, 0)..Point::new(1, 0), "        c();\n")],
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+                fn a() {
+                    c();
+                        b();
+                }
+            "
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_autoindent_block_mode(cx: &mut App) {
     init_settings(cx, |_| {});
 

@@ -1194,7 +1194,7 @@ async fn open_worktree_workspace(
                 None
             };
 
-            let task = multi_workspace.find_or_create_workspace_with_source_workspace(
+            let task = multi_workspace.find_or_create_workspace(
                 path_list,
                 remote_connection_options,
                 None,
@@ -1206,7 +1206,6 @@ async fn open_worktree_workspace(
                         cx,
                     )
                 },
-                &[],
                 init,
                 OpenMode::Add,
                 source_for_transfer.clone(),
@@ -1355,7 +1354,7 @@ async fn open_worktree_workspace(
         } else {
             // Background open: register the new workspace as a retained tab
             // but leave the user where they are.
-            multi_workspace.add_background_workspace(new_workspace.clone(), window, cx);
+            multi_workspace.add(new_workspace.clone(), window, cx);
         }
 
         if is_creating_new_worktree {
