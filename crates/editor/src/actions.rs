@@ -1022,3 +1022,28 @@ pub struct ConfirmEditReviewComment {
 pub struct CancelEditReviewComment {
     pub id: usize,
 }
+
+/// Adds a cursor at the current mouse position. Intended for keymap-bound mouse buttons.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct AddCursorAtMouse;
+
+/// Extends the current selection to the mouse position. Intended for keymap-bound mouse buttons.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct ExtendSelectionToMouse;
+
+/// Goes to the definition of the symbol at the current mouse position.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct GoToDefinitionAtMouse;
+
+/// Goes to the type definition of the symbol at the current mouse position.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct GoToTypeDefinitionAtMouse;
+
+/// Starts a columnar (block) selection at the current mouse position.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct StartColumnarSelectionAtMouse;
