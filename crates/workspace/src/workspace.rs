@@ -3627,6 +3627,11 @@ impl Workspace {
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
 
         let workspace_is_empty = !is_remote && !has_worktree && !has_dirty_items;
+        let workspace_matching = if open_mode == OpenMode::NewWindow {
+            WorkspaceMatching::None
+        } else {
+            WorkspaceMatching::default()
+        };
         if workspace_is_empty {
             open_mode = OpenMode::Activate;
         }
@@ -3642,11 +3647,7 @@ impl Workspace {
                         OpenOptions {
                             requesting_window,
                             open_mode,
-                            workspace_matching: if open_mode == OpenMode::NewWindow {
-                                WorkspaceMatching::None
-                            } else {
-                                WorkspaceMatching::default()
-                            },
+                            workspace_matching,
                             ..Default::default()
                         },
                         cx,
@@ -17432,5 +17433,70 @@ mod tests {
             workspace.open_url_or_file("nonexistent.txt", None, window, cx);
         });
         assert_eq!(cx.opened_url(), Some("nonexistent.txt".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_open_workspace_for_paths_new_window_does_not_reuse_existing(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project-a", json!({ "src": { "main.rs": "" } }))
+            .await;
+
+        let app_state = cx.update(|cx| AppState::test(cx));
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from("/project-a")],
+                app_state.clone(),
+                OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+        let first_window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        cx.run_until_parked();
+
+        let empty_project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (empty_workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(empty_project, window, cx));
+
+        assert_eq!(cx.update(|_, cx| cx.windows().len()), 2);
+
+        empty_workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .open_workspace_for_paths(OpenMode::NewWindow, vec![PathBuf::from("/project-a")], window, cx)
+                .detach_and_prompt_err("Failed to open project", window, cx, |_, _, _| None);
+        });
+
+        cx.run_until_parked();
+
+        let second_window = cx.update(|_, cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|w| w.downcast::<MultiWorkspace>())
+                .find(|w| *w != first_window)
+                .expect("second window should exist")
+        });
+        let second_window_workspace = second_window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let second_window_paths: Vec<_> = second_window_workspace
+            .read_with(cx, |ws, cx| {
+                ws.project()
+                    .read(cx)
+                    .worktrees(cx)
+                    .map(|wt| wt.read(cx).abs_path().to_path_buf())
+                    .collect::<Vec<_>>()
+            });
+
+        assert!(
+            second_window_paths.iter().any(|p| p == Path::new("/project-a")),
+            "project should have been opened in the new (second) window, not the first"
+        );
     }
 }
