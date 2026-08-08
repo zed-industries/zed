@@ -2,7 +2,6 @@ use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore};
 use db::AppDatabase;
 use extension::ExtensionHostProxy;
 use fs::RealFs;
-use gpui::http_client::read_proxy_from_env;
 use gpui::{App, AppContext, Entity};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -46,15 +45,13 @@ pub fn init(cx: &mut App) -> EpAppState {
         std::env::consts::OS,
         std::env::consts::ARCH
     );
-    let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
-    let proxy_url = proxy_str
-        .as_ref()
-        .and_then(|input| input.parse().ok())
-        .or_else(read_proxy_from_env);
+    let proxy_settings = ProxySettings::get_global(cx);
+    let proxy_url = proxy_settings.proxy_url();
+    let no_proxy = proxy_settings.no_proxy();
     let http = {
         let _guard = Tokio::handle(cx).enter();
 
-        ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
+        ReqwestClient::proxy_and_user_agent(proxy_url, no_proxy, &user_agent)
             .expect("could not start HTTP client")
     };
     cx.set_http_client(Arc::new(http));
