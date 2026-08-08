@@ -3320,8 +3320,8 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     assert_eq!(&remote_branches, &branches_set);
 
     cx.update(|cx| {
-        repository.update(cx, |repository, _cx| {
-            repository.change_branch(new_branch.to_string())
+        repository.update(cx, |repository, cx| {
+            repository.change_branch(new_branch.to_string(), cx)
         })
     })
     .await
@@ -3349,6 +3349,20 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     assert_eq!(server_branch.name(), branches[2]);
 
+    // The downstream (client) repository must observe the new branch too —
+    // its snapshot is updated via the `UpdateRepository` the server sends
+    // after the scan triggered by `change_branch`.
+    let client_branch = cx.update(|cx| {
+        repository
+            .read(cx)
+            .branch
+            .as_ref()
+            .unwrap()
+            .name()
+            .to_string()
+    });
+    assert_eq!(client_branch, branches[2]);
+
     // Also try creating a new branch
     cx.update(|cx| {
         repository.update(cx, |repo, _cx| {
@@ -3360,8 +3374,8 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     .unwrap();
 
     cx.update(|cx| {
-        repository.update(cx, |repo, _cx| {
-            repo.change_branch("totally-new-branch".to_string())
+        repository.update(cx, |repo, cx| {
+            repo.change_branch("totally-new-branch".to_string(), cx)
         })
     })
     .await
@@ -3388,6 +3402,17 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     });
 
     assert_eq!(server_branch.name(), "totally-new-branch");
+
+    let client_branch = cx.update(|cx| {
+        repository
+            .read(cx)
+            .branch
+            .as_ref()
+            .unwrap()
+            .name()
+            .to_string()
+    });
+    assert_eq!(client_branch, "totally-new-branch");
 
     let default_branch = cx
         .update(|cx| repository.update(cx, |repository, _cx| repository.default_branch(false)))
