@@ -219,20 +219,37 @@ When you encounter merge conflicts after a merge, rebase, or pull, Zed highlight
 
 ### Viewing Conflicts
 
-Conflicting files appear in the Git Panel with a warning icon. You can also see conflicts in the Project Diff view, where each conflict region is highlighted:
+Conflicting files appear in the Git Panel under a **Conflicts** section that tracks how many of them you have resolved. You can also see conflicts in the Project Diff view, where each conflict region is highlighted:
 
 - Changes from your current branch are highlighted in green
 - Changes from the incoming branch are highlighted in blue
 
+Conflict regions are also marked on the scrollbar, and the header above each conflict shows how many are left in the file.
+
+### Navigating Conflicts
+
+| Command                             | Default Shortcut                     |
+| ----------------------------------- | ------------------------------------ |
+| `git: go to next conflict`          | {#kb git::GoToNextConflict}          |
+| `git: go to previous conflict`      | {#kb git::GoToPreviousConflict}      |
+| `git: go to next conflicted file`   | {#kb git::GoToNextConflictedFile}    |
+| `git: go to previous conflicted file` | {#kb git::GoToPreviousConflictedFile} |
+
+The first two move the cursor within the current file and wrap at its last conflict. The other two open the next or previous conflicted file in the project and put the cursor on its first conflict, so you can work through a merge without returning to the Git Panel.
+
 ### Resolving Conflicts
 
-Each conflict shows three buttons:
+Each conflict shows three buttons, each with a keyboard equivalent:
 
-- **Use [branch-name]**: Keep the changes from one branch (shows the actual branch name, like "main")
-- **Use [other-branch]**: Keep the changes from the other branch (like "feature-branch")
-- **Use Both**: Keep both sets of changes, with your branch's changes first
+| Button                 | Action                                                       | Default Shortcut                |
+| ---------------------- | ------------------------------------------------------------ | ------------------------------- |
+| **Use [current]**      | Keep the changes from your current branch                      | {#kb git::AcceptCurrentChange}  |
+| **Use [incoming]**     | Keep the changes from the incoming branch                      | {#kb git::AcceptIncomingChange} |
+| **Use Both**           | Keep both sets of changes, with your branch's changes first    | {#kb git::AcceptBothChanges}    |
 
-Click a button to resolve that conflict. The conflict markers are removed and replaced with your chosen content. After resolving all conflicts in a file, stage it and commit to complete the merge.
+The first two buttons are labelled with the names Git wrote into the conflict markers. During a merge that is usually `HEAD` for your side and the branch name for the incoming side (for example, **Use HEAD** and **Use feature-branch**).
+
+The keyboard shortcuts apply to the conflict containing the cursor and are only bound while the file has unresolved conflicts. The conflict markers are removed and replaced with your chosen content. After resolving all conflicts in a file, stage it and commit to complete the merge.
 
 > **Tip:** For complex conflicts that need manual editing, you can edit the file directly. Remove the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and keep the content you want.
 

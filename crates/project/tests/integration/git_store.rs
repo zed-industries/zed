@@ -142,6 +142,31 @@ mod conflict_set_tests {
     }
 
     #[test]
+    fn test_incomplete_conflicts_are_ignored() {
+        let parse = |text: &str| {
+            let buffer_id = BufferId::new(1).unwrap();
+            let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, text.to_string());
+            ConflictSet::parse(buffer.snapshot()).conflicts.len()
+        };
+
+        assert_eq!(
+            parse("<<<<<<< HEAD\nours\n=======\ntheirs\n"),
+            0,
+            "a conflict with no closing marker is not reported"
+        );
+        assert_eq!(
+            parse("<<<<<<< HEAD\nours\n>>>>>>> feature\n"),
+            0,
+            "a conflict with no ======= separator is not reported"
+        );
+        assert_eq!(
+            parse("=======\n>>>>>>> feature\n"),
+            0,
+            "closing markers with no opening marker are not reported"
+        );
+    }
+
+    #[test]
     fn test_conflict_markers_at_eof() {
         let test_content = r#"
             <<<<<<< ours

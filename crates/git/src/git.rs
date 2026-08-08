@@ -55,6 +55,21 @@ actions!(
         /// Restores the selected hunks to their original state and moves to the
         /// next one.
         RestoreAndNext,
+        // per-conflict
+        /// Moves the cursor to the next merge conflict.
+        GoToNextConflict,
+        /// Moves the cursor to the previous merge conflict.
+        GoToPreviousConflict,
+        /// Resolves the merge conflict at the cursor by keeping the current branch's side.
+        AcceptCurrentChange,
+        /// Resolves the merge conflict at the cursor by keeping the incoming branch's side.
+        AcceptIncomingChange,
+        /// Resolves the merge conflict at the cursor by keeping both sides.
+        AcceptBothChanges,
+        /// Opens the next file with merge conflicts and moves to its first conflict.
+        GoToNextConflictedFile,
+        /// Opens the previous file with merge conflicts and moves to its first conflict.
+        GoToPreviousConflictedFile,
         // per-file
         /// Shows git blame information for the current file.
         #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]

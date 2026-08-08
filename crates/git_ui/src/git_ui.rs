@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use commit_modal::CommitModal;
-use editor::{Editor, actions::DiffClipboardWithSelectionData};
+use editor::{Direction, Editor, actions::DiffClipboardWithSelectionData};
 
 use workspace::{Toast, notifications::NotificationId};
 
@@ -314,6 +314,12 @@ pub fn init(cx: &mut App) {
         });
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
             open_modified_files(workspace, window, cx);
+        });
+        workspace.register_action(|workspace, _: &git::GoToNextConflictedFile, window, cx| {
+            conflict_view::go_to_conflicted_file(workspace, Direction::Next, window, cx);
+        });
+        workspace.register_action(|workspace, _: &git::GoToPreviousConflictedFile, window, cx| {
+            conflict_view::go_to_conflicted_file(workspace, Direction::Prev, window, cx);
         });
         workspace.register_action_renderer(|div, workspace, _window, cx| {
             div.when_some(
