@@ -578,6 +578,11 @@ pub fn into_mistral(
                     })
                 })
                 .collect::<Result<_>>()?,
+            reasoning_effort: if model.supports_thinking() && request.thinking_allowed {
+                Some(mistral::ReasoningEffort::High)
+            } else {
+                None
+            },
         },
         request.thread_id,
     ))
@@ -884,6 +889,44 @@ mod tests {
         assert_eq!(mistral_request.messages.len(), 2);
         assert!(mistral_request.stream);
         assert_eq!(affinity, Some("abcdef".into()));
+    }
+
+    #[test]
+    fn test_into_mistral_reasoning_effort() {
+        let request = |thinking_allowed| LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            thinking_allowed,
+            thinking_effort: None,
+            speed: Default::default(),
+            compact_at_tokens: None,
+        };
+
+        let (mistral_request, _) =
+            into_mistral(request(true), mistral::Model::MistralMediumLatest, None).unwrap();
+        assert_eq!(
+            mistral_request.reasoning_effort,
+            Some(mistral::ReasoningEffort::High)
+        );
+
+        let (mistral_request, _) =
+            into_mistral(request(false), mistral::Model::MistralMediumLatest, None).unwrap();
+        assert_eq!(mistral_request.reasoning_effort, None);
+
+        let (mistral_request, _) =
+            into_mistral(request(true), mistral::Model::CodestralLatest, None).unwrap();
+        assert_eq!(mistral_request.reasoning_effort, None);
     }
 
     #[test]

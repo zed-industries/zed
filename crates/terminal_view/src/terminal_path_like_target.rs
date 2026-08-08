@@ -4,11 +4,12 @@ use editor::items::open_resolved_target;
 use gpui::{Context, Task, TaskExt, WeakEntity, Window};
 use std::path::PathBuf;
 use terminal::PathLikeTarget;
+use workspace::path_link::PathMatching;
 #[cfg(not(test))]
-use workspace::path_link::possible_open_target;
+use workspace::path_link::resolve_open_target;
 #[cfg(test)]
 use workspace::path_link::{
-    BackgroundPathChecks, OpenTargetFoundBy, possible_open_target_with_fs_checks,
+    BackgroundPathChecks, OpenTargetFoundBy, resolve_open_target_with_fs_checks,
 };
 use workspace::{Workspace, path_link::OpenTarget};
 
@@ -42,17 +43,19 @@ fn possible_hover_target(
     #[cfg(test)] background_path_checks: BackgroundPathChecks,
 ) -> Task<()> {
     #[cfg(not(test))]
-    let file_to_open_task = possible_open_target(
+    let file_to_open_task = resolve_open_target(
         workspace,
+        PathMatching::Heuristic,
         &path_like_target.maybe_path,
-        path_like_target.terminal_dir.as_deref(),
+        path_like_target.working_directory.as_deref(),
         cx,
     );
     #[cfg(test)]
-    let file_to_open_task = possible_open_target_with_fs_checks(
+    let file_to_open_task = resolve_open_target_with_fs_checks(
         workspace,
+        PathMatching::Heuristic,
         &path_like_target.maybe_path,
-        path_like_target.terminal_dir.as_deref(),
+        path_like_target.working_directory.as_deref(),
         cx,
         background_path_checks,
     );
@@ -119,19 +122,21 @@ fn possibly_open_target(
             .update(cx, |_, cx| {
                 #[cfg(not(test))]
                 {
-                    possible_open_target(
+                    resolve_open_target(
                         &workspace,
+                        PathMatching::Heuristic,
                         &path_like_target.maybe_path,
-                        path_like_target.terminal_dir.as_deref(),
+                        path_like_target.working_directory.as_deref(),
                         cx,
                     )
                 }
                 #[cfg(test)]
                 {
-                    possible_open_target_with_fs_checks(
+                    resolve_open_target_with_fs_checks(
                         &workspace,
+                        PathMatching::Heuristic,
                         &path_like_target.maybe_path,
-                        path_like_target.terminal_dir.as_deref(),
+                        path_like_target.working_directory.as_deref(),
                         cx,
                         background_path_checks,
                     )
@@ -263,7 +268,7 @@ mod tests {
         ) -> (Option<HoverTarget>, Option<OpenTarget>),
         maybe_path: &str,
         tooltip: &str,
-        terminal_dir: Option<PathBuf>,
+        working_directory: Option<PathBuf>,
         background_path_checks: BackgroundPathChecks,
         open_target_found_by: OpenTargetFoundBy,
         file: &str,
@@ -277,7 +282,7 @@ mod tests {
             },
             PathLikeTarget {
                 maybe_path: maybe_path.to_string(),
-                terminal_dir,
+                working_directory,
             },
             background_path_checks,
         )

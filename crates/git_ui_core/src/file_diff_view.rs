@@ -204,7 +204,7 @@ impl FileDiffView {
 }
 
 #[ztracing::instrument(skip_all)]
-pub(crate) async fn build_buffer_diff(
+pub async fn build_buffer_diff(
     old_buffer: &Entity<Buffer>,
     new_buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
@@ -218,6 +218,7 @@ pub(crate) async fn build_buffer_diff(
             &new_buffer_snapshot.text,
             new_buffer_snapshot.language().cloned(),
             language_registry,
+            buffer_diff::DiffBaseKind::Custom,
             cx,
         )
     });
