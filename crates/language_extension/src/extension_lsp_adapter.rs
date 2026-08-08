@@ -9,12 +9,12 @@ use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
 use futures::{FutureExt, future::join_all, lock::OwnedMutexGuard};
 use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
-    BinaryStatus, CodeLabel, DynLspInstaller, HighlightId, Language, LanguageName,
-    LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
+    BinaryStatus, BinaryStatusUpdate, CodeLabel, DynLspInstaller, HighlightId, Language,
+    LanguageName, LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
 };
 use lsp::{
-    CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
-    LanguageServerSelector, Uri,
+    CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
+    LanguageServerName, LanguageServerSelector, Uri,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -130,8 +130,14 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
             language_server_id,
             status
         );
+        // Need to check whether servers exsist and ensure that sending `0` is ok
         self.language_registry
-            .update_lsp_binary_status(language_server_id, status);
+            .update_lsp_binary_status(BinaryStatusUpdate {
+                name: language_server_id,
+                // Need to check whether servers exsist and ensure that sending `0` is ok
+                id: LanguageServerId(0),
+                binary_status: status,
+            });
     }
 }
 

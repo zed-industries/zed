@@ -86,12 +86,15 @@ impl ActivityIndicator {
         let this = cx.new(|cx| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(async move |this, cx| {
-                while let Some((name, binary_status)) = status_events.next().await {
+                while let Some(binary_status_update) = status_events.next().await {
                     this.update(cx, |this: &mut ActivityIndicator, cx| {
-                        this.statuses.retain(|s| s.name != name);
+                        this.statuses
+                            .retain(|s| s.name != binary_status_update.name);
                         this.statuses.push(ServerStatus {
-                            name,
-                            status: LanguageServerStatusUpdate::Binary(binary_status),
+                            name: binary_status_update.name,
+                            status: LanguageServerStatusUpdate::Binary(
+                                binary_status_update.binary_status,
+                            ),
                         });
                         cx.notify();
                     })?;
