@@ -4,8 +4,8 @@ use anyhow::{Context as _, Result};
 use client::{TypedEnvelope, proto};
 use collections::{HashMap, HashSet};
 use extension::{
-    Extension, ExtensionDebugAdapterProviderProxy, ExtensionHostProxy, ExtensionLanguageProxy,
-    ExtensionLanguageServerProxy, ExtensionManifest,
+    Event, Extension, ExtensionDebugAdapterProviderProxy, ExtensionEvents, ExtensionHostProxy,
+    ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionManifest,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::future::join_all;
@@ -14,6 +14,7 @@ use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
+use util::ResultExt;
 
 use crate::wasm_host::{WasmExtension, WasmHost};
 
@@ -85,6 +86,8 @@ impl HeadlessExtensionStore {
             })
             .collect();
 
+        let extensions_changed = !to_remove.is_empty() || !to_load.is_empty();
+
         cx.spawn(async move |this, cx| {
             let mut missing = Vec::new();
 
@@ -101,6 +104,15 @@ impl HeadlessExtensionStore {
                 } else if extension.dev {
                     missing.push(extension)
                 }
+            }
+
+            if extensions_changed {
+                // Notify listeners (e.g. the JSON schema store) that the set of
+                // loaded extensions may have changed, so that cached schemas are
+                // regenerated. This mirrors the local `ExtensionStore`, which
+                // emits the same event after every extension load.
+                this.update(cx, |_, cx| notify_extensions_changed(cx))
+                    .log_err();
             }
 
             Ok(missing)
@@ -283,7 +295,15 @@ impl HeadlessExtensionStore {
                 .await
                 .with_context(|| format!("Failed to rename {tmp_path:?} to {path:?}"))?;
 
-            Self::load_extension(this, extension, cx).await
+            Self::load_extension(this.clone(), extension, cx).await?;
+
+            // The extension was loaded after the initial sync, so notify
+            // listeners (e.g. the JSON schema store) that the set of loaded
+            // extensions has changed, so that cached schemas are regenerated.
+            this.update(cx, |_, cx| notify_extensions_changed(cx))
+                .log_err();
+
+            Ok(())
         })
     }
 
@@ -348,5 +368,13 @@ impl HeadlessExtensionStore {
             .await?;
 
         Ok(proto::Ack {})
+    }
+}
+
+fn notify_extensions_changed(cx: &mut App) {
+    if let Some(events) = ExtensionEvents::try_global(cx) {
+        events.update(cx, |this, cx| {
+            this.emit(Event::ExtensionsInstalledChanged, cx)
+        });
     }
 }
