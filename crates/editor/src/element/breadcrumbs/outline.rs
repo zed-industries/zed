@@ -1,9 +1,5 @@
-//! Outline index helpers and symbol breadcrumb labels.
-
 use super::super::*;
 
-/// Parent of each outline item: nearest preceding shallower depth (`None` at top level).
-/// Uses nearest-shallower rather than `depth - 1` because tree-sitter outlines can jump levels.
 pub(super) fn outline_parents(depths: &[usize]) -> Vec<Option<usize>> {
     let mut parents = Vec::with_capacity(depths.len());
     let mut ancestor_stack: Vec<(usize, usize)> = Vec::new();
@@ -20,7 +16,6 @@ pub(super) fn outline_parents(depths: &[usize]) -> Vec<Option<usize>> {
     parents
 }
 
-/// Indices sharing `target_index`'s parent (includes `target_index`).
 pub(crate) fn sibling_outline_indices(depths: &[usize], target_index: usize) -> Vec<usize> {
     if target_index >= depths.len() {
         return Vec::new();
@@ -35,7 +30,6 @@ pub(crate) fn sibling_outline_indices(depths: &[usize], target_index: usize) -> 
         .collect()
 }
 
-/// Direct children of `target_index` (same parent notion as `sibling_outline_indices`).
 pub(crate) fn child_outline_indices(depths: &[usize], target_index: usize) -> Vec<usize> {
     if target_index >= depths.len() {
         return Vec::new();
@@ -49,7 +43,6 @@ pub(crate) fn child_outline_indices(depths: &[usize], target_index: usize) -> Ve
         .collect()
 }
 
-/// Indices of items with no parent (top-level outline entries).
 pub(crate) fn top_level_outline_indices(depths: &[usize]) -> Vec<usize> {
     let parents = outline_parents(depths);
     parents
@@ -59,8 +52,6 @@ pub(crate) fn top_level_outline_indices(depths: &[usize]) -> Vec<usize> {
         .collect()
 }
 
-/// Symbol chain the bar shows: the menu's trail while browsing, except that a trail which is
-/// a prefix of the (deeper) cursor chain must not truncate it.
 pub(super) fn resolve_bar_symbol_trail(
     cursor_chain: Vec<OutlineItem<Anchor>>,
     menu_trail: Option<Vec<OutlineItem<Anchor>>>,
@@ -82,7 +73,6 @@ pub(super) fn resolve_bar_symbol_trail(
     }
 }
 
-/// Replace newlines with spaces so multi-line outline labels fit the bar/menu.
 pub(super) fn flatten_text_for_single_line_display(text: &str) -> String {
     const LINE_BREAK: char = '\n';
     const REPLACEMENT: &str = " ";
@@ -90,7 +80,6 @@ pub(super) fn flatten_text_for_single_line_display(text: &str) -> String {
     text.replace(LINE_BREAK, REPLACEMENT)
 }
 
-/// Outline-style menu row (syntax highlights + optional current checkmark column).
 pub(super) fn render_outline_item_menu_row(
     item: &OutlineItem<Anchor>,
     is_current: bool,
@@ -114,8 +103,15 @@ pub(super) fn render_outline_item_menu_row(
             this.child(div().size(IconSize::Small.rems()))
         })
         .child(
-            StyledText::new(flatten_text_for_single_line_display(&item.text))
-                .with_default_highlights(&text_style, item.highlight_ranges.clone()),
+            div()
+                .min_w_0()
+                .overflow_x_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis_middle()
+                .child(
+                    StyledText::new(flatten_text_for_single_line_display(&item.text))
+                        .with_default_highlights(&text_style, item.highlight_ranges.clone()),
+                ),
         )
         .into_any_element()
 }

@@ -1,9 +1,6 @@
-//! Path listing and drill-down navigation for breadcrumbs.
-
 use super::super::*;
 use super::BreadcrumbSegmentTarget;
 
-/// Path prefixes root-first (`a/b/c.rs` → `[a, a/b, a/b/c.rs]`). Empty for the empty path.
 pub(super) fn breadcrumb_path_prefixes(path: &RelPath) -> Vec<&RelPath> {
     let mut prefixes: Vec<&RelPath> = path
         .ancestors()
@@ -13,8 +10,6 @@ pub(super) fn breadcrumb_path_prefixes(path: &RelPath) -> Vec<&RelPath> {
     prefixes
 }
 
-/// Path bar segments: worktree root plus each component of `path`. Last segment is a symbol menu
-/// when `terminal_buffer_id` is set (open file); otherwise a directory menu (navigated path).
 pub(crate) fn breadcrumb_path_segments(
     worktree_id: WorktreeId,
     root_name: &str,
@@ -61,7 +56,6 @@ pub(crate) fn breadcrumb_path_segments(
     (labels, targets)
 }
 
-/// Max rows in a breadcrumb directory/symbol dropdown (layout cost, not I/O).
 pub(crate) const MAX_BREADCRUMB_MENU_ROWS: usize = 200;
 
 pub(super) fn breadcrumb_menu_truncated_label(filter_active: bool) -> String {
@@ -72,11 +66,8 @@ pub(super) fn breadcrumb_menu_truncated_label(filter_active: bool) -> String {
     }
 }
 
-/// Cap for single-child directory walks (pathological depth / symlink cycles).
 pub(crate) const MAX_UNARY_DIRECTORY_SKIP_DEPTH: usize = 64;
 
-/// If `children` is exactly one directory, return that path; otherwise `None`.
-/// Shared per-step decision for production drill.
 pub(crate) fn single_child_directory(children: &[(Arc<RelPath>, bool)]) -> Option<Arc<RelPath>> {
     match children {
         [(path, true)] => Some(path.clone()),
@@ -84,7 +75,6 @@ pub(crate) fn single_child_directory(children: &[(Arc<RelPath>, bool)]) -> Optio
     }
 }
 
-/// File-type icon for the open file's bar segment, honoring the panel's `file_icons` setting.
 pub(super) fn breadcrumb_file_icon(path: Option<&RelPath>, cx: &App) -> Option<SharedString> {
     if !BreadcrumbListingSettings::get_global(cx).file_icons {
         return None;
@@ -92,8 +82,6 @@ pub(super) fn breadcrumb_file_icon(path: Option<&RelPath>, cx: &App) -> Option<S
     file_icons::FileIcons::get_icon(path?.as_std_path(), cx)
 }
 
-/// Direct children of `path` as `(path, is_dir)` pairs — a git-free fast path for the
-/// fold walk, which only needs shape, not row data.
 pub(super) fn directory_child_paths(
     worktree: &Entity<project::Worktree>,
     path: &RelPath,
@@ -110,7 +98,6 @@ pub(super) fn directory_child_paths(
         .collect()
 }
 
-/// Icon source for a directory-browser row (mirrors project panel file/folder icon settings).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DirectoryEntryIconSource {
     File,
@@ -137,8 +124,8 @@ pub(crate) fn directory_entry_icon_source(
     }
 }
 
-/// Project-panel sort/hide/icon/git/fold settings, read independently to avoid a `project_panel` cycle.
-#[derive(Clone, Copy, settings::RegisterSetting)]
+/// Panel listing settings, read directly to avoid a project_panel crate cycle.
+#[derive(Clone, Copy, PartialEq, Eq, settings::RegisterSetting)]
 pub(super) struct BreadcrumbListingSettings {
     pub(super) sort_mode: settings::ProjectPanelSortMode,
     pub(super) sort_order: settings::ProjectPanelSortOrder,
@@ -146,7 +133,6 @@ pub(super) struct BreadcrumbListingSettings {
     pub(super) hide_hidden: bool,
     pub(super) file_icons: bool,
     pub(super) folder_icons: bool,
-    // project_panel.git_status AND global git.enabled status gate.
     pub(super) git_status: bool,
     pub(super) auto_fold_dirs: bool,
 }
@@ -154,7 +140,6 @@ pub(super) struct BreadcrumbListingSettings {
 impl settings::Settings for BreadcrumbListingSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let project_panel = content.project_panel.clone().unwrap();
-        // Same gate as ProjectPanelSettings: panel flag AND global git status enablement.
         let git_status = project_panel.git_status.unwrap()
             && content
                 .git
@@ -185,8 +170,6 @@ pub(super) struct BreadcrumbDirectoryEntry {
     pub(super) git_summary: GitSummary,
 }
 
-/// Direct children of `path`, ordered/filtered like the project panel (full set; display caps later).
-/// Delegates assembly to [`project::worktree_child_listing`] so sort/filter/git stay shared.
 pub(super) fn breadcrumb_directory_entries(
     project: &Entity<project::Project>,
     worktree: &Entity<project::Worktree>,
@@ -227,7 +210,6 @@ pub(super) fn breadcrumb_directory_entries(
     .collect()
 }
 
-/// Select `path` in the project panel, expanding as needed to show it.
 pub(super) fn reveal_directory_in_project_panel(
     workspace: &WeakEntity<Workspace>,
     worktree_id: WorktreeId,

@@ -1189,6 +1189,20 @@
     },
   },
   {
+    "context": "BreadcrumbNavigationMenu > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
+      "left": "menu::SelectParent",
+      "right": "menu::SelectChild",
+      "home": "menu::SelectFirst",
+      "end": "menu::SelectLast",
+      "enter": "menu::Confirm",
+      "escape": "menu::Cancel",
+    },
+  },
+  {
     "context": "ChannelModal > Picker > Editor",
     "bindings": {
       "tab": "channel_modal::ToggleMode",

@@ -326,8 +326,6 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
     });
 }
 
-/// Keystroke-dispatched `OpenBreadcrumbNavigation` opens the parent directory listing with the
-/// current file preselected. Drives the real action path (not a method call on the editor).
 #[gpui::test]
 async fn test_open_breadcrumb_navigation_via_keystroke(cx: &mut TestAppContext) {
     use breadcrumbs::Breadcrumbs;
@@ -389,7 +387,6 @@ async fn test_open_breadcrumb_navigation_via_keystroke(cx: &mut TestAppContext) 
     editor.update_in(cx, |editor, window, cx| {
         window.focus(&editor.focus_handle(cx), cx);
     });
-    // Draw so EditorElement registers actions and the breadcrumb strip paints.
     cx.update(|window, cx| {
         let _ = window.draw(cx);
     });
@@ -423,7 +420,6 @@ async fn test_open_breadcrumb_navigation_via_keystroke(cx: &mut TestAppContext) 
     });
 }
 
-/// Single-file worktree (`zed some_file.rs`): action opens Symbols; empty outline falls through.
 #[gpui::test]
 async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppContext) {
     use project::{FakeFs, Project};
@@ -433,17 +429,19 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
     use util::path;
     use workspace::Workspace;
 
-    // Process-global callback, but each test installs its own flag so concurrent tests do not race.
-    static OUTLINE_TOGGLE_FLAG: OnceLock<parking_lot::Mutex<Arc<AtomicBool>>> = OnceLock::new();
-    fn outline_toggle_for_test(_: gpui::AnyView, _: &mut gpui::Window, _: &mut gpui::App) {
-        if let Some(flag) = OUTLINE_TOGGLE_FLAG.get() {
-            flag.lock().store(true, Ordering::SeqCst);
+    use gpui::EntityId;
+    use std::collections::HashMap;
+
+    static OUTLINE_TOGGLE_FLAGS: OnceLock<parking_lot::Mutex<HashMap<EntityId, Arc<AtomicBool>>>> =
+        OnceLock::new();
+    fn outline_toggle_for_test(view: gpui::AnyView, _: &mut gpui::Window, _: &mut gpui::App) {
+        let entity_id = view.entity_id();
+        if let Some(flags) = OUTLINE_TOGGLE_FLAGS.get()
+            && let Some(flag) = flags.lock().get(&entity_id)
+        {
+            flag.store(true, Ordering::SeqCst);
         }
     }
-    let outline_toggled = Arc::new(AtomicBool::new(false));
-    *OUTLINE_TOGGLE_FLAG
-        .get_or_init(|| parking_lot::Mutex::new(Arc::new(AtomicBool::new(false))))
-        .lock() = outline_toggled.clone();
     let _ = zed_actions::outline::TOGGLE_OUTLINE.set(outline_toggle_for_test);
 
     init_test(cx, |_| {});
@@ -485,12 +483,16 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
     let editor = cx.update(|window, cx| {
         cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx))
     });
+    let outline_toggled = Arc::new(AtomicBool::new(false));
+    OUTLINE_TOGGLE_FLAGS
+        .get_or_init(|| parking_lot::Mutex::new(HashMap::new()))
+        .lock()
+        .insert(editor.entity_id(), outline_toggled.clone());
     workspace.update_in(cx, |workspace, window, cx| {
         workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
     });
     cx.run_until_parked();
 
-    // File-segment click path: open symbols listing for the singleton.
     editor.update_in(cx, |editor, window, cx| {
         editor.open_or_toggle_breadcrumb_listing(
             crate::element::BreadcrumbSegmentTarget::Symbol {
@@ -501,7 +503,6 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
             cx,
         );
     });
-    // No language/outline: async load empties, falls through to outline picker, dismisses menu.
     cx.run_until_parked();
     editor.read_with(cx, |editor, _| {
         assert!(
@@ -514,12 +515,10 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
         "empty outline must invoke the outline picker fallthrough"
     );
 
-    // Action path: same Symbols listing for non-navigable singleton.
     outline_toggled.store(false, Ordering::SeqCst);
     editor.update_in(cx, |editor, window, cx| {
         editor.open_breadcrumb_navigation_action(&OpenBreadcrumbNavigation, window, cx);
     });
-    // Before load settles, a Symbols menu is attached.
     editor.read_with(cx, |editor, cx| {
         let menu = editor
             .breadcrumb_navigation_menu()
@@ -538,9 +537,13 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
         );
     });
     assert!(outline_toggled.load(Ordering::SeqCst));
+    OUTLINE_TOGGLE_FLAGS
+        .get()
+        .unwrap()
+        .lock()
+        .remove(&editor.entity_id());
 }
 
-/// Symbols listing waits for a delayed LSP document-symbol response (no-cache async load).
 #[gpui::test]
 async fn test_open_breadcrumb_symbols_shows_rows_after_delayed_lsp(cx: &mut TestAppContext) {
     use futures::channel::oneshot;
@@ -590,8 +593,6 @@ async fn test_open_breadcrumb_symbols_shows_rows_after_delayed_lsp(cx: &mut Test
         });
 
     cx.set_state("fn delayed_fn() {ˇ}");
-    // Fire the debounced document-symbol refresh; keep the oneshot closed so the
-    // response cannot land until we assert the empty loading state.
     cx.executor()
         .advance_clock(crate::LSP_REQUEST_DEBOUNCE_TIMEOUT + std::time::Duration::from_millis(100));
 
@@ -615,8 +616,6 @@ async fn test_open_breadcrumb_symbols_shows_rows_after_delayed_lsp(cx: &mut Test
             cx,
         );
     });
-    // Assert the empty/loading state without parking: parking would advance the
-    // fake clock to the LSP request timeout while the oneshot is still closed.
     cx.update_editor(|editor, _window, cx| {
         let menu = editor
             .breadcrumb_navigation_menu()
@@ -652,7 +651,6 @@ async fn test_open_breadcrumb_symbols_shows_rows_after_delayed_lsp(cx: &mut Test
     });
 }
 
-/// Multibuffer editors fall through to the outline toggle; they must not start path navigation.
 #[gpui::test]
 fn test_open_breadcrumb_navigation_on_multibuffer_does_not_start_navigation(
     cx: &mut TestAppContext,

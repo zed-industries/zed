@@ -1126,7 +1126,6 @@ pub struct Editor {
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
-    /// Open breadcrumb navigation session (one async-populating menu entity).
     breadcrumb_navigation_menu: Option<Entity<BreadcrumbNavigationMenu>>,
     _breadcrumb_navigation_menu_subscription: Option<Subscription>,
     focused_block: Option<FocusedBlock>,
@@ -9881,7 +9880,6 @@ impl Editor {
         }
 
         if old_breadcrumbs_visible != self.breadcrumbs_visible() {
-            // Menu anchors to a painted strip segment; hide it when the strip goes away.
             if !self.breadcrumbs_visible() {
                 self.dismiss_breadcrumb_navigation(window, cx);
             }
@@ -10990,12 +10988,10 @@ impl Editor {
         }
     }
 
-    /// Open breadcrumb navigation menu entity, if any.
     pub(crate) fn breadcrumb_navigation_menu(&self) -> Option<&Entity<BreadcrumbNavigationMenu>> {
         self.breadcrumb_navigation_menu.as_ref()
     }
 
-    /// Open or switch the single breadcrumb navigation menu to `listing`.
     pub(crate) fn open_breadcrumb_navigation(
         &mut self,
         listing: BreadcrumbListing,
@@ -11009,8 +11005,7 @@ impl Editor {
         };
 
         if let Some(menu) = self.breadcrumb_navigation_menu.clone() {
-            // set_listing must not call editor.update (would double-lease when this is
-            // already under editor.update from a segment click).
+            // set_listing runs under this editor.update; it must not re-enter the editor.
             menu.update(cx, |menu, cx| {
                 menu.set_listing(listing, false, window, cx);
             });
@@ -11033,8 +11028,6 @@ impl Editor {
             &menu,
             window,
             |this, menu, _: &gpui::DismissEvent, window, cx| {
-                // Restore editor focus only when the menu owned it; a dismissal caused by
-                // clicking into another pane must not steal that pane's focus back.
                 let menu_had_focus = menu.focus_handle(cx).contains_focused(window, cx);
                 this.breadcrumb_navigation_menu = None;
                 this._breadcrumb_navigation_menu_subscription = None;
@@ -11051,7 +11044,6 @@ impl Editor {
         cx.notify();
     }
 
-    /// Segment click: toggle if the same listing is already open, otherwise open/switch.
     pub(crate) fn open_or_toggle_breadcrumb_listing(
         &mut self,
         target: element::BreadcrumbSegmentTarget,
@@ -11125,7 +11117,6 @@ impl Editor {
         self.open_or_toggle_breadcrumb_listing(target, window, cx);
     }
 
-    /// Map buffer-local outline items into multibuffer anchor space.
     pub(crate) fn map_text_outline_items(
         &self,
         text_items: &[OutlineItem<text::Anchor>],
@@ -11142,7 +11133,6 @@ impl Editor {
             .collect()
     }
 
-    /// Opens breadcrumb navigation for the active file.
     pub fn open_breadcrumb_navigation_action(
         &mut self,
         _: &OpenBreadcrumbNavigation,
@@ -11155,8 +11145,6 @@ impl Editor {
             }
         };
 
-        // No breadcrumb strip → nothing to anchor the menu on; use the outline picker.
-        // Use effective visibility (setting XOR ToggleBreadcrumb), not the raw setting.
         if !self.breadcrumbs_visible() {
             toggle_outline(window, cx);
             return;
@@ -11198,7 +11186,6 @@ impl Editor {
             return;
         }
 
-        // Non-navigable singleton: open symbols at the file segment (async; empty → outline picker).
         self.open_breadcrumb_navigation(
             BreadcrumbListing::Symbols {
                 buffer_id,

@@ -259,7 +259,6 @@ pub struct WorktreeChildListingOptions {
     pub sort_order: SortOrder,
     pub hide_gitignore: bool,
     pub hide_hidden: bool,
-    /// When false, summaries are zeroed; ignored-dimming still uses `is_ignored`.
     pub git_status_enabled: bool,
 }
 

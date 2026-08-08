@@ -46,7 +46,6 @@ impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
 impl Render for Breadcrumbs {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // min_w_0 + overflow_hidden: strip shrinks inside the toolbar; width-collapse truncates.
         let element = h_flex()
             .id("breadcrumb-container")
             .flex_grow_1()

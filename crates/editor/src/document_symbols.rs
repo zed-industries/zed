@@ -107,7 +107,6 @@ impl Editor {
         Some((buffer.remote_id(), symbols))
     }
 
-    /// Move the cursor to `item` and scroll it into view (symbol breadcrumb confirm).
     pub(crate) fn navigate_to_outline_item(
         &mut self,
         item: &OutlineItem<Anchor>,
@@ -232,8 +231,6 @@ fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
         .lsp_enabled()
 }
 
-/// Lifts a buffer-local outline item's anchors into the multibuffer's anchor space, dropping
-/// the item if any of its anchors don't resolve (e.g. the buffer has no excerpts anymore).
 pub(crate) fn text_outline_item_to_multibuffer(
     item: &OutlineItem<text::Anchor>,
     multi_buffer_snapshot: &MultiBufferSnapshot,
@@ -813,8 +810,7 @@ mod tests {
                 Point::new(1, 7)
             );
 
-            // search_start lands inside the 2-byte 'α'. Pin concrete byte ranges so this
-            // cannot pass with an empty loop: name is "test" at 3..7 inside "fn test".
+            // 'α' is two bytes; concrete ranges keep this from passing with an empty loop.
             assert_eq!(symbol.text, "fn test");
             assert_eq!(symbol.text.len(), 7);
             assert_eq!(symbol.name_ranges, vec![3..7]);

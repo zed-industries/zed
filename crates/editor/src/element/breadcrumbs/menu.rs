@@ -1,5 +1,3 @@
-//! Single async-populating breadcrumb navigation menu (directory + symbols).
-
 use super::super::*;
 use super::outline::{
     child_outline_indices, flatten_text_for_single_line_display, outline_parents,
@@ -71,7 +69,6 @@ pub struct BreadcrumbNavigationMenu {
     editor: WeakEntity<Editor>,
     workspace: WeakEntity<Workspace>,
     listing: BreadcrumbListing,
-    // When set, the strip shows this path instead of the open file (user drilled directories).
     navigated_path: Option<(WorktreeId, Arc<RelPath>)>,
     symbol_trail: Vec<OutlineItem<Anchor>>,
     active_file_path: Option<Arc<RelPath>>,
@@ -80,22 +77,24 @@ pub struct BreadcrumbNavigationMenu {
     listed_symbol_indices: Vec<usize>,
     cursor_symbol_ranges: Vec<Range<Anchor>>,
     loading: bool,
-    // Bumps on each load/listing change so older async results are discarded.
     load_epoch: u64,
     load_task: Option<Task<()>>,
     selected_index: Option<usize>,
     pending_initial_selection: bool,
-    filter_query: String,
+    filter_editor: Entity<Editor>,
+    suppressing_filter_events: bool,
+    interaction_started_inside: bool,
     ranked_matches: Vec<StringMatch>,
     filter_task: Option<Task<()>>,
     filter_epoch: u64,
-    /// Epoch of the last completed rank; differs from `filter_epoch` while one is in flight.
     ranked_epoch: u64,
-    // True when ranked matches were truncated to MAX_BREADCRUMB_MENU_ROWS.
     filter_match_truncated: bool,
     filter_candidates: Arc<Vec<StringMatchCandidate>>,
     scroll_handle: UniformListScrollHandle,
     focus_handle: FocusHandle,
+    last_listing_settings: BreadcrumbListingSettings,
+    #[cfg(test)]
+    directory_reload_count: usize,
     _subscriptions: Vec<Subscription>,
     _buffer_subscription: Option<Subscription>,
 }
@@ -112,6 +111,11 @@ impl BreadcrumbNavigationMenu {
     ) -> Entity<Self> {
         let menu = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
+            let filter_editor = cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text("Type to filter…", window, cx);
+                editor
+            });
             let navigated_path = match (&listing, navigated) {
                 (BreadcrumbListing::Directory { worktree_id, path }, true) => {
                     Some((*worktree_id, path.clone()))
@@ -134,7 +138,9 @@ impl BreadcrumbNavigationMenu {
                 load_task: None,
                 selected_index: None,
                 pending_initial_selection: true,
-                filter_query: String::new(),
+                filter_editor,
+                suppressing_filter_events: false,
+                interaction_started_inside: false,
                 ranked_matches: Vec::new(),
                 filter_task: None,
                 filter_epoch: 0,
@@ -143,13 +149,24 @@ impl BreadcrumbNavigationMenu {
                 filter_candidates: Arc::new(Vec::new()),
                 scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
+                last_listing_settings: *BreadcrumbListingSettings::get_global(cx),
+                #[cfg(test)]
+                directory_reload_count: 0,
                 _subscriptions: Vec::new(),
                 _buffer_subscription: None,
             }
         });
         menu.update(cx, |this, cx| {
-            let focus_handle = this.focus_handle.clone();
-            this._subscriptions.push(cx.on_blur(&focus_handle, window, {
+            this._subscriptions.push(cx.subscribe(
+                &this.filter_editor,
+                |this, _, event: &EditorEvent, cx| {
+                    if matches!(event, EditorEvent::BufferEdited) {
+                        this.apply_filter_edit(cx);
+                    }
+                },
+            ));
+            let filter_focus = this.filter_editor.focus_handle(cx);
+            this._subscriptions.push(cx.on_blur(&filter_focus, window, {
                 |this: &mut Self, window, cx| {
                     if !this.focus_handle.contains_focused(window, cx) {
                         cx.emit(DismissEvent);
@@ -168,8 +185,6 @@ impl BreadcrumbNavigationMenu {
                         };
                         let listing_path = listing_path.clone();
                         let should_reload = match event {
-                            // Reload only when a direct child of the listed directory changed;
-                            // unrelated saves elsewhere in the worktree must not re-sort the menu.
                             project::Event::WorktreeUpdatedEntries(worktree_id, updates) => {
                                 worktree_id == listing_worktree
                                     && updates.iter().any(|(path, _, _)| {
@@ -183,8 +198,6 @@ impl BreadcrumbNavigationMenu {
                             }
                             project::Event::WorktreeRemoved(worktree_id) => {
                                 if worktree_id == listing_worktree {
-                                    // No worktree, no anchor segment: a cleared listing would
-                                    // leave an installed menu that never paints again.
                                     cx.emit(DismissEvent);
                                 }
                                 false
@@ -198,9 +211,15 @@ impl BreadcrumbNavigationMenu {
             }
             this._subscriptions
                 .push(cx.observe_global::<SettingsStore>(|this, cx| {
-                    if matches!(this.listing, BreadcrumbListing::Directory { .. }) {
-                        this.reload_directory_rows(cx);
+                    if !matches!(this.listing, BreadcrumbListing::Directory { .. }) {
+                        return;
                     }
+                    let settings = *BreadcrumbListingSettings::get_global(cx);
+                    if settings == this.last_listing_settings {
+                        return;
+                    }
+                    this.last_listing_settings = settings;
+                    this.reload_directory_rows(cx);
                 }));
             this.reload_listing(window, cx);
             this.focus_menu(window, cx);
@@ -224,9 +243,6 @@ impl BreadcrumbNavigationMenu {
         &self.symbol_trail
     }
 
-    /// Switch contents in place (no close/reopen). Resets filter and reloads async.
-    /// Does not emit BreadcrumbsChanged — callers that need a bar refresh must emit themselves
-    /// (set_listing can run under an editor.update lease).
     pub fn set_listing(
         &mut self,
         listing: BreadcrumbListing,
@@ -239,8 +255,6 @@ impl BreadcrumbNavigationMenu {
                 self.navigated_path = Some((*worktree_id, path.clone()));
             }
         } else if let BreadcrumbListing::Directory { worktree_id, path } = &listing {
-            // A non-drill open keeps the navigated bar only while browsing segments of that
-            // navigated chain; opening anything outside it returns to the real file path.
             let within_navigated_chain =
                 self.navigated_path
                     .as_ref()
@@ -251,7 +265,6 @@ impl BreadcrumbNavigationMenu {
                 self.navigated_path = None;
             }
         } else {
-            // Leaving the directory browser for symbols returns the bar to the open file.
             self.navigated_path = None;
         }
         if matches!(listing, BreadcrumbListing::Directory { .. }) {
@@ -259,7 +272,7 @@ impl BreadcrumbNavigationMenu {
             self._buffer_subscription = None;
         }
         self.listing = listing;
-        self.clear_filter();
+        self.clear_filter(window, cx);
         self.pending_initial_selection = true;
         self.selected_index = None;
         self.reload_listing(window, cx);
@@ -273,8 +286,8 @@ impl BreadcrumbNavigationMenu {
     }
 
     #[cfg(test)]
-    pub fn filter(&self) -> &str {
-        &self.filter_query
+    pub fn filter(&self, cx: &App) -> String {
+        self.filter_query(cx)
     }
 
     #[cfg(test)]
@@ -303,14 +316,19 @@ impl BreadcrumbNavigationMenu {
     }
 
     #[cfg(test)]
-    pub fn filtered_entry_names(&self) -> Vec<SharedString> {
-        self.visible_row_labels()
+    pub fn filtered_entry_names(&self, cx: &App) -> Vec<SharedString> {
+        self.visible_row_labels(cx)
     }
 
     #[cfg(test)]
-    pub fn clear_filter_for_test(&mut self, cx: &mut Context<Self>) {
-        self.clear_filter();
+    pub fn clear_filter_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_filter(window, cx);
         self.rerank_filter(cx);
+    }
+
+    #[cfg(test)]
+    pub fn directory_reload_count_for_test(&self) -> usize {
+        self.directory_reload_count
     }
 
     #[cfg(test)]
@@ -320,44 +338,22 @@ impl BreadcrumbNavigationMenu {
     }
 
     #[cfg(test)]
-    pub fn choose_directory_entry_for_test(
-        &mut self,
-        path: Arc<RelPath>,
-        entry_id: ProjectEntryId,
-        is_dir: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.choose_directory_entry(
-            BreadcrumbDirectoryEntry {
-                name: path
-                    .file_name()
-                    .unwrap_or_else(|| path.as_unix_str())
-                    .to_string()
-                    .into(),
-                path,
-                entry_id,
-                is_dir,
-                is_ignored: false,
-                git_summary: GitSummary::UNCHANGED,
-            },
-            window,
-            cx,
-        );
-    }
-
-    #[cfg(test)]
     pub fn new_with_symbols_for_test(
         editor: WeakEntity<Editor>,
         buffer_id: BufferId,
         all_items: Vec<OutlineItem<Anchor>>,
         listed_indices: Vec<usize>,
         cursor_symbol_ranges: Vec<Range<Anchor>>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         let menu = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
+            let filter_editor = cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text("Type to filter…", window, cx);
+                editor
+            });
             Self {
                 editor,
                 workspace: WeakEntity::new_invalid(),
@@ -377,7 +373,9 @@ impl BreadcrumbNavigationMenu {
                 load_task: None,
                 selected_index: None,
                 pending_initial_selection: true,
-                filter_query: String::new(),
+                filter_editor,
+                suppressing_filter_events: false,
+                interaction_started_inside: false,
                 ranked_matches: Vec::new(),
                 filter_task: None,
                 filter_epoch: 0,
@@ -386,19 +384,42 @@ impl BreadcrumbNavigationMenu {
                 filter_candidates: Arc::new(Vec::new()),
                 scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
+                last_listing_settings: *BreadcrumbListingSettings::get_global(cx),
+                #[cfg(test)]
+                directory_reload_count: 0,
                 _subscriptions: Vec::new(),
                 _buffer_subscription: None,
             }
+        });
+        menu.update(cx, |this, cx| {
+            this._subscriptions.push(cx.subscribe(
+                &this.filter_editor,
+                |this, _, event: &EditorEvent, cx| {
+                    if matches!(event, EditorEvent::BufferEdited) {
+                        this.apply_filter_edit(cx);
+                    }
+                },
+            ));
         });
         menu
     }
 
     fn focus_menu(&self, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.focus_handle, cx);
+        window.focus(&self.filter_editor.focus_handle(cx), cx);
     }
 
-    fn clear_filter(&mut self) {
-        self.filter_query.clear();
+    fn filter_query(&self, cx: &App) -> String {
+        self.filter_editor.read(cx).text(cx)
+    }
+
+    fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.suppressing_filter_events = true;
+        self.filter_editor.update(cx, |editor, cx| {
+            if !editor.is_empty(cx) {
+                editor.set_text("", window, cx);
+            }
+        });
+        self.suppressing_filter_events = false;
         self.ranked_matches.clear();
         self.filter_match_truncated = false;
         self.filter_epoch = self.filter_epoch.wrapping_add(1);
@@ -432,7 +453,6 @@ impl BreadcrumbNavigationMenu {
         self.loading = true;
         self.directory_entries.clear();
         self.filter_candidates = Arc::new(Vec::new());
-        // Keep the symbol tree across parent-only listing changes so Left/Right stays instant.
         if matches!(self.listing, BreadcrumbListing::Directory { .. }) {
             self.all_symbol_items.clear();
             self.listed_symbol_indices.clear();
@@ -449,15 +469,17 @@ impl BreadcrumbNavigationMenu {
         }
     }
 
-    /// Recompute stored directory rows from the current worktree snapshot (no expand, no
-    /// load_epoch bump — in-flight drills must not be cancelled by worktree events).
     fn reload_directory_rows(&mut self, cx: &mut Context<Self>) {
         let BreadcrumbListing::Directory { worktree_id, path } = &self.listing else {
             return;
         };
-        // Preserve selection by path across re-sorts / re-lists (positional index would drift).
+        #[cfg(test)]
+        {
+            self.directory_reload_count = self.directory_reload_count.wrapping_add(1);
+        }
+        let filter_active = !self.filter_query(cx).is_empty();
         let selected_path = self.selected_index.and_then(|position| {
-            if !self.filter_query.is_empty() {
+            if filter_active {
                 let match_ = self.ranked_matches.get(position)?;
                 self.directory_entries
                     .get(match_.candidate_id)
@@ -477,9 +499,7 @@ impl BreadcrumbNavigationMenu {
         self.directory_entries = breadcrumb_directory_entries(&project, &worktree, path, cx);
         self.rebuild_filter_candidates();
         self.loading = false;
-        if !self.filter_query.is_empty() {
-            // Old match indices point into the replaced entry vec; confirming against them
-            // would resolve the wrong row until the async rerank lands.
+        if !self.filter_query(cx).is_empty() {
             self.ranked_matches.clear();
             self.selected_index = None;
             self.rerank_filter(cx);
@@ -491,13 +511,11 @@ impl BreadcrumbNavigationMenu {
                 .take(display_count)
                 .position(|entry| entry.path.as_ref() == selected_path.as_ref());
             if self.selected_index.is_none() {
-                // The selected entry disappeared; fall back to the initial selection rules
-                // (open file, else first row) rather than jumping to the last row.
                 self.pending_initial_selection = true;
             }
             self.apply_initial_selection_if_needed(cx);
         } else {
-            let visible = self.visible_row_count();
+            let visible = self.visible_row_count(cx);
             if let Some(position) = self.selected_index
                 && position >= visible
             {
@@ -548,10 +566,9 @@ impl BreadcrumbNavigationMenu {
                 this.directory_entries = entries;
                 this.rebuild_filter_candidates();
                 this.loading = false;
-                if this.filter_query.is_empty() {
+                if this.filter_query(cx).is_empty() {
                     this.apply_initial_selection_if_needed(cx);
                 } else {
-                    // A query typed while loading ranked an empty candidate set.
                     this.ranked_matches.clear();
                     this.selected_index = None;
                     this.rerank_filter(cx);
@@ -581,8 +598,6 @@ impl BreadcrumbNavigationMenu {
             return;
         }
 
-        // Start the outline task inside the spawned future so we never nest
-        // `editor.update` under an outer `editor.update` (segment click / action).
         self.load_task = Some(cx.spawn_in(window, async move |this, cx| {
             let outline_task = this
                 .update(cx, |this, cx| {
@@ -640,7 +655,7 @@ impl BreadcrumbNavigationMenu {
                 }
 
                 this.apply_symbol_parent(parent, cx);
-                if this.filter_query.is_empty() {
+                if this.filter_query(cx).is_empty() {
                     this.apply_initial_selection_if_needed(cx);
                 } else {
                     this.ranked_matches.clear();
@@ -654,8 +669,6 @@ impl BreadcrumbNavigationMenu {
         }));
     }
 
-    /// Reload the symbol tree from the buffer (edit/reload events). No window here, so an
-    /// emptied tree shows the empty state instead of the outline-picker fallthrough.
     fn reload_symbols_from_buffer(
         &mut self,
         buffer_id: BufferId,
@@ -713,7 +726,7 @@ impl BreadcrumbNavigationMenu {
                 this.all_symbol_items = all_items;
                 this.loading = false;
                 this.apply_symbol_parent(parent, cx);
-                if this.filter_query.is_empty() {
+                if this.filter_query(cx).is_empty() {
                     this.apply_initial_selection_if_needed(cx);
                 } else {
                     this.ranked_matches.clear();
@@ -729,8 +742,6 @@ impl BreadcrumbNavigationMenu {
     }
 
     fn subscribe_listed_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        // Clear any previous subscription immediately; install the new one deferred so we never
-        // `editor.read` under an outer `editor.update` lease (segment click / action path).
         self._buffer_subscription = None;
         let menu = cx.weak_entity();
         let editor = self.editor.clone();
@@ -851,54 +862,10 @@ impl BreadcrumbNavigationMenu {
         self.symbol_trail = trail;
     }
 
-    /// Speed-search input: printable keys append, backspace pops one grapheme, cmd/ctrl-v
-    /// pastes. Alt is allowed so option-composed characters (é, ü) can type.
-    fn handle_filter_key(&mut self, event: &gpui::KeyDownEvent, cx: &mut Context<Self>) -> bool {
-        use unicode_segmentation::UnicodeSegmentation as _;
-        let keystroke = &event.keystroke;
-        let paste_modifier = if cfg!(target_os = "macos") {
-            keystroke.modifiers.platform
-        } else {
-            keystroke.modifiers.control
-        };
-        if paste_modifier && keystroke.key == "v" {
-            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                let sanitized: String = text.chars().filter(|ch| !ch.is_control()).collect();
-                if !sanitized.is_empty() {
-                    self.filter_query.push_str(&sanitized);
-                    self.apply_filter_edit(cx);
-                    return true;
-                }
-            }
-            return false;
-        }
-        if keystroke.modifiers.control
-            || keystroke.modifiers.platform
-            || keystroke.modifiers.function
-        {
-            return false;
-        }
-        if keystroke.key == "backspace" {
-            let Some((offset, _)) = self.filter_query.grapheme_indices(true).next_back() else {
-                return false;
-            };
-            self.filter_query.truncate(offset);
-            self.apply_filter_edit(cx);
-            return true;
-        }
-        if let Some(key_char) = keystroke
-            .key_char
-            .as_ref()
-            .filter(|key_char| !key_char.chars().any(char::is_control))
-        {
-            self.filter_query.push_str(key_char);
-            self.apply_filter_edit(cx);
-            return true;
-        }
-        false
-    }
-
     fn apply_filter_edit(&mut self, cx: &mut Context<Self>) {
+        if self.suppressing_filter_events {
+            return;
+        }
         self.pending_initial_selection = false;
         self.rerank_filter(cx);
         cx.notify();
@@ -907,7 +874,7 @@ impl BreadcrumbNavigationMenu {
     fn rerank_filter(&mut self, cx: &mut Context<Self>) {
         self.filter_epoch = self.filter_epoch.wrapping_add(1);
         let epoch = self.filter_epoch;
-        let query = self.filter_query.clone();
+        let query = self.filter_query(cx);
 
         if query.is_empty() {
             self.ranked_matches.clear();
@@ -917,7 +884,7 @@ impl BreadcrumbNavigationMenu {
             if self.selected_index.is_none() {
                 self.apply_initial_selection_if_needed(cx);
             } else {
-                let visible = self.visible_row_count();
+                let visible = self.visible_row_count(cx);
                 if let Some(position) = self.selected_index
                     && position >= visible
                 {
@@ -930,7 +897,6 @@ impl BreadcrumbNavigationMenu {
 
         let candidates = self.filter_candidates.clone();
         let executor = cx.background_executor().clone();
-        // Request one past the display cap so we can show a truncation note.
         self.filter_task = Some(cx.spawn(async move |this, cx| {
             let cancel_flag = AtomicBool::new(false);
             let matches = fuzzy::match_strings(
@@ -982,8 +948,8 @@ impl BreadcrumbNavigationMenu {
         self.filter_candidates = Arc::new(candidates);
     }
 
-    fn visible_row_count(&self) -> usize {
-        if !self.filter_query.is_empty() {
+    fn visible_row_count(&self, cx: &App) -> usize {
+        if !self.filter_query(cx).is_empty() {
             return self.ranked_matches.len().min(MAX_BREADCRUMB_MENU_ROWS);
         }
         match &self.listing {
@@ -998,8 +964,8 @@ impl BreadcrumbNavigationMenu {
     }
 
     #[cfg(test)]
-    fn visible_row_labels(&self) -> Vec<SharedString> {
-        if !self.filter_query.is_empty() {
+    fn visible_row_labels(&self, cx: &App) -> Vec<SharedString> {
+        if !self.filter_query(cx).is_empty() {
             return self
                 .ranked_matches
                 .iter()
@@ -1027,8 +993,8 @@ impl BreadcrumbNavigationMenu {
         }
     }
 
-    fn is_display_truncated(&self) -> bool {
-        if !self.filter_query.is_empty() {
+    fn is_display_truncated(&self, cx: &App) -> bool {
+        if !self.filter_query(cx).is_empty() {
             return self.ranked_epoch == self.filter_epoch && self.filter_match_truncated;
         }
         match &self.listing {
@@ -1042,10 +1008,10 @@ impl BreadcrumbNavigationMenu {
     }
 
     fn apply_initial_selection_if_needed(&mut self, cx: &mut Context<Self>) {
-        if !self.pending_initial_selection || !self.filter_query.is_empty() || self.loading {
+        if !self.pending_initial_selection || !self.filter_query(cx).is_empty() || self.loading {
             return;
         }
-        let visible = self.visible_row_count();
+        let visible = self.visible_row_count(cx);
         if visible == 0 {
             return;
         }
@@ -1116,7 +1082,7 @@ impl BreadcrumbNavigationMenu {
     }
 
     pub fn select_next(&mut self, _: &menu::SelectNext, _: &mut Window, cx: &mut Context<Self>) {
-        let visible = self.visible_row_count();
+        let visible = self.visible_row_count(cx);
         if visible == 0 {
             return;
         }
@@ -1133,7 +1099,7 @@ impl BreadcrumbNavigationMenu {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let visible = self.visible_row_count();
+        let visible = self.visible_row_count(cx);
         if visible == 0 {
             return;
         }
@@ -1151,14 +1117,14 @@ impl BreadcrumbNavigationMenu {
     }
 
     fn select_first(&mut self, _: &menu::SelectFirst, _: &mut Window, cx: &mut Context<Self>) {
-        if self.visible_row_count() == 0 {
+        if self.visible_row_count(cx) == 0 {
             return;
         }
         self.move_selection(Some(0), cx);
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _: &mut Window, cx: &mut Context<Self>) {
-        let visible = self.visible_row_count();
+        let visible = self.visible_row_count(cx);
         if visible == 0 {
             return;
         }
@@ -1168,13 +1134,13 @@ impl BreadcrumbNavigationMenu {
     pub fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         match self.listing.clone() {
             BreadcrumbListing::Directory { .. } => {
-                let Some(entry) = self.selected_directory_entry() else {
+                let Some(entry) = self.selected_directory_entry(cx) else {
                     return;
                 };
                 self.choose_directory_entry(entry, window, cx);
             }
             BreadcrumbListing::Symbols { .. } => {
-                let Some(item) = self.selected_symbol_item() else {
+                let Some(item) = self.selected_symbol_item(cx) else {
                     return;
                 };
                 self.navigate_to_symbol(&item, window, cx);
@@ -1190,7 +1156,7 @@ impl BreadcrumbNavigationMenu {
     ) {
         match self.listing.clone() {
             BreadcrumbListing::Directory { .. } => {
-                let Some(entry) = self.selected_directory_entry() else {
+                let Some(entry) = self.selected_directory_entry(cx) else {
                     return;
                 };
                 if entry.is_dir {
@@ -1200,7 +1166,6 @@ impl BreadcrumbNavigationMenu {
                     .as_ref()
                     .is_some_and(|path| path.as_ref() == entry.path.as_ref())
                 {
-                    // Right on the open file's row crosses into that buffer's symbols listing.
                     let Some(editor) = self.editor.upgrade() else {
                         return;
                     };
@@ -1226,7 +1191,7 @@ impl BreadcrumbNavigationMenu {
                 }
             }
             BreadcrumbListing::Symbols { .. } => {
-                let Some(outline_index) = self.selected_symbol_outline_index() else {
+                let Some(outline_index) = self.selected_symbol_outline_index(cx) else {
                     return;
                 };
                 let depths: Vec<usize> = self
@@ -1243,7 +1208,7 @@ impl BreadcrumbNavigationMenu {
                     BreadcrumbListing::Symbols { buffer_id, .. } => *buffer_id,
                     _ => return,
                 };
-                self.clear_filter();
+                self.clear_filter(window, cx);
                 self.pending_initial_selection = true;
                 self.selected_index = None;
                 self.listing = BreadcrumbListing::Symbols { buffer_id, parent };
@@ -1295,8 +1260,7 @@ impl BreadcrumbNavigationMenu {
                     .collect();
                 let parents = outline_parents(&depths);
                 let Some(parent_index) = parents.get(first).copied().flatten() else {
-                    // Parent of listed rows is the file top-level.
-                    self.clear_filter();
+                    self.clear_filter(window, cx);
                     self.pending_initial_selection = true;
                     self.selected_index = None;
                     self.listing = BreadcrumbListing::Symbols {
@@ -1317,7 +1281,7 @@ impl BreadcrumbNavigationMenu {
                     .copied()
                     .flatten()
                     .and_then(|index| self.all_symbol_items.get(index).cloned());
-                self.clear_filter();
+                self.clear_filter(window, cx);
                 self.pending_initial_selection = true;
                 self.selected_index = None;
                 self.listing = BreadcrumbListing::Symbols {
@@ -1359,29 +1323,29 @@ impl BreadcrumbNavigationMenu {
         self.emit_bar_changed(cx);
     }
 
-    fn selected_directory_entry(&self) -> Option<BreadcrumbDirectoryEntry> {
+    fn selected_directory_entry(&self, cx: &App) -> Option<BreadcrumbDirectoryEntry> {
         let BreadcrumbListing::Directory { .. } = &self.listing else {
             return None;
         };
         let position = self.selected_index?;
-        if !self.filter_query.is_empty() {
+        if !self.filter_query(cx).is_empty() {
             let match_ = self.ranked_matches.get(position)?;
             return self.directory_entries.get(match_.candidate_id).cloned();
         }
         self.directory_entries.get(position).cloned()
     }
 
-    fn selected_symbol_item(&self) -> Option<OutlineItem<Anchor>> {
-        let outline_index = self.selected_symbol_outline_index()?;
+    fn selected_symbol_item(&self, cx: &App) -> Option<OutlineItem<Anchor>> {
+        let outline_index = self.selected_symbol_outline_index(cx)?;
         self.all_symbol_items.get(outline_index).cloned()
     }
 
-    fn selected_symbol_outline_index(&self) -> Option<usize> {
+    fn selected_symbol_outline_index(&self, cx: &App) -> Option<usize> {
         let BreadcrumbListing::Symbols { .. } = &self.listing else {
             return None;
         };
         let position = self.selected_index?;
-        if !self.filter_query.is_empty() {
+        if !self.filter_query(cx).is_empty() {
             let match_ = self.ranked_matches.get(position)?;
             let listed_position = match_.candidate_id;
             return self.listed_symbol_indices.get(listed_position).copied();
@@ -1502,6 +1466,24 @@ impl BreadcrumbNavigationMenu {
         cx.emit(DismissEvent);
     }
 
+    fn dismiss_on_mouse_up_out(
+        &mut self,
+        _: &MouseUpEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.interaction_started_inside {
+            self.interaction_started_inside = false;
+            return;
+        }
+        let listing = self.listing.clone();
+        cx.defer_in(window, move |this, _window, cx| {
+            if this.listing == listing {
+                cx.emit(DismissEvent);
+            }
+        });
+    }
+
     fn render_directory_entry(
         &self,
         position: usize,
@@ -1516,7 +1498,6 @@ impl BreadcrumbNavigationMenu {
                 .active_file_path
                 .as_ref()
                 .is_some_and(|active_path| active_path.starts_with(&entry.path));
-        // Current-file trail must not paint a second selection highlight.
         let is_selected = self.selected_index == Some(position);
 
         let icon_path =
@@ -1543,8 +1524,6 @@ impl BreadcrumbNavigationMenu {
             })
             .unwrap_or_else(|| div().size(IconSize::Small.rems()).into_any_element());
 
-        // Always use git-aware colors: when git_status is off, summaries are UNCHANGED and
-        // ignored-dimming still applies (same as the project panel).
         let label_color = crate::items::entry_git_aware_label_color(
             entry.git_summary,
             entry.is_ignored,
@@ -1552,13 +1531,16 @@ impl BreadcrumbNavigationMenu {
         );
 
         let entry_for_click = entry.clone();
+        let full_name = entry.name.clone();
         let label = if match_positions.is_empty() {
             Label::new(entry.name.clone())
                 .color(label_color)
+                .truncate_middle()
                 .into_any_element()
         } else {
             ui::HighlightedLabel::new(entry.name.clone(), match_positions.to_vec())
                 .color(label_color)
+                .truncate_middle()
                 .into_any_element()
         };
 
@@ -1570,12 +1552,14 @@ impl BreadcrumbNavigationMenu {
         .toggle_state(is_selected)
         .start_slot(icon)
         .child(label)
+        .when(full_name.len() > 24, |this| {
+            this.tooltip(move |_window, cx| Tooltip::simple(full_name.clone(), cx))
+        })
         .on_click(cx.listener(move |this, _, window, cx| {
             this.choose_directory_entry(entry_for_click.clone(), window, cx);
         }))
     }
 
-    /// Range of the deepest cursor symbol (checkmark only on that row, not ancestors).
     fn deepest_cursor_symbol_range(&self) -> Option<&Range<Anchor>> {
         self.cursor_symbol_ranges.last()
     }
@@ -1583,8 +1567,9 @@ impl BreadcrumbNavigationMenu {
     fn directory_row_data(
         &self,
         position: usize,
+        cx: &App,
     ) -> Option<(BreadcrumbDirectoryEntry, Vec<usize>)> {
-        if !self.filter_query.is_empty() {
+        if !self.filter_query(cx).is_empty() {
             let match_ = self.ranked_matches.get(position)?;
             let entry = self.directory_entries.get(match_.candidate_id)?.clone();
             return Some((entry, match_.positions.clone()));
@@ -1593,8 +1578,12 @@ impl BreadcrumbNavigationMenu {
         Some((entry, Vec::new()))
     }
 
-    fn symbol_row_data(&self, position: usize) -> Option<(OutlineItem<Anchor>, Vec<usize>)> {
-        if !self.filter_query.is_empty() {
+    fn symbol_row_data(
+        &self,
+        position: usize,
+        cx: &App,
+    ) -> Option<(OutlineItem<Anchor>, Vec<usize>)> {
+        if !self.filter_query(cx).is_empty() {
             let match_ = self.ranked_matches.get(position)?;
             let listed_position = match_.candidate_id;
             let outline_index = *self.listed_symbol_indices.get(listed_position)?;
@@ -1607,15 +1596,9 @@ impl BreadcrumbNavigationMenu {
     }
 
     fn render_filter_row(&self, cx: &Context<Self>) -> impl IntoElement {
-        let content: gpui::AnyElement = if self.filter_query.is_empty() {
-            Label::new("Type to filter…")
-                .color(Color::Placeholder)
-                .into_any_element()
-        } else {
-            Label::new(self.filter_query.clone()).into_any_element()
-        };
+        let filter_empty = self.filter_query(cx).is_empty();
         let match_count: Option<SharedString> =
-            if self.filter_query.is_empty() || self.ranked_epoch != self.filter_epoch {
+            if filter_empty || self.ranked_epoch != self.filter_epoch {
                 None
             } else if self.filter_match_truncated {
                 Some(format!("{}+ matches", MAX_BREADCRUMB_MENU_ROWS).into())
@@ -1637,12 +1620,14 @@ impl BreadcrumbNavigationMenu {
             .child(
                 h_flex()
                     .gap_2()
+                    .min_w_0()
+                    .flex_1()
                     .child(
                         Icon::new(IconName::MagnifyingGlass)
                             .color(Color::Muted)
                             .size(IconSize::Small),
                     )
-                    .child(content),
+                    .child(div().min_w_0().flex_1().child(self.filter_editor.clone())),
             )
             .when_some(match_count, |this, match_count| {
                 this.child(
@@ -1655,8 +1640,8 @@ impl BreadcrumbNavigationMenu {
 }
 
 impl gpui::Focusable for BreadcrumbNavigationMenu {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.filter_editor.focus_handle(cx)
     }
 }
 
@@ -1664,7 +1649,7 @@ impl EventEmitter<DismissEvent> for BreadcrumbNavigationMenu {}
 
 impl Render for BreadcrumbNavigationMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let visible = self.visible_row_count();
+        let visible = self.visible_row_count(cx);
         let listing_settings = BreadcrumbListingSettings::get_global(cx);
         let show_file_icons = listing_settings.file_icons;
         let show_folder_icons = listing_settings.folder_icons;
@@ -1675,7 +1660,7 @@ impl Render for BreadcrumbNavigationMenu {
             BreadcrumbListing::Symbols { .. } => {
                 if self.loading {
                     false
-                } else if !self.filter_query.is_empty() {
+                } else if !self.filter_query(cx).is_empty() {
                     self.ranked_matches.iter().any(|match_| {
                         self.listed_symbol_indices
                             .get(match_.candidate_id)
@@ -1702,8 +1687,7 @@ impl Render for BreadcrumbNavigationMenu {
 
         let empty_message = if self.loading {
             "Loading…"
-        } else if !self.filter_query.is_empty() {
-            // While the async rank is in flight, avoid flashing "No matches".
+        } else if !self.filter_query(cx).is_empty() {
             if self.ranked_epoch != self.filter_epoch && self.ranked_matches.is_empty() {
                 "Searching…"
             } else {
@@ -1715,13 +1699,16 @@ impl Render for BreadcrumbNavigationMenu {
             "No symbols"
         };
 
-        let truncated = self.is_display_truncated();
-        let filter_active = !self.filter_query.is_empty();
+        let truncated = self.is_display_truncated(cx);
+        let filter_active = !self.filter_query(cx).is_empty();
         let theme_settings = theme::theme_settings(cx);
         let ui_font_size = theme_settings.ui_font_size(cx);
         let ui_font_family = theme_settings.ui_font(cx).family.clone();
         let list_count = if self.loading { 0 } else { visible };
         let max_height = vh(0.75, window);
+        let window_size = window.viewport_size();
+        let rem_size = window.rem_size();
+        let is_wide_window = window_size.width / rem_size > rems_from_px(800_f32).0;
 
         let rows_list = uniform_list(
             "breadcrumb-navigation-menu-rows",
@@ -1730,7 +1717,8 @@ impl Render for BreadcrumbNavigationMenu {
                 range
                     .map(|position| {
                         if is_directory {
-                            let Some((entry, match_positions)) = this.directory_row_data(position)
+                            let Some((entry, match_positions)) =
+                                this.directory_row_data(position, cx)
                             else {
                                 return div().into_any_element();
                             };
@@ -1744,7 +1732,7 @@ impl Render for BreadcrumbNavigationMenu {
                             )
                             .into_any_element()
                         } else {
-                            let Some((item, match_positions)) = this.symbol_row_data(position)
+                            let Some((item, match_positions)) = this.symbol_row_data(position, cx)
                             else {
                                 return div().into_any_element();
                             };
@@ -1752,6 +1740,9 @@ impl Render for BreadcrumbNavigationMenu {
                                 .as_ref()
                                 .is_some_and(|range| item.range == *range);
                             let is_selected = this.selected_index == Some(position);
+                            let full_name = SharedString::from(
+                                flatten_text_for_single_line_display(&item.text),
+                            );
                             let row = if match_positions.is_empty() {
                                 render_outline_item_menu_row(
                                     &item,
@@ -1763,6 +1754,7 @@ impl Render for BreadcrumbNavigationMenu {
                             } else {
                                 h_flex()
                                     .gap_1p5()
+                                    .min_w_0()
                                     .when(is_current, |this| {
                                         this.child(
                                             Icon::new(IconName::Check)
@@ -1775,10 +1767,11 @@ impl Render for BreadcrumbNavigationMenu {
                                     })
                                     .child(
                                         ui::HighlightedLabel::new(
-                                            flatten_text_for_single_line_display(&item.text),
+                                            full_name.clone(),
                                             match_positions,
                                         )
-                                        .color(Color::Default),
+                                        .color(Color::Default)
+                                        .truncate_middle(),
                                     )
                                     .into_any_element()
                             };
@@ -1786,6 +1779,14 @@ impl Render for BreadcrumbNavigationMenu {
                                 .inset(true)
                                 .toggle_state(is_selected)
                                 .child(row)
+                                .when(full_name.len() > 24, {
+                                    let full_name = full_name.clone();
+                                    move |this| {
+                                        this.tooltip(move |_window, cx| {
+                                            Tooltip::simple(full_name.clone(), cx)
+                                        })
+                                    }
+                                })
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.navigate_to_symbol(&item, window, cx);
                                 }))
@@ -1797,6 +1798,7 @@ impl Render for BreadcrumbNavigationMenu {
         )
         .with_sizing_behavior(ListSizingBehavior::Infer)
         .track_scroll(&self.scroll_handle)
+        .w_full()
         .flex_grow(1.)
         .max_h(max_height);
 
@@ -1807,8 +1809,9 @@ impl Render for BreadcrumbNavigationMenu {
             .child(
                 v_flex()
                     .id("breadcrumb-navigation-menu")
+                    .debug_selector(|| "breadcrumb-navigation-menu".into())
                     .track_focus(&self.focus_handle)
-                    .key_context("menu")
+                    .key_context("BreadcrumbNavigationMenu")
                     .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| cx.emit(DismissEvent)))
                     .on_action(cx.listener(Self::select_next))
                     .on_action(cx.listener(Self::select_previous))
@@ -1817,32 +1820,47 @@ impl Render for BreadcrumbNavigationMenu {
                     .on_action(cx.listener(Self::confirm))
                     .on_action(cx.listener(Self::select_child))
                     .on_action(cx.listener(Self::select_parent))
-                    .on_key_down(cx.listener(|this, event, _, cx| {
-                        if this.handle_filter_key(event, cx) {
-                            cx.stop_propagation();
-                        }
+                    .on_any_mouse_down(cx.listener(|this, _, _, _| {
+                        this.interaction_started_inside = true;
                     }))
-                    // Dismiss on mouse-up outside so the bar does not re-render between down and up
-                    // (which would misroute segment clicks on a drilled path). Defer so a same-frame
-                    // segment click can toggle/switch first; listing comparison cancels a stale dismiss.
-                    .on_mouse_up_out(
+                    .on_mouse_up(
                         MouseButton::Left,
-                        cx.listener(|this, _: &MouseUpEvent, window, cx| {
-                            let listing = this.listing.clone();
-                            cx.defer_in(window, move |this, _window, cx| {
-                                if this.listing == listing {
-                                    cx.emit(DismissEvent);
-                                }
-                            });
+                        cx.listener(|this, _, _, _| {
+                            this.interaction_started_inside = false;
                         }),
                     )
+                    .on_mouse_up(
+                        MouseButton::Right,
+                        cx.listener(|this, _, _, _| {
+                            this.interaction_started_inside = false;
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Middle,
+                        cx.listener(|this, _, _, _| {
+                            this.interaction_started_inside = false;
+                        }),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(Self::dismiss_on_mouse_up_out),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Right,
+                        cx.listener(Self::dismiss_on_mouse_up_out),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Middle,
+                        cx.listener(Self::dismiss_on_mouse_up_out),
+                    )
                     .min_w(px(200.))
+                    .when(is_wide_window, |this| this.max_w_96())
+                    .when(!is_wide_window, |this| this.max_w_48())
                     .child(self.render_filter_row(cx))
                     .child(
                         v_flex()
                             .id("breadcrumb-navigation-menu-list")
                             .relative()
-                            // Vertical inset so the selected-row highlight clears rounded corners.
                             .py(DynamicSpacing::Base04.rems(cx))
                             .max_h(max_height)
                             .min_h_0()

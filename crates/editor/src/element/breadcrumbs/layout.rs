@@ -1,5 +1,3 @@
-//! Width-aware breadcrumb strip layout and segment classification.
-
 use super::super::*;
 use super::BreadcrumbSegmentTarget;
 use super::menu::BreadcrumbListing;
@@ -7,20 +5,14 @@ use super::outline::flatten_text_for_single_line_display;
 use super::path::reveal_directory_in_project_panel;
 use gpui::{anchored, deferred};
 
-/// Drop priority for width-aware collapse (see [`plan_breadcrumb_layout`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BreadcrumbSegmentKind {
-    /// Project root; kept after all [`Middle`](Self::Middle) are gone.
     Root,
-    /// Directory between root and file; dropped first.
     Middle,
-    /// Open file (or navigated directory); dropped after root/middle.
     File,
-    /// Ancestor symbols (outer first); last segment is never dropped.
     Symbol,
 }
 
-/// Kind per segment from position relative to `file_segment_index` / `has_root_segment`.
 pub(crate) fn classify_breadcrumb_segment_kinds(
     segment_count: usize,
     file_segment_index: usize,
@@ -36,7 +28,6 @@ pub(crate) fn classify_breadcrumb_segment_kinds(
         .collect()
 }
 
-/// Ensure `symbol_segments` matches `segments.len()` (else all-`None`); avoids splice panics.
 pub(super) fn align_symbol_segments(
     segments: &[HighlightedText],
     symbol_segments: Vec<Option<BreadcrumbSegmentTarget>>,
@@ -48,10 +39,36 @@ pub(super) fn align_symbol_segments(
     }
 }
 
-/// Pathological middle-run cap before width planning (normal bars stay far under this).
-const MAX_BREADCRUMB_SEGMENTS_HARD_CAP: usize = 64;
+pub(crate) const MAX_BREADCRUMB_SEGMENTS_HARD_CAP: usize = 64;
 
-/// Collapse a huge contiguous `Middle` run to prefix + ⋯ + suffix before width planning.
+fn hard_cap_ellipsis() -> HighlightedText {
+    HighlightedText {
+        text: "⋯".into(),
+        highlights: vec![],
+    }
+}
+
+fn splice_middle_run(
+    segments: &mut Vec<HighlightedText>,
+    symbol_segments: &mut Vec<Option<BreadcrumbSegmentTarget>>,
+    kinds: &mut Vec<BreadcrumbSegmentKind>,
+    file_segment_index: &mut usize,
+    range: std::ops::Range<usize>,
+) {
+    if range.end <= range.start {
+        return;
+    }
+    let removed = range.end - range.start;
+    segments.splice(range.clone(), Some(hard_cap_ellipsis()));
+    symbol_segments.splice(range.clone(), Some(None));
+    kinds.splice(range.clone(), Some(BreadcrumbSegmentKind::Middle));
+    if *file_segment_index >= range.end {
+        *file_segment_index -= removed - 1;
+    } else if *file_segment_index > range.start {
+        *file_segment_index = range.start;
+    }
+}
+
 pub(crate) fn hard_cap_middle_segments(
     mut segments: Vec<HighlightedText>,
     mut symbol_segments: Vec<Option<BreadcrumbSegmentTarget>>,
@@ -74,68 +91,59 @@ pub(crate) fn hard_cap_middle_segments(
     let (Some(middle_start), Some(middle_end)) = (middle_start, middle_end) else {
         return (segments, symbol_segments, kinds, file_segment_index);
     };
-    if middle_end - middle_start <= MAX_BREADCRUMB_SEGMENTS_HARD_CAP {
+    let middle_len = middle_end - middle_start;
+    if middle_len <= MAX_BREADCRUMB_SEGMENTS_HARD_CAP {
+        return (segments, symbol_segments, kinds, file_segment_index);
+    }
+
+    if let Some(protected) =
+        protected_index.filter(|index| (middle_start..middle_end).contains(index))
+    {
+        let keep = MAX_BREADCRUMB_SEGMENTS_HARD_CAP;
+        let mut window_start = protected.saturating_sub(keep / 2).max(middle_start);
+        let mut window_end = window_start + keep;
+        if window_end > middle_end {
+            window_end = middle_end;
+            window_start = window_end.saturating_sub(keep).max(middle_start);
+        }
+        // Right side first so left indices stay valid.
+        splice_middle_run(
+            &mut segments,
+            &mut symbol_segments,
+            &mut kinds,
+            &mut file_segment_index,
+            window_end..middle_end,
+        );
+        splice_middle_run(
+            &mut segments,
+            &mut symbol_segments,
+            &mut kinds,
+            &mut file_segment_index,
+            middle_start..window_start,
+        );
         return (segments, symbol_segments, kinds, file_segment_index);
     }
 
     let half = MAX_BREADCRUMB_SEGMENTS_HARD_CAP / 2;
-    let mut splice_start = middle_start + half;
-    let mut splice_end = middle_end - half;
-    // The open menu's anchor segment must survive the cap or the popup loses its anchor.
-    // Keep the removal window the same size and slide it off the protected index, so the
-    // cap still bounds pathological input while a menu is open.
-    if let Some(protected) = protected_index
-        && (splice_start..splice_end).contains(&protected)
-    {
-        let removal = splice_end - splice_start;
-        if protected + 1 + removal <= middle_end {
-            splice_start = protected + 1;
-            splice_end = protected + 1 + removal;
-        } else if middle_start + removal <= protected {
-            splice_end = protected;
-            splice_start = protected - removal;
-        } else {
-            // Neither side fits the whole window: shrink to the larger side.
-            if protected - middle_start >= middle_end - (protected + 1) {
-                splice_start = middle_start;
-                splice_end = protected;
-            } else {
-                splice_start = protected + 1;
-                splice_end = middle_end;
-            }
-        }
-        if splice_end <= splice_start {
-            return (segments, symbol_segments, kinds, file_segment_index);
-        }
-    }
-
-    segments.splice(
+    let splice_start = middle_start + half;
+    let splice_end = middle_end - half;
+    splice_middle_run(
+        &mut segments,
+        &mut symbol_segments,
+        &mut kinds,
+        &mut file_segment_index,
         splice_start..splice_end,
-        Some(HighlightedText {
-            text: "⋯".into(),
-            highlights: vec![],
-        }),
     );
-    symbol_segments.splice(splice_start..splice_end, Some(None));
-    kinds.splice(
-        splice_start..splice_end,
-        Some(BreadcrumbSegmentKind::Middle),
-    );
-
-    // File always follows the middle run, so the splice only shifts its index left.
-    file_segment_index -= (splice_end - splice_start) - 1;
 
     (segments, symbol_segments, kinds, file_segment_index)
 }
 
-/// Visible segment indices and contiguous runs collapsed to "⋯" (partition of `0..n`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BreadcrumbLayoutPlan {
     pub(crate) visible: Vec<usize>,
     pub(crate) ellipses: Vec<Range<usize>>,
 }
 
-/// Width of a candidate layout: visible segments + one ellipsis per dropped run.
 fn total_breadcrumb_layout_width(
     widths: &[Pixels],
     dropped: &[bool],
@@ -177,9 +185,6 @@ fn breadcrumb_layout_plan_from_dropped(dropped: &[bool]) -> BreadcrumbLayoutPlan
     BreadcrumbLayoutPlan { visible, ellipses }
 }
 
-/// Drop segments by kind priority (middle → root → file → outer symbols) until widths fit.
-/// Never drops the last segment so the bar never goes empty. Also never drops
-/// `protected_index` when set (active menu-anchor segment must stay laid out).
 pub(crate) fn plan_breadcrumb_layout(
     widths: &[Pixels],
     kinds: &[BreadcrumbSegmentKind],
@@ -232,8 +237,6 @@ pub(crate) fn plan_breadcrumb_layout(
     breadcrumb_layout_plan_from_dropped(&dropped)
 }
 
-/// Whether path/file segments should be clickable. False for unsaved buffers and single-file
-/// worktrees; `worktree_is_single_file: None` stays navigable (fallback-to-symbols).
 pub(super) fn breadcrumb_path_is_navigable(
     has_project_path: bool,
     worktree_is_single_file: Option<bool>,
@@ -241,31 +244,21 @@ pub(super) fn breadcrumb_path_is_navigable(
     has_project_path && !worktree_is_single_file.unwrap_or(false)
 }
 
-/// Padding inside a clickable segment trigger so the hover/click target extends past the
-/// label. Narrower horizontally so the highlight clears the separator arrows. A matching
-/// negative margin on the segment wrapper cancels it out of layout, so the bar's footprint
-/// and spacing stay exactly text-sized.
+// Negative margins cancel the trigger padding out of layout; the bar stays text-sized.
 pub(super) const SEGMENT_TRIGGER_PADDING_X: f32 = 2.;
-/// The label's line box leaves more empty space above the glyphs than below them, so the
-/// highlight needs less padding on top than underneath to look vertically balanced.
 pub(super) const SEGMENT_TRIGGER_PADDING_TOP: f32 = 3.;
 pub(super) const SEGMENT_TRIGGER_PADDING_BOTTOM: f32 = 4.;
 
-/// Segment ready for measure/render (precomputed in `render_breadcrumb_text`).
+#[derive(Clone)]
 pub(super) struct PreparedBreadcrumbSegment {
     pub(super) kind: BreadcrumbSegmentKind,
     pub(super) label: HighlightedText,
     pub(super) target: Option<BreadcrumbSegmentTarget>,
-    /// Dirty-filename bold style; precomputed (row can't hold `active_item`).
     pub(super) dirty_filename_style: bool,
-    /// File-type icon shown before the open file's segment.
     pub(super) icon: Option<SharedString>,
-    /// Git status color for the open file's segment, matching its tab.
     pub(super) git_status_color: Option<Color>,
 }
 
-/// Per-segment width (label + one arrow + gaps). One-arrow-per-segment slightly overestimates
-/// so collapse fires early rather than overflowing.
 pub(super) struct BreadcrumbSegmentMetrics {
     widths: Vec<Pixels>,
     ellipsis_width: Pixels,
@@ -286,7 +279,6 @@ fn breadcrumb_layout_plan_width(
     total_breadcrumb_layout_width(widths, &dropped, ellipsis_width)
 }
 
-/// Width-aware breadcrumb row: measures in layout, builds interactive segments in prepaint.
 pub(super) struct BreadcrumbStrip {
     pub(super) segments: Vec<PreparedBreadcrumbSegment>,
     pub(super) editor: Option<WeakEntity<Editor>>,
@@ -294,8 +286,6 @@ pub(super) struct BreadcrumbStrip {
 }
 
 impl BreadcrumbStrip {
-    /// Index of the segment that anchors the open navigation menu, if any.
-    /// Kept visible during width collapse while the menu is open.
     fn protected_segment_index(&self, cx: &App) -> Option<usize> {
         let editor = self.editor.as_ref()?.upgrade()?;
         let menu = editor.read(cx).breadcrumb_navigation_menu()?.clone();
@@ -372,8 +362,6 @@ impl BreadcrumbStrip {
                         window,
                     )
                 } else {
-                    // Syntax highlights can change font weight/style; measuring with a single
-                    // plain run would under-measure what gets painted and clip the strip.
                     let runs = highlighted_text_runs(&text, &segment.label, &text_style);
                     window
                         .text_system()
@@ -396,7 +384,6 @@ impl BreadcrumbStrip {
         }
     }
 
-    /// Separator / ellipsis painted with the same text style used for measure (breadcrumb font).
     fn styled_separator_glyph(&self, glyph: &str, window: &Window, cx: &App) -> gpui::AnyElement {
         let mut text_style = self.effective_text_style(window);
         text_style.color = Color::Placeholder.color(cx);
@@ -405,8 +392,6 @@ impl BreadcrumbStrip {
             .into_any()
     }
 
-    /// Every visible cell uses the same shape: content + separator slot. The last position keeps
-    /// an invisible separator so baseline/height do not jump when a segment stops being last.
     fn with_separator(
         &self,
         position: usize,
@@ -487,27 +472,24 @@ impl BreadcrumbStrip {
         editor: WeakEntity<Editor>,
         cx: &mut App,
     ) -> gpui::AnyElement {
-        let (tooltip_title, tooltip_meta): (SharedString, Option<SharedString>) = match &target {
+        let tooltip_title: SharedString = match &target {
             BreadcrumbSegmentTarget::Directory { path, .. } => {
                 if path.is_empty() {
-                    ("Browse project root".into(), None)
+                    "Browse project root".into()
                 } else {
-                    (format!("Browse {}", path.as_unix_str()).into(), None)
+                    format!("Browse {}", path.as_unix_str()).into()
                 }
             }
             BreadcrumbSegmentTarget::Symbol { item, .. } => {
                 if item.is_some() {
-                    ("Navigate related symbols".into(), None)
+                    "Navigate related symbols".into()
                 } else {
-                    (
-                        "Navigate file symbols".into(),
-                        Some("Right-click the bar to copy the path".into()),
-                    )
+                    "Navigate file symbols".into()
                 }
             }
         };
+        let tooltip_meta: SharedString = "Right-click to copy this path".into();
 
-        // No tooltips while the navigation menu is open: they paint over the popup.
         let menu_open = editor
             .upgrade()
             .is_some_and(|editor| editor.read(cx).breadcrumb_navigation_menu().is_some());
@@ -522,17 +504,14 @@ impl BreadcrumbStrip {
                     .child(label),
             )
             .when(!menu_open, |this| {
-                this.tooltip(move |_, cx| match tooltip_meta.clone() {
-                    Some(meta) => Tooltip::with_meta(tooltip_title.clone(), None, meta, cx),
-                    None => Tooltip::simple(tooltip_title.clone(), cx),
+                this.tooltip(move |_, cx| {
+                    Tooltip::with_meta(tooltip_title.clone(), None, tooltip_meta.clone(), cx)
                 })
             })
             .on_click({
                 let editor = editor.clone();
                 let target = target.clone();
                 move |event, window, cx| {
-                    // The second click of a double-click reveals in the panel (mouse-down
-                    // handler below); it must not reopen the menu the first click toggled.
                     if event.click_count() >= 2 {
                         return;
                     }
@@ -545,12 +524,39 @@ impl BreadcrumbStrip {
                 }
             });
 
-        // Double-click on a directory segment reveals it in the project panel. Mouse-down carries
-        // click count; menu dismiss does not consume, so both clicks reach the segment.
         let mut wrapper = div()
+            .id(("breadcrumb-segment-hit", index))
+            .debug_selector(move || format!("breadcrumb-segment-{index}"))
             .mx(px(-SEGMENT_TRIGGER_PADDING_X))
             .mt(px(-SEGMENT_TRIGGER_PADDING_TOP))
             .mb(px(-SEGMENT_TRIGGER_PADDING_BOTTOM));
+
+        {
+            let editor = editor.clone();
+            let target = target.clone();
+            wrapper = wrapper.on_mouse_down(MouseButton::Right, move |_, _, cx| {
+                let Some(editor_entity) = editor.upgrade() else {
+                    return;
+                };
+                let abs_path = match &target {
+                    BreadcrumbSegmentTarget::Directory { worktree_id, path } => {
+                        editor_entity.read(cx).project().and_then(|project| {
+                            let worktree = project.read(cx).worktree_for_id(*worktree_id, cx)?;
+                            Some(worktree.read(cx).absolutize(path))
+                        })
+                    }
+                    BreadcrumbSegmentTarget::Symbol { .. } => {
+                        editor_entity.update(cx, |editor, cx| editor.target_file_abs_path(cx))
+                    }
+                };
+                if let Some(abs_path) = abs_path
+                    && let Some(path_str) = abs_path.to_str()
+                {
+                    cx.write_to_clipboard(ClipboardItem::new_string(path_str.to_string()));
+                }
+                cx.stop_propagation();
+            });
+        }
 
         if let BreadcrumbSegmentTarget::Directory {
             worktree_id, path, ..
@@ -575,7 +581,6 @@ impl BreadcrumbStrip {
         wrapper.child(trigger).into_any_element()
     }
 
-    /// Inert "⋯" for a collapsed run (no popover; hidden segments stay reachable via neighbors).
     fn render_ellipsis(
         &self,
         position: usize,
@@ -717,8 +722,6 @@ impl gpui::Element for BreadcrumbStrip {
                 AvailableSpace::Definite(bounds.size.height),
             );
             let element_size = element.layout_as_root(available_space, window, cx);
-            // Center each child vertically: segment triggers and plain labels have different
-            // intrinsic heights, so top-aligning makes the last (unwrapped) segment sit high.
             let y_offset = (bounds.size.height - element_size.height) / 2.;
             let origin = point(x, bounds.origin.y + y_offset);
             if let Some(segment_index) = segment_index
@@ -764,7 +767,17 @@ impl gpui::Element for BreadcrumbStrip {
                 element.prepaint_at(position, window, cx);
                 Some(element)
             }
-            _ => None,
+            (Some(_), None) => {
+                if let Some(editor) = self.editor.as_ref().and_then(|editor| editor.upgrade()) {
+                    window.defer(cx, move |window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.dismiss_breadcrumb_navigation(window, cx);
+                        });
+                    });
+                }
+                None
+            }
+            (None, _) => None,
         };
 
         BreadcrumbStripPrepaintState {
@@ -791,7 +804,6 @@ impl gpui::Element for BreadcrumbStrip {
         }
     }
 }
-/// Byte range of the filename portion to paint/measure bold for a dirty file segment.
 pub(super) fn dirty_filename_bold_range(segment: &HighlightedText) -> Option<Range<usize>> {
     let filename_position = std::path::Path::new(segment.text.as_ref())
         .file_name()
@@ -799,11 +811,9 @@ pub(super) fn dirty_filename_bold_range(segment: &HighlightedText) -> Option<Ran
             let filename_str = file_name.to_string_lossy();
             segment.text.rfind(filename_str.as_ref())
         })?;
-    // Newline→space is byte-for-byte, so flattened length matches `segment.text`.
     Some(filename_position..segment.text.len())
 }
 
-/// Text runs for `text` with `segment.highlights` applied, matching what painting produces.
 fn highlighted_text_runs(
     text: &str,
     segment: &HighlightedText,
@@ -876,7 +886,6 @@ fn measure_dirty_filename_width(
         .width()
 }
 
-/// Bold the dirty filename while keeping `text_style.color` (git status, etc.).
 pub(super) fn apply_dirty_filename_style(
     segment: &HighlightedText,
     text_style: &gpui::TextStyle,

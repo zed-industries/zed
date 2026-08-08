@@ -150,7 +150,6 @@ impl Editor {
     ) {
         if self.breadcrumbs_visibility != breadcrumbs_visibility {
             self.breadcrumbs_visibility = breadcrumbs_visibility;
-            // Menu anchors to a painted strip segment; hide it when the strip goes away.
             if !self.breadcrumbs_visible() {
                 self.dismiss_breadcrumb_navigation(window, cx);
             }
