@@ -153,6 +153,7 @@ struct InlineBlameLayout {
     element: AnyElement,
     bounds: Bounds<Pixels>,
     buffer_id: BufferId,
+    buffer_row: u32,
     entry: BlameEntry,
 }
 
@@ -2053,6 +2054,7 @@ impl EditorElement {
                 blame.blame_for_rows(&[*row_info], cx).next()
             })
             .flatten()?;
+        let buffer_row = row_info.buffer_row?;
 
         let mut element = render_inline_blame_entry(entry.clone(), &self.style, cx)?;
 
@@ -2094,6 +2096,7 @@ impl EditorElement {
             element,
             bounds,
             buffer_id,
+            buffer_row,
             entry,
         })
     }
@@ -2156,6 +2159,7 @@ impl EditorElement {
         let maybe_element = workspace.and_then(|workspace| {
             render_blame_entry_popover(
                 blame_entry,
+                popover_state.buffer_row,
                 popover_state.scroll_handle,
                 popover_state.commit_message,
                 popover_state.markdown,
@@ -2237,8 +2241,10 @@ impl EditorElement {
             .enumerate()
             .flat_map(|(ix, blame_entry)| {
                 let (buffer_id, blame_entry) = blame_entry?;
+                let buffer_row = buffer_rows[ix].buffer_row?;
                 let mut element = render_blame_entry(
                     ix,
+                    buffer_row,
                     &blame,
                     blame_entry,
                     &self.style,
@@ -6960,6 +6966,7 @@ fn render_inline_blame_entry(
 
 fn render_blame_entry_popover(
     blame_entry: BlameEntry,
+    buffer_row: u32,
     scroll_handle: ScrollHandle,
     commit_message: Option<ParsedCommitMessage>,
     markdown: Entity<Markdown>,
@@ -6979,6 +6986,7 @@ fn render_blame_entry_popover(
     let tag_names = blame.tag_names_for_entry(buffer, &blame_entry);
     renderer.render_blame_entry_popover(
         blame_entry,
+        buffer_row,
         scroll_handle,
         commit_message,
         tag_names,
@@ -6992,6 +7000,7 @@ fn render_blame_entry_popover(
 
 fn render_blame_entry(
     ix: usize,
+    buffer_row: u32,
     blame: &Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
@@ -7029,6 +7038,7 @@ fn render_blame_entry(
         workspace.downgrade(),
         editor,
         ix,
+        buffer_row,
         sha_color,
         window,
         cx,
@@ -8103,6 +8113,17 @@ impl Element for EditorElement {
 
                     let height_in_lines = f64::from(bounds.size.height / line_height);
                     let max_row = snapshot.max_point().row().as_f64();
+                    // Use the expected (virtual) max row for scroll clamping and
+                    // scrollbar sizing when set, so manual scrolling and the scrollbar
+                    // thumb reflect the final document size rather than the partially
+                    // loaded content during incremental builds.
+                    let effective_max_row = self
+                        .editor
+                        .read(cx)
+                        .scroll_manager
+                        .expected_max_row()
+                        .map(|expected| expected.max(max_row))
+                        .unwrap_or(max_row);
 
                     // Calculate how much of the editor is clipped by parent containers (e.g., List).
                     // This allows us to only render lines that are actually visible, which is
@@ -8118,11 +8139,14 @@ impl Element for EditorElement {
                     // The max scroll position for the top of the window
                     let scroll_beyond_last_line = self.editor.read(cx).scroll_beyond_last_line(cx);
                     let max_scroll_top = match scroll_beyond_last_line {
-                        ScrollBeyondLastLine::OnePage => max_row,
-                        ScrollBeyondLastLine::Off => (max_row - height_in_lines + 1.).max(0.),
+                        ScrollBeyondLastLine::OnePage => effective_max_row,
+                        ScrollBeyondLastLine::Off => {
+                            (effective_max_row - height_in_lines + 1.).max(0.)
+                        }
                         ScrollBeyondLastLine::VerticalScrollMargin => {
                             let settings = EditorSettings::get_global(cx);
-                            (max_row - height_in_lines + 1. + settings.vertical_scroll_margin)
+                            (effective_max_row - height_in_lines + 1.
+                                + settings.vertical_scroll_margin)
                                 .max(0.)
                         }
                     };
@@ -8653,7 +8677,7 @@ impl Element for EditorElement {
                         glyph_grid_cell,
                         size(
                             longest_line_width,
-                            Pixels::from(max_row.as_f64() * f64::from(line_height)),
+                            Pixels::from(effective_max_row * f64::from(line_height)),
                         ),
                         longest_line_blame_width,
                         EditorSettings::get_global(cx),
@@ -9392,9 +9416,14 @@ impl Element for EditorElement {
                         content_width: text_hitbox.size.width,
                         gutter_hitbox: gutter_hitbox.clone(),
                         text_hitbox: text_hitbox.clone(),
-                        inline_blame_bounds: inline_blame_layout
-                            .as_ref()
-                            .map(|layout| (layout.bounds, layout.buffer_id, layout.entry.clone())),
+                        inline_blame_bounds: inline_blame_layout.as_ref().map(|layout| {
+                            (
+                                layout.bounds,
+                                layout.buffer_id,
+                                layout.buffer_row,
+                                layout.entry.clone(),
+                            )
+                        }),
                         display_hunks: display_hunks.clone(),
                         diff_hunk_control_bounds,
                     });
@@ -10121,7 +10150,7 @@ pub(crate) struct PositionMap {
     pub content_width: Pixels,
     pub text_hitbox: Hitbox,
     pub gutter_hitbox: Hitbox,
-    pub inline_blame_bounds: Option<(Bounds<Pixels>, BufferId, BlameEntry)>,
+    pub inline_blame_bounds: Option<(Bounds<Pixels>, BufferId, u32, BlameEntry)>,
     pub display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     pub diff_hunk_control_bounds: Vec<(DisplayRow, Bounds<Pixels>)>,
 }
@@ -11035,6 +11064,7 @@ mod tests {
                 _: WeakEntity<Workspace>,
                 _: Entity<Editor>,
                 _: usize,
+                _: u32,
                 _: Hsla,
                 _: &mut Window,
                 _: &mut App,
@@ -11054,6 +11084,7 @@ mod tests {
             fn render_blame_entry_popover(
                 &self,
                 _: BlameEntry,
+                _: u32,
                 _: ScrollHandle,
                 _: Option<ParsedCommitMessage>,
                 _: Vec<SharedString>,
@@ -11069,6 +11100,7 @@ mod tests {
             fn open_blame_commit(
                 &self,
                 _: BlameEntry,
+                _: u32,
                 _: Entity<project::git_store::Repository>,
                 _: WeakEntity<Workspace>,
                 _: &mut Window,

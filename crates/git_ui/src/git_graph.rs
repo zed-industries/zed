@@ -262,6 +262,7 @@ impl ChangedFileEntry {
             workspace.clone(),
             None,
             Some(self.repo_path.clone()),
+            None,
             window,
             cx,
         );
@@ -2342,6 +2343,7 @@ impl GitGraph {
             commit_entry.data.sha.to_string(),
             repository.downgrade(),
             self.workspace.clone(),
+            None,
             None,
             None,
             window,
