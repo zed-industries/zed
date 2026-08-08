@@ -582,6 +582,27 @@ fn test_undo_redo() {
 }
 
 #[test]
+fn test_undo_stack_is_bounded() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "x");
+    // Set group interval to zero so every edit becomes its own undo entry.
+    buffer.set_group_interval(Duration::from_secs(0));
+
+    // Perform far more edits than any reasonable undo depth, simulating a
+    // file being reloaded repeatedly by an external process (e.g. another
+    // process rewriting the file on disk many times per second).
+    for _ in 0..10_000 {
+        buffer.edit([(0..0, "y")]);
+    }
+
+    assert!(
+        buffer.history.undo_stack.len() <= MAX_UNDO_STACK_ENTRIES,
+        "undo_stack grew to {} entries, expected it to be capped at {}",
+        buffer.history.undo_stack.len(),
+        MAX_UNDO_STACK_ENTRIES,
+    );
+}
+
+#[test]
 fn test_history() {
     let mut now = Instant::now();
     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "123456");

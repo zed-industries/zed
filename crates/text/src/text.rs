@@ -150,6 +150,17 @@ impl HistoryEntry {
     }
 }
 
+/// Caps the number of transactions retained in a buffer's undo history.
+///
+/// Without a bound, a buffer that is reloaded from disk repeatedly by an
+/// external process (a file watcher, a sync tool, another editor) grows its
+/// undo history without limit, since every reload is recorded as an
+/// undoable transaction. Each entry keeps its edited text alive in
+/// `History::operations`, so unbounded growth here is unbounded memory
+/// growth. This cap evicts the oldest transactions once exceeded, the same
+/// way most editors bound undo depth.
+const MAX_UNDO_STACK_ENTRIES: usize = 1000;
+
 struct History {
     base_text: Rope,
     operations: TreeMap<clock::Lamport, Operation>,
@@ -276,6 +287,10 @@ impl History {
                 None
             } else {
                 self.redo_stack.clear();
+                if self.undo_stack.len() > MAX_UNDO_STACK_ENTRIES {
+                    let overflow = self.undo_stack.len() - MAX_UNDO_STACK_ENTRIES;
+                    self.undo_stack.drain(..overflow);
+                }
                 let entry = self.undo_stack.last_mut().unwrap();
                 entry.last_edit_at = now;
                 Some(entry)
