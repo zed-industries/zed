@@ -5,6 +5,8 @@ pub use fs_watcher::requires_poll_watcher;
 use parking_lot::Mutex;
 use slotmap::{KeyData, SlotMap};
 use std::ffi::OsString;
+#[cfg(feature = "test-support")]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
 use util::maybe;
@@ -1400,6 +1402,7 @@ pub struct FakeFs {
     // Use an unfair lock to ensure tests are deterministic.
     state: Arc<Mutex<FakeFsState>>,
     executor: gpui::BackgroundExecutor,
+    case_sensitive: AtomicBool,
 }
 
 #[cfg(feature = "test-support")]
@@ -1419,6 +1422,7 @@ struct FakeFsState {
     trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
     file_to_create_before_watch_add: Option<(PathBuf, PathBuf)>,
     remove_dir_errors: std::collections::HashMap<PathBuf, String>,
+    case_sensitive: bool,
 }
 
 #[cfg(feature = "test-support")]
@@ -1582,7 +1586,20 @@ impl FakeFsState {
                     Component::Normal(name) => {
                         let current_entry = *entry_stack.last()?;
                         if let FakeFsEntry::Dir { entries, .. } = current_entry {
-                            let entry = entries.get(name.to_str().unwrap())?;
+                            let name_str = name.to_str().unwrap();
+                            let (canonical_name, entry) = match entries.get(name_str) {
+                                Some(entry) => (name_str, entry),
+                                None => {
+                                    if !self.case_sensitive {
+                                        entries
+                                            .iter()
+                                            .find(|(key, _)| key.eq_ignore_ascii_case(name_str))
+                                            .map(|(key, entry)| (key.as_str(), entry))?
+                                    } else {
+                                        return None;
+                                    }
+                                }
+                            };
                             if (path_components.peek().is_some() || follow_symlink)
                                 && let FakeFsEntry::Symlink { target, .. } = entry
                             {
@@ -1592,7 +1609,7 @@ impl FakeFsState {
                                 continue 'outer;
                             }
                             entry_stack.push(entry);
-                            canonical_path = canonical_path.join(name);
+                            canonical_path = canonical_path.join(canonical_name);
                         } else {
                             return None;
                         }
@@ -1739,7 +1756,9 @@ impl FakeFs {
                 trash: Mutex::new(SlotMap::with_key()),
                 file_to_create_before_watch_add: None,
                 remove_dir_errors: Default::default(),
+                case_sensitive: true,
             })),
+            case_sensitive: AtomicBool::new(true),
         });
 
         executor.spawn({
@@ -1756,6 +1775,12 @@ impl FakeFs {
         }).detach();
 
         this
+    }
+
+    /// Configures whether the fake filesystem reports as case-sensitive.
+    pub fn set_case_sensitive(&self, case_sensitive: bool) {
+        self.case_sensitive.store(case_sensitive, Ordering::Release);
+        self.state.lock().case_sensitive = case_sensitive;
     }
 
     pub fn set_next_mtime(&self, next_mtime: SystemTime) {
@@ -3328,7 +3353,7 @@ impl Fs for FakeFs {
     }
 
     async fn is_case_sensitive(&self) -> bool {
-        true
+        self.case_sensitive.load(Ordering::Acquire)
     }
 
     fn subscribe_to_jobs(&self) -> JobEventReceiver {
