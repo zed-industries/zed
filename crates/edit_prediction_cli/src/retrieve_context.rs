@@ -189,7 +189,10 @@ pub async fn run_context_retrieval(
                 )
             })
             .await?;
-        merge_context_files(&mut context_files, editable_context);
+        merge_context_files(
+            &mut context_files,
+            zeta_prompt::context_files_to_related_files(&editable_context),
+        );
     }
 
     let excerpt_count: usize = context_files.iter().map(|f| f.excerpts.len()).sum();
