@@ -790,6 +790,42 @@ impl HitboxId {
     }
 }
 
+/// A scoped vertical edge fade (see [`Window::with_edge_fade`]): primitives
+/// painted inside the scope get their opacity multiplied by a ramp that runs
+/// from 0 at an active edge of `bounds` to 1 a `band` further in. Built for
+/// scroll-edge fades over translucent/blurred window backgrounds, where a
+/// backdrop-colored gradient overlay cannot exist (there is no paintable
+/// color equal to "what is behind the window").
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EdgeFade {
+    /// The faded region, in window coordinates.
+    pub bounds: Bounds<Pixels>,
+    /// Ramp height inside each active edge.
+    pub band: Pixels,
+    /// Fade primitives approaching the region's top edge.
+    pub top: bool,
+    /// Fade primitives approaching the region's bottom edge.
+    pub bottom: bool,
+}
+
+impl EdgeFade {
+    /// The fade ramp at a vertical position (window coords): 1 in the
+    /// region's body, falling linearly to 0 across `band` at each active
+    /// edge.
+    pub(crate) fn ramp_at(&self, y: Pixels) -> f32 {
+        let y = y.0;
+        let band = self.band.0.max(1.0);
+        let mut ramp: f32 = 1.0;
+        if self.top {
+            ramp = ramp.min(((y - self.bounds.top().0) / band).clamp(0.0, 1.0));
+        }
+        if self.bottom {
+            ramp = ramp.min(((self.bounds.bottom().0 - y) / band).clamp(0.0, 1.0));
+        }
+        ramp
+    }
+}
+
 /// A rectangular region that potentially blocks hitboxes inserted prior.
 /// See [Window::insert_hitbox] for more details.
 #[derive(Clone, Debug, Deref)]
@@ -1129,6 +1165,7 @@ pub struct Window {
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
+    pub(crate) edge_fade: Option<EdgeFade>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
@@ -1896,6 +1933,7 @@ impl Window {
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
+            edge_fade: None,
             requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
@@ -3586,6 +3624,27 @@ impl Window {
         result
     }
 
+    /// Executes the provided function with a vertical [`EdgeFade`] applied:
+    /// every primitive painted inside is additionally faded by its vertical
+    /// position — full alpha in the region's body, ramping to zero across
+    /// `fade.band` at each active edge. Granularity is per-primitive (each
+    /// quad/glyph/sprite takes the ramp value at its own position), which
+    /// reads as a smooth gradient for text and small marks.
+    pub fn with_edge_fade<R>(
+        &mut self,
+        fade: Option<EdgeFade>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let Some(fade) = fade else {
+            return f(self);
+        };
+        self.invalidator.debug_assert_paint_or_prepaint();
+        let previous = self.edge_fade.replace(fade);
+        let result = f(self);
+        self.edge_fade = previous;
+        result
+    }
+
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
@@ -3683,6 +3742,17 @@ impl Window {
     pub(crate) fn element_opacity(&self) -> f32 {
         self.invalidator.debug_assert_paint_or_prepaint();
         self.element_opacity
+    }
+
+    /// The element opacity at a vertical position (window coords): the scoped
+    /// uniform opacity times the [`EdgeFade`] ramp evaluated at `center_y`.
+    #[inline]
+    pub(crate) fn element_opacity_at(&self, center_y: Pixels) -> f32 {
+        let opacity = self.element_opacity();
+        match &self.edge_fade {
+            Some(fade) => opacity * fade.ramp_at(center_y),
+            None => opacity,
+        }
     }
 
     /// Obtain the current content mask. This method should only be called during element drawing.
@@ -3951,7 +4021,7 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let content_mask = self.snapped_content_mask();
-        let opacity = self.element_opacity();
+        let opacity = self.element_opacity_at(bounds.center().y);
         let element_bounds = self.cover_bounds(bounds);
         let element_corner_radii = corner_radii.scale(scale_factor);
         for shadow in shadows {
@@ -3987,7 +4057,7 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let content_mask = self.snapped_content_mask();
-        let opacity = self.element_opacity();
+        let opacity = self.element_opacity_at(bounds.center().y);
         let element_bounds = self.cover_bounds(bounds);
         let element_corner_radii = corner_radii.scale(scale_factor);
         for shadow in shadows {
@@ -4070,7 +4140,7 @@ impl Window {
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
-        let opacity = self.element_opacity();
+        let opacity = self.element_opacity_at(quad.bounds.center().y);
         let snapped_bounds = self.snap_bounds(quad.bounds);
         let snapped_border_widths = self.snap_border_widths(quad.border_widths);
         let quad = Quad {
@@ -4143,7 +4213,7 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let opacity = self.element_opacity();
+        let opacity = self.element_opacity_at(path.bounds.center().y);
         path.content_mask = content_mask;
         let color: Background = color.into();
         path.color = color.opacity(opacity);
@@ -4174,7 +4244,7 @@ impl Window {
             origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
             size: size(self.snap_stroke(width), height),
         };
-        let element_opacity = self.element_opacity();
+        let element_opacity = self.element_opacity_at(origin.y);
 
         self.next_frame.scene.insert_primitive(Underline {
             order: 0,
@@ -4204,7 +4274,7 @@ impl Window {
             origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
             size: size(self.snap_stroke(width), self.snap_stroke(height)),
         };
-        let opacity = self.element_opacity();
+        let opacity = self.element_opacity_at(origin.y);
 
         self.next_frame.scene.insert_primitive(Underline {
             order: 0,
@@ -4235,7 +4305,7 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let element_opacity = self.element_opacity();
+        let element_opacity = self.element_opacity_at(origin.y);
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
 
@@ -4368,7 +4438,7 @@ impl Window {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.snapped_content_mask();
-            let opacity = self.element_opacity();
+            let opacity = self.element_opacity_at(origin.y);
 
             self.next_frame.scene.insert_primitive(PolychromeSprite {
                 order: 0,
@@ -4398,7 +4468,7 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let element_opacity = self.element_opacity();
+        let element_opacity = self.element_opacity_at(bounds.center().y);
         let bounds = self.snap_bounds(bounds);
 
         let params = RenderSvgParams {
@@ -4468,6 +4538,7 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
+        let fade_center_y = bounds.center().y;
         let visible_bounds = bounds.intersect(&image_bounds);
         if visible_bounds.size.width <= Pixels::ZERO || visible_bounds.size.height <= Pixels::ZERO {
             return Ok(());
@@ -4540,7 +4611,7 @@ impl Window {
         let corner_radii = corner_radii
             .clamp_radii_for_quad_size(visible_bounds.size)
             .scale(self.scale_factor());
-        let opacity = self.element_opacity();
+        let opacity = self.element_opacity_at(fade_center_y);
 
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
@@ -6878,6 +6949,51 @@ mod tests {
                 // a mid-draw arena clear when painted afterwards.
                 .child(div().child("after"))
         }
+    }
+
+    /// The edge-fade ramp is what every painted primitive's opacity is
+    /// multiplied by: 1 in the region's body, falling linearly to 0 across
+    /// `band` at each active edge, and never negative outside the region.
+    #[test]
+    fn test_edge_fade_ramp() {
+        let fade = crate::EdgeFade {
+            bounds: Bounds::new(point(px(0.), px(100.)), size(px(50.), px(200.))),
+            band: px(20.),
+            top: true,
+            bottom: true,
+        };
+
+        // Body: fully opaque.
+        assert_eq!(fade.ramp_at(px(200.)), 1.0);
+        // Band boundaries: exactly opaque.
+        assert_eq!(fade.ramp_at(px(120.)), 1.0);
+        assert_eq!(fade.ramp_at(px(280.)), 1.0);
+        // Mid-band: half faded.
+        assert_eq!(fade.ramp_at(px(110.)), 0.5);
+        assert_eq!(fade.ramp_at(px(290.)), 0.5);
+        // Edges and beyond: fully transparent, clamped.
+        assert_eq!(fade.ramp_at(px(100.)), 0.0);
+        assert_eq!(fade.ramp_at(px(300.)), 0.0);
+        assert_eq!(fade.ramp_at(px(0.)), 0.0);
+        assert_eq!(fade.ramp_at(px(400.)), 0.0);
+
+        // An inactive edge does not fade.
+        let top_only = crate::EdgeFade {
+            top: true,
+            bottom: false,
+            ..fade
+        };
+        assert_eq!(top_only.ramp_at(px(290.)), 1.0);
+        assert_eq!(top_only.ramp_at(px(300.)), 1.0);
+        assert_eq!(top_only.ramp_at(px(110.)), 0.5);
+
+        // A degenerate band still yields a hard 0/1 step instead of NaN.
+        let zero_band = crate::EdgeFade {
+            band: px(0.),
+            ..fade
+        };
+        assert_eq!(zero_band.ramp_at(px(100.)), 0.0);
+        assert_eq!(zero_band.ramp_at(px(101.)), 1.0);
     }
 
     /// Opening a window synchronously draws it and requests an element arena
