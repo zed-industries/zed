@@ -1,5 +1,5 @@
 use gpui::SharedString;
-use lsp::{DiagnosticSeverity, NumberOrString};
+use lsp::{DiagnosticSeverity, MarkupContent, NumberOrString};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -19,6 +19,8 @@ pub struct Diagnostic {
     pub message: String,
     /// The human-readable message (in markdown format)
     pub markdown: Option<String>,
+    /// Server-originated markup, kept separate from adapter-generated `markdown`.
+    pub lsp_markup: Option<MarkupContent>,
     /// An id that identifies the group to which this diagnostic belongs.
     ///
     /// When a language server produces a diagnostic with
@@ -64,6 +66,7 @@ impl Default for Diagnostic {
             severity: DiagnosticSeverity::ERROR,
             message: Default::default(),
             markdown: None,
+            lsp_markup: None,
             group_id: 0,
             is_primary: false,
             is_disk_based: false,

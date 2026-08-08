@@ -2950,10 +2950,17 @@ impl LspCommand for GetCodeActions {
         _: &App,
     ) -> Result<lsp::CodeActionParams> {
         let mut relevant_diagnostics = Vec::new();
-        for entry in buffer
+        let target_server_id = language_server.server_id();
+        for (source_server_id, entry) in buffer
             .snapshot()
-            .diagnostics_in_range::<_, language::PointUtf16>(self.range.clone(), false)
+            .diagnostics_in_range_with_server_id::<_, language::PointUtf16>(
+                self.range.clone(),
+                false,
+            )
         {
+            if source_server_id != target_server_id && entry.diagnostic.lsp_markup.is_some() {
+                continue;
+            }
             relevant_diagnostics.push(entry.to_lsp_diagnostic_stub()?);
         }
 
@@ -4494,6 +4501,25 @@ impl GetDocumentDiagnostics {
             })
             .collect::<Vec<_>>();
 
+        let message = match diagnostic
+            .markup_message_kind
+            .and_then(proto::MarkupKind::from_i32)
+        {
+            Some(proto::MarkupKind::PlainText) => {
+                lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::PlainText,
+                    value: diagnostic.message,
+                })
+            }
+            Some(proto::MarkupKind::Markdown) => {
+                lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: diagnostic.message,
+                })
+            }
+            None => diagnostic.message.into(),
+        };
+
         Ok(lsp::Diagnostic {
             range: language::range_to_lsp(range)?,
             severity: match proto::lsp_diagnostic::Severity::from_i32(diagnostic.severity).unwrap()
@@ -4514,14 +4540,24 @@ impl GetDocumentDiagnostics {
                 }),
             related_information: Some(related_information),
             tags: Some(tags),
-            source: diagnostic.source.clone(),
-            message: diagnostic.message,
+            source: diagnostic.source,
+            message,
             data,
         })
     }
 
     pub fn serialize_lsp_diagnostic(diagnostic: lsp::Diagnostic) -> Result<proto::LspDiagnostic> {
         let range = language::range_from_lsp(diagnostic.range);
+        let (message, markup_message_kind) = match diagnostic.message {
+            lsp::DiagnosticMessage::String(message) => (message, None),
+            lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent { kind, value }) => {
+                let markup_message_kind = match kind {
+                    lsp::MarkupKind::PlainText => Some(proto::MarkupKind::PlainText as i32),
+                    lsp::MarkupKind::Markdown => Some(proto::MarkupKind::Markdown as i32),
+                };
+                (value, markup_message_kind)
+            }
+        };
         let related_information = diagnostic
             .related_information
             .unwrap_or_default()
@@ -4585,7 +4621,8 @@ impl GetDocumentDiagnostics {
             code_description: diagnostic
                 .code_description
                 .and_then(|desc| desc.href.map(|url| url.to_string())),
-            message: diagnostic.message,
+            message,
+            markup_message_kind,
             data: diagnostic.data.as_ref().map(|data| data.to_string()),
         })
     }
