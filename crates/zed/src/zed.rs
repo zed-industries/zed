@@ -476,6 +476,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
                 if cx
                     .update(|window, cx| {
                         input_latency_ui::report_input_latency_telemetry(window, cx);
+                        input_latency_ui::report_frame_duration_telemetry(window, cx);
                     })
                     .is_err()
                 {
