@@ -226,16 +226,95 @@ impl Editor {
                 push_to_lsp_host_history,
                 cx,
             )
-        });
+        })?;
+
+        // Cursors are right-biased, so text the server inserts exactly at a cursor would push it
+        // along. Keep a left-biased copy to restore afterwards, keyed by the anchor the editor
+        // holds now so that cursors the user moved during the request are left alone.
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let cursors_to_pin = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .filter(|selection| selection.start == selection.end)
+            .map(|selection| (selection.head(), snapshot.anchor_before(selection.head())))
+            .collect::<HashMap<_, _>>();
+
         Some(cx.spawn_in(window, async move |editor, cx| {
             if let Some(transaction) = on_type_formatting.await? {
-                if push_to_client_history {
-                    buffer.update(cx, |buffer, _| {
+                let (formatted_buffer_id, formatted_ranges) = buffer.update(cx, |buffer, _| {
+                    let formatted_ranges = buffer
+                        .edited_ranges_for_transaction::<usize>(&transaction)
+                        .collect::<Vec<_>>();
+                    if push_to_client_history {
                         buffer.push_transaction(transaction, Instant::now());
                         buffer.finalize_last_transaction();
-                    });
-                }
-                editor.update(cx, |editor, cx| {
+                    }
+                    (buffer.remote_id(), formatted_ranges)
+                });
+                editor.update_in(cx, |editor, window, cx| {
+                    let snapshot = editor.buffer.read(cx).snapshot(cx);
+                    let mut any_cursor_pushed = false;
+                    let pinned = editor
+                        .selections
+                        .disjoint_anchors()
+                        .iter()
+                        .map(|selection| {
+                            if selection.start != selection.end {
+                                return selection.clone();
+                            }
+                            let head = selection.head();
+                            let Some(&cursor) = cursors_to_pin.get(&head) else {
+                                return selection.clone();
+                            };
+                            let Some((buffer_cursor, buffer_snapshot)) =
+                                snapshot.anchor_to_buffer_anchor(cursor)
+                            else {
+                                return selection.clone();
+                            };
+                            let Some((buffer_head, head_buffer_snapshot)) =
+                                snapshot.anchor_to_buffer_anchor(head)
+                            else {
+                                return selection.clone();
+                            };
+                            if buffer_snapshot.remote_id() != formatted_buffer_id
+                                || head_buffer_snapshot.remote_id() != formatted_buffer_id
+                            {
+                                return selection.clone();
+                            }
+
+                            let cursor_offset = buffer_cursor.to_offset(buffer_snapshot);
+                            let head_offset = buffer_head.to_offset(head_buffer_snapshot);
+                            // Only rewind when formatter edits cover the displacement without gaps
+                            // that could contain edits made while the request was in flight.
+                            let mut formatted_end = cursor_offset;
+                            for range in &formatted_ranges {
+                                if range.end <= formatted_end {
+                                    continue;
+                                }
+                                if range.start > formatted_end || range.end > head_offset {
+                                    break;
+                                }
+                                formatted_end = range.end;
+                            }
+                            if cursor_offset == head_offset || formatted_end != head_offset {
+                                return selection.clone();
+                            }
+
+                            any_cursor_pushed = true;
+                            Selection {
+                                start: cursor,
+                                end: cursor,
+                                goal: SelectionGoal::None,
+                                ..selection.clone()
+                            }
+                        })
+                        .collect();
+                    if any_cursor_pushed {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                            s.select_anchors(pinned)
+                        });
+                    }
                     editor.refresh_document_highlights(cx);
                 })?;
             }
