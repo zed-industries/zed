@@ -392,9 +392,8 @@ pub fn init(cx: &mut App) {
         .detach_and_log_err(cx);
     });
     _ = ui_input::ERASED_EDITOR_FACTORY.set(|window, cx| {
-        Arc::new(ErasedEditorImpl(
-            cx.new(|cx| Editor::single_line(window, cx)),
-        )) as Arc<dyn ErasedEditor>
+        cx.new(|cx| Editor::single_line(window, cx))
+            .update(cx, |editor, cx| editor.erased(cx))
     });
     _ = multi_buffer::EXCERPT_CONTEXT_LINES.set(multibuffer_context_lines);
 }
@@ -1728,6 +1727,10 @@ impl Editor {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::SingleLine, buffer, None, window, cx)
+    }
+
+    pub fn erased(&self, cx: &Context<Self>) -> Arc<dyn ErasedEditor> {
+        Arc::new(ErasedEditorImpl(cx.entity()))
     }
 
     pub fn multi_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
