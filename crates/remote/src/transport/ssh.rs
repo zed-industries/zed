@@ -1230,7 +1230,23 @@ impl SshRemoteConnection {
         if Self::is_sftp_available().await {
             log::debug!("using SFTP for file upload");
             let mut command = self.build_sftp_command();
-            let sftp_batch = format!("put {src_path_display} {dest_path_str}\n");
+            let path_escape = |path: &str| {
+                let mut escaped = String::with_capacity(path.len() + 2);
+                escaped.push('"');
+                for character in path.chars() {
+                    if character == '\\' || character == '"' {
+                        escaped.push('\\');
+                    }
+                    escaped.push(character);
+                }
+                escaped.push('"');
+                escaped
+            };
+            let sftp_batch = format!(
+                "put {} {}\n",
+                path_escape(&src_path_display),
+                path_escape(&dest_path_str)
+            );
 
             let mut child = command.spawn()?;
             if let Some(mut stdin) = child.stdin.take() {
