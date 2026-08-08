@@ -20,7 +20,8 @@ use ui::{
 use util::ResultExt as _;
 use util::paths::PathExt;
 use workspace::{
-    ModalView, MultiWorkspace, Workspace, dock::DockPosition, notifications::DetachAndPromptErr,
+    ModalView, MultiWorkspace, RemovalIntent, Workspace, dock::DockPosition,
+    notifications::DetachAndPromptErr,
 };
 
 use crate::notifications::show_error_toast;
@@ -448,19 +449,17 @@ impl WorktreePickerDelegate {
             && let Some(workspace) = self.workspace.upgrade()
         {
             let group_key = workspace.read(cx).project_group_key(cx);
-            if let Some(group_workspaces) = multi_workspace
+            for group_workspace in multi_workspace
                 .read(cx)
                 .workspaces_for_project_group(&group_key, cx)
             {
-                for group_workspace in group_workspaces {
-                    for worktree in group_workspace
-                        .read(cx)
-                        .project()
-                        .read(cx)
-                        .visible_worktrees(cx)
-                    {
-                        paths.insert(worktree.read(cx).abs_path().to_path_buf());
-                    }
+                for worktree in group_workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .visible_worktrees(cx)
+                {
+                    paths.insert(worktree.read(cx).abs_path().to_path_buf());
                 }
             }
         }
@@ -660,7 +659,7 @@ impl WorktreePickerDelegate {
         let group_key = workspace.read(cx).project_group_key(cx);
         multi_workspace
             .read(cx)
-            .workspaces_for_project_group(&group_key, cx)?
+            .workspaces_for_project_group(&group_key, cx)
             .into_iter()
             .find(|group_workspace| {
                 *group_workspace != workspace
@@ -693,7 +692,12 @@ impl WorktreePickerDelegate {
         cx.spawn_in(window, async move |picker, cx| {
             let removed = window_handle
                 .update(cx, |multi_workspace, window, cx| {
-                    multi_workspace.close_workspace(&workspace_to_remove, window, cx)
+                    multi_workspace.remove(
+                        [workspace_to_remove.clone()],
+                        RemovalIntent::CloseProject,
+                        window,
+                        cx,
+                    )
                 })?
                 .await?;
 
@@ -1425,7 +1429,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 Button::new("configure-worktree-tasks", "Automate Setup")
                     .key_binding(
                         KeyBinding::for_action_in(&OpenWorktreeSetupTasks, &focus_handle, cx)
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                            .map(|kb| kb.size(rems_from_px(12_f32))),
                     )
                     .on_click(|_, window, cx| {
                         window.dispatch_action(OpenWorktreeSetupTasks.boxed_clone(), cx)
@@ -1439,7 +1443,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                         Button::new("create-worktree", "Create")
                             .key_binding(
                                 KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                    .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(menu::Confirm.boxed_clone(), cx)
@@ -1470,7 +1474,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                                                 &focus_handle,
                                                 cx,
                                             )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                            .map(|kb| kb.size(rems_from_px(12_f32))),
                                         )
                                         .on_click(|_, window, cx| {
                                             window.dispatch_action(DeleteWorktree.boxed_clone(), cx)
@@ -1487,7 +1491,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                                                 &focus_handle,
                                                 cx,
                                             )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                            .map(|kb| kb.size(rems_from_px(12_f32))),
                                         )
                                         .on_click(|_, window, cx| {
                                             window.dispatch_action(
@@ -1506,7 +1510,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                                                 &focus_handle,
                                                 cx,
                                             )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                            .map(|kb| kb.size(rems_from_px(12_f32))),
                                         )
                                         .on_click(|_, window, cx| {
                                             window.dispatch_action(menu::Confirm.boxed_clone(), cx)

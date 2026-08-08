@@ -432,9 +432,9 @@ async fn test_find_or_create_local_workspace_reuses_active_workspace_when_sideba
             mw.find_or_create_local_workspace(
                 PathList::new(&[PathBuf::from("/root_a")]),
                 None,
-                &[],
                 None,
                 OpenMode::Activate,
+                None,
                 window,
                 cx,
             )
@@ -497,9 +497,9 @@ async fn test_find_or_create_workspace_uses_project_group_key_when_paths_are_mis
                 None,
                 Some(project_group_key.clone()),
                 |_options, _window, _cx| Task::ready(Ok(None)),
-                &[],
                 None,
                 OpenMode::Activate,
+                None,
                 window,
                 cx,
             )
@@ -555,22 +555,9 @@ async fn test_remove_fallback_via_find_or_create_skips_removed_workspaces(cx: &m
 
     let removed = multi_workspace
         .update_in(cx, |mw, window, cx| {
-            let excluded = vec![workspace_a.clone()];
             mw.remove(
-                excluded.clone(),
-                move |this, window, cx| {
-                    this.find_or_create_workspace(
-                        PathList::new(&[PathBuf::from("/root_a")]),
-                        None,
-                        None,
-                        |_options, _window, _cx| Task::ready(Ok(None)),
-                        &excluded,
-                        None,
-                        OpenMode::Activate,
-                        window,
-                        cx,
-                    )
-                },
+                vec![workspace_a.clone()],
+                RemovalIntent::CloseProject,
                 window,
                 cx,
             )
@@ -589,6 +576,52 @@ async fn test_remove_fallback_via_find_or_create_skips_removed_workspaces(cx: &m
             mw.workspaces()
                 .all(|workspace| workspace.entity_id() != workspace_a.entity_id()),
             "the removed workspace should be gone"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_remove_keeping_the_project_does_not_switch_projects(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    fs.insert_tree("/root_b", json!({ "file.txt": "" })).await;
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    let project_b = Project::test(fs, ["/root_b".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    let workspace_a = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+    let _workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b, window, cx)
+    });
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.activate(workspace_a.clone(), None, window, cx);
+    });
+    cx.run_until_parked();
+
+    multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.remove(
+                vec![workspace_a.clone()],
+                RemovalIntent::KeepProject,
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("removing the active workspace should succeed");
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |mw, cx| {
+        assert_eq!(
+            PathList::new(&mw.workspace().read(cx).root_paths(cx)),
+            PathList::new(&[PathBuf::from("/root_a")]),
+            "the replacement workspace should be in the removed workspace's project"
         );
     });
 }
@@ -625,9 +658,9 @@ async fn test_find_or_create_local_workspace_reuses_active_workspace_after_sideb
             mw.find_or_create_local_workspace(
                 PathList::new(&[PathBuf::from("/root_a")]),
                 None,
-                &[],
                 None,
                 OpenMode::Activate,
+                None,
                 window,
                 cx,
             )
@@ -711,7 +744,12 @@ async fn test_close_workspace_prefers_already_loaded_neighboring_workspace(
 
     let closed = multi_workspace
         .update_in(cx, |multi_workspace, window, cx| {
-            multi_workspace.close_workspace(&workspace_a, window, cx)
+            multi_workspace.remove(
+                [workspace_a.clone()],
+                RemovalIntent::CloseProject,
+                window,
+                cx,
+            )
         })
         .await
         .expect("closing the active workspace should succeed");
@@ -735,7 +773,6 @@ async fn test_close_workspace_prefers_already_loaded_neighboring_workspace(
         assert!(
             multi_workspace
                 .workspaces_for_project_group(&project_c_key, cx)
-                .unwrap_or_default()
                 .is_empty(),
             "the unloaded neighboring group C should remain unopened"
         );
@@ -758,7 +795,6 @@ async fn test_close_workspace_prefers_workspace_in_same_project_group(cx: &mut T
     let (workspace_a_1, workspace_a_2) = multi_workspace.read_with(cx, |multi_workspace, cx| {
         let mut workspaces = multi_workspace
             .workspaces_for_project_group(&key_a, cx)
-            .expect("project group A should have retained workspaces")
             .into_iter();
         let first = workspaces
             .next()
@@ -781,7 +817,12 @@ async fn test_close_workspace_prefers_workspace_in_same_project_group(cx: &mut T
 
     let closed = multi_workspace
         .update_in(cx, |multi_workspace, window, cx| {
-            multi_workspace.close_workspace(&workspace_a_1, window, cx)
+            multi_workspace.remove(
+                [workspace_a_1.clone()],
+                RemovalIntent::CloseProject,
+                window,
+                cx,
+            )
         })
         .await
         .expect("closing the active workspace should succeed");
@@ -795,9 +836,7 @@ async fn test_close_workspace_prefers_workspace_in_same_project_group(cx: &mut T
         );
 
         assert_eq!(
-            multi_workspace
-                .workspaces_for_project_group(&key_a, cx)
-                .expect("project group A should remain"),
+            multi_workspace.workspaces_for_project_group(&key_a, cx),
             vec![workspace_a_2],
             "only the fallback workspace should remain in project group A"
         );
@@ -830,7 +869,12 @@ async fn test_close_workspace_opens_unloaded_local_neighbor(cx: &mut TestAppCont
 
     let closed = multi_workspace
         .update_in(cx, |multi_workspace, window, cx| {
-            multi_workspace.close_workspace(&workspace_a, window, cx)
+            multi_workspace.remove(
+                [workspace_a.clone()],
+                RemovalIntent::CloseProject,
+                window,
+                cx,
+            )
         })
         .await
         .expect("closing the active workspace should succeed");
@@ -1294,7 +1338,12 @@ async fn test_close_workspace_with_remote_neighbor_does_not_create_local_workspa
     // to creating an empty workspace instead.
     multi_workspace
         .update_in(cx, |mw, window, cx| {
-            mw.close_workspace(&workspace_a, window, cx)
+            mw.remove(
+                [workspace_a.clone()],
+                RemovalIntent::CloseProject,
+                window,
+                cx,
+            )
         })
         .await
         .expect("close_workspace should succeed");
@@ -1418,15 +1467,16 @@ async fn test_nearest_retained_workspace(cx: &mut TestAppContext) {
             .expect("project group for project-c should exist");
         let workspace_b = multi_workspace
             .workspaces_for_project_group(&key_b, cx)
-            .and_then(|workspaces| workspaces.into_iter().next())
+            .into_iter()
+            .next()
             .expect("workspace for project-b should exist");
         let workspace_d = multi_workspace
             .workspaces_for_project_group(&key_d, cx)
-            .and_then(|workspaces| workspaces.into_iter().next())
+            .into_iter()
+            .next()
             .expect("workspace for project-d should exist");
         let retained_workspaces_a = multi_workspace
-            .workspaces_for_project_group(&key_a, cx)
-            .expect("project group A should have retained workspaces");
+            .workspaces_for_project_group(&key_a, cx);
         assert_eq!(
             retained_workspaces_a.len(),
             2,
@@ -1477,23 +1527,20 @@ async fn test_nearest_retained_workspace(cx: &mut TestAppContext) {
             "the farther group's last active workspace should be preferred"
         );
 
-        // We'll now clear the project group's last active workspace.
-        // In that state, the search falls back to the group's first retained
-        // workspace.
-        multi_workspace
-            .group_state_by_key_mut(&key_a)
-            .expect("project group A should exist")
-            .last_active_workspace
-            .take();
-
+        // With the group's most recently activated workspace excluded, the
+        // search falls back to the member activated before it.
         assert_eq!(
             multi_workspace.nearest_retained_workspace(
                 group_c_index,
-                &[workspace_b.clone(), workspace_d.clone()],
+                &[
+                    workspace_b.clone(),
+                    workspace_d.clone(),
+                    workspace_a_2.clone()
+                ],
                 cx
             ),
             Some(workspace_a_1.clone()),
-            "the first retained workspace should be used without a last active workspace"
+            "the previously activated workspace should be used when the last active one is excluded"
         );
 
         // Excluding every neighboring workspace exhausts the search.

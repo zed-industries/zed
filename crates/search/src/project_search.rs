@@ -2435,7 +2435,7 @@ impl Render for ProjectSearchBar {
                 div()
                     .id("matches")
                     .ml_2()
-                    .min_w(rems_from_px(40.))
+                    .min_w(rems_from_px(40_f32))
                     .child(
                         h_flex()
                             .gap_1p5()
