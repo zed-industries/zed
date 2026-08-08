@@ -5137,6 +5137,48 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_dropping_completed_terminal_does_not_kill_new_terminal(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (completed_terminal, completion_rx) = build_test_terminal(cx, "true", &[]).await;
+        completion_rx
+            .recv()
+            .await
+            .expect("completed terminal should report its exit status");
+
+        let (new_terminal, _completion_rx) = build_test_terminal(cx, "sleep", &["300"]).await;
+        let new_shell_pid = new_terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+            TerminalType::Pty { info, .. } => info.pid_getter().fallback_pid().as_u32() as i32,
+            TerminalType::DisplayOnly => panic!("expected a PTY-backed terminal"),
+        });
+
+        let (completed_child_pid, completed_foreground_pid) =
+            completed_terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+                TerminalType::Pty { info, .. } => (info.pid_getter().fallback_pid(), info.pid()),
+                TerminalType::DisplayOnly => panic!("expected a PTY-backed terminal"),
+            });
+        assert_eq!(
+            completed_foreground_pid,
+            Some(completed_child_pid),
+            "a completed terminal whose PTY descriptor may have been reused must \
+             report its own child, not another terminal's foreground group"
+        );
+
+        drop(completed_terminal);
+        cx.update(|_| {});
+        cx.background_executor
+            .timer(PROCESS_KILL_GRACE_PERIOD + Duration::from_millis(50))
+            .await;
+
+        assert_eq!(
+            unsafe { libc::kill(new_shell_pid, 0) },
+            0,
+            "dropping a completed terminal should not kill a newly spawned terminal"
+        );
+    }
+
     /// Test that kill_active_task on a task that's not running is a no-op
     #[gpui::test]
     async fn test_kill_active_task_on_completed_task_is_noop(cx: &mut TestAppContext) {
