@@ -1364,6 +1364,16 @@ impl RemoteConnectionOptions {
             RemoteConnectionOptions::Mock(_) => "mock",
         }
     }
+
+    pub fn host(&self) -> String {
+        match self {
+            RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
+            RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
+            RemoteConnectionOptions::Docker(opts) => opts.name.clone(),
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1554,6 +1564,17 @@ mod tests {
             0,
             "stream channel should be removed once the consumer has dropped the stream"
         );
+    }
+
+    #[test]
+    fn test_ssh_host_ignores_nickname() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            nickname: Some("My Cool Project".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(options.host(), "1.2.3.4");
     }
 }
 
