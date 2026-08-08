@@ -606,6 +606,7 @@ message GitEditRef {
   oneof action {
     string update_to_commit = 4;
     DeleteRef delete = 5;
+    string create_to_commit = 6;
   }
   message DeleteRef {}
 }

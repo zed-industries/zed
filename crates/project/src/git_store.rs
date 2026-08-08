@@ -606,6 +606,7 @@ pub enum RepositoryEvent {
     StatusesChanged,
     HeadChanged,
     BranchListChanged,
+    TagsChanged,
     StashEntriesChanged,
     GitWorktreeListChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
@@ -3584,17 +3585,30 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let ref_name = envelope.payload.ref_name;
-        let commit = match envelope.payload.action {
-            Some(proto::git_edit_ref::Action::UpdateToCommit(sha)) => Some(sha),
-            Some(proto::git_edit_ref::Action::Delete(_)) => None,
+        match envelope.payload.action {
+            Some(proto::git_edit_ref::Action::CreateToCommit(sha)) => {
+                repository_handle
+                    .update(&mut cx, |repository_handle, _| {
+                        repository_handle.create_ref(ref_name, sha)
+                    })
+                    .await??;
+            }
+            Some(proto::git_edit_ref::Action::UpdateToCommit(sha)) => {
+                repository_handle
+                    .update(&mut cx, |repository_handle, _| {
+                        repository_handle.edit_ref(ref_name, Some(sha))
+                    })
+                    .await??;
+            }
+            Some(proto::git_edit_ref::Action::Delete(_)) => {
+                repository_handle
+                    .update(&mut cx, |repository_handle, _| {
+                        repository_handle.edit_ref(ref_name, None)
+                    })
+                    .await??;
+            }
             None => anyhow::bail!("GitEditRef missing action"),
-        };
-
-        repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.edit_ref(ref_name, commit)
-            })
-            .await??;
+        }
 
         Ok(proto::Ack {})
     }
@@ -5912,7 +5926,9 @@ impl Repository {
         // scan id greater than 2 means the initial snapshot was calculated,
         // otherwise we don't need to refresh the graph state
         match event {
-            RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
+            RepositoryEvent::HeadChanged
+            | RepositoryEvent::BranchListChanged
+            | RepositoryEvent::TagsChanged => {
                 if self.scan_id > 2 {
                     self.initial_graph_data.clear();
                 }
@@ -8519,6 +8535,45 @@ impl Repository {
                 }
             }
         })
+    }
+
+    fn create_ref(&mut self, ref_name: String, commit: String) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        let this = self.this.clone();
+        self.send_job(
+            "create_ref",
+            Some(format!("git update-ref {ref_name} {commit}").into()),
+            move |repo, mut cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.create_ref(ref_name, commit).await?;
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitEditRef {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                ref_name,
+                                action: Some(proto::git_edit_ref::Action::CreateToCommit(commit)),
+                            })
+                            .await?;
+                    }
+                }
+
+                this.update(&mut cx, |_, cx| {
+                    cx.emit(RepositoryEvent::TagsChanged);
+                })?;
+                Ok(())
+            },
+        )
+    }
+
+    pub fn create_tag(
+        &mut self,
+        tag_name: String,
+        commit: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.create_ref(format!("refs/tags/{tag_name}"), commit)
     }
 
     fn edit_ref(

@@ -129,6 +129,13 @@ impl FakeGitRepository {
     fn edit_ref(&self, edit: RefEdit) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             match edit {
+                RefEdit::Create { ref_name, commit } => {
+                    anyhow::ensure!(
+                        !state.refs.contains_key(&ref_name),
+                        "reference {ref_name} already exists"
+                    );
+                    state.refs.insert(ref_name, commit);
+                }
                 RefEdit::Update { ref_name, commit } => {
                     state.refs.insert(ref_name, commit);
                 }
@@ -1609,6 +1616,10 @@ impl GitRepository for FakeGitRepository {
                 }
             })?
         }))
+    }
+
+    fn create_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
+        self.edit_ref(RefEdit::Create { ref_name, commit })
     }
 
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {

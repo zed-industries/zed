@@ -1077,6 +1077,7 @@ pub trait GitRepository: Send + Sync {
 
     fn commit_data_reader(&self) -> Result<CommitDataReader>;
 
+    fn create_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>>;
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>>;
 
     fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>>;
@@ -1126,6 +1127,7 @@ pub struct RealGitRepository {
 
 #[derive(Debug)]
 pub enum RefEdit {
+    Create { ref_name: String, commit: String },
     Update { ref_name: String, commit: String },
     Delete { ref_name: String },
 }
@@ -1133,6 +1135,14 @@ pub enum RefEdit {
 impl RefEdit {
     fn into_args(self) -> Vec<OsString> {
         match self {
+            Self::Create { ref_name, commit } => {
+                vec![
+                    "update-ref".into(),
+                    ref_name.into(),
+                    commit.into(),
+                    "".into(),
+                ]
+            }
             Self::Update { ref_name, commit } => {
                 vec!["update-ref".into(), ref_name.into(), commit.into()]
             }
@@ -2636,6 +2646,10 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
+    fn create_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
+        self.edit_ref(RefEdit::Create { ref_name, commit })
+    }
+
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
         self.edit_ref(RefEdit::Update { ref_name, commit })
     }
@@ -4107,6 +4121,18 @@ mod tests {
 
     use super::*;
     use gpui::TestAppContext;
+
+    #[test]
+    fn test_create_ref_requires_ref_to_not_exist() {
+        assert_eq!(
+            RefEdit::Create {
+                ref_name: "refs/tags/v1.0.0".to_string(),
+                commit: "abcdef".to_string(),
+            }
+            .into_args(),
+            ["update-ref", "refs/tags/v1.0.0", "abcdef", ""].map(OsString::from)
+        );
+    }
 
     fn disable_git_global_config() {
         unsafe {
