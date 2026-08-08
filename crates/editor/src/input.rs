@@ -830,23 +830,10 @@ impl Editor {
                 });
             });
 
-            let mut indent_edits = Vec::new();
             let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
-            for row in rows {
-                let indents = multibuffer_snapshot.suggested_indents(row..row + 1, cx);
-                for (row, indent) in indents {
-                    if indent.len == 0 {
-                        continue;
-                    }
-
-                    let text = match indent.kind {
-                        IndentKind::Space => " ".repeat(indent.len as usize),
-                        IndentKind::Tab => "\t".repeat(indent.len as usize),
-                    };
-                    let point = Point::new(row.0, 0);
-                    indent_edits.push((point..point, text));
-                }
-            }
+            let indent_edits = indent_edits_for_new_lines(&multibuffer_snapshot, &rows, |row| {
+                Some(row + 1)
+            }, cx);
             editor.edit(indent_edits, cx);
             if let Some(format) = editor.trigger_on_type_formatting("\n".to_owned(), window, cx) {
                 format.detach_and_log_err(cx);
@@ -914,23 +901,13 @@ impl Editor {
                 });
             });
 
-            let mut indent_edits = Vec::new();
             let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
-            for row in rows.into_iter().flatten() {
-                let indents = multibuffer_snapshot.suggested_indents(row..row + 1, cx);
-                for (row, indent) in indents {
-                    if indent.len == 0 {
-                        continue;
-                    }
-
-                    let text = match indent.kind {
-                        IndentKind::Space => " ".repeat(indent.len as usize),
-                        IndentKind::Tab => "\t".repeat(indent.len as usize),
-                    };
-                    let point = Point::new(row.0, 0);
-                    indent_edits.push((point..point, text));
-                }
-            }
+            let indent_edits = indent_edits_for_new_lines(
+                &multibuffer_snapshot,
+                &rows.into_iter().flatten().collect::<Vec<_>>(),
+                |row| row.checked_sub(1),
+                cx,
+            );
             editor.edit(indent_edits, cx);
             if let Some(format) = editor.trigger_on_type_formatting("\n".to_owned(), window, cx) {
                 format.detach_and_log_err(cx);
@@ -2223,6 +2200,54 @@ impl Editor {
 
         self.insert_snippet(&insertion_ranges, snippet, window, cx)
     }
+}
+
+fn indent_edits_for_new_lines(
+    snapshot: &MultiBufferSnapshot,
+    rows: &[u32],
+    preserve_indent_source_row: impl Fn(u32) -> Option<u32>,
+    cx: &App,
+) -> Vec<(Range<Point>, String)> {
+    let mut indent_edits = Vec::new();
+    for row in rows {
+        let auto_indent_mode = snapshot
+            .language_settings_at(Point::new(*row, 0), cx)
+            .auto_indent;
+        match auto_indent_mode {
+            language::AutoIndentMode::None => {}
+            language::AutoIndentMode::PreserveIndent => {
+                let Some(source_row) = preserve_indent_source_row(*row) else {
+                    continue;
+                };
+                let line_indent = snapshot.line_indent_for_row(MultiBufferRow(source_row));
+                if line_indent.raw_len() == 0 {
+                    continue;
+                }
+                let text = format!(
+                    "{}{}",
+                    "\t".repeat(line_indent.tabs as usize),
+                    " ".repeat(line_indent.spaces as usize)
+                );
+                let point = Point::new(*row, 0);
+                indent_edits.push((point..point, text));
+            }
+            language::AutoIndentMode::SyntaxAware => {
+                let indents = snapshot.suggested_indents(*row..*row + 1, cx);
+                for (row, indent) in indents {
+                    if indent.len == 0 {
+                        continue;
+                    }
+                    let text = match indent.kind {
+                        IndentKind::Space => " ".repeat(indent.len as usize),
+                        IndentKind::Tab => "\t".repeat(indent.len as usize),
+                    };
+                    let point = Point::new(row.0, 0);
+                    indent_edits.push((point..point, text));
+                }
+            }
+        }
+    }
+    indent_edits
 }
 
 #[cfg(any(test, feature = "test-support"))]
