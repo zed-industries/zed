@@ -164,6 +164,8 @@ pub struct SettingsContent {
 
     pub git_panel: Option<GitPanelSettingsContent>,
 
+    pub worktree_panel: Option<WorktreePanelSettingsContent>,
+
     pub tabs: Option<ItemSettingsContent>,
     pub tab_bar: Option<TabBarSettingsContent>,
     pub status_bar: Option<StatusBarSettingsContent>,
@@ -666,6 +668,27 @@ pub struct CallSettingsContent {
     ///
     /// Default: false
     pub share_on_join: Option<bool>,
+}
+
+/// Configuration of the worktree panel, which lists the repository's git
+/// worktrees and their uncommitted changes.
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct WorktreePanelSettingsContent {
+    /// Whether to show the panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Where to dock the panel. When unset, the panel docks on the same side
+    /// as the git panel, so their status bar buttons sit together.
+    ///
+    /// Default: unset
+    pub dock: Option<DockPosition>,
+    /// Default width of the panel in pixels.
+    ///
+    /// Default: 300
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_width: Option<f32>,
 }
 
 #[with_fallible_options]

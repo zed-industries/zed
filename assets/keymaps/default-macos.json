@@ -1064,6 +1064,16 @@
     },
   },
   {
+    "context": "WorktreePanel",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
+      "enter": "menu::Confirm",
+      "escape": "menu::Cancel",
+    },
+  },
+  {
     "context": "GitPanel",
     "bindings": {
       "cmd-1": "git_panel::ActivateChangesTab",

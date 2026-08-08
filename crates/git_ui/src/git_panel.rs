@@ -7079,11 +7079,11 @@ impl GitPanel {
     }
 
     fn entry_label(&self, label: impl Into<SharedString>, color: Color) -> Label {
-        Label::new(label.into()).single_line().color(color)
+        crate::git_status_list_item::entry_label(label, color)
     }
 
     fn list_item_height(&self) -> Rems {
-        rems(1.75)
+        crate::git_status_list_item::git_list_item_height()
     }
 
     fn render_list_header(
@@ -7762,34 +7762,15 @@ impl GitPanel {
         git_path_style: GitPathStyle,
         strikethrough: bool,
     ) -> Div {
-        let file_name_first = git_path_style == GitPathStyle::FileNameFirst;
-        let file_path_first = git_path_style == GitPathStyle::FilePathFirst;
-
-        let file_name = format!("{} ", file_name);
-
-        h_flex()
-            .min_w_0()
-            .overflow_hidden()
-            .when(file_path_first, |this| this.flex_row_reverse())
-            .child(
-                div().flex_none().child(
-                    self.entry_label(file_name, label_color)
-                        .when(strikethrough, Label::strikethrough),
-                ),
-            )
-            .when_some(directory, |this, dir| {
-                let path_name = if file_name_first {
-                    dir
-                } else {
-                    format!("{dir}{}", path_style.primary_separator())
-                };
-
-                this.child(
-                    self.entry_label(path_name, path_color)
-                        .truncate_start()
-                        .when(strikethrough, Label::strikethrough),
-                )
-            })
+        crate::git_status_list_item::path_formatted(
+            directory,
+            path_color,
+            file_name,
+            label_color,
+            path_style,
+            git_path_style,
+            strikethrough,
+        )
     }
 
     fn has_write_access(&self, cx: &App) -> bool {

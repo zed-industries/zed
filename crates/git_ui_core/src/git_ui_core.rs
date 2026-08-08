@@ -14,6 +14,7 @@ pub mod notifications;
 pub mod worktree_names;
 pub mod worktree_picker;
 pub mod worktree_service;
+pub mod worktree_status;
 
 /// A type-erased picker view, e.g. for the title bar's branch popover.
 ///
