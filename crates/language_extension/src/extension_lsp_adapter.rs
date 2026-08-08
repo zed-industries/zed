@@ -1,4 +1,3 @@
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -9,7 +8,7 @@ use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
 use futures::{FutureExt, future::join_all, lock::OwnedMutexGuard};
 use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
-    BinaryStatus, CodeLabel, DynLspInstaller, Language, LanguageName,
+    BinaryStatus, CodeLabel, CodeLabelRun, DynLspInstaller, Language, LanguageName,
     LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
 };
 use lsp::{
@@ -18,7 +17,6 @@ use lsp::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use syntax_token::SyntaxTokenId;
 use util::{ResultExt, fs::make_file_executable, maybe, rel_path::RelPath};
 
 use crate::{LanguageServerRegistryProxy, LspAccess};
@@ -516,7 +514,7 @@ fn labels_from_extension(
 
 fn build_code_label(
     label: &extension::CodeLabel,
-    parsed_runs: &[(Range<usize>, SyntaxTokenId)],
+    parsed_runs: &[CodeLabelRun],
     language: &Arc<Language>,
 ) -> Option<CodeLabel> {
     let mut text = String::new();
@@ -528,7 +526,7 @@ fn build_code_label(
                 let code_span = &label.code.get(range.clone())?;
                 let mut input_ix = range.start;
                 let mut output_ix = text.len();
-                for (run_range, id) in parsed_runs {
+                for (run_range, id, fallbacks) in parsed_runs {
                     if run_range.start >= range.end {
                         break;
                     }
@@ -543,7 +541,7 @@ fn build_code_label(
                     }
 
                     let len = range.end.min(run_range.end) - input_ix;
-                    runs.push((output_ix..output_ix + len, *id));
+                    runs.push((output_ix..output_ix + len, *id, fallbacks.clone()));
                     output_ix += len;
                     input_ix += len;
                 }
@@ -559,7 +557,7 @@ fn build_code_label(
                     })
                 {
                     let ix = text.len();
-                    runs.push((ix..ix + span.text.len(), highlight_id));
+                    runs.push((ix..ix + span.text.len(), highlight_id, Default::default()));
                 }
                 text.push_str(&span.text);
             }
@@ -687,7 +685,7 @@ fn test_build_code_label() {
     );
     let code_runs = code_ranges
         .into_iter()
-        .map(|range| (range, syntax_token::intern("variable")))
+        .map(|range| (range, syntax_token::intern("variable"), Default::default()))
         .collect::<Vec<_>>();
 
     let label = build_code_label(
@@ -710,7 +708,7 @@ fn test_build_code_label() {
         marked_text_ranges("pqrs.tuv: «fn»(«Bcd»(«Efgh»)) -> «Ijklm»", false);
     let label_runs = label_ranges
         .into_iter()
-        .map(|range| (range, syntax_token::intern("variable")))
+        .map(|range| (range, syntax_token::intern("variable"), Default::default()))
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -726,7 +724,7 @@ fn test_build_code_label_with_invalid_ranges() {
     let (code, code_ranges) = marked_text_ranges("const «a»: «B» = '🏀'", false);
     let code_runs = code_ranges
         .into_iter()
-        .map(|range| (range, syntax_token::intern("variable")))
+        .map(|range| (range, syntax_token::intern("variable"), Default::default()))
         .collect::<Vec<_>>();
 
     // A span uses a code range that is invalid because it starts inside of

@@ -20,7 +20,6 @@ use std::{
     borrow::Cow,
     ffi::{OsStr, OsString},
     future::Future,
-    ops::Range,
     path::{Path, PathBuf},
     process::Output,
     str,
@@ -573,11 +572,8 @@ async fn get_cached_server_binary(container_dir: &Path) -> Option<LanguageServer
     .log_err()
 }
 
-fn adjust_runs(
-    delta: usize,
-    mut runs: Vec<(Range<usize>, SyntaxTokenId)>,
-) -> Vec<(Range<usize>, SyntaxTokenId)> {
-    for (range, _) in &mut runs {
+fn adjust_runs(delta: usize, mut runs: Vec<CodeLabelRun>) -> Vec<CodeLabelRun> {
+    for (range, _, _) in &mut runs {
         range.start += delta;
         range.end += delta;
     }
@@ -955,12 +951,29 @@ mod tests {
         )
     }
 
-    fn runs(
-        spec: &[(std::ops::Range<usize>, &str)],
-    ) -> Vec<(std::ops::Range<usize>, SyntaxTokenId)> {
+    fn runs(spec: &[(std::ops::Range<usize>, &str)]) -> Vec<CodeLabelRun> {
         spec.iter()
-            .map(|(range, name)| (range.clone(), syntax_token::intern(name)))
+            .map(|(range, name)| {
+                (range.clone(), syntax_token::intern(name), smallvec::SmallVec::new())
+            })
             .collect()
+    }
+
+    /// Sets the enclosing-capture fallback on the runs matching `patches`'
+    /// ranges, for grammar nodes the query gives more than one capture.
+    fn with_fallbacks(
+        mut runs: Vec<CodeLabelRun>,
+        patches: &[(std::ops::Range<usize>, &[&str])],
+    ) -> Vec<CodeLabelRun> {
+        for (range, fallback_names) in patches {
+            if let Some(entry) = runs.iter_mut().find(|(r, _, _)| r == range) {
+                entry.2 = fallback_names
+                    .iter()
+                    .map(|name| syntax_token::intern(name))
+                    .collect();
+            }
+        }
+        runs
     }
 
     #[gpui::test]
@@ -983,16 +996,19 @@ mod tests {
             Some(CodeLabel::new(
                 "Hello(a B) c.D".to_string(),
                 0..5,
-                runs(&[
-                    (0..5, "function"),
-                    (5..6, "punctuation.bracket"),
-                    (6..7, "variable"),
-                    (8..9, "type"),
-                    (9..10, "punctuation.bracket"),
-                    (11..12, "namespace"),
-                    (12..13, "punctuation.delimiter"),
-                    (13..14, "type"),
-                ])
+                with_fallbacks(
+                    runs(&[
+                        (0..5, "function"),
+                        (5..6, "punctuation.bracket"),
+                        (6..7, "variable"),
+                        (8..9, "type"),
+                        (9..10, "punctuation.bracket"),
+                        (11..12, "namespace"),
+                        (12..13, "punctuation.delimiter"),
+                        (13..14, "type"),
+                    ]),
+                    &[(0..5, &["variable"])],
+                )
             ))
         );
 
@@ -1012,18 +1028,21 @@ mod tests {
             Some(CodeLabel::new(
                 "one.two.Three() [3]interface{}".to_string(),
                 0..13,
-                runs(&[
-                    (7..8, "punctuation.delimiter"),
-                    (8..13, "function"),
-                    (13..14, "punctuation.bracket"),
-                    (14..15, "punctuation.bracket"),
-                    (16..17, "punctuation.bracket"),
-                    (17..18, "number"),
-                    (18..19, "punctuation.bracket"),
-                    (19..28, "keyword"),
-                    (28..29, "punctuation.bracket"),
-                    (29..30, "punctuation.bracket"),
-                ]),
+                with_fallbacks(
+                    runs(&[
+                        (7..8, "punctuation.delimiter"),
+                        (8..13, "function"),
+                        (13..14, "punctuation.bracket"),
+                        (14..15, "punctuation.bracket"),
+                        (16..17, "punctuation.bracket"),
+                        (17..18, "number"),
+                        (18..19, "punctuation.bracket"),
+                        (19..28, "keyword"),
+                        (28..29, "punctuation.bracket"),
+                        (29..30, "punctuation.bracket"),
+                    ]),
+                    &[(8..13, &["variable"])],
+                ),
             ))
         );
 

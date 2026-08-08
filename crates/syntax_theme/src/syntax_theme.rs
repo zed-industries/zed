@@ -221,6 +221,11 @@ impl SyntaxTheme {
             }
         }
 
+        // Any resolution already memoized above reflects `capture_name_map` as
+        // it stood before this merge; a token that fell back to a general
+        // capture, or resolved to nothing, may now resolve differently.
+        base.resolved_indices.get_mut().clear();
+
         Arc::new(base)
     }
 }
@@ -348,6 +353,38 @@ mod tests {
         assert_eq!(
             light.get(keyword).and_then(|style| style.color),
             Some(gpui::yellow())
+        );
+    }
+
+    #[test]
+    fn merge_invalidates_resolutions_memoized_before_it() {
+        // Resolving a token before a merge can memoize it against a capture
+        // name the merge is about to add a more specific entry for. The memo
+        // must not keep serving that pre-merge answer afterward.
+        let base = Arc::new(SyntaxTheme::new_test([("variable", gpui::red())]));
+
+        let special = syntax_token::intern("variable.special");
+        assert_eq!(
+            base.get(special).and_then(|style| style.color),
+            Some(gpui::red()),
+            "resolving before the merge should memoize the prefix fallback"
+        );
+
+        let merged = SyntaxTheme::merge(
+            base,
+            vec![(
+                "variable.special".to_string(),
+                HighlightStyle {
+                    color: Some(gpui::blue()),
+                    ..Default::default()
+                },
+            )],
+        );
+
+        assert_eq!(
+            merged.get(special).and_then(|style| style.color),
+            Some(gpui::blue()),
+            "the merged override must win over a resolution memoized before the merge"
         );
     }
 

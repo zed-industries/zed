@@ -1454,7 +1454,11 @@ impl MarksMatchInfo {
         for chunk in chunks {
             line.push_str(chunk.text);
             if let Some(highlight_id) = chunk.syntax_highlight_id
-                && let Some(highlight) = cx.theme().syntax().get(highlight_id).cloned()
+                && let Some(highlight) = cx
+                    .theme()
+                    .syntax()
+                    .style_for_captures(highlight_id, &chunk.syntax_fallbacks)
+                    .cloned()
             {
                 highlights.push((offset..offset + chunk.text.len(), highlight))
             }

@@ -232,7 +232,7 @@ impl LspAdapter for VtslsLspAdapter {
             text,
             label_len,
             item.filter_text.as_deref(),
-            vec![(0..label_len, highlight_id)],
+            vec![(0..label_len, highlight_id, Default::default())],
         ))
     }
 

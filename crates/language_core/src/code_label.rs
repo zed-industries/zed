@@ -1,5 +1,12 @@
 use std::ops::Range;
+use smallvec::SmallVec;
 use syntax_token::SyntaxTokenId;
+
+/// One syntax-highlighted run in a [`CodeLabel`]: the innermost capture
+/// covering the run, plus the captures enclosing it (outermost first), so a
+/// theme that does not style the innermost one can still style the run
+/// through a more general enclosing capture.
+pub type CodeLabelRun = (Range<usize>, SyntaxTokenId, SmallVec<[SyntaxTokenId; 3]>);
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum SymbolKind {
@@ -77,7 +84,7 @@ pub struct CodeLabel {
     /// The text to display.
     pub text: String,
     /// Syntax highlighting runs.
-    pub runs: Vec<(Range<usize>, SyntaxTokenId)>,
+    pub runs: Vec<CodeLabelRun>,
     /// The portion of the text that should be used in fuzzy filtering.
     pub filter_range: Range<usize>,
 }
@@ -87,7 +94,7 @@ pub struct CodeLabelBuilder {
     /// The text to display.
     text: String,
     /// Syntax highlighting runs.
-    runs: Vec<(Range<usize>, SyntaxTokenId)>,
+    runs: Vec<CodeLabelRun>,
     /// The portion of the text that should be used in fuzzy filtering.
     filter_range: Range<usize>,
 }
@@ -101,7 +108,7 @@ impl CodeLabel {
         text: String,
         label_len: usize,
         filter_text: Option<&str>,
-        runs: Vec<(Range<usize>, SyntaxTokenId)>,
+        runs: Vec<CodeLabelRun>,
     ) -> Self {
         assert!(label_len <= text.len());
         let filter_range = filter_text
@@ -110,16 +117,12 @@ impl CodeLabel {
         Self::new(text, filter_range, runs)
     }
 
-    pub fn new(
-        text: String,
-        filter_range: Range<usize>,
-        runs: Vec<(Range<usize>, SyntaxTokenId)>,
-    ) -> Self {
+    pub fn new(text: String, filter_range: Range<usize>, runs: Vec<CodeLabelRun>) -> Self {
         assert!(
             text.get(filter_range.clone()).is_some(),
             "invalid filter range"
         );
-        runs.iter().for_each(|(range, _)| {
+        runs.iter().for_each(|(range, _, _)| {
             assert!(
                 text.get(range.clone()).is_some(),
                 "invalid run range with inputs. Requested range {range:?} in text '{text}'",
@@ -169,8 +172,18 @@ impl CodeLabelBuilder {
         self.text.push_str(text);
         if let Some(highlight) = highlight {
             let end_index = self.text.len();
-            self.runs.push((start_index..end_index, highlight));
+            self.runs
+                .push((start_index..end_index, highlight, SmallVec::new()));
         }
+    }
+
+    /// Appends the runs `highlight_text` produced, offsetting each range by
+    /// where this label's text currently ends.
+    pub fn extend_runs(&mut self, offset: usize, runs: Vec<CodeLabelRun>) {
+        self.runs.extend(
+            runs.into_iter()
+                .map(|(range, id, fallbacks)| (range.start + offset..range.end + offset, id, fallbacks)),
+        );
     }
 
     pub fn build(mut self) -> CodeLabel {

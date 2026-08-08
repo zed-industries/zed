@@ -9827,6 +9827,7 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "smallvec",
  "syntax_token",
  "toml 0.8.23",
  "tree-sitter",

@@ -509,6 +509,7 @@ impl LspAdapter for RustLspAdapter {
                             runs.push((
                                 placeholder.label_run_start..label.len(),
                                 syntax_token::tabstop_replace(),
+                                SmallVec::new(),
                             ));
                             open_placeholders.pop();
                         }
@@ -519,7 +520,11 @@ impl LspAdapter for RustLspAdapter {
                         if start_pos == end_pos {
                             let caret_start = label.len();
                             label.push('…');
-                            runs.push((caret_start..label.len(), syntax_token::tabstop_insert()));
+                            runs.push((
+                                caret_start..label.len(),
+                                syntax_token::tabstop_insert(),
+                                SmallVec::new(),
+                            ));
                         } else {
                             open_placeholders.push(OpenPlaceholder {
                                 snippet_text_end: end_pos,
@@ -534,11 +539,12 @@ impl LspAdapter for RustLspAdapter {
                         runs.push((
                             placeholder.label_run_start..label.len(),
                             syntax_token::tabstop_replace(),
+                            SmallVec::new(),
                         ));
                     }
 
                     label.push_str(&snippet.text[text_pos..]);
-                    runs.sort_unstable_by_key(|(range, _)| (range.start, Reverse(range.end)));
+                    runs.sort_unstable_by_key(|(range, _, _)| (range.start, Reverse(range.end)));
 
                     if detail_left.is_some_and(|detail_left| detail_left == new_text) {
                         // We only include the left detail if it isn't the snippet again
@@ -567,6 +573,7 @@ impl LspAdapter for RustLspAdapter {
                         runs.push((
                             0..label.rfind('(').unwrap_or(completion.label.len()),
                             highlight_id,
+                            SmallVec::new(),
                         ));
                     } else if detail_left.is_none()
                         && kind != Some(lsp::CompletionItemKind::SNIPPET)
@@ -1519,12 +1526,27 @@ mod tests {
         );
     }
 
-    fn runs(
-        spec: &[(std::ops::Range<usize>, &str)],
-    ) -> Vec<(std::ops::Range<usize>, SyntaxTokenId)> {
+    fn runs(spec: &[(std::ops::Range<usize>, &str)]) -> Vec<CodeLabelRun> {
         spec.iter()
-            .map(|(range, name)| (range.clone(), syntax_token::intern(name)))
+            .map(|(range, name)| (range.clone(), syntax_token::intern(name), SmallVec::new()))
             .collect()
+    }
+
+    /// Sets the enclosing-capture fallback on the runs matching `patches`'
+    /// ranges, for grammar nodes the query gives more than one capture.
+    fn with_fallbacks(
+        mut runs: Vec<CodeLabelRun>,
+        patches: &[(std::ops::Range<usize>, &[&str])],
+    ) -> Vec<CodeLabelRun> {
+        for (range, fallback_names) in patches {
+            if let Some(entry) = runs.iter_mut().find(|(r, _, _)| r == range) {
+                entry.2 = fallback_names
+                    .iter()
+                    .map(|name| syntax_token::intern(name))
+                    .collect();
+            }
+        }
+        runs
     }
 
     #[gpui::test]
@@ -1550,22 +1572,36 @@ mod tests {
             Some(CodeLabel::new(
                 "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
                 0..5,
-                runs(&[
-                    (0..5, "function.definition"),
-                    (5..6, "punctuation.bracket"),
-                    (6..7, "operator"),
-                    (7..10, "keyword"),
-                    (11..17, "type"),
-                    (17..18, "operator"),
-                    (18..19, "type"),
-                    (19..20, "operator"),
-                    (20..21, "punctuation.bracket"),
-                    (22..24, "operator"),
-                    (25..28, "type"),
-                    (28..29, "operator"),
-                    (29..30, "type"),
-                    (30..31, "operator"),
-                ]),
+                with_fallbacks(
+                    runs(&[
+                        (0..5, "function.definition"),
+                        (5..6, "punctuation.bracket"),
+                        (6..7, "operator"),
+                        (7..10, "keyword"),
+                        (11..17, "type"),
+                        (17..18, "operator"),
+                        (18..19, "type"),
+                        (19..20, "operator"),
+                        (20..21, "punctuation.bracket"),
+                        (22..24, "operator"),
+                        (25..28, "type"),
+                        (28..29, "operator"),
+                        (29..30, "type"),
+                        (30..31, "operator"),
+                    ]),
+                    &[
+                        // `hello` is also captured by the broader `@variable`
+                        // pattern alongside `@function.definition`.
+                        (0..5, &["variable"]),
+                        // `<`/`>` used as type-parameter brackets are also
+                        // captured by the broader `@punctuation.bracket`
+                        // pattern alongside `@operator`.
+                        (17..18, &["punctuation.bracket"]),
+                        (19..20, &["punctuation.bracket"]),
+                        (28..29, &["punctuation.bracket"]),
+                        (30..31, &["punctuation.bracket"]),
+                    ],
+                ),
             ))
         );
         assert_eq!(
@@ -1586,22 +1622,36 @@ mod tests {
             Some(CodeLabel::new(
                 "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
                 0..5,
-                runs(&[
-                    (0..5, "function.definition"),
-                    (5..6, "punctuation.bracket"),
-                    (6..7, "operator"),
-                    (7..10, "keyword"),
-                    (11..17, "type"),
-                    (17..18, "operator"),
-                    (18..19, "type"),
-                    (19..20, "operator"),
-                    (20..21, "punctuation.bracket"),
-                    (22..24, "operator"),
-                    (25..28, "type"),
-                    (28..29, "operator"),
-                    (29..30, "type"),
-                    (30..31, "operator"),
-                ]),
+                with_fallbacks(
+                    runs(&[
+                        (0..5, "function.definition"),
+                        (5..6, "punctuation.bracket"),
+                        (6..7, "operator"),
+                        (7..10, "keyword"),
+                        (11..17, "type"),
+                        (17..18, "operator"),
+                        (18..19, "type"),
+                        (19..20, "operator"),
+                        (20..21, "punctuation.bracket"),
+                        (22..24, "operator"),
+                        (25..28, "type"),
+                        (28..29, "operator"),
+                        (29..30, "type"),
+                        (30..31, "operator"),
+                    ]),
+                    &[
+                        // `hello` is also captured by the broader `@variable`
+                        // pattern alongside `@function.definition`.
+                        (0..5, &["variable"]),
+                        // `<`/`>` used as type-parameter brackets are also
+                        // captured by the broader `@punctuation.bracket`
+                        // pattern alongside `@operator`.
+                        (17..18, &["punctuation.bracket"]),
+                        (19..20, &["punctuation.bracket"]),
+                        (28..29, &["punctuation.bracket"]),
+                        (30..31, &["punctuation.bracket"]),
+                    ],
+                ),
             ))
         );
         assert_eq!(
@@ -1645,22 +1695,36 @@ mod tests {
             Some(CodeLabel::new(
                 "hello(&mut Option<T>) -> Vec<T> (use crate::foo)".to_string(),
                 0..5,
-                runs(&[
-                    (0..5, "function.definition"),
-                    (5..6, "punctuation.bracket"),
-                    (6..7, "operator"),
-                    (7..10, "keyword"),
-                    (11..17, "type"),
-                    (17..18, "operator"),
-                    (18..19, "type"),
-                    (19..20, "operator"),
-                    (20..21, "punctuation.bracket"),
-                    (22..24, "operator"),
-                    (25..28, "type"),
-                    (28..29, "operator"),
-                    (29..30, "type"),
-                    (30..31, "operator"),
-                ]),
+                with_fallbacks(
+                    runs(&[
+                        (0..5, "function.definition"),
+                        (5..6, "punctuation.bracket"),
+                        (6..7, "operator"),
+                        (7..10, "keyword"),
+                        (11..17, "type"),
+                        (17..18, "operator"),
+                        (18..19, "type"),
+                        (19..20, "operator"),
+                        (20..21, "punctuation.bracket"),
+                        (22..24, "operator"),
+                        (25..28, "type"),
+                        (28..29, "operator"),
+                        (29..30, "type"),
+                        (30..31, "operator"),
+                    ]),
+                    &[
+                        // `hello` is also captured by the broader `@variable`
+                        // pattern alongside `@function.definition`.
+                        (0..5, &["variable"]),
+                        // `<`/`>` used as type-parameter brackets are also
+                        // captured by the broader `@punctuation.bracket`
+                        // pattern alongside `@operator`.
+                        (17..18, &["punctuation.bracket"]),
+                        (19..20, &["punctuation.bracket"]),
+                        (28..29, &["punctuation.bracket"]),
+                        (30..31, &["punctuation.bracket"]),
+                    ],
+                ),
             ))
         );
 
@@ -1683,24 +1747,32 @@ mod tests {
             Some(CodeLabel::new(
                 "await.as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
                 6..18,
-                runs(&[
-                    (0..5, "variable"),
-                    (5..6, "punctuation.delimiter"),
-                    (6..18, "function.definition"),
-                    (18..19, "punctuation.bracket"),
-                    (19..20, "operator"),
-                    (20..23, "keyword"),
-                    (24..28, "variable.special"),
-                    (28..29, "punctuation.bracket"),
-                    (30..32, "operator"),
-                    (33..40, "type"),
-                    (40..41, "operator"),
-                    (41..42, "lifetime"),
-                    (42..43, "lifetime"),
-                    (43..44, "punctuation.delimiter"),
-                    (45..46, "type"),
-                    (46..47, "operator"),
-                ]),
+                with_fallbacks(
+                    runs(&[
+                        (0..5, "variable"),
+                        (5..6, "punctuation.delimiter"),
+                        (6..18, "function.definition"),
+                        (18..19, "punctuation.bracket"),
+                        (19..20, "operator"),
+                        (20..23, "keyword"),
+                        (24..28, "variable.special"),
+                        (28..29, "punctuation.bracket"),
+                        (30..32, "operator"),
+                        (33..40, "type"),
+                        (40..41, "operator"),
+                        (41..42, "lifetime"),
+                        (42..43, "lifetime"),
+                        (43..44, "punctuation.delimiter"),
+                        (45..46, "type"),
+                        (46..47, "operator"),
+                    ]),
+                    &[
+                        (6..18, &["variable"]),
+                        (40..41, &["punctuation.bracket"]),
+                        (42..43, &["variable"]),
+                        (46..47, &["punctuation.bracket"]),
+                    ],
+                ),
             ))
         );
 
@@ -1725,24 +1797,32 @@ mod tests {
             Some(CodeLabel::new(
                 "pub fn as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
                 7..19,
-                runs(&[
-                    (0..3, "keyword"),
-                    (4..6, "keyword"),
-                    (7..19, "function.definition"),
-                    (19..20, "punctuation.bracket"),
-                    (20..21, "operator"),
-                    (21..24, "keyword"),
-                    (25..29, "variable.special"),
-                    (29..30, "punctuation.bracket"),
-                    (31..33, "operator"),
-                    (34..41, "type"),
-                    (41..42, "operator"),
-                    (42..43, "lifetime"),
-                    (43..44, "lifetime"),
-                    (44..45, "punctuation.delimiter"),
-                    (46..47, "type"),
-                    (47..48, "operator"),
-                ]),
+                with_fallbacks(
+                    runs(&[
+                        (0..3, "keyword"),
+                        (4..6, "keyword"),
+                        (7..19, "function.definition"),
+                        (19..20, "punctuation.bracket"),
+                        (20..21, "operator"),
+                        (21..24, "keyword"),
+                        (25..29, "variable.special"),
+                        (29..30, "punctuation.bracket"),
+                        (31..33, "operator"),
+                        (34..41, "type"),
+                        (41..42, "operator"),
+                        (42..43, "lifetime"),
+                        (43..44, "lifetime"),
+                        (44..45, "punctuation.delimiter"),
+                        (46..47, "type"),
+                        (47..48, "operator"),
+                    ]),
+                    &[
+                        (7..19, &["variable"]),
+                        (41..42, &["punctuation.bracket"]),
+                        (43..44, &["variable"]),
+                        (47..48, &["punctuation.bracket"]),
+                    ],
+                ),
             ))
         );
 
@@ -1767,23 +1847,30 @@ mod tests {
             Some(CodeLabel::new(
                 "pub fn sync_all(&self) -> io::Result<()>".to_string(),
                 7..15,
-                runs(&[
-                    (0..3, "keyword"),
-                    (4..6, "keyword"),
-                    (7..15, "function.definition"),
-                    (15..16, "punctuation.bracket"),
-                    (16..17, "operator"),
-                    (17..21, "variable.special"),
-                    (21..22, "punctuation.bracket"),
-                    (23..25, "operator"),
-                    (26..28, "variable"),
-                    (28..30, "punctuation.delimiter"),
-                    (30..36, "type"),
-                    (36..37, "operator"),
-                    (37..38, "punctuation.bracket"),
-                    (38..39, "punctuation.bracket"),
-                    (39..40, "operator"),
-                ]),
+                with_fallbacks(
+                    runs(&[
+                        (0..3, "keyword"),
+                        (4..6, "keyword"),
+                        (7..15, "function.definition"),
+                        (15..16, "punctuation.bracket"),
+                        (16..17, "operator"),
+                        (17..21, "variable.special"),
+                        (21..22, "punctuation.bracket"),
+                        (23..25, "operator"),
+                        (26..28, "variable"),
+                        (28..30, "punctuation.delimiter"),
+                        (30..36, "type"),
+                        (36..37, "operator"),
+                        (37..38, "punctuation.bracket"),
+                        (38..39, "punctuation.bracket"),
+                        (39..40, "operator"),
+                    ]),
+                    &[
+                        (7..15, &["variable"]),
+                        (36..37, &["punctuation.bracket"]),
+                        (39..40, &["punctuation.bracket"]),
+                    ],
+                ),
             ))
         );
 
@@ -1827,14 +1914,17 @@ mod tests {
             Some(CodeLabel::new(
                 "vec![elem]".to_string(),
                 0..4,
-                runs(&[
-                    (5..9, "$tabstop.replace"),
-                    (0..3, "function.special"),
-                    (3..4, "function.special"),
-                    (4..5, "punctuation.bracket"),
-                    (5..9, "variable"),
-                    (9..10, "punctuation.bracket"),
-                ]),
+                with_fallbacks(
+                    runs(&[
+                        (5..9, "$tabstop.replace"),
+                        (0..3, "function.special"),
+                        (3..4, "function.special"),
+                        (4..5, "punctuation.bracket"),
+                        (5..9, "variable"),
+                        (9..10, "punctuation.bracket"),
+                    ]),
+                    &[(0..3, &["variable"])],
+                ),
             ))
         );
 
@@ -1891,16 +1981,19 @@ mod tests {
             Some(CodeLabel::new(
                 "for item in iter {\n    \n}".to_string(),
                 0..3,
-                runs(&[
-                    (4..8, "$tabstop.replace"),
-                    (12..16, "$tabstop.replace"),
-                    (0..3, "keyword.control"),
-                    (4..8, "variable"),
-                    (9..11, "keyword.control"),
-                    (12..16, "variable"),
-                    (17..18, "punctuation.bracket"),
-                    (24..25, "punctuation.bracket"),
-                ]),
+                with_fallbacks(
+                    runs(&[
+                        (4..8, "$tabstop.replace"),
+                        (12..16, "$tabstop.replace"),
+                        (0..3, "keyword.control"),
+                        (4..8, "variable"),
+                        (9..11, "keyword.control"),
+                        (12..16, "variable"),
+                        (17..18, "punctuation.bracket"),
+                        (24..25, "punctuation.bracket"),
+                    ]),
+                    &[(0..3, &["keyword"])],
+                ),
             ))
         );
 
@@ -1923,15 +2016,18 @@ mod tests {
             Some(CodeLabel::new(
                 "unimplemented!(\"…\")".to_string(),
                 0..13,
-                runs(&[
-                    (15..20, "$tabstop.replace"),
-                    (16..19, "$tabstop.insert"),
-                    (0..13, "function.special"),
-                    (13..14, "function.special"),
-                    (14..15, "punctuation.bracket"),
-                    (15..20, "string"),
-                    (20..21, "punctuation.bracket"),
-                ]),
+                with_fallbacks(
+                    runs(&[
+                        (15..20, "$tabstop.replace"),
+                        (16..19, "$tabstop.insert"),
+                        (0..13, "function.special"),
+                        (13..14, "function.special"),
+                        (14..15, "punctuation.bracket"),
+                        (15..20, "string"),
+                        (20..21, "punctuation.bracket"),
+                    ]),
+                    &[(0..13, &["variable"])],
+                ),
             ))
         );
 
@@ -2058,7 +2154,10 @@ mod tests {
             Some(CodeLabel::new(
                 "fn hello".to_string(),
                 3..8,
-                vec![(0..2, highlight_keyword), (3..8, highlight_function)],
+                vec![
+                    (0..2, highlight_keyword, SmallVec::new()),
+                    (3..8, highlight_function, smallvec::smallvec![highlight_variable]),
+                ],
             ))
         );
 
@@ -2076,7 +2175,10 @@ mod tests {
             Some(CodeLabel::new(
                 "type World".to_string(),
                 5..10,
-                vec![(0..4, highlight_keyword), (5..10, highlight_type)],
+                vec![
+                    (0..4, highlight_keyword, SmallVec::new()),
+                    (5..10, highlight_type, SmallVec::new()),
+                ],
             ))
         );
 
@@ -2095,9 +2197,9 @@ mod tests {
                 "extern crate zed".to_string(),
                 13..16,
                 vec![
-                    (0..6, highlight_keyword),
-                    (7..12, highlight_keyword),
-                    (13..16, highlight_variable),
+                    (0..6, highlight_keyword, SmallVec::new()),
+                    (7..12, highlight_keyword, SmallVec::new()),
+                    (13..16, highlight_variable, SmallVec::new()),
                 ],
             ))
         );
@@ -2116,7 +2218,11 @@ mod tests {
             Some(CodeLabel::new(
                 "Variant".to_string(),
                 0..7,
-                vec![(0..7, highlight_type)],
+                vec![(
+                    0..7,
+                    highlight_type,
+                    smallvec::smallvec![highlight_variable, highlight_type],
+                )],
             ))
         );
     }

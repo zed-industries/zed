@@ -209,7 +209,7 @@ fn label_for_pyright_completion(
         label_len,
         item.filter_text.as_deref(),
         highlight_id
-            .map(|id| (0..label_len, id))
+            .map(|id| (0..label_len, id, Default::default()))
             .into_iter()
             .collect(),
     ))
@@ -347,7 +347,7 @@ impl LspAdapter for TyLspAdapter {
             label_len,
             item.filter_text.as_deref(),
             highlight_id
-                .map(|id| (0..label_len, id))
+                .map(|id| (0..label_len, id, Default::default()))
                 .into_iter()
                 .collect(),
         ))
@@ -1821,7 +1821,7 @@ impl LspAdapter for PyLspAdapter {
             label.clone(),
             label_len,
             item.filter_text.as_deref(),
-            vec![(0..label.len(), highlight_id)],
+            vec![(0..label.len(), highlight_id, Default::default())],
         ))
     }
 

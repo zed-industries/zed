@@ -610,7 +610,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let new_text_len = new_text.len();
         let icon_path = skill_completion_icon_path(&skill, &uri, cx);
         let crease_text: SharedString = uri.name().into();
-        let source_highlight_id = Some(syntax_token::intern("variable"));
+        let source_highlight_id = syntax_token::intern("variable");
         let label = build_slash_item_label(&skill.name, Some(&skill.source), source_highlight_id);
         Completion {
             replace_range: source_range.clone(),
@@ -1448,7 +1448,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 // grouping no longer applies.
                 let show_section_headers = argument.is_none();
 
-                let source_highlight_id = Some(syntax_token::intern("variable"));
+                let source_highlight_id = syntax_token::intern("variable");
 
                 type SkillInfo = (
                     String,
@@ -2551,7 +2551,7 @@ pub fn extract_file_name_and_directory(
 
 fn build_slash_command_label(
     command: &AvailableCommand,
-    source_highlight_id: Option<SyntaxTokenId>,
+    source_highlight_id: SyntaxTokenId,
 ) -> CodeLabel {
     build_slash_item_label(&command.name, command.source.as_ref(), source_highlight_id)
 }
@@ -2563,7 +2563,7 @@ fn build_slash_command_label(
 fn build_slash_item_label(
     name: &Arc<str>,
     source: Option<&SharedString>,
-    source_highlight_id: Option<SyntaxTokenId>,
+    source_highlight_id: SyntaxTokenId,
 ) -> CodeLabel {
     let source = source.filter(|source| !source.is_empty());
     let Some(source) = source else {
@@ -2572,7 +2572,7 @@ fn build_slash_item_label(
     let mut builder = CodeLabelBuilder::default();
     builder.push_str(name, None);
     builder.push_str(" ", None);
-    builder.push_str(source, source_highlight_id);
+    builder.push_str(source, Some(source_highlight_id));
     // The filter range defaults to the entire label after `build()`,
     // which would let the source text participate in fuzzy filtering.
     // Slash commands are matched up-front in `search_slash_commands`
@@ -2590,7 +2590,7 @@ fn build_code_label_for_path(
     line_number: Option<u32>,
     label_max_chars: usize,
 ) -> CodeLabel {
-    let variable_highlight_id = Some(syntax_token::intern("variable"));
+    let variable_highlight_id = syntax_token::intern("variable");
     let mut label = CodeLabelBuilder::default();
 
     label.push_str(file, None);
@@ -2603,10 +2603,10 @@ fn build_code_label_for_path(
             .saturating_sub(file_name_chars)
             .saturating_sub(1);
         let truncated_directory = truncate_and_remove_front(directory, directory_max_chars.max(5));
-        label.push_str(&truncated_directory, variable_highlight_id);
+        label.push_str(&truncated_directory, Some(variable_highlight_id));
     }
     if let Some(line_number) = line_number {
-        label.push_str(&format!(" L{}", line_number), variable_highlight_id);
+        label.push_str(&format!(" L{}", line_number), Some(variable_highlight_id));
     }
     label.build()
 }

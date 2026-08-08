@@ -729,10 +729,11 @@ impl HighlightedTextBuilder {
             self.text.push_str(chunk.text);
             let end = self.text.len();
 
-            if let Some(highlight_style) = chunk
-                .syntax_highlight_id
-                .and_then(|id| syntax_theme.get(id).cloned())
-            {
+            if let Some(highlight_style) = chunk.syntax_highlight_id.and_then(|id| {
+                syntax_theme
+                    .style_for_captures(id, &chunk.syntax_fallbacks)
+                    .cloned()
+            }) {
                 let highlight_style = override_style.map_or(highlight_style, |override_style| {
                     highlight_style.highlight(override_style)
                 });

@@ -284,6 +284,7 @@ impl super::LspAdapter for CLspAdapter {
                     label.runs.push((
                         0..label.text.rfind('(').unwrap_or(label.text.len()),
                         highlight_id,
+                        Default::default(),
                     ));
                     return Some(label);
                 }

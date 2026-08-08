@@ -1887,9 +1887,12 @@ impl DisplaySnapshot {
             let mut current_diagnostic_underline: Option<UnderlineStyle> = None;
 
             move |chunk| {
-                let syntax_highlight_style = chunk
-                    .syntax_highlight_id
-                    .and_then(|id| editor_style.syntax.get(id).cloned());
+                let syntax_highlight_style = chunk.syntax_highlight_id.and_then(|id| {
+                    editor_style
+                        .syntax
+                        .style_for_captures(id, &chunk.syntax_fallbacks)
+                        .cloned()
+                });
 
                 let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
                     HighlightStyle {

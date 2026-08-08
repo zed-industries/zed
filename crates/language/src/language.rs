@@ -43,7 +43,8 @@ use http_client::HttpClient;
 pub use futures::future::FutureExt as _;
 pub use language_core::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, BracketsConfig,
-    BracketsPatternConfig, CodeLabel, CodeLabelBuilder, DebugVariablesConfig, DebuggerTextObject,
+    BracketsPatternConfig, CodeLabel, CodeLabelBuilder, CodeLabelRun, DebugVariablesConfig,
+    DebuggerTextObject,
     DecreaseIndentConfig, Grammar, GrammarId, HighlightsConfig, IndentConfig, InjectionConfig,
     InjectionPatternConfig, JsxTagAutoCloseConfig, LanguageConfig, LanguageConfigOverride,
     LanguageId, LanguageMatcher, OrderedListConfig, OutlineConfig, Override, OverrideConfig,
@@ -1105,7 +1106,7 @@ impl Language {
         self: &'a Arc<Self>,
         text: &'a Rope,
         range: Range<usize>,
-    ) -> Vec<(Range<usize>, SyntaxTokenId)> {
+    ) -> Vec<CodeLabelRun> {
         let mut result = Vec::new();
         if let Some(grammar) = &self.grammar {
             let tree = parse_text(grammar, text, None);
@@ -1123,7 +1124,7 @@ impl Language {
             {
                 let end_offset = offset + chunk.text.len();
                 if let Some(highlight_id) = chunk.syntax_highlight_id {
-                    result.push((offset..end_offset, highlight_id));
+                    result.push((offset..end_offset, highlight_id, chunk.syntax_fallbacks));
                 }
                 offset = end_offset;
             }
@@ -1410,7 +1411,7 @@ impl CodeLabelExt for CodeLabel {
         let label = &item.label;
         let label_length = label.len();
         let runs = highlight_id
-            .map(|token| vec![(0..label_length, token)])
+            .map(|token| vec![(0..label_length, token, Default::default())])
             .unwrap_or_default();
         let text = if let Some(detail) = item.detail.as_deref().filter(|detail| detail != label) {
             format!("{label} {detail}")

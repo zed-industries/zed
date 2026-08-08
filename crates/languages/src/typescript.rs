@@ -818,7 +818,7 @@ impl LspAdapter for TypeScriptLspAdapter {
             text,
             label_len,
             item.filter_text.as_deref(),
-            vec![(0..label_len, highlight_id)],
+            vec![(0..label_len, highlight_id, Default::default())],
         ))
     }
 
@@ -940,8 +940,8 @@ mod tests {
             let class_spans = language
                 .highlight_text(&source, 0..source.len())
                 .into_iter()
-                .filter(|(_, token)| *token == class_highlight)
-                .map(|(range, _)| range)
+                .filter(|(_, token, _)| *token == class_highlight)
+                .map(|(range, _, _)| range)
                 .collect::<Vec<_>>();
             assert_eq!(
                 class_spans,

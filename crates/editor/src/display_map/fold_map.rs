@@ -1601,13 +1601,17 @@ impl<'a> Iterator for FoldChunks<'a> {
 
             self.inlay_offset = chunk_end;
             self.output_offset.0 += chunk.text.len();
+            // `inlay_chunk` (and thus `chunk`) is a clone local to this call
+            // that is discarded once we return, so moving the fallbacks out
+            // instead of cloning them costs nothing.
+            let syntax_fallbacks = std::mem::take(&mut chunk.syntax_fallbacks);
             return Some(Chunk {
                 text: chunk.text,
                 tabs: chunk.tabs,
                 chars: chunk.chars,
                 newlines: chunk.newlines,
                 syntax_highlight_id: chunk.syntax_highlight_id,
-                syntax_fallbacks: chunk.syntax_fallbacks.clone(),
+                syntax_fallbacks,
                 highlight_style: chunk.highlight_style,
                 diagnostic_severity: chunk.diagnostic_severity,
                 is_unnecessary: chunk.is_unnecessary,

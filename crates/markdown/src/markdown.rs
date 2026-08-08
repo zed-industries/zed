@@ -3751,7 +3751,9 @@ impl MarkdownElementBuilder {
 
         if let Some(Some(language)) = self.code_block_stack.last() {
             let mut offset = 0;
-            for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
+            for (range, highlight_id, fallbacks) in
+                language.highlight_text(&Rope::from(text), 0..text.len())
+            {
                 if range.start > offset {
                     self.pending_line
                         .runs
@@ -3759,7 +3761,11 @@ impl MarkdownElementBuilder {
                 }
 
                 let run_len = range.len();
-                if let Some(highlight) = self.syntax_theme.get(highlight_id).cloned() {
+                if let Some(highlight) = self
+                    .syntax_theme
+                    .style_for_captures(highlight_id, &fallbacks)
+                    .cloned()
+                {
                     self.pending_line
                         .runs
                         .push(text_style.clone().highlight(highlight).to_run(run_len));

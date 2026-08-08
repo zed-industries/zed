@@ -12170,7 +12170,7 @@ pub fn styled_runs_for_code_label<'a>(
             .runs
             .iter()
             .enumerate()
-            .flat_map(move |(ix, (range, highlight_id))| {
+            .flat_map(move |(ix, (range, highlight_id, fallbacks))| {
                 let style = if *highlight_id == syntax_token::tabstop_insert() {
                     HighlightStyle {
                         color: Some(local_player.cursor),
@@ -12181,7 +12181,9 @@ pub fn styled_runs_for_code_label<'a>(
                         background_color: Some(local_player.selection),
                         ..Default::default()
                     }
-                } else if let Some(style) = syntax_theme.get(*highlight_id).cloned() {
+                } else if let Some(style) =
+                    syntax_theme.style_for_captures(*highlight_id, fallbacks).cloned()
+                {
                     style
                 } else {
                     return Default::default();

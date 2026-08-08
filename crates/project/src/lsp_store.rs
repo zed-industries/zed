@@ -13875,7 +13875,10 @@ fn resolve_word_completion(snapshot: &BufferSnapshot, completion: &mut Completio
     ) {
         let end_offset = offset + chunk.text.len();
         if let Some(token) = chunk.syntax_highlight_id {
-            completion.label.runs.push((offset..end_offset, token));
+            completion
+                .label
+                .runs
+                .push((offset..end_offset, token, chunk.syntax_fallbacks));
         }
         offset = end_offset;
     }
@@ -14951,7 +14954,7 @@ pub fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
 
     let last_index = new_idx;
     let mut run_ranges_errors = Vec::new();
-    label.runs.retain_mut(|(range, _)| {
+    label.runs.retain_mut(|(range, _, _)| {
         match offset_map.get(range.start) {
             Some(&start) => range.start = start,
             None => {
