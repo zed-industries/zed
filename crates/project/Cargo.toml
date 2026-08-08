@@ -88,6 +88,7 @@ shellexpand.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 snippet.workspace = true
+symbol_index.workspace = true
 snippet_provider.workspace = true
 sum_tree.workspace = true
 task.workspace = true

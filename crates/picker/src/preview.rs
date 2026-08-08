@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{AnyElement, App, Entity, IntoElement, Window};
-use language::{Anchor, Buffer, HighlightedText};
+use language::{Anchor, Buffer, HighlightedText, Point};
 use project::Symbol;
 
 /// The editor-agnostic interface a [`Picker`](crate::Picker) uses to drive its
@@ -61,8 +61,12 @@ pub enum PreviewSource {
     /// The buffer is identified by its absolute path; the preview opens it.
     ///
     /// Used by pickers (like the file finder) that only know the path of the
-    /// match.
-    Path(PathBuf),
+    /// match. When `position` is `Some`, the preview scrolls to and highlights
+    /// that point after the buffer loads.
+    Path {
+        abs_path: PathBuf,
+        position: Option<Point>,
+    },
     /// The buffer is provided directly.
     ///
     /// Used by pickers (like the text picker) that already hold the matched
@@ -102,7 +106,22 @@ impl Update {
     /// Preview the buffer at `abs_path` without highlighting anything.
     pub fn from_path(abs_path: PathBuf) -> Self {
         Self {
-            source: PreviewSource::Path(abs_path),
+            source: PreviewSource::Path {
+                abs_path,
+                position: None,
+            },
+            match_location: None,
+        }
+    }
+
+    /// Preview the buffer at `abs_path`, scrolling to and highlighting `position`
+    /// once the buffer loads.
+    pub fn from_path_with_position(abs_path: PathBuf, position: Point) -> Self {
+        Self {
+            source: PreviewSource::Path {
+                abs_path,
+                position: Some(position),
+            },
             match_location: None,
         }
     }

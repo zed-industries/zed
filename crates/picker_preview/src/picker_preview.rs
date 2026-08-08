@@ -6,10 +6,9 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, IntoElement, Pixels, StyledText, Task,
     Window, px,
 };
-use language::{Bias, Buffer, HighlightedText, HighlightedTextBuilder, ToPoint};
+use language::{Bias, Buffer, HighlightedText, HighlightedTextBuilder, Point, ToPoint};
 use picker::{MatchLocation, PreviewBackend, PreviewLayout, PreviewSource, PreviewUpdate};
 use project::{Project, Symbol};
-use rope::Point;
 use settings::Settings;
 use ui::{ActiveTheme, Color, div, prelude::*, v_flex};
 use util::ResultExt as _;
@@ -120,8 +119,8 @@ impl EditorPreview {
         } = update;
 
         match source {
-            PreviewSource::Path(abs_path) => {
-                self.update_from_path(abs_path, highlight, window, cx);
+            PreviewSource::Path { abs_path, position } => {
+                self.update_from_path(abs_path, position, highlight, window, cx);
             }
             PreviewSource::Buffer(buffer) => {
                 self.update_from_buffer(buffer, highlight, window, cx);
@@ -140,6 +139,7 @@ impl EditorPreview {
     fn update_from_path(
         &mut self,
         abs_path: std::path::PathBuf,
+        position: Option<language::Point>,
         highlight: Option<MatchLocation>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -162,6 +162,27 @@ impl EditorPreview {
                 return;
             };
             this.update_in(cx, |this, window, cx| {
+                // If the caller supplied a position but no explicit MatchLocation,
+                // derive a MatchLocation from the position so the preview scrolls
+                // to and highlights it.
+                let highlight = match (highlight, position) {
+                    (Some(hl), _) => Some(hl),
+                    (None, Some(point)) => {
+                        let snapshot = buffer.read(cx).text_snapshot();
+                        let start = snapshot.clip_point(point, language::Bias::Left);
+                        let line_len = snapshot.line_len(start.row);
+                        let end = Point::new(start.row, line_len);
+                        let start_anchor = snapshot.anchor_before(start);
+                        let end_anchor = snapshot.anchor_after(end);
+                        let start_offset = snapshot.point_to_offset(start);
+                        let end_offset = snapshot.point_to_offset(end);
+                        Some(MatchLocation {
+                            anchor_range: start_anchor..end_anchor,
+                            range: start_offset..end_offset,
+                        })
+                    }
+                    (None, None) => None,
+                };
                 this.update_from_buffer(buffer, highlight, window, cx);
                 cx.notify();
             })

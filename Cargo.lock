@@ -14241,6 +14241,7 @@ dependencies = [
  "snippet",
  "snippet_provider",
  "sum_tree",
+ "symbol_index",
  "task",
  "tempfile",
  "terminal",
@@ -14332,12 +14333,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
- "futures 0.3.32",
- "fuzzy",
  "gpui",
  "language",
- "lsp",
- "ordered-float 2.10.1",
+ "language_core",
  "picker",
  "picker_preview",
  "project",
@@ -14345,10 +14343,13 @@ dependencies = [
  "semver",
  "serde_json",
  "settings",
+ "symbol_index",
  "theme",
  "theme_settings",
+ "tree-sitter-rust",
  "util",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -18068,6 +18069,18 @@ dependencies = [
  "skrifa 0.37.0",
  "yazi",
  "zeno",
+]
+
+[[package]]
+name = "symbol_index"
+version = "0.1.0"
+dependencies = [
+ "fuzzy_nucleo",
+ "gpui",
+ "language_core",
+ "log",
+ "tree-sitter",
+ "tree-sitter-rust",
 ]
 
 [[package]]
