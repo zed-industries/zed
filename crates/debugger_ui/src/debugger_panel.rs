@@ -615,7 +615,7 @@ impl DebugPanel {
         let active_session = self.active_session.clone();
         let focus_handle = self.focus_handle.clone();
         let is_side = self.position(window, cx).axis() == gpui::Axis::Horizontal;
-        let div = if is_side { v_flex() } else { h_flex() };
+        let div = h_flex();
 
         let new_session_button = || {
             IconButton::new("debug-new-session", IconName::Plus)
@@ -683,9 +683,11 @@ impl DebugPanel {
                 .py_1()
                 .px_1p5()
                 .justify_between()
+                .flex_wrap()
+                .gap_y_1()
                 .border_b_1()
                 .border_color(cx.theme().colors().border)
-                .when(is_side, |this| this.gap_1().h(Tab::container_height(cx)))
+                .when(is_side, |this| this.gap_1().min_h(Tab::container_height(cx)))
                 .child(
                     h_flex()
                         .justify_between()
@@ -936,17 +938,12 @@ impl DebugPanel {
                                 },
                             ),
                         )
-                        .when(is_side, |this| {
-                            this.child(new_session_button())
-                                .child(edit_debug_json_button())
-                                .child(documentation_button())
-                                .child(logs_button())
-                        }),
                 )
                 .child(
                     h_flex()
+                        .flex_grow()
+                        .justify_end()
                         .gap_0p5()
-                        .when(is_side, |this| this.justify_between())
                         .child(
                             h_flex().when_some(
                                 active_session
@@ -987,13 +984,11 @@ impl DebugPanel {
                                     window,
                                     cx,
                                 ))
-                                .when(!is_side, |this| {
-                                    this.child(new_session_button())
-                                        .child(edit_debug_json_button())
-                                        .child(documentation_button())
-                                        .child(logs_button())
-                                        .child(close_bottom_panel_button)
-                                }),
+                                .child(new_session_button())
+                                .child(edit_debug_json_button())
+                                .child(documentation_button())
+                                .child(logs_button())
+                                .when(!is_side, |this| this.child(close_bottom_panel_button)),
                         ),
                 ),
         )
