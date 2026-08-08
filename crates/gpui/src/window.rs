@@ -808,6 +808,24 @@ pub struct EdgeFade {
     pub bottom: bool,
 }
 
+impl EdgeFade {
+    /// The fade ramp at a vertical position (window coords): 1 in the
+    /// region's body, falling linearly to 0 across `band` at each active
+    /// edge.
+    pub(crate) fn ramp_at(&self, y: Pixels) -> f32 {
+        let y = y.0;
+        let band = self.band.0.max(1.0);
+        let mut ramp: f32 = 1.0;
+        if self.top {
+            ramp = ramp.min(((y - self.bounds.top().0) / band).clamp(0.0, 1.0));
+        }
+        if self.bottom {
+            ramp = ramp.min(((self.bounds.bottom().0 - y) / band).clamp(0.0, 1.0));
+        }
+        ramp
+    }
+}
+
 /// A rectangular region that potentially blocks hitboxes inserted prior.
 /// See [Window::insert_hitbox] for more details.
 #[derive(Clone, Debug, Deref)]
@@ -3731,19 +3749,10 @@ impl Window {
     #[inline]
     pub(crate) fn element_opacity_at(&self, center_y: Pixels) -> f32 {
         let opacity = self.element_opacity();
-        let Some(fade) = &self.edge_fade else {
-            return opacity;
-        };
-        let y = center_y.0;
-        let band = fade.band.0.max(1.0);
-        let mut ramp: f32 = 1.0;
-        if fade.top {
-            ramp = ramp.min(((y - fade.bounds.top().0) / band).clamp(0.0, 1.0));
+        match &self.edge_fade {
+            Some(fade) => opacity * fade.ramp_at(center_y),
+            None => opacity,
         }
-        if fade.bottom {
-            ramp = ramp.min(((fade.bounds.bottom().0 - y) / band).clamp(0.0, 1.0));
-        }
-        opacity * ramp
     }
 
     /// Obtain the current content mask. This method should only be called during element drawing.
@@ -6940,6 +6949,51 @@ mod tests {
                 // a mid-draw arena clear when painted afterwards.
                 .child(div().child("after"))
         }
+    }
+
+    /// The edge-fade ramp is what every painted primitive's opacity is
+    /// multiplied by: 1 in the region's body, falling linearly to 0 across
+    /// `band` at each active edge, and never negative outside the region.
+    #[test]
+    fn test_edge_fade_ramp() {
+        let fade = crate::EdgeFade {
+            bounds: Bounds::new(point(px(0.), px(100.)), size(px(50.), px(200.))),
+            band: px(20.),
+            top: true,
+            bottom: true,
+        };
+
+        // Body: fully opaque.
+        assert_eq!(fade.ramp_at(px(200.)), 1.0);
+        // Band boundaries: exactly opaque.
+        assert_eq!(fade.ramp_at(px(120.)), 1.0);
+        assert_eq!(fade.ramp_at(px(280.)), 1.0);
+        // Mid-band: half faded.
+        assert_eq!(fade.ramp_at(px(110.)), 0.5);
+        assert_eq!(fade.ramp_at(px(290.)), 0.5);
+        // Edges and beyond: fully transparent, clamped.
+        assert_eq!(fade.ramp_at(px(100.)), 0.0);
+        assert_eq!(fade.ramp_at(px(300.)), 0.0);
+        assert_eq!(fade.ramp_at(px(0.)), 0.0);
+        assert_eq!(fade.ramp_at(px(400.)), 0.0);
+
+        // An inactive edge does not fade.
+        let top_only = crate::EdgeFade {
+            top: true,
+            bottom: false,
+            ..fade
+        };
+        assert_eq!(top_only.ramp_at(px(290.)), 1.0);
+        assert_eq!(top_only.ramp_at(px(300.)), 1.0);
+        assert_eq!(top_only.ramp_at(px(110.)), 0.5);
+
+        // A degenerate band still yields a hard 0/1 step instead of NaN.
+        let zero_band = crate::EdgeFade {
+            band: px(0.),
+            ..fade
+        };
+        assert_eq!(zero_band.ramp_at(px(100.)), 0.0);
+        assert_eq!(zero_band.ramp_at(px(101.)), 1.0);
     }
 
     /// Opening a window synchronously draws it and requests an element arena
