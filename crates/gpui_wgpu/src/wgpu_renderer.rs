@@ -282,7 +282,7 @@ impl WgpuRenderer {
             .borrow()
             .as_ref()
             .map(|ctx| ctx.instance.clone())
-            .unwrap_or_else(|| WgpuContext::instance(Box::new(window.clone())));
+            .unwrap_or_else(|| WgpuContext::instance(|| Box::new(window.clone())));
 
         // Safety: The caller guarantees that the window handle is valid for the
         // lifetime of this renderer. In practice, the RawWindow struct is created
@@ -2092,7 +2092,7 @@ impl WgpuRenderer {
             // may need more time to come back (e.g. after suspend/resume).
             std::thread::sleep(std::time::Duration::from_millis(350));
 
-            let instance = WgpuContext::instance(Box::new(window.clone()));
+            let instance = WgpuContext::instance(|| Box::new(window.clone()));
             let surface = create_surface(&instance, window_handle.as_raw())?;
             let new_context =
                 WgpuContext::new_rejecting_software(instance, &surface, self.compositor_gpu)?;
