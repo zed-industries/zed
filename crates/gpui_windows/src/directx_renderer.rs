@@ -1,4 +1,6 @@
 use std::{
+    cell::Cell,
+    rc::Rc,
     slice,
     sync::{Arc, OnceLock},
 };
@@ -41,6 +43,7 @@ pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
     devices: Option<DirectXRendererDevices>,
     resources: Option<DirectXResources>,
+    overlay_resources: Option<OverlayResources>,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
     direct_composition: Option<DirectComposition>,
@@ -83,6 +86,12 @@ struct DirectXResources {
     viewport: D3D11_VIEWPORT,
 }
 
+struct OverlayResources {
+    swap_chain: IDXGISwapChain1,
+    render_target: Option<ID3D11Texture2D>,
+    render_target_view: Option<ID3D11RenderTargetView>,
+}
+
 struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState<Shadow>,
     quad_pipeline: PipelineState<Quad>,
@@ -117,8 +126,23 @@ impl Drop for Annotation<'_> {
 
 struct DirectComposition {
     comp_device: IDCompositionDevice,
+    // Keep these COM objects alive for the lifetime of the visual tree. They
+    // are not otherwise read after the tree is attached to the target.
+    #[allow(dead_code)]
     comp_target: IDCompositionTarget,
-    comp_visual: IDCompositionVisual,
+    #[allow(dead_code)]
+    root_visual: IDCompositionVisual,
+    base_visual: IDCompositionVisual,
+    portal_container: IDCompositionVisual,
+    overlay_visual: IDCompositionVisual,
+}
+
+struct DirectCompositionPortal {
+    comp_device: IDCompositionDevice,
+    container: IDCompositionVisual,
+    visual: IDCompositionVisual,
+    clip: IDCompositionRectangleClip,
+    visible: Cell<bool>,
 }
 
 impl DirectXRendererDevices {
@@ -187,6 +211,7 @@ impl DirectXRenderer {
             atlas,
             devices: Some(devices),
             resources: Some(resources),
+            overlay_resources: None,
             globals,
             pipelines,
             direct_composition,
@@ -201,7 +226,11 @@ impl DirectXRenderer {
         self.atlas.clone()
     }
 
-    fn pre_draw(&self, clear_color: &[f32; 4]) -> Result<()> {
+    fn pre_draw(
+        &self,
+        render_target_view: &Option<ID3D11RenderTargetView>,
+        clear_color: &[f32; 4],
+    ) -> Result<()> {
         let resources = self.resources.as_ref().expect("resources missing");
         let device_context = &self
             .devices
@@ -222,14 +251,12 @@ impl DirectXRenderer {
         )?;
         unsafe {
             device_context.ClearRenderTargetView(
-                resources
-                    .render_target_view
+                render_target_view
                     .as_ref()
                     .context("missing render target view")?,
                 clear_color,
             );
-            device_context
-                .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
+            device_context.OMSetRenderTargets(Some(slice::from_ref(render_target_view)), None);
             device_context.RSSetViewports(Some(slice::from_ref(&resources.viewport)));
             device_context
                 .VSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
@@ -262,6 +289,7 @@ impl DirectXRenderer {
 
     fn handle_device_lost_impl(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
         let disable_direct_composition = self.direct_composition.is_none();
+        let overlay_enabled = self.overlay_resources.is_some();
 
         unsafe {
             #[cfg(debug_assertions)]
@@ -272,6 +300,7 @@ impl DirectXRenderer {
             }
 
             self.resources.take();
+            self.overlay_resources.take();
             if let Some(devices) = &self.devices {
                 devices.device_context.OMSetRenderTargets(None, None);
                 devices.device_context.ClearState();
@@ -309,6 +338,16 @@ impl DirectXRenderer {
             composition.set_swap_chain(&resources.swap_chain)?;
             Some(composition)
         };
+        let overlay_resources = if overlay_enabled {
+            let overlay = OverlayResources::new(&devices, self.width, self.height)?;
+            direct_composition
+                .as_ref()
+                .context("DirectComposition missing for overlay")?
+                .set_overlay_swap_chain(&overlay.swap_chain)?;
+            Some(overlay)
+        } else {
+            None
+        };
 
         self.atlas
             .handle_device_lost(&devices.device, &devices.device_context);
@@ -320,6 +359,7 @@ impl DirectXRenderer {
         }
         self.devices = Some(devices);
         self.resources = Some(resources);
+        self.overlay_resources = overlay_resources;
         self.globals = globals;
         self.pipelines = pipelines;
         self.direct_composition = direct_composition;
@@ -337,13 +377,113 @@ impl DirectXRenderer {
             // and so likely do not have the textures anymore that are required for drawing
             return Ok(());
         }
-        self.pre_draw(&match background_appearance {
-            WindowBackgroundAppearance::Opaque => [1.0f32; 4],
-            _ => [0.0f32; 4],
-        })?;
+        let render_target_view = self
+            .resources
+            .as_ref()
+            .context("resources missing")?
+            .render_target_view
+            .clone();
+        self.pre_draw(
+            &render_target_view,
+            &match background_appearance {
+                WindowBackgroundAppearance::Opaque => [1.0f32; 4],
+                _ => [0.0f32; 4],
+            },
+        )?;
+        self.draw_scene(scene)?;
+        self.present()
+    }
 
+    pub(crate) fn draw_layered(
+        &mut self,
+        scene: &Scene,
+        overlay_start: usize,
+        background_appearance: WindowBackgroundAppearance,
+    ) -> Result<()> {
+        if self.overlay_resources.is_none() {
+            return self.draw(scene, background_appearance);
+        }
+        if self.skip_draws {
+            return Ok(());
+        }
+
+        let split = overlay_start.min(scene.len());
+        let mut base_scene = Scene::default();
+        base_scene.replay(0..split, scene);
+        base_scene.finish();
+        let mut overlay_scene = Scene::default();
+        overlay_scene.replay(split..scene.len(), scene);
+        overlay_scene.finish();
+
+        let base_view = self
+            .resources
+            .as_ref()
+            .context("resources missing")?
+            .render_target_view
+            .clone();
+        self.pre_draw(
+            &base_view,
+            &match background_appearance {
+                WindowBackgroundAppearance::Opaque => [1.0; 4],
+                _ => [0.0; 4],
+            },
+        )?;
+        self.draw_scene(&base_scene)?;
+
+        let overlay_view = self
+            .overlay_resources
+            .as_ref()
+            .context("overlay resources missing")?
+            .render_target_view
+            .clone();
+        self.pre_draw(&overlay_view, &[0.0; 4])?;
+        self.draw_scene(&overlay_scene)?;
+
+        unsafe {
+            self.resources
+                .as_ref()
+                .context("resources missing")?
+                .swap_chain
+                .Present(0, DXGI_PRESENT(0))
+                .ok()
+                .context("presenting base swap chain")?;
+            self.overlay_resources
+                .as_ref()
+                .context("overlay resources missing")?
+                .swap_chain
+                .Present(0, DXGI_PRESENT(0))
+                .ok()
+                .context("presenting overlay swap chain")?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn enable_scene_overlay(&mut self) -> Result<()> {
+        if self.overlay_resources.is_some() {
+            return Ok(());
+        }
+        let devices = self.devices.as_ref().context("devices missing")?;
+        let overlay = OverlayResources::new(devices, self.width, self.height)?;
+        self.direct_composition
+            .as_ref()
+            .context("DirectComposition is disabled")?
+            .set_overlay_swap_chain(&overlay.swap_chain)?;
+        self.overlay_resources = Some(overlay);
+        Ok(())
+    }
+
+    pub(crate) fn create_native_surface(&mut self) -> Result<Rc<dyn PlatformNativeSurface>> {
+        self.enable_scene_overlay()?;
+        Ok(Rc::new(
+            self.direct_composition
+                .as_ref()
+                .context("DirectComposition is disabled")?
+                .create_portal()?,
+        ))
+    }
+
+    fn draw_scene(&mut self, scene: &Scene) -> Result<()> {
         self.upload_scene_buffers(scene)?;
-
         let annotation = self
             .devices
             .as_ref()
@@ -388,7 +528,7 @@ impl DirectXRenderer {
                 )
             })?;
         }
-        self.present()
+        Ok(())
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
@@ -425,6 +565,10 @@ impl DirectXRenderer {
         }
 
         resources.recreate_resources(devices, width, height)?;
+
+        if let Some(overlay) = self.overlay_resources.as_mut() {
+            overlay.resize(devices, width, height)?;
+        }
 
         unsafe {
             devices
@@ -918,21 +1062,147 @@ impl DirectComposition {
     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
         let comp_device = get_comp_device(dxgi_device)?;
         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-        let comp_visual = unsafe { comp_device.CreateVisual() }?;
+        let root_visual = unsafe { comp_device.CreateVisual() }?;
+        let base_visual = unsafe { comp_device.CreateVisual() }?;
+        let portal_container = unsafe { comp_device.CreateVisual() }?;
+        let overlay_visual = unsafe { comp_device.CreateVisual() }?;
+
+        unsafe {
+            root_visual.AddVisual(&base_visual, false, None)?;
+            root_visual.AddVisual(&portal_container, true, &base_visual)?;
+            root_visual.AddVisual(&overlay_visual, true, &portal_container)?;
+            comp_target.SetRoot(&root_visual)?;
+            comp_device.Commit()?;
+        }
 
         Ok(Self {
             comp_device,
             comp_target,
-            comp_visual,
+            root_visual,
+            base_visual,
+            portal_container,
+            overlay_visual,
         })
     }
 
     pub fn set_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
         unsafe {
-            self.comp_visual.SetContent(swap_chain)?;
-            self.comp_target.SetRoot(&self.comp_visual)?;
+            self.base_visual.SetContent(swap_chain)?;
             self.comp_device.Commit()?;
         }
+        Ok(())
+    }
+
+    pub fn set_overlay_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
+        unsafe {
+            self.overlay_visual.SetContent(swap_chain)?;
+            self.comp_device.Commit()?;
+        }
+        Ok(())
+    }
+
+    fn create_portal(&self) -> Result<DirectCompositionPortal> {
+        let visual = unsafe { self.comp_device.CreateVisual() }?;
+        let clip = unsafe { self.comp_device.CreateRectangleClip() }?;
+        unsafe {
+            visual.SetClip(&clip)?;
+            self.portal_container.AddVisual(&visual, true, None)?;
+            self.comp_device.Commit()?;
+        }
+        Ok(DirectCompositionPortal {
+            comp_device: self.comp_device.clone(),
+            container: self.portal_container.clone(),
+            visual,
+            clip,
+            visible: Cell::new(true),
+        })
+    }
+}
+
+impl PlatformNativeSurface for DirectCompositionPortal {
+    fn set_bounds(&self, bounds: Bounds<DevicePixels>) -> Result<()> {
+        let x = bounds.origin.x.0 as f32;
+        let y = bounds.origin.y.0 as f32;
+        let width = bounds.size.width.0.max(0) as f32;
+        let height = bounds.size.height.0.max(0) as f32;
+        unsafe {
+            self.visual.SetOffsetX2(x)?;
+            self.visual.SetOffsetY2(y)?;
+            self.clip.SetLeft2(0.0)?;
+            self.clip.SetTop2(0.0)?;
+            self.clip.SetRight2(width)?;
+            self.clip.SetBottom2(height)?;
+            self.comp_device.Commit()?;
+        }
+        Ok(())
+    }
+
+    fn set_visible(&self, visible: bool) -> Result<()> {
+        if self.visible.get() != visible {
+            unsafe {
+                if visible {
+                    self.container.AddVisual(&self.visual, true, None)?;
+                } else {
+                    self.container.RemoveVisual(&self.visual)?;
+                }
+                self.comp_device.Commit()?;
+            }
+            self.visible.set(visible);
+        }
+        Ok(())
+    }
+
+    fn platform_handle(&self) -> Box<dyn std::any::Any> {
+        Box::new(
+            self.visual
+                .cast::<windows::core::IUnknown>()
+                .expect("IDCompositionVisual must implement IUnknown"),
+        )
+    }
+}
+
+impl Drop for DirectCompositionPortal {
+    fn drop(&mut self) {
+        unsafe {
+            self.container.RemoveVisual(&self.visual).ok();
+            self.comp_device.Commit().ok();
+        }
+    }
+}
+
+impl OverlayResources {
+    fn new(devices: &DirectXRendererDevices, width: u32, height: u32) -> Result<Self> {
+        let swap_chain = create_swap_chain_for_composition(
+            &devices.dxgi_factory,
+            &devices.device,
+            width,
+            height,
+        )?;
+        let (render_target, render_target_view) =
+            create_render_target_and_its_view(&swap_chain, &devices.device)?;
+        Ok(Self {
+            swap_chain,
+            render_target: Some(render_target),
+            render_target_view,
+        })
+    }
+
+    fn resize(&mut self, devices: &DirectXRendererDevices, width: u32, height: u32) -> Result<()> {
+        self.render_target.take();
+        self.render_target_view.take();
+        unsafe {
+            self.swap_chain.ResizeBuffers(
+                BUFFER_COUNT as u32,
+                width,
+                height,
+                RENDER_TARGET_FORMAT,
+                DXGI_SWAP_CHAIN_FLAG(0),
+            )?;
+        }
+        let (render_target, render_target_view) =
+            create_render_target_and_its_view(&self.swap_chain, &devices.device)?;
+        self.render_target = Some(render_target);
+        self.render_target_view = render_target_view;
         Ok(())
     }
 }
