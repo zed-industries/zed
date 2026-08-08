@@ -706,11 +706,6 @@ impl LineIndent {
     pub fn raw_len(&self) -> u32 {
         self.tabs + self.spaces
     }
-
-    /// Returns the number of indentation characters (tabs or spaces), taking tab size into account.
-    pub fn len(&self, tab_size: u32) -> u32 {
-        self.tabs * tab_size + self.spaces
-    }
 }
 
 impl From<&str> for LineIndent {

@@ -2,7 +2,7 @@ use super::*;
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use gpui::{App, Entity, TestAppContext};
 use indoc::indoc;
-use language::{Buffer, Rope};
+use language::{Buffer, Rope, language_settings::IndentationSettings};
 use parking_lot::RwLock;
 use rand::prelude::*;
 use settings::SettingsStore;
@@ -4336,16 +4336,39 @@ fn test_history(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_indentation_column_for_line_uses_indentation_settings(cx: &mut TestAppContext) {
+    let buffer = cx.update(|cx| MultiBuffer::build_simple("\t  text\n  \ttext\n    text", cx));
+    let snapshot = cx.read(|cx| buffer.read(cx).snapshot(cx));
+    let indentation = IndentationSettings::new(4.try_into().unwrap(), 8.try_into().unwrap(), true);
+
+    assert_eq!(
+        snapshot.indentation_column_for_line(MultiBufferRow(0), indentation),
+        10
+    );
+    assert_eq!(
+        snapshot.indentation_column_for_line(MultiBufferRow(1), indentation),
+        8
+    );
+    assert_eq!(
+        snapshot.indentation_column_for_line(MultiBufferRow(2), indentation),
+        4
+    );
+}
+
+#[gpui::test]
 async fn test_enclosing_indent(cx: &mut TestAppContext) {
     async fn enclosing_indent(
         text: &str,
         buffer_row: u32,
         cx: &mut TestAppContext,
-    ) -> Option<(Range<u32>, LineIndent)> {
+    ) -> Option<(Range<u32>, u32)> {
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
         let snapshot = cx.read(|cx| buffer.read(cx).snapshot(cx));
         let (range, indent) = snapshot
-            .enclosing_indent(MultiBufferRow(buffer_row))
+            .enclosing_indent(
+                MultiBufferRow(buffer_row),
+                IndentationSettings::new(4.try_into().unwrap(), 4.try_into().unwrap(), false),
+            )
             .await?;
         Some((range.start.0..range.end.0, indent))
     }
@@ -4365,14 +4388,7 @@ async fn test_enclosing_indent(cx: &mut TestAppContext) {
             cx,
         )
         .await,
-        Some((
-            1..2,
-            LineIndent {
-                tabs: 0,
-                spaces: 4,
-                line_blank: false,
-            }
-        ))
+        Some((1..2, 4))
     );
 
     assert_eq!(
@@ -4390,14 +4406,7 @@ async fn test_enclosing_indent(cx: &mut TestAppContext) {
             cx,
         )
         .await,
-        Some((
-            1..2,
-            LineIndent {
-                tabs: 0,
-                spaces: 4,
-                line_blank: false,
-            }
-        ))
+        Some((1..2, 4))
     );
 
     assert_eq!(
@@ -4417,14 +4426,18 @@ async fn test_enclosing_indent(cx: &mut TestAppContext) {
             cx,
         )
         .await,
-        Some((
-            1..4,
-            LineIndent {
-                tabs: 0,
-                spaces: 4,
-                line_blank: false,
-            }
-        ))
+        Some((1..4, 4))
+    );
+
+    let buffer = cx.update(|cx| MultiBuffer::build_simple("root\n    parent\n\tchild\nroot", cx));
+    let snapshot = cx.read(|cx| buffer.read(cx).snapshot(cx));
+    let indentation = IndentationSettings::new(4.try_into().unwrap(), 8.try_into().unwrap(), true);
+    assert_eq!(
+        snapshot
+            .enclosing_indent(MultiBufferRow(2), indentation)
+            .await
+            .map(|(range, indent)| (range.start.0..range.end.0, indent)),
+        Some((1..2, 4)),
     );
 }
 

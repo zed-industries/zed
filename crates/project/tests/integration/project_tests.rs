@@ -248,7 +248,8 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         root = true
         [*.rs]
             indent_style = tab
-            indent_size = 3
+            indent_size = 4
+            tab_width = 8
             end_of_line = lf
             insert_final_newline = true
             trim_trailing_whitespace = true
@@ -344,7 +345,8 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     let settings_readme = settings_for("README.json", cx).await;
     let settings_markdown = settings_for("README.md", cx).await;
     // .editorconfig overrides .zed/settings
-    assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
+    assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(4));
+    assert_eq!(Some(settings_a.tab_width), NonZeroU32::new(8));
     assert_eq!(settings_a.hard_tabs, true);
     assert_eq!(settings_a.ensure_final_newline_on_save, true);
     // .editorconfig can disable trailing whitespace removal, but should not
@@ -355,12 +357,15 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
     // .editorconfig in b/ overrides .editorconfig in root
     assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
+    assert_eq!(Some(settings_b.tab_width), NonZeroU32::new(8));
 
     // .editorconfig in subdirectory overrides .editorconfig in root
     assert_eq!(Some(settings_d.tab_size), NonZeroU32::new(1));
+    assert_eq!(Some(settings_d.tab_width), NonZeroU32::new(8));
 
     // Non-empty values in e/ are parsed and applied as usual.
     assert_eq!(Some(settings_e.tab_size), NonZeroU32::new(5));
+    assert_eq!(Some(settings_e.tab_width), NonZeroU32::new(8));
     assert_eq!(settings_e.hard_tabs, false);
     // An empty value opts out of the inherited `max_line_length = 120`,
     // falling back to .zed/settings.json instead of rejecting the whole file.
@@ -368,6 +373,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
     // "indent_size" is not set, so "tab_width" is used
     assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
+    assert_eq!(Some(settings_c.tab_width), NonZeroU32::new(10));
     assert_eq!(settings_c.remove_trailing_whitespace_on_save, false);
     assert_eq!(settings_readme.remove_trailing_whitespace_on_save, true);
     assert_eq!(settings_markdown.remove_trailing_whitespace_on_save, true);
@@ -378,6 +384,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
     // README.md should not be affected by .editorconfig's globe "*.rs"
     assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
+    assert_eq!(Some(settings_readme.tab_width), NonZeroU32::new(8));
 }
 
 #[gpui::test]
@@ -427,12 +434,15 @@ async fn test_external_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
     // main.rs gets indent_size = 2 from parent's external .editorconfig
     assert_eq!(Some(settings_rs.tab_size), NonZeroU32::new(2));
+    assert_eq!(Some(settings_rs.tab_width), NonZeroU32::new(2));
 
     // README.md gets indent_size = 3 from internal worktree .editorconfig
     assert_eq!(Some(settings_md.tab_size), NonZeroU32::new(3));
+    assert_eq!(Some(settings_md.tab_width), NonZeroU32::new(3));
 
     // other.txt gets indent_size = 4 from grandparent's external .editorconfig
     assert_eq!(Some(settings_txt.tab_size), NonZeroU32::new(4));
+    assert_eq!(Some(settings_txt.tab_width), NonZeroU32::new(4));
 }
 
 #[gpui::test]
