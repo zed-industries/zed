@@ -56,7 +56,9 @@ use crate::linux::{
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
-use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
+use crate::linux::{
+    LinuxCommon, LinuxKeyboardLayout, LinuxPlatformEvent, X11Window, modifiers_from_xinput_info,
+};
 
 use gpui::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
@@ -244,6 +246,7 @@ impl X11ClientStatePtr {
         {
             state.loop_handle.remove(event_loop_token);
         }
+        state.common.dbus_menu.unregister_x11_window(x_window);
         if state.mouse_focused_window == Some(x_window) {
             state.mouse_focused_window = None;
         }
@@ -308,7 +311,7 @@ impl X11Client {
     pub(crate) fn new() -> anyhow::Result<Self> {
         let event_loop = EventLoop::try_new()?;
 
-        let (common, main_receiver, wake_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, event_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
 
@@ -335,9 +338,42 @@ impl X11Client {
             })?;
 
         handle
-            .insert_source(wake_receiver, |event, _, client: &mut X11Client| {
-                if let calloop::channel::Event::Msg(()) = event {
-                    client.0.borrow_mut().common.handle_system_wake();
+            .insert_source(event_receiver, |event, _, client: &mut X11Client| {
+                if let calloop::channel::Event::Msg(event) = event {
+                    let mut state = client.0.borrow_mut();
+                    match event {
+                        LinuxPlatformEvent::Wake => {
+                            let mut callback = state.common.callbacks.system_wake.take();
+                            drop(state);
+                            if let Some(ref mut callback) = callback {
+                                callback();
+                            }
+                            let mut state = client.0.borrow_mut();
+                            state.common.callbacks.system_wake = callback;
+                        }
+                        LinuxPlatformEvent::MenuAction(action) => {
+                            let mut callback = state.common.callbacks.app_menu_action.take();
+                            drop(state);
+                            if let Some(ref mut callback) = callback {
+                                callback(action.as_ref());
+                            }
+                            let mut state = client.0.borrow_mut();
+                            state.common.callbacks.app_menu_action = callback;
+                        }
+                        LinuxPlatformEvent::MenuWillOpen => {
+                            let mut callback =
+                                state.common.callbacks.will_open_app_menu.take();
+                            drop(state);
+                            if let Some(ref mut callback) = callback {
+                                callback();
+                            }
+                            let mut state = client.0.borrow_mut();
+                            state.common.callbacks.will_open_app_menu = callback;
+                        }
+                        LinuxPlatformEvent::MenuServiceReady(connection, path) => {
+                            state.common.dbus_menu.set_connection(connection, path)
+                        }
+                    }
                 }
             })
             .map_err(|err| {
@@ -1660,6 +1696,7 @@ impl LinuxClient for X11Client {
         };
 
         state.windows.insert(x_window, window_ref);
+        state.common.dbus_menu.register_x11_window(x_window);
         Ok(Box::new(window))
     }
 

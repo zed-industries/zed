@@ -2352,6 +2352,7 @@ impl App {
     }
 
     /// Gets the menu bar for this application.
+    /// Returns the menus currently set for this application, if any.
     pub fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
         self.platform.get_menus()
     }
