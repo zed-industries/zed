@@ -10804,7 +10804,7 @@ pub fn open_remote_project_with_existing_connection(
         let (workspace_id, serialized_workspace) =
             deserialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
 
-        open_remote_project_inner(
+        let (workspace, items) = open_remote_project_inner(
             project,
             paths,
             workspace_id,
@@ -10815,7 +10815,24 @@ pub fn open_remote_project_with_existing_connection(
             source_workspace,
             cx,
         )
-        .await
+        .await?;
+
+        // Register the connection with the extension store so that extensions
+        // are synced to it, matching the behavior of
+        // `open_remote_project_with_new_connection`. Without this, remote
+        // servers connected to via dev servers or other existing connections
+        // never receive installed extensions.
+        cx.update(|cx| {
+            if let Some(client) = workspace.read(cx).project().read(cx).remote_client()
+                && let Some(extension_store) = extension_host::ExtensionStore::try_global(cx)
+            {
+                extension_store.update(cx, |store, cx| {
+                    store.register_remote_client(client, cx);
+                });
+            }
+        });
+
+        Ok((workspace, items))
     })
 }
 
