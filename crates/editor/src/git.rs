@@ -2276,6 +2276,21 @@ impl Editor {
         None
     }
 
+    pub fn open_inline_blame_commit(
+        &mut self,
+        buffer_id: BufferId,
+        blame_entry: BlameEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let blame = self.blame.as_ref()?;
+        let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+        let repo = blame.read(cx).repository(cx, buffer_id)?;
+        let workspace = self.workspace()?.downgrade();
+        renderer.open_blame_commit(blame_entry, repo, workspace, window, cx);
+        None
+    }
+
     fn has_blame_entries(&self, cx: &App) -> bool {
         self.blame()
             .is_some_and(|blame| blame.read(cx).has_generated_entries())

@@ -112,6 +112,17 @@ impl EditorElement {
             }
         }
 
+        let was_hovered_inline_blame = editor.hovered_inline_blame;
+        editor.hovered_inline_blame = text_hovered
+            && Editor::is_cmd_or_ctrl_pressed(&modifiers, cx)
+            && position_map
+                .inline_blame_bounds
+                .as_ref()
+                .is_some_and(|(bounds, _, _)| bounds.contains(&event.position));
+        if was_hovered_inline_blame != editor.hovered_inline_blame {
+            cx.notify();
+        }
+
         // Handle diff review indicator when gutter is hovered in diff mode with AI enabled
         let show_diff_review = editor.show_diff_review_button()
             && cx.has_flag::<DiffReviewFeatureFlag>()
@@ -949,6 +960,28 @@ impl EditorElement {
         } else {
             true
         };
+
+        // Cmd/Ctrl+click on inline blame opens the corresponding commit view.
+        if hovered_link_modifier
+            && mouse_down_hovered_link_modifier
+            && !pending_nonempty_selections
+            && !matches!(
+                editor.selection_drag_state,
+                SelectionDragState::Dragging { .. }
+            )
+            && let Some(mouse_position) = event.mouse_position()
+            && let Some((bounds, buffer_id, blame_entry)) = &position_map.inline_blame_bounds
+            && bounds.contains(&mouse_position)
+        {
+            editor.open_inline_blame_commit(
+                *buffer_id,
+                blame_entry.clone(),
+                window,
+                cx,
+            );
+            cx.stop_propagation();
+            return;
+        }
 
         if let Some(mouse_position) = event.mouse_position()
             && !pending_nonempty_selections
