@@ -489,6 +489,8 @@ pub struct VercelAiGatewayAvailableModel {
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
     pub max_completion_tokens: Option<u64>,
+    pub input_token_cost_per_1m: Option<f64>,
+    pub output_token_cost_per_1m: Option<f64>,
     #[serde(default)]
     pub capabilities: OpenAiCompatibleModelCapabilities,
 }

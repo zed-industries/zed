@@ -72,6 +72,13 @@ impl From<Role> for String {
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct ModelPricing {
+    pub prompt: Option<String>,
+    pub completion: Option<String>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
@@ -81,6 +88,7 @@ pub struct Model {
     #[serde(default)]
     pub mode: ModelMode,
     pub provider: Option<Provider>,
+    pub pricing: Option<ModelPricing>,
 }
 
 impl Model {
@@ -113,6 +121,7 @@ impl Model {
             supports_images,
             mode: mode.unwrap_or(ModelMode::Default),
             provider,
+            pricing: None,
         }
     }
 
@@ -473,6 +482,8 @@ pub struct ModelEntry {
     pub supported_parameters: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub architecture: Option<ModelArchitecture>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<ModelPricing>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
@@ -647,6 +658,7 @@ pub async fn list_models(
                     ModelMode::Default
                 },
                 provider: None,
+                pricing: entry.pricing,
             })
             .collect();
 
