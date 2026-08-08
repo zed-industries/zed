@@ -58,3 +58,12 @@ message GetDirectoryEnvironment {
 message DirectoryEnvironment {
   map<string, string> environment = 1;
 }
+
+message GetTerminalShell {
+  uint64 project_id = 1;
+  optional uint64 worktree_id = 2;
+}
+
+message TerminalShell {
+  Shell shell = 1;
+}
