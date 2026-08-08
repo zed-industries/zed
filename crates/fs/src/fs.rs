@@ -5,7 +5,6 @@ pub use fs_watcher::requires_poll_watcher;
 use parking_lot::Mutex;
 use slotmap::{KeyData, SlotMap};
 use std::ffi::OsString;
-use std::ops::Deref;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
 use util::maybe;
