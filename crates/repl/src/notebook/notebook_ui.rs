@@ -1,6 +1,9 @@
 #![allow(unused, dead_code)]
 use std::future::Future;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{Context as _, Result};
 use client::proto::ViewId;
@@ -19,6 +22,7 @@ use log;
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
 use ui::{CommonAnimationExt, KeyBinding, Tooltip, prelude::*};
+use util::paths::PathStyle;
 use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
@@ -110,6 +114,32 @@ pub struct NotebookEditor {
 }
 
 impl NotebookEditor {
+    fn parent_directory(path: &Path, path_style: PathStyle) -> Option<PathBuf> {
+        if path_style == PathStyle::local() {
+            return path.parent().map(Path::to_path_buf);
+        }
+
+        let path = path_style.normalize(&path.to_string_lossy());
+        path_style.split(&path).0.map(PathBuf::from)
+    }
+
+    fn kernel_working_directory(
+        project: &Project,
+        worktree_id: project::WorktreeId,
+        cx: &App,
+    ) -> PathBuf {
+        project
+            .worktree_for_id(worktree_id, cx)
+            .and_then(|worktree| {
+                let worktree = worktree.read(cx);
+                worktree
+                    .root_dir()
+                    .map(|path| path.to_path_buf())
+                    .or_else(|| Self::parent_directory(&worktree.abs_path(), worktree.path_style()))
+            })
+            .unwrap_or_else(std::env::temp_dir)
+    }
+
     pub fn new(
         project: Entity<Project>,
         notebook_item: Entity<NotebookItem>,
@@ -375,12 +405,8 @@ impl NotebookEditor {
         cx: &mut Context<Self>,
     ) {
         let entity_id = cx.entity_id();
-        let working_directory = self
-            .project
-            .read(cx)
-            .worktree_for_id(self.worktree_id, cx)
-            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-            .unwrap_or_else(std::env::temp_dir);
+        let working_directory =
+            Self::kernel_working_directory(self.project.read(cx), self.worktree_id, cx);
         let fs = self.project.read(cx).fs().clone();
         let view = cx.entity();
 
@@ -1695,6 +1721,40 @@ impl project::ProjectItem for NotebookItem {
 }
 
 impl NotebookItem {
+    fn file_name_for_path(path: &Path, path_style: PathStyle) -> Option<String> {
+        if path_style == PathStyle::local() {
+            return path
+                .file_name()
+                .map(|file_name| file_name.to_string_lossy().into_owned());
+        }
+
+        let path = path_style.normalize(&path.to_string_lossy());
+        let file_name = path_style.split(&path).1;
+        (!file_name.is_empty()).then(|| file_name.to_string())
+    }
+
+    fn file_name(&self, project: &Project, cx: &App) -> String {
+        let worktree = project.worktree_for_id(self.project_path.worktree_id, cx);
+
+        self.project_path
+            .path
+            .file_name()
+            .map(|file_name| file_name.to_string())
+            .or_else(|| {
+                worktree.as_ref().and_then(|worktree| {
+                    let worktree = worktree.read(cx);
+                    Self::file_name_for_path(&self.path, worktree.path_style())
+                })
+            })
+            .or_else(|| {
+                worktree
+                    .as_ref()
+                    .map(|worktree| worktree.read(cx).root_name_str().to_owned())
+            })
+            .or_else(|| Self::file_name_for_path(&self.path, PathStyle::local()))
+            .unwrap_or_default()
+    }
+
     pub fn language_name(&self) -> Option<String> {
         self.notebook
             .metadata
@@ -1808,11 +1868,7 @@ impl Item for NotebookEditor {
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         self.notebook_item
             .read(cx)
-            .project_path
-            .path
-            .file_name()
-            .map(|s| s.to_string())
-            .unwrap_or_default()
+            .file_name(self.project.read(cx), cx)
             .into()
     }
 
@@ -2061,6 +2117,25 @@ mod tests {
         ]
     }"#;
 
+    #[test]
+    fn test_single_file_remote_windows_path() {
+        assert_eq!(
+            NotebookEditor::parent_directory(
+                Path::new(r"C:\notebooks\single.ipynb"),
+                PathStyle::Windows,
+            ),
+            Some(PathBuf::from(r"C:\notebooks\"))
+        );
+
+        assert_eq!(
+            NotebookItem::file_name_for_path(
+                Path::new(r"C:\notebooks\single.ipynb"),
+                PathStyle::Windows,
+            ),
+            Some("single.ipynb".to_string())
+        );
+    }
+
     /// When the configured interpreter doesn't exist (e.g. Python isn't installed),
     /// running a cell must not leave it stuck in the executing state. It should
     /// instead surface the kernel launch error as an error output on the cell.
@@ -2142,6 +2217,10 @@ mod tests {
 
         let editor = cx.update(|window, cx| {
             cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.tab_content_text(0, cx), "test.ipynb");
         });
 
         // Creating the editor launches the kernel. Wait for the actual launch
@@ -2235,6 +2314,13 @@ mod tests {
             "single-file worktree relative path should have no extension"
         );
 
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                NotebookEditor::kernel_working_directory(project, project_path.worktree_id, cx),
+                PathBuf::from(path!("/notebooks"))
+            );
+        });
+
         let notebook_item = cx
             .update(|cx| {
                 NotebookItem::try_open(&project, &project_path, cx)
@@ -2243,8 +2329,9 @@ mod tests {
             .await
             .expect("notebook should parse");
 
-        notebook_item.read_with(cx, |item, _| {
+        notebook_item.read_with(cx, |item, cx| {
             assert_eq!(item.notebook.cells.len(), 1);
+            assert_eq!(item.file_name(project.read(cx), cx), "single.ipynb");
         });
     }
 }
