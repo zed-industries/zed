@@ -43,7 +43,9 @@ impl Editor {
                 .filter(|_| self.is_empty(cx))
                 .unwrap_or(&self.display_map);
 
-            display_map.update(cx, |map, cx| map.set_font(font, font_size, cx));
+            if display_map.update(cx, |map, cx| map.set_font(font, font_size, cx)) {
+                self.minimap_marker_state.dirty = true;
+            }
         }
         self.style = Some(style);
     }
@@ -273,8 +275,8 @@ impl Editor {
 
     // Called by the element. This method is not designed to be called outside of the editor
     // element's layout code because it does not notify when rewrapping is computed synchronously.
-    pub(super) fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut App) -> bool {
-        if self.is_empty(cx) {
+    pub(super) fn set_wrap_width(&mut self, width: Option<Pixels>, cx: &mut App) -> bool {
+        let changed = if self.is_empty(cx) {
             self.placeholder_display_map
                 .as_ref()
                 .map_or(false, |display_map| {
@@ -283,7 +285,11 @@ impl Editor {
         } else {
             self.display_map
                 .update(cx, |map, cx| map.set_wrap_width(width, cx))
+        };
+        if changed {
+            self.minimap_marker_state.dirty = true;
         }
+        changed
     }
 
     pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, _: &mut Window, cx: &mut Context<Self>) {
