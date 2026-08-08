@@ -14,7 +14,7 @@ path = "src/gpui_wgpu.rs"
 [features]
 default = []
 font-kit = ["dep:font-kit"]
-test-support = ["gpui/test-support"]
+test-support = ["gpui/test-support", "dep:image"]
 
 [dependencies]
 gpui.workspace = true
@@ -24,6 +24,7 @@ collections.workspace = true
 cosmic-text = "0.19.0"
 etagere.workspace = true
 itertools.workspace = true
+image = { workspace = true, optional = true }
 log.workspace = true
 parking_lot.workspace = true
 profiling.workspace = true
@@ -50,6 +51,8 @@ js-sys.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+image.workspace = true
 
 [[bench]]
 name = "layout_line"

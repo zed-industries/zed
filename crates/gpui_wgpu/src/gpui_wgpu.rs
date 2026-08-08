@@ -7,4 +7,6 @@ pub use cosmic_text_system::*;
 pub use wgpu;
 pub use wgpu_atlas::*;
 pub use wgpu_context::*;
+#[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
+pub use wgpu_renderer::WgpuHeadlessRenderer;
 pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
