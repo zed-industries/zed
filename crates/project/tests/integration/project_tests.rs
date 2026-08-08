@@ -11328,10 +11328,10 @@ async fn test_restaging_hunk_after_optimistic_unstage(cx: &mut gpui::TestAppCont
 
     cx.run_until_parked();
     assert_eq!(
-        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
+        repo.load_index_bytes(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap(),
-        file_contents,
+        file_contents.as_bytes(),
         "the re-stage should have overridden the in-flight unstage"
     );
 
@@ -11353,10 +11353,10 @@ async fn test_restaging_hunk_after_optimistic_unstage(cx: &mut gpui::TestAppCont
         );
     });
     assert_eq!(
-        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
+        repo.load_index_bytes(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap(),
-        file_contents
+        file_contents.as_bytes()
     );
 }
 
@@ -11453,10 +11453,10 @@ async fn test_staging_random_hunks(
         .unwrap();
     cx.executor().run_until_parked();
     assert_eq!(
-        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
+        repo.load_index_bytes(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap(),
-        index_text
+        index_text.as_bytes()
     );
     fs.unpause_events_and_flush();
     cx.run_until_parked();
@@ -11513,9 +11513,12 @@ async fn test_staging_random_hunks(
 
     log::info!(
         "index text:\n{}",
-        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
-            .await
-            .unwrap()
+        String::from_utf8_lossy(
+            &repo
+                .load_index_bytes(RepoPath::from_rel_path(rel_path("file.txt")))
+                .await
+                .unwrap()
+        )
     );
 
     uncommitted_diff.update(cx, |diff, cx| {
@@ -11941,10 +11944,12 @@ async fn test_staging_random_hunks_with_edits(
     let old_staged_state = capture_diff_state(&staged_diff, cx);
     let old_uncommitted_state = capture_diff_state(&uncommitted_diff, cx);
 
-    let disk_index_text = repo
-        .load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
-        .await
-        .unwrap();
+    let disk_index_text = String::from_utf8(
+        repo.load_index_bytes(RepoPath::from_rel_path(rel_path("file.txt")))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(
         old_unstaged_state.1.as_deref(),
         Some(disk_index_text.as_str()),

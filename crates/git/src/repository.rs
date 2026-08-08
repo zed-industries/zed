@@ -754,7 +754,7 @@ pub trait GitRepository: Send + Sync {
     /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
+    fn load_index_bytes(&self, path: RepoPath) -> BoxFuture<'_, Option<Vec<u8>>> {
         let future = self.load_revisions(vec![format!(":{}", path.as_unix_str())]);
         async move { future.await.ok()?.pop()? }.boxed()
     }
@@ -762,16 +762,16 @@ pub trait GitRepository: Send + Sync {
     /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
-    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
+    fn load_committed_bytes(&self, path: RepoPath) -> BoxFuture<'_, Option<Vec<u8>>> {
         let future = self.load_revisions(vec![format!("HEAD:{}", path.as_unix_str())]);
         async move { future.await.ok()?.pop()? }.boxed()
     }
-    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<String>>;
+    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<Vec<u8>>>;
 
-    fn set_index_text(
+    fn set_index_bytes(
         &self,
         path: RepoPath,
-        content: Option<String>,
+        content: Option<Vec<u8>>,
         env: Arc<HashMap<String, String>>,
         is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>>;
@@ -789,7 +789,8 @@ pub trait GitRepository: Send + Sync {
     /// Resolve a list of refs to SHAs.
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
 
-    fn load_revisions(&self, revisions: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
+    fn load_revisions(&self, revisions: Vec<String>)
+    -> BoxFuture<'_, Result<Vec<Option<Vec<u8>>>>>;
 
     fn head_sha(&self) -> BoxFuture<'_, Option<String>> {
         async move {
@@ -1540,11 +1541,23 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<String>> {
+    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<Vec<u8>>> {
         let git_binary = self.git_binary();
         let oid_str = oid.to_string();
         self.executor
-            .spawn(async move { git_binary.run_raw(&["cat-file", "blob", &oid_str]).await })
+            .spawn(async move {
+                let mut command = git_binary.build_command(&["cat-file", "blob", &oid_str]);
+                let output = command.output().await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    GitBinaryCommandError {
+                        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                        status: output.status,
+                    }
+                );
+                Ok(output.stdout)
+            })
             .boxed()
     }
 
@@ -1590,10 +1603,10 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn set_index_text(
+    fn set_index_bytes(
         &self,
         path: RepoPath,
-        content: Option<String>,
+        content: Option<Vec<u8>>,
         env: Arc<HashMap<String, String>>,
         is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
@@ -1610,7 +1623,7 @@ impl GitRepository for RealGitRepository {
                         .stdout(Stdio::piped())
                         .spawn()?;
                     let mut stdin = child.stdin.take().unwrap();
-                    stdin.write_all(content.as_bytes()).await?;
+                    stdin.write_all(&content).await?;
                     stdin.flush().await?;
                     drop(stdin);
                     let output = child.output().await?.stdout;
@@ -1715,7 +1728,10 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn load_revisions(&self, revisions: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
+    fn load_revisions(
+        &self,
+        revisions: Vec<String>,
+    ) -> BoxFuture<'_, Result<Vec<Option<Vec<u8>>>>> {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
@@ -1761,7 +1777,7 @@ impl GitRepository for RealGitRepository {
                             stdout.read_exact(&mut newline).await?;
 
                             if object_type == "blob" {
-                                results.push(String::from_utf8(content).ok());
+                                results.push(Some(content));
                             } else {
                                 results.push(None);
                             }
@@ -5431,13 +5447,72 @@ mod tests {
         assert_eq!(
             results,
             vec![
-                Some("file1 committed contents".into()),
-                Some("file1 index contents".into()),
-                Some("file2 committed contents".into()),
-                Some("file2 committed contents".into()), // untouched in index, should match HEAD
+                Some(b"file1 committed contents".to_vec()),
+                Some(b"file1 index contents".to_vec()),
+                Some(b"file2 committed contents".to_vec()),
+                Some(b"file2 committed contents".to_vec()), // untouched in index, should match HEAD
                 None,
-                Some("space file committed contents".into()),
+                Some(b"space file committed contents".to_vec()),
                 None,
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_load_revisions_preserves_windows_1251_blobs(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let file_path = repo_dir.path().join("legacy.txt");
+        let committed_text = "строка один\nстрока два\n";
+        let staged_text = "строка один\nстрока три\n";
+        let (committed_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(committed_text);
+        smol::fs::write(&file_path, committed_bytes.as_ref())
+            .await
+            .unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(vec![repo_path("legacy.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .unwrap();
+
+        let (staged_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(staged_text);
+        smol::fs::write(&file_path, staged_bytes.as_ref())
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("legacy.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        let results = repo
+            .load_revisions(vec!["HEAD:legacy.txt".into(), ":legacy.txt".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            results,
+            vec![
+                Some(committed_bytes.into_owned()),
+                Some(staged_bytes.into_owned()),
             ]
         );
     }

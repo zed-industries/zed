@@ -7351,6 +7351,7 @@ dependencies = [
  "async-trait",
  "collections",
  "derive_more",
+ "encoding_rs",
  "futures 0.3.32",
  "gpui",
  "http_client",
@@ -9746,6 +9747,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chardetng",
  "clock",
  "collections",
  "criterion",

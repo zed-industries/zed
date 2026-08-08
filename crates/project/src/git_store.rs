@@ -52,7 +52,7 @@ use gpui::{
     Subscription, Task, TaskExt, WeakEntity,
 };
 use language::{
-    Anchor, Buffer, BufferEvent, Capability, Language, LanguageRegistry,
+    Anchor, Buffer, BufferEvent, Capability, Language, LanguageRegistry, decode_text, encode_text,
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
@@ -187,6 +187,10 @@ fn pending_hunks(
             )
         })
         .collect()
+}
+
+fn decode_git_text(bytes: Vec<u8>) -> Result<String> {
+    Ok(decode_text(bytes)?.text)
 }
 
 #[derive(Clone, Debug)]
@@ -2573,11 +2577,22 @@ impl GitStore {
         let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) else {
             return;
         };
+        let (encoding, has_bom) = self
+            .buffer_store
+            .read(cx)
+            .get(buffer_id)
+            .map(|buffer| {
+                let buffer = buffer.read(cx);
+                (buffer.encoding(), buffer.has_bom())
+            })
+            .unwrap_or((encoding_rs::UTF_8, false));
         let recv = repo.update(cx, |repo, cx| {
             log::debug!("hunks changed for {}", path.as_unix_str());
             repo.spawn_set_index_text_job(
                 path,
                 new_index_text,
+                encoding,
+                has_bom,
                 Some(hunk_staging_operation_count),
                 cx,
             )
@@ -3142,11 +3157,30 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let repo_path = RepoPath::from_proto(&envelope.payload.path)?;
 
+        let (encoding, has_bom) = cx.update(|cx| {
+            repository_handle
+                .read(cx)
+                .repo_path_to_project_path(&repo_path, cx)
+                .and_then(|project_path| {
+                    this.read(cx)
+                        .buffer_store
+                        .read(cx)
+                        .get_by_path(&project_path)
+                })
+                .map(|buffer| {
+                    let buffer = buffer.read(cx);
+                    (buffer.encoding(), buffer.has_bom())
+                })
+                .unwrap_or((encoding_rs::UTF_8, false))
+        });
+
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.spawn_set_index_text_job(
                     repo_path,
                     envelope.payload.text,
+                    encoding,
+                    has_bom,
                     None,
                     cx,
                 )
@@ -6020,11 +6054,13 @@ impl Repository {
                         {
                             let index_text = (current_index_text.is_some() && !*is_symlink)
                                 .then(|| loaded_revisions.next().flatten())
-                                .flatten();
+                                .flatten()
+                                .and_then(|bytes| decode_git_text(bytes).log_err());
 
                             let head_text = (current_head_text.is_some() && !*is_symlink)
                                 .then(|| loaded_revisions.next().flatten())
-                                .flatten();
+                                .flatten()
+                                .and_then(|bytes| decode_git_text(bytes).log_err());
 
                             let change =
                                 match (current_index_text.as_ref(), current_head_text.as_ref()) {
@@ -8082,6 +8118,8 @@ impl Repository {
         &mut self,
         path: RepoPath,
         content: Option<String>,
+        encoding: &'static encoding_rs::Encoding,
+        has_bom: bool,
         hunk_staging_operation_count: Option<usize>,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
@@ -8111,8 +8149,10 @@ impl Repository {
                             Ok(None) => false,
                             Err(_err) => false,
                         };
+                        let content =
+                            content.map(|content| encode_text(&content, encoding, has_bom));
                         backend
-                            .set_index_text(path.clone(), content, environment.clone(), executable)
+                            .set_index_bytes(path.clone(), content, environment.clone(), executable)
                             .await?;
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
@@ -9416,9 +9456,11 @@ impl Repository {
     ) -> Task<Result<Option<String>>> {
         let rx = self.send_job("load_staged_text", None, move |state, _| async move {
             match state {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    anyhow::Ok(backend.load_index_text(repo_path).await)
-                }
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
+                    .load_index_bytes(repo_path)
+                    .await
+                    .map(decode_git_text)
+                    .transpose(),
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                     let response = client
                         .request(proto::OpenUnstagedDiff {
@@ -9447,8 +9489,16 @@ impl Repository {
                         format!(":{}", repo_path.as_unix_str()),
                     ];
                     let mut loaded_revisions = backend.load_revisions(revisions).await?.into_iter();
-                    let committed_text = loaded_revisions.next().flatten();
-                    let staged_text = loaded_revisions.next().flatten();
+                    let committed_text = loaded_revisions
+                        .next()
+                        .flatten()
+                        .map(decode_git_text)
+                        .transpose()?;
+                    let staged_text = loaded_revisions
+                        .next()
+                        .flatten()
+                        .map(decode_git_text)
+                        .transpose()?;
                     let diff_bases_change = if committed_text == staged_text {
                         DiffBasesChange::SetBoth(committed_text)
                     } else {
@@ -9517,7 +9567,7 @@ impl Repository {
         let rx = self.send_job("load_blob_content", None, move |state, _| async move {
             match state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.load_blob_content(oid).await
+                    decode_git_text(backend.load_blob_content(oid).await?)
                 }
                 RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
                     let response = client
@@ -10496,6 +10546,31 @@ mod tests {
         // to the raw path).
         let resolved = resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/Foo/Bar")).await;
         assert_eq!(resolved, None);
+    }
+
+    #[gpui::test]
+    fn test_decode_git_text_windows_1251_one_line_change(cx: &mut TestAppContext) {
+        let old_text = "строка один\nстрока два\n";
+        let new_text = "строка один\nстрока три\n";
+        let (old_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(old_text);
+        let (new_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(new_text);
+
+        let decoded_old = decode_git_text(old_bytes.into_owned()).unwrap();
+        let decoded_new = decode_git_text(new_bytes.into_owned()).unwrap();
+        let buffer = cx.new(|cx| Buffer::local(decoded_new, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let diff = cx.new(|cx| BufferDiff::new_with_base_text(&decoded_old, &buffer_snapshot, cx));
+        let diff = diff.update(cx, |diff, cx| diff.snapshot(cx));
+        let hunks = diff.hunks(&buffer_snapshot).collect::<Vec<_>>();
+        let [hunk] = hunks.as_slice() else {
+            panic!("expected one modified hunk, got {hunks:?}");
+        };
+
+        assert_eq!(hunk.range, text::Point::new(1, 0)..text::Point::new(2, 0));
+        assert_eq!(
+            hunk.diff_base_byte_range,
+            old_text.find("строка два").unwrap()..old_text.len()
+        );
     }
 
     #[gpui::test]
