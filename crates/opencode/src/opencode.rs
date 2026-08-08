@@ -68,8 +68,6 @@ pub enum Model {
     ClaudeOpus4_6,
     #[serde(rename = "claude-opus-4-5")]
     ClaudeOpus4_5,
-    #[serde(rename = "claude-opus-4-1")]
-    ClaudeOpus4_1,
     #[default]
     #[serde(rename = "claude-sonnet-4-6")]
     ClaudeSonnet4_6,
@@ -270,7 +268,6 @@ impl Model {
             Self::ClaudeOpus4_7 => "claude-opus-4-7",
             Self::ClaudeOpus4_6 => "claude-opus-4-6",
             Self::ClaudeOpus4_5 => "claude-opus-4-5",
-            Self::ClaudeOpus4_1 => "claude-opus-4-1",
             Self::ClaudeSonnet4_6 => "claude-sonnet-4-6",
             Self::ClaudeSonnet4_5 => "claude-sonnet-4-5",
             Self::ClaudeSonnet4 => "claude-sonnet-4",
@@ -341,7 +338,6 @@ impl Model {
             Self::ClaudeOpus4_7 => "Claude Opus 4.7",
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
             Self::ClaudeOpus4_5 => "Claude Opus 4.5",
-            Self::ClaudeOpus4_1 => "Claude Opus 4.1",
             Self::ClaudeSonnet4_6 => "Claude Sonnet 4.6",
             Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
@@ -425,7 +421,6 @@ impl Model {
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
             | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_1
             | Self::ClaudeSonnet5
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
@@ -522,7 +517,6 @@ impl Model {
             Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 1_000_000,
             Self::ClaudeSonnet4_5 => 1_000_000,
             Self::ClaudeOpus4_5 | Self::ClaudeHaiku4_5 => 200_000,
-            Self::ClaudeOpus4_1 => 200_000,
             Self::ClaudeSonnet4 => 1_000_000,
             Self::ClaudeSonnet5 => 1_000_000,
             Self::ClaudeFable5 => 1_000_000,
@@ -600,7 +594,6 @@ impl Model {
             | Self::ClaudeSonnet4_5
             | Self::ClaudeHaiku4_5
             | Self::ClaudeSonnet4 => Some(64_000),
-            Self::ClaudeOpus4_1 => Some(32_000),
             Self::ClaudeSonnet5 => Some(128_000),
             Self::ClaudeFable5 => Some(128_000),
 
@@ -690,7 +683,6 @@ impl Model {
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
             | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_1
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
