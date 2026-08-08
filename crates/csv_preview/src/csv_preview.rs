@@ -23,7 +23,7 @@ mod settings;
 mod table_data_engine;
 mod types;
 
-actions!(csv, [OpenPreview, OpenPreviewToTheSide]);
+actions!(tabular_data, [OpenPreview, OpenPreviewToTheSide]);
 
 pub struct TabularDataPreviewFeatureFlag;
 
@@ -279,12 +279,12 @@ impl CsvPreviewView {
             .buffer()
             .read(cx)
             .as_singleton()
-            .and_then(|buffer| {
-                buffer
-                    .read(cx)
-                    .file()
-                    .and_then(|file| file.path().extension())
-                    .map(|ext| ext.eq_ignore_ascii_case("csv"))
+            .and_then(|buffer| buffer.read(cx).file())
+            .and_then(|file| {
+                file.path().extension().map(|ext_str| {
+                    let lower = ext_str.to_lowercase();
+                    matches!(lower.as_str(), "csv" | "tsv" | "ssv" | "psv")
+                })
             })
             .unwrap_or(false)
     }
@@ -302,7 +302,7 @@ impl Item for CsvPreviewView {
     type Event = ();
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
-        Some(Icon::new(IconName::FileDoc))
+        Some(Icon::new(IconName::Table))
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {

@@ -230,8 +230,8 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
         "storage",
         &[
             "accdb", "csv", "dat", "db", "dbf", "dll", "fmp", "fp7", "frm", "gdb", "ib", "ldf",
-            "mdb", "mdf", "myd", "myi", "pdb", "RData", "rdata", "sav", "sdf", "sql", "sqlite",
-            "tsv",
+            "mdb", "mdf", "myd", "myi", "pdb", "psv", "RData", "rdata", "sav", "sdf", "sql", "sqlite",
+            "ssv", "tsv",
         ],
     ),
     (
