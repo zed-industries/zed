@@ -17,6 +17,9 @@
     [
       (string
         (string_fragment) @run)
+      (template_string
+        (string_fragment) @run)
+      (template_string) @run
       (identifier) @run
     ])) @_js-test
   (#set! tag js-test))
@@ -47,6 +50,9 @@
     [
       (string
         (string_fragment) @run)
+      (template_string
+        (string_fragment) @run)
+      (template_string) @run
       (identifier) @run
     ])) @_js-test
   (#set! tag js-test))
