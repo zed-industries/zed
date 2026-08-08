@@ -778,6 +778,7 @@ mod tests {
     use editor::test::editor_lsp_test_context::EditorLspTestContext;
     use gpui::TestAppContext;
     use indoc::indoc;
+    use workspace::Item as _;
 
     async fn rust_cx(
         capabilities: lsp::ServerCapabilities,
@@ -968,5 +969,49 @@ mod tests {
         assert_eq!(matches(&mut cx, "lx"), 1);
         assert_eq!(matches(&mut cx, "zzzz"), 0);
         assert_eq!(matches(&mut cx, ""), 2);
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_fallback_honors_lsp_results_location(cx: &mut TestAppContext) {
+        // The action handlers attach to editors created after `init` runs, so
+        // register them before the test context builds its editor.
+        cx.update(crate::init);
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.update(|_window, cx| {
+            cx.update_global::<settings::SettingsStore, _>(|settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.editor.lsp_results_location = Some(OpenResultsIn::Picker);
+                });
+            });
+        });
+        cx.set_state(SOURCE);
+        cx.lsp
+            .set_request_handler::<lsp::request::GotoDefinition, _, _>(async move |_params, _| {
+                Ok(None)
+            });
+        cx.lsp
+            .set_request_handler::<lsp::request::References, _, _>(async move |params, _| {
+                let uri = params.text_document_position.text_document.uri;
+                Ok(Some(references(uri, &[(1, 8, 11), (2, 14, 17)])))
+            });
+
+        let screen_coord = cx
+            .editor(|editor, _, cx| editor.pixel_position_of_cursor(cx))
+            .unwrap();
+        cx.simulate_click(screen_coord, gpui::Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        assert!(
+            active_picker(&mut cx).is_some(),
+            "the cmd-click go-to-definition fallback should open the references picker when lsp_results_location is picker"
+        );
     }
 }
