@@ -1268,6 +1268,22 @@ impl Extension {
             }
         }
     }
+
+    pub async fn call_get_dap_custom_actions(
+        &self,
+        store: &mut Store<WasmState>,
+        adapter_name: Arc<str>,
+    ) -> Result<Vec<::dap::adapters::DapCustomAction>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                let actions = ext
+                    .call_get_dap_custom_actions(store, &adapter_name)
+                    .await?;
+                Ok(actions.into_iter().map(Into::into).collect())
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
 }
 
 trait ToWasmtimeResult<T> {

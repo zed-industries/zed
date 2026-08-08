@@ -16,7 +16,7 @@ use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, P
 use anyhow::{Context as _, Result, anyhow, bail};
 use base64::Engine;
 use collections::{HashMap, HashSet, IndexMap, TypeIdHashMap};
-use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
+use dap::adapters::{DapCustomAction, DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
 use dap::requests::{Request, RunInTerminal, StartDebugging};
 use dap::transport::TcpTransport;
@@ -718,6 +718,7 @@ pub struct Session {
     node_runtime: Option<NodeRuntime>,
     http_client: Option<Arc<dyn HttpClient>>,
     companion_port: Option<u16>,
+    custom_actions: Vec<DapCustomAction>,
 }
 
 trait CacheableCommand: Any + Send + Sync {
@@ -893,6 +894,7 @@ impl Session {
                 node_runtime,
                 http_client,
                 companion_port: None,
+                custom_actions: Vec::new(),
             }
         })
     }
@@ -2310,6 +2312,31 @@ impl Session {
 
     pub fn has_ever_stopped(&self) -> bool {
         self.state.has_ever_stopped()
+    }
+
+    pub fn custom_actions(&self) -> &[DapCustomAction] {
+        &self.custom_actions
+    }
+
+    pub fn set_custom_actions(&mut self, actions: Vec<DapCustomAction>) {
+        self.custom_actions = actions;
+    }
+
+    /// Send a custom DAP request (used by extension-declared custom actions).
+    pub fn send_custom_request(
+        &self,
+        command: String,
+        arguments: serde_json::Value,
+        cx: &Context<Self>,
+    ) -> Task<Result<serde_json::Value>> {
+        let Some(client) = self.adapter_client() else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "no adapter client available for custom request: {command}"
+            )));
+        };
+        cx.background_executor().spawn(async move {
+            client.request_raw(&command, arguments).await
+        })
     }
 
     pub fn step_over(

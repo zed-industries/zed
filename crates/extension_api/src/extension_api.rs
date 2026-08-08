@@ -21,9 +21,10 @@ pub use wit::{
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
         AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, BuildTaskTemplate,
-        DebugAdapterBinary, DebugConfig, DebugRequest, DebugScenario, DebugTaskDefinition,
-        LaunchRequest, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
-        TaskTemplate, TcpArguments, TcpArgumentsTemplate, resolve_tcp_template,
+        DapCustomAction, DapCustomActionIcon, DapCustomActionTrigger, DebugAdapterBinary, DebugConfig, DebugRequest,
+        DebugScenario, DebugTaskDefinition, LaunchRequest, StartDebuggingRequestArguments,
+        StartDebuggingRequestArgumentsRequest, TaskTemplate, TcpArguments, TcpArgumentsTemplate,
+        resolve_tcp_template,
     },
     zed::extension::github::{
         GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
@@ -280,6 +281,14 @@ pub trait Extension: Send + Sync {
         _build_task: TaskTemplate,
     ) -> Result<DebugRequest, String> {
         Err("`run_dap_locator` not implemented".to_string())
+    }
+
+    /// Returns a list of custom actions for the debugger toolbar.
+    ///
+    /// These actions will be rendered as buttons in the debug toolbar. When clicked,
+    /// Zed sends the specified DAP command directly to the debug adapter.
+    fn get_dap_custom_actions(&self, _adapter_name: String) -> Vec<DapCustomAction> {
+        Vec::new()
     }
 }
 
@@ -558,6 +567,10 @@ impl wit::Guest for Component {
         build_task: TaskTemplate,
     ) -> Result<DebugRequest, String> {
         extension().run_dap_locator(locator_name, build_task)
+    }
+
+    fn get_dap_custom_actions(adapter_name: String) -> Vec<DapCustomAction> {
+        extension().get_dap_custom_actions(adapter_name)
     }
 }
 
