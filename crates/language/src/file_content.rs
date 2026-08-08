@@ -131,6 +131,7 @@ fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
                     .is_some_and(|next| (0xDC00..=0xDFFF).contains(&next));
                 if has_low_surrogate {
                     total += 1;
+                    word_like_count += 2;
                     i += 2;
                 } else {
                     suspicious_count += 1;
@@ -138,6 +139,7 @@ fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
             }
             // Lone low surrogate without a preceding high surrogate
             0xDC00..=0xDFFF => suspicious_count += 1,
+            0x0100.. => word_like_count += 1,
             _ => {}
         }
 
@@ -154,10 +156,14 @@ fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
 
     // Binary formats that interleave short ASCII fragments with small
     // length/type fields (e.g. game asset formats) can dodge the control
-    // character check above while barely containing any real words: most
-    // "characters" land on stray symbol/high-byte values rather than
-    // letters, digits, or spaces. Real UTF-16 text is overwhelmingly made
-    // of those, so require a minimum share of them too.
+    // character check above while barely containing any real words: their
+    // code units land on ASCII punctuation and Latin-1 symbol values rather
+    // than letters, digits, or spaces. Real text is overwhelmingly made of
+    // word characters, so require a minimum share of them. Code units above
+    // the Latin-1 range (and surrogate pairs) also count as word-like so
+    // that scripts such as Cyrillic or Greek, whose letters are non-ASCII,
+    // are still recognized -- tag bytes paired with a zero byte can never
+    // land there.
     let enough_word_chars = word_like_count * 100 >= total * 30;
 
     low_control_ratio && enough_word_chars

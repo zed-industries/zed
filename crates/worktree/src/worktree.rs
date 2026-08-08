@@ -7155,7 +7155,7 @@ mod tests {
     // Tibia-style OTBM maps): most high bytes are zero, matching UTF-16LE's
     // null-byte pattern for ASCII, but the low bytes are mostly non-word
     // "tag" values rather than real letters/digits/spaces.
-    fn build_length_prefixed_binary_bytes() -> Vec<u8> {
+    fn build_tag_interleaved_binary_bytes() -> Vec<u8> {
         let mut bytes = Vec::new();
         let tags: [u8; 6] = [0xFE, 0xFF, 0x25, 0x2B, 0xA3, 0xC5];
         let mut i = 0;
@@ -7169,8 +7169,8 @@ mod tests {
     }
 
     #[test]
-    fn test_length_prefixed_binary_not_misdetected_as_utf16le() {
-        let bytes = build_length_prefixed_binary_bytes();
+    fn test_tag_interleaved_binary_not_misdetected_as_utf16le() {
+        let bytes = build_tag_interleaved_binary_bytes();
         assert_eq!(bytes.len(), FILE_ANALYSIS_BYTES);
 
         let result = analyze_byte_content(&bytes);
@@ -7197,6 +7197,30 @@ mod tests {
     #[test]
     fn test_utf16be_text_detected_as_utf16be() {
         let text = "Hello, world! This is a UTF-16 test string. ";
+        let mut bytes = Vec::new();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            bytes.extend(text.encode_utf16().flat_map(|u| u.to_be_bytes()));
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Be);
+    }
+
+    #[test]
+    fn test_utf16le_cyrillic_text_detected_as_utf16le() {
+        let text = "Привет, мир! Это тестовая строка в UTF-16. ";
+        let mut bytes = Vec::new();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Le);
+    }
+
+    #[test]
+    fn test_utf16be_greek_text_detected_as_utf16be() {
+        let text = "Γεια σου κόσμε! Αυτή είναι μια δοκιμαστική συμβολοσειρά. ";
         let mut bytes = Vec::new();
         while bytes.len() < FILE_ANALYSIS_BYTES {
             bytes.extend(text.encode_utf16().flat_map(|u| u.to_be_bytes()));
