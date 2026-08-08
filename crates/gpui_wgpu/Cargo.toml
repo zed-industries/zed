@@ -14,6 +14,7 @@ path = "src/gpui_wgpu.rs"
 [features]
 default = []
 font-kit = ["dep:font-kit"]
+test-support = ["gpui/test-support"]
 
 [dependencies]
 gpui.workspace = true

@@ -71,6 +71,87 @@ impl WgpuContext {
                 reject_software,
             ))?;
 
+        Ok(Self::from_adapter_and_device(
+            instance,
+            adapter,
+            device,
+            queue,
+            dual_source_blending,
+            color_texture_format,
+        ))
+    }
+
+    /// Creates a GPU context without requiring a display or window surface.
+    #[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
+    pub fn new_headless() -> anyhow::Result<Self> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            flags: wgpu::InstanceFlags::default(),
+            backend_options: wgpu::BackendOptions::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            display: None,
+        });
+
+        let (adapter, device, queue, dual_source_blending, color_texture_format) =
+            gpui::block_on(async {
+                let adapter = match instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+                {
+                    Ok(adapter) => adapter,
+                    Err(primary_error) => {
+                        log::warn!(
+                            "Failed to request a headless GPU adapter: {primary_error}. \
+                             Retrying with a fallback adapter."
+                        );
+                        instance
+                            .request_adapter(&wgpu::RequestAdapterOptions {
+                                power_preference: wgpu::PowerPreference::HighPerformance,
+                                compatible_surface: None,
+                                force_fallback_adapter: true,
+                            })
+                            .await
+                            .map_err(|fallback_error| {
+                                anyhow::anyhow!(
+                                    "Failed to request a headless GPU adapter: {primary_error}; \
+                                     fallback adapter request also failed: {fallback_error}"
+                                )
+                            })?
+                    }
+                };
+                let (device, queue, dual_source_blending, color_texture_format) =
+                    Self::create_device(&adapter).await?;
+                anyhow::Ok((
+                    adapter,
+                    device,
+                    queue,
+                    dual_source_blending,
+                    color_texture_format,
+                ))
+            })?;
+
+        Ok(Self::from_adapter_and_device(
+            instance,
+            adapter,
+            device,
+            queue,
+            dual_source_blending,
+            color_texture_format,
+        ))
+    }
+
+    fn from_adapter_and_device(
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        dual_source_blending: bool,
+        color_texture_format: TextureFormat,
+    ) -> Self {
         let device_lost = Arc::new(AtomicBool::new(false));
         device.set_device_lost_callback({
             let device_lost = Arc::clone(&device_lost);
@@ -88,7 +169,7 @@ impl WgpuContext {
             adapter.get_info().backend
         );
 
-        Ok(Self {
+        Self {
             instance,
             adapter,
             device: Arc::new(device),
@@ -96,7 +177,7 @@ impl WgpuContext {
             dual_source_blending,
             color_texture_format,
             device_lost,
-        })
+        }
     }
 
     #[cfg(target_family = "wasm")]
