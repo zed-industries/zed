@@ -188,6 +188,11 @@ pub struct SettingsContent {
     /// Default: VSCode
     pub base_keymap: Option<BaseKeymapContent>,
 
+    /// Time to wait in milliseconds before resolving an ambiguous keybinding sequence.
+    ///
+    /// Default: 1000
+    pub keybinding_sequence_timeout_ms: Option<u64>,
+
     /// Configuration for the collab panel visual settings.
     pub collaboration_panel: Option<PanelSettingsContent>,
 

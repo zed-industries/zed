@@ -173,7 +173,20 @@ When multiple keybindings have the same keystroke and are active at the same tim
 
 The other kind of conflict that arises is when you have two bindings, one of which is a prefix of the other. For example, if you have `"ctrl-w":"editor::DeleteToNextWordEnd"` and `"ctrl-w left":"editor::DeleteToEndOfLine"`.
 
-When this happens, and both bindings are active in the current context, Zed will wait for 1 second after you type `ctrl-w` to see if you're about to type `left`. If you don't type anything, or if you type a different key, then `DeleteToNextWordEnd` will be triggered. If you do, then `DeleteToEndOfLine` will be triggered.
+When this happens, and both bindings are active in the current context, Zed
+waits for the duration configured by `keybinding_sequence_timeout_ms` after you
+type `ctrl-w` to see if you're about to type `left`. The default is 1000
+milliseconds. If you don't type anything, or if you type a different key, then
+`DeleteToNextWordEnd` is triggered. If you type `left` within the timeout, then
+`DeleteToEndOfLine` is triggered.
+
+You can change the timeout in your settings:
+
+```json [settings]
+{
+  "keybinding_sequence_timeout_ms": 300
+}
+```
 
 ### Non-QWERTY keyboards
 

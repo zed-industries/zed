@@ -630,6 +630,7 @@ mod tests {
         cell::{Cell, RefCell},
         ops::Range,
         rc::Rc,
+        time::Duration,
     };
 
     use crate::{
@@ -1251,6 +1252,21 @@ mod tests {
             assert_eq!(test.action_count.get(), 1);
             assert_eq!(test.text.borrow().as_str(), "");
         });
+
+        cx.update(|_, cx| {
+            assert_eq!(cx.keybinding_sequence_timeout(), Duration::from_secs(1));
+            cx.set_keybinding_sequence_timeout(Duration::from_millis(200));
+        });
+        cx.simulate_keystrokes("ctrl-b");
+        test.update(cx, |test, _| assert_eq!(test.action_count.get(), 1));
+
+        cx.executor().advance_clock(Duration::from_millis(199));
+        cx.run_until_parked();
+        test.update(cx, |test, _| assert_eq!(test.action_count.get(), 1));
+
+        cx.executor().advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+        test.update(cx, |test, _| assert_eq!(test.action_count.get(), 2));
 
         cx.simulate_keystrokes("ctrl-b [");
         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
