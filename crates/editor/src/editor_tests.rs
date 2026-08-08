@@ -42035,6 +42035,50 @@ async fn test_align_selections_multicolumn(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_align_selections_with_multibyte_chars(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // The reported case: `←` and `π` take more bytes than they take columns, so
+    // aligning on the buffer column padded the first row one space too far.
+    let before = "a ← 1  ˇ# one\nbc ← π  ˇ# two";
+    let after = "a ← 1   ˇ# one\nbc ← π  ˇ# two";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // A multi-byte character before the first column also has to shift the
+    // offset that is carried into the second column.
+    let before = "π aˇ bbbˇc\nxy aˇ bˇc";
+    let after = "π a ˇ bbbˇc\nxy aˇ b  ˇc";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // The display map expands tabs before the row is laid out, so a leading tab
+    // counts as its expanded width rather than as one byte.
+    let before = "\taˇbc\nxyzaˇbc";
+    let after = "\taˇbc\nxyza ˇbc";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // A non-BMP character advances two columns, so counting characters rather
+    // than measuring advances would pad this row twice as far as it needs.
+    let before = "😀ˇb\nxyzˇb";
+    let after = "😀 ˇb\nxyzˇb";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // Multi-byte characters after the cursors do not move them.
+    let before = "abˇ←z\ncdˇqz";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(before);
+}
+
+#[gpui::test]
 async fn test_custom_fallback_highlights(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
