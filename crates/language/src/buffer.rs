@@ -2940,6 +2940,19 @@ impl Buffer {
                     } = &mode
                     {
                         original_indent_column = Some(if new_text.starts_with('\n') {
+                            // Blank lines have no indentation to compare against, so measure
+                            // the block's original indent on its first line with content. A
+                            // wholly blank block has none, and skipping it would indent the
+                            // line after the edit.
+                            while let Some((blank_line, rest)) =
+                                new_text[range_of_insertion_to_indent.clone()].split_once('\n')
+                            {
+                                if rest.is_empty() || !blank_line.chars().all(char::is_whitespace) {
+                                    break;
+                                }
+                                range_of_insertion_to_indent.start += blank_line.len() + 1;
+                            }
+
                             indent_size_for_text(
                                 new_text[range_of_insertion_to_indent.clone()].chars(),
                             )
