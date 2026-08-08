@@ -1168,7 +1168,7 @@ fn resolve_file_history_target(
 ) -> Option<(RepositoryId, LogSource)> {
     if let Some(panel) = workspace.panel::<crate::git_panel::GitPanel>(cx)
         && panel.read(cx).focus_handle(cx).contains_focused(window, cx)
-        && let Some((repository, repo_path)) = panel.read(cx).selected_file_history_target()
+        && let Some((repository, repo_path)) = panel.read(cx).selected_file_history_target(cx)
     {
         return Some((repository.read(cx).id, LogSource::Path(repo_path)));
     }
