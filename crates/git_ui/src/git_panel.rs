@@ -88,8 +88,8 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, Chip, ContextMenu, ContextMenuEntry, Divider, DocumentationSide,
-    ElevationIndex, IndentGuideColors, KeyBinding, PopoverMenu, PopoverMenuHandle,
+    ButtonLike, Checkbox, Chip, ContextMenu, ContextMenuEntry, Disclosure, Divider,
+    DocumentationSide, ElevationIndex, IndentGuideColors, KeyBinding, PopoverMenu, PopoverMenuHandle,
     ProjectEmptyState, ScrollAxes, Scrollbars, SplitButton, Tab, TintColor, Tooltip, WithScrollbar,
     prelude::*,
 };
@@ -654,6 +654,7 @@ struct TreeViewState {
     // This is needed because some entries (like collapsed directories) may be hidden.
     logical_indices: Vec<usize>,
     expanded_dirs: HashMap<TreeKey, bool>,
+    collapsed_sections: HashSet<Section>,
     directory_descendants: HashMap<TreeKey, Vec<GitStatusEntry>>,
 }
 
@@ -1342,6 +1343,10 @@ impl GitPanel {
 
         let mut needs_rebuild = false;
         if let (Some(section), Some(tree_state)) = (section, self.view_mode.tree_state_mut()) {
+            if tree_state.collapsed_sections.remove(&section) {
+                needs_rebuild = true;
+            }
+
             let mut current_dir = repo_path.parent();
             while let Some(dir) = current_dir {
                 let key = TreeKey {
@@ -1585,13 +1590,11 @@ impl GitPanel {
                 .entries
                 .iter()
                 .position(|entry| entry.status_entry().is_some()),
-            GitPanelViewMode::Tree(state) => {
-                let index = self.entries.iter().position(|entry| {
+            GitPanelViewMode::Tree(state) => state.logical_indices.iter().copied().find(|&index| {
+                self.entries.get(index).is_some_and(|entry| {
                     entry.status_entry().is_some() || entry.directory_entry().is_some()
-                });
-
-                index.map(|index| state.logical_indices[index])
-            }
+                })
+            }),
         };
 
         if let Some(first_entry) = first_entry {
@@ -4310,6 +4313,17 @@ impl GitPanel {
         }
     }
 
+    fn toggle_section(&mut self, section: Section, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(state) = self.view_mode.tree_state_mut() {
+            if !state.collapsed_sections.remove(&section) {
+                state.collapsed_sections.insert(section);
+            }
+            self.update_visible_entries(window, cx);
+        } else {
+            util::debug_panic!("Attempted to toggle section in flat Git Panel state");
+        }
+    }
+
     fn fill_co_authors(&mut self, message: &mut String, cx: &mut Context<Self>) {
         const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
 
@@ -4756,13 +4770,19 @@ impl GitPanel {
                 // This is just to get around the borrow checker
                 // because push_entry mutably borrows self
                 let mut tree_state = std::mem::take(tree_state);
+                let mut seen_sections = HashSet::default();
 
                 for (section, entries) in section_entries {
                     if entries.is_empty() && !show_when_empty(section) {
                         continue;
                     }
 
+                    // Only sections that render a header can be collapsed, since the
+                    // header is what stays visible to expand them again.
+                    let mut collapsed = false;
                     if section != Section::Tracked || group_by != GitPanelGroupBy::None {
+                        collapsed = tree_state.collapsed_sections.contains(&section);
+                        seen_sections.insert(section);
                         push_entry(
                             self,
                             GitListEntry::Header(GitHeaderEntry { header: section }),
@@ -4777,7 +4797,7 @@ impl GitPanel {
                             self,
                             GitListEntry::EmptySection(section),
                             section,
-                            true,
+                            !collapsed,
                             Some(&mut tree_state.logical_indices),
                         );
                     }
@@ -4789,7 +4809,7 @@ impl GitPanel {
                             self,
                             entry,
                             section,
-                            is_visible,
+                            is_visible && !collapsed,
                             Some(&mut tree_state.logical_indices),
                         );
                     }
@@ -4798,6 +4818,9 @@ impl GitPanel {
                 tree_state
                     .expanded_dirs
                     .retain(|key, _| seen_directories.contains(key));
+                tree_state
+                    .collapsed_sections
+                    .retain(|section| seen_sections.contains(section));
                 self.tree_expanded_dirs = tree_state.expanded_dirs.clone();
                 self.view_mode = GitPanelViewMode::Tree(tree_state);
             }
@@ -7111,6 +7134,13 @@ impl GitPanel {
             .get(ix + 1)
             .is_some_and(GitListEntry::is_selectable);
 
+        // Sections are only collapsible in tree view, where hidden entries are
+        // filtered out of `logical_indices`.
+        let section_collapsed = self
+            .view_mode
+            .tree_state()
+            .map(|state| state.collapsed_sections.contains(&section));
+
         h_flex()
             .id(id)
             .group(group_name)
@@ -7127,9 +7157,33 @@ impl GitPanel {
             .border_1()
             .border_r_2()
             .child(
-                Label::new(header.title())
-                    .color(Color::Muted)
-                    .size(LabelSize::Small),
+                h_flex()
+                    .gap_0p5()
+                    .when_some(section_collapsed, |this, collapsed| {
+                        this.child(
+                            div().occlude().child(
+                                Disclosure::new(
+                                    ElementId::Name(format!("header_{}_disclosure", ix).into()),
+                                    !collapsed,
+                                )
+                                .on_click({
+                                    let weak = weak.clone();
+                                    move |_, window, cx| {
+                                        weak.update(cx, |this, cx| {
+                                            this.toggle_section(section, window, cx);
+                                            cx.stop_propagation();
+                                        })
+                                        .ok();
+                                    }
+                                }),
+                            ),
+                        )
+                    })
+                    .child(
+                        Label::new(header.title())
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    ),
             )
             .child(if section_is_empty {
                 gpui::Empty.into_any_element()
@@ -11865,6 +11919,160 @@ mod tests {
                 .and_then(|entry| entry.status_entry())
                 .expect("selected entry should be a status entry");
             assert_eq!(selected_entry.repo_path, repo_path("foobar.py"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tree_view_collapse_section(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "src": {
+                    "foo.rs": "fn foo() {}",
+                },
+                "new.rs": "fn new() {}",
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("src/foo.rs", StatusCode::Modified.worktree()),
+                ("new.rs", FileStatus::Untracked),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().tree_view = Some(true);
+                })
+            });
+        });
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let (entry_count, visible_count, new_count) = panel.read_with(cx, |panel, _| {
+            let state = panel
+                .view_mode
+                .tree_state()
+                .expect("tree view state should exist");
+            (
+                panel.entries.len(),
+                state.logical_indices.len(),
+                panel.new_count,
+            )
+        });
+        assert_eq!(new_count, 1);
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_section(Section::New, window, cx);
+        });
+
+        panel.read_with(cx, |panel, _| {
+            let state = panel
+                .view_mode
+                .tree_state()
+                .expect("tree view state should exist");
+
+            // Entries stay in the flat list so bulk staging and counts see them.
+            assert_eq!(panel.entries.len(), entry_count);
+            assert_eq!(panel.new_count, new_count);
+
+            let visible_new_entries = state
+                .logical_indices
+                .iter()
+                .filter(|&&index| {
+                    panel.section_for_entry_index(index) == Some(Section::New)
+                        && panel.entries[index].is_selectable()
+                })
+                .count();
+            assert_eq!(visible_new_entries, 0);
+            assert!(state.logical_indices.iter().any(|&index| matches!(
+                panel.entries.get(index),
+                Some(GitListEntry::Header(GitHeaderEntry {
+                    header: Section::New
+                }))
+            )));
+            assert_eq!(state.logical_indices.len(), visible_count - new_count);
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_section(Section::New, window, cx);
+        });
+
+        panel.read_with(cx, |panel, _| {
+            let state = panel
+                .view_mode
+                .tree_state()
+                .expect("tree view state should exist");
+            assert!(state.collapsed_sections.is_empty());
+            assert_eq!(state.logical_indices.len(), visible_count);
+        });
+
+        // Grouping by staging state puts a collapsible (and here empty) section
+        // ahead of the first selectable entry, which `SelectFirst` must skip.
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+        cx.executor().run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_section(Section::Staged, window, cx);
+            panel.select_first(&menu::SelectFirst, window, cx);
+        });
+
+        panel.read_with(cx, |panel, _| {
+            let state = panel
+                .view_mode
+                .tree_state()
+                .expect("tree view state should exist");
+            let selected_ix = panel.selected_entry.expect("selection should be set");
+            assert!(state.logical_indices.contains(&selected_ix));
+            assert_eq!(
+                panel.entries[selected_ix]
+                    .directory_entry()
+                    .map(|dir| dir.key.path.clone()),
+                Some(repo_path("src"))
+            );
         });
     }
 
