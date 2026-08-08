@@ -290,9 +290,71 @@ pub fn lsp_to_symbol_kind(kind: lsp::SymbolKind) -> SymbolKind {
 #[derive(Debug, Clone)]
 pub enum ClientCommand {
     /// Open a location list (references panel / peek view).
-    ShowLocations,
+    ShowLocations(Vec<serde_json::Value>),
     /// Schedule a task from an LSP command's arguments.
     ScheduleTask(task::TaskTemplate),
+}
+
+impl ClientCommand {
+    pub fn into_proto(self) -> rpc::proto::ClientCommand {
+        match self {
+            Self::ShowLocations(arguments) => {
+                let arguments = match serde_json::to_string(&arguments) {
+                    Ok(arguments) => arguments,
+                    Err(error) => {
+                        log::error!("failed to serialize client command arguments: {error}");
+                        "[]".to_string()
+                    }
+                };
+                rpc::proto::ClientCommand {
+                    variant: Some(rpc::proto::client_command::Variant::ShowLocations(
+                        rpc::proto::client_command::ShowLocations { arguments },
+                    )),
+                }
+            }
+            Self::ScheduleTask(task_template) => rpc::proto::ClientCommand {
+                variant: Some(rpc::proto::client_command::Variant::ScheduleTask(
+                    rpc::proto::TaskTemplate {
+                        label: task_template.label,
+                        command: task_template.command,
+                        args: task_template.args,
+                        env: task_template.env.into_iter().collect(),
+                        cwd: task_template.cwd,
+                    },
+                )),
+            },
+        }
+    }
+
+    pub fn from_proto(proto: rpc::proto::ClientCommand) -> Option<Self> {
+        match proto.variant {
+            Some(rpc::proto::client_command::Variant::ShowLocations(show_locations)) => {
+                let arguments = if show_locations.arguments.is_empty() {
+                    Vec::new()
+                } else {
+                    match serde_json::from_str(&show_locations.arguments) {
+                        Ok(arguments) => arguments,
+                        Err(error) => {
+                            log::error!("failed to deserialize client command arguments: {error}");
+                            return None;
+                        }
+                    }
+                };
+                Some(Self::ShowLocations(arguments))
+            }
+            Some(rpc::proto::client_command::Variant::ScheduleTask(task_template)) => {
+                Some(Self::ScheduleTask(task::TaskTemplate {
+                    label: task_template.label,
+                    command: task_template.command,
+                    args: task_template.args,
+                    env: task_template.env.into_iter().collect(),
+                    cwd: task_template.cwd,
+                    ..Default::default()
+                }))
+            }
+            None => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -659,12 +721,12 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         Ok(original)
     }
 
-    fn client_command(
+    async fn client_command(
         &self,
         _command_name: &str,
         _arguments: &[serde_json::Value],
-    ) -> Option<ClientCommand> {
-        None
+    ) -> Result<Option<ClientCommand>> {
+        Ok(None)
     }
 
     /// Method only implemented by the default JSON language server adapter.
@@ -1627,6 +1689,28 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, rgba};
     use pretty_assertions::assert_matches;
+
+    #[test]
+    fn client_command_schedule_task_round_trips_through_proto() {
+        let mut env = collections::HashMap::default();
+        env.insert("RUST_BACKTRACE".into(), "1".into());
+        let task_template = task::TaskTemplate {
+            label: "Run tests".into(),
+            command: "cargo".into(),
+            args: vec!["test".into()],
+            env,
+            cwd: Some("/workspace".into()),
+            ..Default::default()
+        };
+        let command = ClientCommand::ScheduleTask(task_template.clone());
+
+        let round_tripped = ClientCommand::from_proto(command.into_proto());
+
+        assert!(matches!(
+            round_tripped,
+            Some(ClientCommand::ScheduleTask(round_tripped)) if round_tripped == task_template
+        ));
+    }
 
     #[test]
     fn test_highlight_map() {
