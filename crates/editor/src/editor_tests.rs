@@ -42719,3 +42719,45 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
 }
+
+#[gpui::test]
+async fn test_newest_selection_on_screen_multibyte(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Two lines of identical *rendered* width inside a window wide enough for both.
+    // They differ only in how many bytes they occupy, which must not affect whether
+    // the cursor counts as on screen.
+    let window_columns = 60.;
+    let rendered_columns = 40;
+
+    // 40 two-byte characters: 80 bytes, 40 rendered columns.
+    let multibyte: String = "ã".repeat(rendered_columns);
+    cx.set_state(&format!("{multibyte}ˇx\n"));
+    let multibyte_result = cx.update_editor(|editor, window, cx| {
+        editor.set_visible_line_count(50., window, cx);
+        editor.set_visible_column_count(window_columns);
+        editor.newest_selection_on_screen(window, cx)
+    });
+
+    // Control: same rendered width, one byte per character.
+    let ascii: String = "a".repeat(rendered_columns);
+    cx.set_state(&format!("{ascii}ˇx\n"));
+    let ascii_result = cx.update_editor(|editor, window, cx| {
+        editor.set_visible_line_count(50., window, cx);
+        editor.set_visible_column_count(window_columns);
+        editor.newest_selection_on_screen(window, cx)
+    });
+
+    assert_eq!(
+        ascii_result,
+        std::cmp::Ordering::Equal,
+        "control: an ASCII cursor {rendered_columns} columns into a {window_columns}-column \
+         window must be on screen"
+    );
+    assert_eq!(
+        multibyte_result, ascii_result,
+        "a multi-byte line and an ASCII line of the same rendered width must agree; \
+         got multibyte={multibyte_result:?} vs ascii={ascii_result:?}"
+    );
+}
