@@ -2451,7 +2451,9 @@ impl Workspace {
 
         if position.axis() == Axis::Horizontal
             && use_flex
-            && let Some(flex) = size_state.flex.or_else(|| self.default_dock_flex(position))
+            && let Some(flex) = self
+                .effective_dock_flex(&size_state, cx)
+                .or_else(|| self.default_dock_flex(position))
         {
             let workspace_width = self.bounds.size.width;
             if workspace_width <= Pixels::ZERO {
@@ -2529,6 +2531,7 @@ impl Workspace {
         let mut size_state = opposite_dock
             .stored_panel_size_state(panel.as_ref())
             .unwrap_or_default();
+        size_state.flex = self.effective_dock_flex(&size_state, cx);
         if size_state.flex.is_none() && panel.has_flexible_size(window, cx) {
             size_state.flex = self.default_dock_flex(opposite_position);
         }
@@ -2537,6 +2540,23 @@ impl Workspace {
 
     fn center_full_height_column_count(&self) -> f32 {
         self.center.full_height_column_count().max(1) as f32
+    }
+
+    /// Whether the center holds no items at all, in which case flexible docks
+    /// use the width they were last given while the center was empty.
+    pub fn center_is_empty(&self, cx: &App) -> bool {
+        self.center
+            .panes()
+            .iter()
+            .all(|pane| pane.read(cx).items_len() == 0)
+    }
+
+    fn effective_dock_flex(&self, size_state: &PanelSizeState, cx: &App) -> Option<f32> {
+        if self.center_is_empty(cx) {
+            size_state.flex_when_center_empty.or(size_state.flex)
+        } else {
+            size_state.flex
+        }
     }
 
     pub fn default_dock_flex(&self, position: DockPosition) -> Option<f32> {
@@ -2570,7 +2590,7 @@ impl Workspace {
                     load_legacy_panel_size(T::panel_key(), dock_position, self, cx).map(|size| {
                         let state = dock::PanelSizeState {
                             size: Some(size),
-                            flex: None,
+                            ..Default::default()
                         };
                         self.persist_panel_size_state(T::panel_key(), state, cx);
                         state
@@ -8135,7 +8155,7 @@ impl Workspace {
                 let use_flexible = panel.has_flexible_size(window, cx);
                 let flex_grow = if use_flexible {
                     size_state
-                        .and_then(|state| state.flex)
+                        .and_then(|state| self.effective_dock_flex(&state, cx))
                         .or_else(|| self.default_dock_flex(position))
                 } else {
                     None
@@ -8432,14 +8452,15 @@ impl Workspace {
         });
 
         let flex_grow = self.dock_flex_for_size(DockPosition::Left, size, window, cx);
+        let center_is_empty = self.center_is_empty(cx);
         self.left_dock.update(cx, |left_dock, cx| {
             if WorkspaceSettings::get_global(cx)
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Left)
             {
-                left_dock.resize_all_panels(Some(size), flex_grow, window, cx);
+                left_dock.resize_all_panels(Some(size), flex_grow, center_is_empty, window, cx);
             } else {
-                left_dock.resize_active_panel(Some(size), flex_grow, window, cx);
+                left_dock.resize_active_panel(Some(size), flex_grow, center_is_empty, window, cx);
             }
         });
     }
@@ -8456,14 +8477,15 @@ impl Workspace {
             }
         });
         let flex_grow = self.dock_flex_for_size(DockPosition::Right, size, window, cx);
+        let center_is_empty = self.center_is_empty(cx);
         self.right_dock.update(cx, |right_dock, cx| {
             if WorkspaceSettings::get_global(cx)
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Right)
             {
-                right_dock.resize_all_panels(Some(size), flex_grow, window, cx);
+                right_dock.resize_all_panels(Some(size), flex_grow, center_is_empty, window, cx);
             } else {
-                right_dock.resize_active_panel(Some(size), flex_grow, window, cx);
+                right_dock.resize_active_panel(Some(size), flex_grow, center_is_empty, window, cx);
             }
         });
     }
@@ -8475,9 +8497,9 @@ impl Workspace {
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Bottom)
             {
-                bottom_dock.resize_all_panels(Some(size), None, window, cx);
+                bottom_dock.resize_all_panels(Some(size), None, false, window, cx);
             } else {
-                bottom_dock.resize_active_panel(Some(size), None, window, cx);
+                bottom_dock.resize_active_panel(Some(size), None, false, window, cx);
             }
         });
     }
@@ -14366,6 +14388,7 @@ mod tests {
                     dock::PanelSizeState {
                         size: None,
                         flex: Some(1.0),
+                        flex_when_center_empty: None,
                     },
                     cx,
                 );
@@ -14808,6 +14831,120 @@ mod tests {
                 "flexible right panel should share workspace width via flex ratios"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_flexible_dock_width_is_remembered_per_center_emptiness(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.bounds.size.width = px(900.);
+        });
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Left, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Left, window, cx);
+            panel
+        });
+
+        let stored_state = |cx: &mut VisualTestContext| {
+            workspace.read_with(cx, |workspace, cx| {
+                workspace
+                    .left_dock()
+                    .read(cx)
+                    .stored_panel_size_state(&panel)
+                    .unwrap_or_default()
+            })
+        };
+        // Widths round-trip through a flex ratio, so they come back within a rounding
+        // error of the requested size rather than exactly equal to it.
+        let assert_left_width = |cx: &mut VisualTestContext, expected: f32, message: &str| {
+            let width = workspace.update_in(cx, |workspace, window, cx| {
+                workspace.bounds.size.width = px(900.);
+                let left_dock = workspace.left_dock().read(cx);
+                workspace
+                    .dock_size(&left_dock, window, cx)
+                    .expect("left dock should have an active panel")
+            });
+            assert!(
+                (width - px(expected)).abs() < px(1.),
+                "{message}: expected about {expected}px, got {width:?}"
+            );
+        };
+
+        // Widening the dock while nothing is open in the center records a width that
+        // only applies while the center stays empty.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bounds.size.width = px(900.);
+            workspace.resize_left_dock(px(800.), window, cx);
+        });
+        let state = stored_state(cx);
+        assert_eq!(
+            state.flex, None,
+            "resizing with an empty center should leave the ordinary width untouched"
+        );
+        assert!(
+            state.flex_when_center_empty.is_some(),
+            "resizing with an empty center should record an empty-center width"
+        );
+        assert_left_width(
+            cx,
+            800.,
+            "an empty center should use the empty-center width",
+        );
+
+        // Opening an item falls back to the ordinary width, which here is still the
+        // default even split.
+        let item = workspace.update_in(cx, |workspace, window, cx| {
+            let item = cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+            });
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+            item
+        });
+        assert_left_width(
+            cx,
+            450.,
+            "an open item should restore the ordinary dock width",
+        );
+
+        // Narrowing the dock to read that item must not disturb the empty-center width.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bounds.size.width = px(900.);
+            workspace.resize_left_dock(px(300.), window, cx);
+        });
+        let state_after = stored_state(cx);
+        assert_eq!(
+            state_after.flex_when_center_empty,
+            state.flex_when_center_empty
+        );
+        assert!(state_after.flex.is_some());
+        assert_left_width(
+            cx,
+            300.,
+            "resizing with an open item should apply immediately",
+        );
+
+        // Closing the item returns to the width the dock had when the center was last empty.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.remove_item(item.item_id(), false, false, window, cx);
+            });
+        });
+        assert_left_width(
+            cx,
+            800.,
+            "emptying the center should restore the empty-center width",
+        );
     }
 
     struct TestModal(FocusHandle);

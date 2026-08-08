@@ -359,6 +359,12 @@ pub struct PanelSizeState {
     pub size: Option<Pixels>,
     #[serde(default)]
     pub flex: Option<f32>,
+    /// Width used while the center has no open items, kept separate so that
+    /// resizing a dock to read a file doesn't overwrite the width the dock had
+    /// when nothing was open. Falls back to `flex` until the user resizes the
+    /// dock with an empty center.
+    #[serde(default)]
+    pub flex_when_center_empty: Option<f32>,
 }
 
 struct PanelEntry {
@@ -388,13 +394,18 @@ fn resize_panel_entry(
     entry: &mut PanelEntry,
     size: Option<Pixels>,
     flex: Option<f32>,
+    center_is_empty: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> (&'static str, PanelSizeState) {
     let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
     let uses_flexible_width = panel_uses_flexible_width(position, entry.panel.as_ref(), window, cx);
     if uses_flexible_width {
-        entry.size_state.flex = flex;
+        if center_is_empty {
+            entry.size_state.flex_when_center_empty = flex;
+        } else {
+            entry.size_state.flex = flex;
+        }
     } else {
         entry.size_state.size = size;
     }
@@ -1003,14 +1014,22 @@ impl Dock {
         &mut self,
         size: Option<Pixels>,
         flex: Option<f32>,
+        center_is_empty: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(index) = self.active_panel_index
             && let Some(entry) = self.panel_entries.get_mut(index)
         {
-            let (panel_key, size_state) =
-                resize_panel_entry(self.position, entry, size, flex, window, cx);
+            let (panel_key, size_state) = resize_panel_entry(
+                self.position,
+                entry,
+                size,
+                flex,
+                center_is_empty,
+                window,
+                cx,
+            );
 
             let workspace = self.workspace.clone();
             cx.defer(move |cx| {
@@ -1028,6 +1047,7 @@ impl Dock {
         &mut self,
         size: Option<Pixels>,
         flex: Option<f32>,
+        center_is_empty: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1051,6 +1071,7 @@ impl Dock {
                     entry,
                     size,
                     flex,
+                    center_is_empty,
                     window,
                     cx,
                 ));
@@ -1151,7 +1172,14 @@ impl Render for Dock {
                         MouseButton::Left,
                         cx.listener(|dock, e: &MouseUpEvent, window, cx| {
                             if e.click_count == 2 {
-                                dock.resize_active_panel(None, None, window, cx);
+                                // Double-clicking the handle resets whichever width
+                                // is in play, so an empty center's width can be
+                                // forgotten without disturbing the other one.
+                                let center_is_empty = dock
+                                    .workspace
+                                    .read_with(cx, |workspace, cx| workspace.center_is_empty(cx))
+                                    .unwrap_or(false);
+                                dock.resize_active_panel(None, None, center_is_empty, window, cx);
                                 dock.workspace
                                     .update(cx, |workspace, cx| {
                                         workspace.serialize_workspace(window, cx);
@@ -1566,6 +1594,7 @@ pub mod test {
             PanelSizeState {
                 size: None,
                 flex: None,
+                flex_when_center_empty: None,
             }
         }
 
