@@ -12878,6 +12878,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dunce",
+ "pretty_assertions",
  "serde",
  "tempfile",
 ]
@@ -20176,7 +20177,6 @@ dependencies = [
  "nix 0.29.0",
  "path",
  "percent-encoding",
- "pretty_assertions",
  "rand 0.9.4",
  "regex",
  "rust-embed",
