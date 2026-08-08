@@ -647,6 +647,7 @@ pub async fn predict_baseten(
         max_tokens: Some(2048),
         temperature: Some(0.),
         stop: vec![],
+        suffix: None,
         environment: None,
     };
 
