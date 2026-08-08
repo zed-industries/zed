@@ -8055,6 +8055,7 @@ dependencies = [
  "collections",
  "cosmic-text",
  "criterion",
+ "env_logger 0.11.8",
  "etagere",
  "gpui",
  "gpui_util",
