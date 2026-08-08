@@ -32,7 +32,7 @@ use editor::{Editor, MultiBufferSnapshot, PathKey, multibuffer_context_lines};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
-    AnyElement, AppContext, AsyncApp, ClickEvent, DismissEvent, EntityId, HighlightStyle,
+    AnyElement, App, AppContext, AsyncApp, ClickEvent, DismissEvent, EntityId, HighlightStyle,
     Modifiers, StyledText, Task, TextStyle, prelude::*,
 };
 use gpui::{Entity, FocusHandle, WeakEntity};
@@ -88,6 +88,7 @@ pub struct Delegate {
     pub(crate) max_line_number: u32,
     pub(crate) selected_matches: Vec<SelectedMatch>,
     pub(crate) collapsed_paths: HashSet<ProjectPath>,
+    pub(crate) query_editor: Option<Entity<Editor>>,
     pub(crate) regex_language: Option<Arc<Language>>,
 }
 
@@ -328,6 +329,7 @@ impl Delegate {
                 max_line_number: 0,
                 selected_matches: Vec::new(),
                 collapsed_paths: HashSet::default(),
+                query_editor: None,
                 regex_language: None,
             });
 
@@ -595,33 +597,35 @@ impl Delegate {
         .detach();
         cx.emit(DismissEvent);
     }
+
+    pub(crate) fn adjust_query_regex_language(&self, cx: &mut App) {
+        let Some(query_buffer) = self
+            .query_editor
+            .as_ref()
+            .and_then(|query_editor| query_editor.read(cx).buffer().read(cx).as_singleton())
+        else {
+            return;
+        };
+        let language = if self.search_options.contains(SearchOptions::REGEX) {
+            self.regex_language.clone()
+        } else {
+            None
+        };
+        query_buffer.update(cx, |query_buffer, cx| {
+            query_buffer.set_language(language, cx);
+        });
+    }
 }
 
-/// Highlight the query as a regex while the regex filter is on, and drop the
-/// highlighting again when it goes off. Mirrors the buffer and project search bars.
-pub(crate) fn adjust_query_regex_language(picker: &Picker<Delegate>, cx: &mut App) {
-    let Some(query_editor) = picker
-        .query_editor()
-        .and_then(|editor| editor.as_any().downcast_ref::<Entity<Editor>>())
-    else {
-        return;
-    };
-    let Some(query_buffer) = query_editor.read(cx).buffer().read(cx).as_singleton() else {
-        return;
-    };
-
-    let language = if picker
-        .delegate
-        .search_options
-        .contains(SearchOptions::REGEX)
-    {
-        picker.delegate.regex_language.clone()
-    } else {
-        None
-    };
-    query_buffer.update(cx, |query_buffer, cx| {
-        query_buffer.set_language(language, cx);
-    });
+pub(crate) fn toggle_search_option(
+    picker: &mut Picker<Delegate>,
+    options: SearchOptions,
+    window: &mut Window,
+    cx: &mut Context<Picker<Delegate>>,
+) {
+    picker.delegate.search_options.toggle(options);
+    picker.delegate.adjust_query_regex_language(cx);
+    picker.refresh(window, cx);
 }
 
 pub(crate) enum PopulateProjectSearch {
@@ -758,9 +762,7 @@ impl PickerDelegate for Delegate {
             .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
             .on_click(move |_, window, cx| {
                 picker.update(cx, |picker, cx| {
-                    picker.delegate.search_options.toggle(options);
-                    adjust_query_regex_language(picker, cx);
-                    picker.refresh(window, cx);
+                    toggle_search_option(picker, options, window, cx);
                 });
             })
         });

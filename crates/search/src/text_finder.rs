@@ -5,6 +5,7 @@ use db::{
     sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
 };
+use editor::Editor;
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Modifiers, Subscription, Task, TaskExt as _, WeakEntity, actions,
@@ -20,7 +21,7 @@ use workspace::{DismissDecision, ItemHandle, ModalView, Workspace, WorkspaceDb, 
 
 mod delegate;
 mod render;
-use delegate::{Delegate, adjust_query_regex_language, matches_to_multibuffer};
+use delegate::{Delegate, matches_to_multibuffer};
 use util::ResultExt as _;
 
 use crate::{ProjectSearchView, SearchOptions, text_finder::delegate::PopulateProjectSearch};
@@ -422,11 +423,22 @@ impl TextFinder {
         let project = delegate.project(cx).clone();
         let languages = project.read(cx).languages().clone();
         let preview = picker_preview::editor_preview(project, window, cx);
-        let picker = cx.new(|cx| Picker::list_with_preview(delegate, preview, window, cx));
+        let query_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let erased_query_editor = query_editor.update(cx, |editor, cx| editor.erased(cx));
+        let picker = cx.new(|cx| {
+            Picker::list_with_preview_and_query_editor(
+                delegate,
+                preview,
+                erased_query_editor,
+                window,
+                cx,
+            )
+        });
         let picker_weak = picker.downgrade();
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
+            picker.delegate.query_editor = Some(query_editor);
             picker.delegate.hook_up_any_ongoing_search(picker_weak, cx);
             if let Some(seed_query) = seed_query {
                 // Restore filters before seeding the query so the initial search runs with them.
@@ -449,14 +461,13 @@ impl TextFinder {
                 picker
                     .update(cx, |picker, cx| {
                         picker.delegate.regex_language = Some(regex_language);
-                        adjust_query_regex_language(picker, cx);
+                        picker.delegate.adjust_query_regex_language(cx);
                     })
                     .ok();
                 anyhow::Ok(())
             }
         })
         .detach_and_log_err(cx);
-
         let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
             cx.emit(DismissEvent);
         });
@@ -523,7 +534,6 @@ pub struct SearchMatch {
 mod tests {
     use std::sync::Arc;
 
-    use editor::Editor;
     use gpui::{TestAppContext, VisualTestContext};
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -531,6 +541,7 @@ mod tests {
     use util::path;
     use workspace::MultiWorkspace;
 
+    use super::delegate::toggle_search_option;
     use super::*;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -659,20 +670,6 @@ mod tests {
         assert!(seed_query.is_none());
     }
 
-    /// The name of the language the query editor is currently highlighted with.
-    fn query_language_name(finder: &TextFinder, cx: &App) -> Option<String> {
-        let query_editor = finder
-            .picker
-            .read(cx)
-            .query_editor()?
-            .as_any()
-            .downcast_ref::<Entity<Editor>>()?
-            .clone();
-        let query_buffer = query_editor.read(cx).buffer().read(cx).as_singleton()?;
-        let language = query_buffer.read(cx).language()?;
-        Some(language.name().to_string())
-    }
-
     #[gpui::test]
     async fn test_query_highlighted_as_regex_while_regex_filter_is_on(cx: &mut TestAppContext) {
         init_test(cx);
@@ -707,31 +704,44 @@ mod tests {
             .await;
         cx.run_until_parked();
 
-        let finder = workspace
-            .read_with(cx, |workspace, cx| workspace.active_modal::<TextFinder>(cx))
-            .expect("text finder should be open");
+        let picker = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<TextFinder>(cx)
+                .expect("text finder should be open")
+                .read(cx)
+                .picker
+                .clone()
+        });
 
-        finder.read_with(cx, |finder, cx| {
+        picker.read_with(cx, |picker, cx| {
             assert_eq!(
-                query_language_name(finder, cx).as_deref(),
+                query_language_name(&picker.delegate, cx).as_deref(),
                 Some("regex"),
                 "query should be highlighted as a regex while the regex filter is on"
             );
         });
 
-        finder.update(cx, |finder, cx| {
-            finder.picker.update(cx, |picker, cx| {
-                picker.delegate.search_options.toggle(SearchOptions::REGEX);
-                adjust_query_regex_language(picker, cx);
-            });
+        picker.update_in(cx, |picker, window, cx| {
+            toggle_search_option(picker, SearchOptions::REGEX, window, cx);
         });
 
-        finder.read_with(cx, |finder, cx| {
+        picker.read_with(cx, |picker, cx| {
             assert_eq!(
-                query_language_name(finder, cx),
+                query_language_name(&picker.delegate, cx),
                 None,
                 "highlighting should be dropped once the regex filter is off"
             );
         });
+    }
+
+    fn query_language_name(delegate: &Delegate, cx: &App) -> Option<String> {
+        let query_buffer = delegate
+            .query_editor
+            .as_ref()?
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()?;
+        Some(query_buffer.read(cx).language()?.name().to_string())
     }
 }

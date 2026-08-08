@@ -1,6 +1,7 @@
 use gpui::{
     PlatformDispatcher, Priority, PriorityQueueReceiver, PriorityQueueSender, RunnableVariant,
 };
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 use std::sync::atomic::AtomicI32;
 use std::time::Duration;
@@ -38,6 +39,10 @@ enum MainThreadItem {
     Delayed {
         runnable: RunnableVariant,
         millis: i32,
+    },
+    Idle {
+        runnable: RunnableVariant,
+        timeout: Option<Duration>,
     },
     Function(Box<dyn FnOnce() + Send>),
     // TODO-Wasm: Shouldn't these run on their own dedicated thread?
@@ -293,6 +298,31 @@ impl PlatformDispatcher for WebDispatcher {
         }
     }
 
+    fn dispatch_on_main_thread_when_idle(
+        &self,
+        runnable: RunnableVariant,
+        timeout: Option<Duration>,
+    ) {
+        if self.on_main_thread() {
+            schedule_idle_runnable(&browser_window(), runnable, timeout);
+        } else {
+            self.main_thread_mailbox
+                .post(Priority::Low, MainThreadItem::Idle { runnable, timeout });
+        }
+    }
+
+    fn idle_time_remaining(&self) -> Option<Duration> {
+        if !self.on_main_thread() {
+            return None;
+        }
+        IDLE_DEADLINE.with(|deadline| {
+            deadline
+                .borrow()
+                .as_ref()
+                .map(|deadline| Duration::from_secs_f64(deadline.time_remaining() / 1000.0))
+        })
+    }
+
     fn now(&self) -> Instant {
         Instant::now()
     }
@@ -306,6 +336,9 @@ fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
     match item {
         MainThreadItem::Runnable(runnable) => {
             runnable.run();
+        }
+        MainThreadItem::Idle { runnable, timeout } => {
+            schedule_idle_runnable(window, runnable, timeout);
         }
         MainThreadItem::Delayed { runnable, millis } => {
             let callback = Closure::once_into_js(move || {
@@ -322,6 +355,64 @@ fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
             function();
         }
     }
+}
+
+thread_local! {
+    /// The deadline of the idle callback currently running; read by
+    /// [`PlatformDispatcher::idle_time_remaining`] from inside the runnable.
+    static IDLE_DEADLINE: RefCell<Option<web_sys::IdleDeadline>> = const { RefCell::new(None) };
+    /// Whether `requestIdleCallback` exists (it is absent on Safari), probed
+    /// on first use.
+    static IDLE_CALLBACK_SUPPORTED: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+/// Registers one `requestIdleCallback` per runnable, mirroring how
+/// `dispatch_after` maps each timer to its own platform alarm. The browser
+/// already provides the queue semantics a central pump would rebuild: idle
+/// callbacks run in registration order, an idle period drains as many as its
+/// deadline allows, and a callback whose `timeout` expires is posted as an
+/// ordinary task instead.
+fn schedule_idle_runnable(
+    window: &web_sys::Window,
+    runnable: RunnableVariant,
+    timeout: Option<Duration>,
+) {
+    if !idle_callback_supported(window) {
+        // Safari: run idle work as ordinary macrotasks. With no metered
+        // deadline, `idle_time_remaining` stays `None` and idle tasks bound
+        // their own slices.
+        schedule_runnable(window, runnable, Priority::Low);
+        return;
+    }
+    let callback = Closure::once_into_js(move |deadline: web_sys::IdleDeadline| {
+        IDLE_DEADLINE.with(|current| *current.borrow_mut() = Some(deadline));
+        runnable.run();
+        IDLE_DEADLINE.with(|current| *current.borrow_mut() = None);
+    });
+    let result = match timeout {
+        Some(timeout) => {
+            let options = web_sys::IdleRequestOptions::new();
+            options.set_timeout(timeout.as_millis().min(u32::MAX as u128) as u32);
+            window.request_idle_callback_with_options(callback.unchecked_ref(), &options)
+        }
+        None => window.request_idle_callback(callback.unchecked_ref()),
+    };
+    if let Err(error) = result {
+        log::error!("requestIdleCallback failed: {error:?}");
+    }
+}
+
+fn idle_callback_supported(window: &web_sys::Window) -> bool {
+    IDLE_CALLBACK_SUPPORTED.with(|supported| {
+        if let Some(supported) = supported.get() {
+            return supported;
+        }
+        let probed =
+            js_sys::Reflect::has(window.as_ref(), &JsValue::from_str("requestIdleCallback"))
+                .unwrap_or(false);
+        supported.set(Some(probed));
+        probed
+    })
 }
 
 fn schedule_runnable(window: &web_sys::Window, runnable: RunnableVariant, priority: Priority) {
