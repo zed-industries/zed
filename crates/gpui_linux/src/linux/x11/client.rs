@@ -77,6 +77,9 @@ pub(crate) const XINPUT_ALL_DEVICES: xinput::DeviceId = 0;
 pub(crate) const XINPUT_ALL_DEVICE_GROUPS: xinput::DeviceId = 1;
 
 const GPUI_X11_SCALE_FACTOR_ENV: &str = "GPUI_X11_SCALE_FACTOR";
+const WORKSPACE_REDRAW_POLL_INTERVAL: Duration = Duration::from_millis(16);
+const WORKSPACE_REDRAW_DEADLINE: Duration = Duration::from_millis(500);
+const DEFAULT_REFRESH_RATE: Duration = Duration::from_micros(1_000_000 / 60);
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
@@ -88,6 +91,14 @@ pub(crate) struct WindowRef {
 impl WindowRef {
     pub fn handle(&self) -> AnyWindowHandle {
         self.window.state.borrow().handle
+    }
+
+    fn refresh_rate(&self) -> Duration {
+        match &self.refresh_state {
+            Some(RefreshState::Hidden { refresh_rate })
+            | Some(RefreshState::PeriodicRefresh { refresh_rate, .. }) => *refresh_rate,
+            None => DEFAULT_REFRESH_RATE,
+        }
     }
 }
 
@@ -107,6 +118,54 @@ enum RefreshState {
         refresh_rate: Duration,
         event_loop_token: RegistrationToken,
     },
+}
+
+struct WorkspaceRedrawWindow {
+    viewable_since: Option<Instant>,
+    refresh_rate: Duration,
+}
+
+impl WorkspaceRedrawWindow {
+    fn observe(&mut self, is_viewable: bool, now: Instant) -> bool {
+        if !is_viewable {
+            self.viewable_since = None;
+            return false;
+        }
+
+        match self.viewable_since {
+            Some(viewable_since) => now.duration_since(viewable_since) >= self.refresh_rate,
+            None => {
+                self.viewable_since = Some(now);
+                false
+            }
+        }
+    }
+}
+
+fn workspace_redraw_candidate(current_desktop: Option<u32>, window_desktop: Option<u32>) -> bool {
+    current_desktop
+        .zip(window_desktop)
+        .is_none_or(|(current, window)| window == current || window == u32::MAX)
+}
+
+fn desktop_property(
+    xcb_connection: &XCBConnection,
+    window: xproto::Window,
+    atom: xproto::Atom,
+) -> anyhow::Result<Option<u32>> {
+    let reply = get_reply(
+        || "Failed to read X11 desktop property",
+        xcb_connection.get_property(false, window, atom, AtomEnum::CARDINAL, 0, 1),
+    )?;
+    if reply.type_ != u32::from(AtomEnum::CARDINAL)
+        || reply.format != 32
+        || reply.value_len != 1
+        || reply.bytes_after != 0
+    {
+        return Ok(None);
+    }
+
+    Ok(reply.value32().and_then(|mut values| values.next()))
 }
 
 #[derive(Debug)]
@@ -190,6 +249,8 @@ pub struct X11ClientState {
     pub(crate) resource_database: Database,
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
+    workspace_redraw_timer: Option<RegistrationToken>,
+    workspace_redraw_generation: u64,
     pub(crate) mouse_focused_window: Option<xproto::Window>,
     pub(crate) keyboard_focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
@@ -379,7 +440,25 @@ impl X11Client {
             .reply()
             .context("Failed to get XCB atoms")?;
 
-        let root = xcb_connection.setup().roots[0].root;
+        let root = xcb_connection
+            .setup()
+            .roots
+            .get(x_root_index)
+            .context("X11 selected screen is missing")?
+            .root;
+        let root_event_mask = get_reply(
+            || "Failed to read X11 root window attributes",
+            xcb_connection.get_window_attributes(root),
+        )?
+        .your_event_mask
+            | EventMask::PROPERTY_CHANGE;
+        check_reply(
+            || "Failed to subscribe to X11 desktop changes",
+            xcb_connection.change_window_attributes(
+                root,
+                &ChangeWindowAttributesAux::new().event_mask(root_event_mask),
+            ),
+        )?;
         let compositor_present = check_compositor_present(&xcb_connection, root);
         let gtk_frame_extents_supported =
             check_gtk_frame_extents_supported(&xcb_connection, &atoms, root);
@@ -533,6 +612,8 @@ impl X11Client {
             resource_database,
             atoms,
             windows: HashMap::default(),
+            workspace_redraw_timer: None,
+            workspace_redraw_generation: 0,
             mouse_focused_window: None,
             keyboard_focused_window: None,
             xkb: xkb_state,
@@ -722,6 +803,178 @@ impl X11Client {
             }
         }
         Ok(())
+    }
+
+    fn start_workspace_redraw(&self) {
+        let (
+            loop_handle,
+            generation,
+            xcb_connection,
+            root,
+            current_desktop_atom,
+            window_desktop_atom,
+            windows,
+        ) = {
+            let mut state = self.0.borrow_mut();
+            if let Some(timer) = state.workspace_redraw_timer.take() {
+                state.loop_handle.remove(timer);
+            }
+            state.workspace_redraw_generation = state.workspace_redraw_generation.wrapping_add(1);
+            let generation = state.workspace_redraw_generation;
+            let Some(root) = state
+                .xcb_connection
+                .setup()
+                .roots
+                .get(state.x_root_index)
+                .map(|screen| screen.root)
+            else {
+                return;
+            };
+            let windows = state
+                .windows
+                .iter()
+                .map(|(&x_window, window)| (x_window, window.refresh_rate()))
+                .collect::<Vec<_>>();
+            (
+                state.loop_handle.clone(),
+                generation,
+                state.xcb_connection.clone(),
+                root,
+                state.atoms._NET_CURRENT_DESKTOP,
+                state.atoms._NET_WM_DESKTOP,
+                windows,
+            )
+        };
+
+        let current_desktop = desktop_property(&xcb_connection, root, current_desktop_atom)
+            .log_with_level(Level::Debug)
+            .flatten();
+        let mut pending_windows = HashMap::default();
+        for (x_window, refresh_rate) in windows {
+            let window_desktop = desktop_property(&xcb_connection, x_window, window_desktop_atom)
+                .log_with_level(Level::Debug)
+                .flatten();
+            if workspace_redraw_candidate(current_desktop, window_desktop) {
+                pending_windows.insert(
+                    x_window,
+                    WorkspaceRedrawWindow {
+                        viewable_since: None,
+                        refresh_rate,
+                    },
+                );
+            }
+        }
+        if pending_windows.is_empty() {
+            return;
+        }
+
+        // Some window managers remap an ancestor without notifying the client window.
+        let deadline = Instant::now() + WORKSPACE_REDRAW_DEADLINE;
+        let timer = calloop::timer::Timer::from_duration(WORKSPACE_REDRAW_POLL_INTERVAL);
+        let registration = loop_handle.insert_source(timer, move |_, (), client| {
+            let now = Instant::now();
+            if now >= deadline {
+                let mut state = client.0.borrow_mut();
+                if state.workspace_redraw_generation == generation {
+                    state.workspace_redraw_timer = None;
+                }
+                return calloop::timer::TimeoutAction::Drop;
+            }
+
+            let (xcb_connection, x_windows) = {
+                let state = client.0.borrow();
+                if state.workspace_redraw_generation != generation {
+                    return calloop::timer::TimeoutAction::Drop;
+                }
+                pending_windows.retain(|x_window, _| {
+                    state
+                        .windows
+                        .get(x_window)
+                        .is_some_and(|window| !window.window.state.borrow().destroyed)
+                });
+                (
+                    state.xcb_connection.clone(),
+                    pending_windows.keys().copied().collect::<Vec<_>>(),
+                )
+            };
+            if current_desktop.is_some()
+                && desktop_property(&xcb_connection, root, current_desktop_atom)
+                    .log_with_level(Level::Debug)
+                    .flatten()
+                    != current_desktop
+            {
+                let mut state = client.0.borrow_mut();
+                if state.workspace_redraw_generation == generation {
+                    state.workspace_redraw_timer = None;
+                }
+                return calloop::timer::TimeoutAction::Drop;
+            }
+            let mut windows_to_refresh = Vec::new();
+            for x_window in x_windows {
+                let Some(attributes) = get_reply(
+                    || "Failed to get X11 window attributes for workspace redraw",
+                    xcb_connection.get_window_attributes(x_window),
+                )
+                .log_with_level(Level::Debug) else {
+                    pending_windows.remove(&x_window);
+                    continue;
+                };
+                let is_viewable = attributes.map_state == xproto::MapState::VIEWABLE;
+                if pending_windows
+                    .get_mut(&x_window)
+                    .is_some_and(|window| window.observe(is_viewable, now))
+                {
+                    pending_windows.remove(&x_window);
+                    windows_to_refresh.push(x_window);
+                }
+            }
+
+            let windows_to_refresh = {
+                let state = client.0.borrow();
+                if state.workspace_redraw_generation != generation {
+                    return calloop::timer::TimeoutAction::Drop;
+                }
+                windows_to_refresh
+                    .into_iter()
+                    .filter_map(|x_window| {
+                        state
+                            .windows
+                            .get(&x_window)
+                            .filter(|window| !window.window.state.borrow().destroyed)
+                            .map(|window| window.window.clone())
+                    })
+                    .collect::<Vec<_>>()
+            };
+            for window in windows_to_refresh {
+                window.refresh(RequestFrameOptions {
+                    require_presentation: true,
+                    force_render: true,
+                });
+            }
+
+            let mut state = client.0.borrow_mut();
+            if state.workspace_redraw_generation != generation {
+                calloop::timer::TimeoutAction::Drop
+            } else if pending_windows.is_empty() {
+                state.workspace_redraw_timer = None;
+                calloop::timer::TimeoutAction::Drop
+            } else {
+                calloop::timer::TimeoutAction::ToDuration(WORKSPACE_REDRAW_POLL_INTERVAL)
+            }
+        });
+        let registration = match registration {
+            Ok(registration) => registration,
+            Err(error) => {
+                log::error!("Failed to initialize X11 workspace redraw timer: {error:?}");
+                return;
+            }
+        };
+        let mut state = self.0.borrow_mut();
+        if state.workspace_redraw_generation == generation {
+            state.workspace_redraw_timer = Some(registration);
+        } else {
+            state.loop_handle.remove(registration);
+        }
     }
 
     pub fn enable_ime(&self) {
@@ -958,6 +1211,22 @@ impl X11Client {
                     .log_err();
             }
             Event::PropertyNotify(event) => {
+                let desktop_changed = {
+                    let state = self.0.borrow();
+                    state
+                        .xcb_connection
+                        .setup()
+                        .roots
+                        .get(state.x_root_index)
+                        .is_some_and(|screen| {
+                            event.window == screen.root
+                                && event.atom == state.atoms._NET_CURRENT_DESKTOP
+                        })
+                };
+                if desktop_changed {
+                    self.start_workspace_redraw();
+                    return Some(());
+                }
                 let window = self.get_window(event.window)?;
                 window
                     .property_notify(event)
@@ -1956,7 +2225,7 @@ impl X11ClientState {
                             "Failed to get screen mode info from xrandr, \
                             defaulting to 60hz refresh rate."
                         );
-                        Duration::from_micros(1_000_000 / 60)
+                        DEFAULT_REFRESH_RATE
                     }
                 };
 
@@ -2805,6 +3074,45 @@ fn xkb_state_for_key_event(xkb: &xkbc::State, event_state: xproto::KeyButMask) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn workspace_redraw_observations(observations: &[(u64, bool)]) -> Vec<bool> {
+        let start = Instant::now();
+        let mut window = WorkspaceRedrawWindow {
+            viewable_since: None,
+            refresh_rate: Duration::from_millis(16),
+        };
+        observations
+            .iter()
+            .map(|(milliseconds, is_viewable)| {
+                window.observe(*is_viewable, start + Duration::from_millis(*milliseconds))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn workspace_redraw_waits_after_becoming_viewable() {
+        assert_eq!(
+            workspace_redraw_observations(&[(0, false), (16, true), (31, true), (32, true)]),
+            [false, false, false, true]
+        );
+    }
+
+    #[test]
+    fn workspace_redraw_resets_when_unviewable() {
+        assert_eq!(
+            workspace_redraw_observations(&[(0, true), (16, false), (32, true), (48, true)]),
+            [false, false, false, true]
+        );
+    }
+
+    #[test]
+    fn workspace_redraw_selects_current_sticky_and_unknown_desktops() {
+        assert!(workspace_redraw_candidate(Some(2), Some(2)));
+        assert!(workspace_redraw_candidate(Some(2), Some(u32::MAX)));
+        assert!(!workspace_redraw_candidate(Some(2), Some(3)));
+        assert!(workspace_redraw_candidate(Some(2), None));
+        assert!(workspace_redraw_candidate(None, Some(3)));
+    }
 
     fn test_keymap(layouts: &str) -> xkbc::Keymap {
         test_keymap_with_variant(layouts, "")
