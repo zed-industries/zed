@@ -5,14 +5,74 @@ use std::{ops::Range, sync::LazyLock};
 use tree_sitter::{Query, StreamingIterator as _};
 use util::RangeExt;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JsonIndent {
+    Spaces(usize),
+    Tabs(usize),
+}
+
+impl JsonIndent {
+    fn unit(self) -> String {
+        match self {
+            Self::Spaces(count) => " ".repeat(count),
+            Self::Tabs(count) => "\t".repeat(count),
+        }
+    }
+
+    fn prefix(self, depth: usize) -> String {
+        match self {
+            Self::Spaces(count) => " ".repeat(count * depth),
+            Self::Tabs(count) => "\t".repeat(count * depth),
+        }
+    }
+}
+
+impl From<usize> for JsonIndent {
+    fn from(count: usize) -> Self {
+        Self::Spaces(count)
+    }
+}
+
+fn line_indent_before(text: &str, byte_offset: usize) -> Option<&str> {
+    let line_start = text
+        .get(..byte_offset)?
+        .rfind('\n')
+        .map_or(0, |index| index + 1);
+    let indent = text.get(line_start..byte_offset)?;
+    indent
+        .chars()
+        .all(|character| matches!(character, ' ' | '\t'))
+        .then_some(indent)
+}
+
+fn indent_from_prefix(prefix: &str, depth: usize) -> Option<JsonIndent> {
+    if depth == 0 || !prefix.len().is_multiple_of(depth) {
+        return None;
+    }
+
+    let unit_size = prefix.len() / depth;
+    if unit_size == 0 {
+        return None;
+    }
+
+    if prefix.chars().all(|character| character == '\t') {
+        Some(JsonIndent::Tabs(unit_size))
+    } else if prefix.chars().all(|character| character == ' ') {
+        Some(JsonIndent::Spaces(unit_size))
+    } else {
+        None
+    }
+}
+
 pub fn update_value_in_json_text<'a>(
     text: &mut String,
     key_path: &mut Vec<&'a str>,
-    tab_size: usize,
+    indent: impl Into<JsonIndent>,
     old_value: &'a Value,
     new_value: &'a Value,
     edits: &mut Vec<(Range<usize>, String)>,
 ) {
+    let indent = indent.into();
     // If the old and new values are both objects, then compare them key by key,
     // preserving the comments and formatting of the unchanged parts. Otherwise,
     // replace the old value with the new value.
@@ -24,7 +84,7 @@ pub fn update_value_in_json_text<'a>(
                 update_value_in_json_text(
                     text,
                     key_path,
-                    tab_size,
+                    indent,
                     old_sub_value,
                     new_sub_value,
                     edits,
@@ -44,7 +104,7 @@ pub fn update_value_in_json_text<'a>(
                 update_value_in_json_text(
                     text,
                     key_path,
-                    tab_size,
+                    indent,
                     &Value::Null,
                     new_sub_value,
                     edits,
@@ -58,7 +118,7 @@ pub fn update_value_in_json_text<'a>(
             new_object.retain(|_, v| !v.is_null());
         }
         let (range, replacement) =
-            replace_value_in_json_text(text, key_path, tab_size, Some(&new_value), None);
+            replace_value_in_json_text(text, key_path, indent, Some(&new_value), None);
         text.replace_range(range.clone(), &replacement);
         edits.push((range, replacement));
     }
@@ -68,10 +128,11 @@ pub fn update_value_in_json_text<'a>(
 pub fn replace_value_in_json_text<T: AsRef<str>>(
     text: &str,
     key_path: &[T],
-    tab_size: usize,
+    indent: impl Into<JsonIndent>,
     new_value: Option<&Value>,
     replace_key: Option<&str>,
 ) -> (Range<usize>, String) {
+    let indent = indent.into();
     static PAIR_QUERY: LazyLock<Query> = LazyLock::new(|| {
         Query::new(
             &tree_sitter_json::LANGUAGE.into(),
@@ -143,7 +204,7 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
                 &key_path[depth..],
                 new_value,
                 replace_key,
-                tab_size,
+                indent,
             ) {
                 return array_replacement;
             }
@@ -155,7 +216,7 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
     // We found the exact key we want
     if depth == key_path.len() {
         if let Some(new_value) = new_value {
-            let new_val = to_pretty_json(new_value, tab_size, tab_size * depth);
+            let new_val = to_pretty_json_with_indent(new_value, indent, &indent.prefix(depth));
             if let Some(replace_key) = replace_key.and_then(|str| serde_json::to_string(str).ok()) {
                 let new_key = format!("{}: ", replace_key);
                 if let Some(key_start) = text[..existing_value_range.start].rfind('"') {
@@ -224,25 +285,15 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
             // We don't have the key, construct the nested objects
             let new_value = construct_json_value(&key_path[(depth + 1)..], new_value);
 
-            let mut row = 0;
-            let mut column = 0;
-            for (ix, char) in text.char_indices() {
-                if ix == first_key_start {
-                    break;
-                }
-                if char == '\n' {
-                    row += 1;
-                    column = 0;
-                } else {
-                    column += char.len_utf8();
-                }
-            }
-
-            if row > 0 {
-                // depth is 0 based, but division needs to be 1 based.
-                let new_val = to_pretty_json(&new_value, column / (depth + 1), column);
-                let space = ' ';
-                let content = format!("\"{new_key}\": {new_val},\n{space:width$}", width = column);
+            if text[..first_key_start].contains('\n') {
+                let existing_indent = line_indent_before(text, first_key_start)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| indent.prefix(depth + 1));
+                let local_indent =
+                    indent_from_prefix(&existing_indent, depth + 1).unwrap_or(indent);
+                let new_val =
+                    to_pretty_json_with_indent(&new_value, local_indent, &existing_indent);
+                let content = format!("\"{new_key}\": {new_val},\n{existing_indent}");
                 (first_key_start..first_key_start, content)
             } else {
                 let new_val = serde_json::to_string(&new_value).unwrap();
@@ -253,8 +304,7 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
         } else {
             // We don't have the key, construct the nested objects
             let new_value = construct_json_value(&key_path[depth..], new_value);
-            let indent_prefix_len = tab_size * depth;
-            let mut new_val = to_pretty_json(&new_value, tab_size, indent_prefix_len);
+            let mut new_val = to_pretty_json_with_indent(&new_value, indent, &indent.prefix(depth));
             if depth == 0 {
                 new_val.push('\n');
             }
@@ -311,7 +361,7 @@ fn handle_possible_array_value(
     remaining_key_path: &[impl AsRef<str>],
     new_value: Option<&Value>,
     replace_key: Option<&str>,
-    tab_size: usize,
+    indent: JsonIndent,
 ) -> Option<(Range<usize>, String)> {
     if remaining_key_path.is_empty() {
         return None;
@@ -333,7 +383,7 @@ fn handle_possible_array_value(
         new_value,
         replace_key,
         index,
-        tab_size,
+        indent,
     );
 
     if value_is_array {
@@ -356,8 +406,10 @@ fn handle_possible_array_value(
     let contains_comment = (replace_value.contains("//") && replace_value.contains('\n'))
         || (replace_value.contains("/*") && replace_value.contains("*/"));
     if needs_indent {
-        let indent_width = key_node.start_position().column;
-        let increased_indent = format!("\n{space:width$}", space = ' ', width = indent_width);
+        let existing_indent = line_indent_before(text, key_node.start_byte())
+            .map(str::to_owned)
+            .unwrap_or_else(|| " ".repeat(key_node.start_position().column));
+        let increased_indent = format!("\n{existing_indent}");
         replace_value = replace_value.replace('\n', &increased_indent);
     } else if non_whitespace_char_count < 32 && !contains_comment {
         // remove indentation
@@ -381,8 +433,9 @@ pub fn replace_top_level_array_value_in_json_text(
     new_value: Option<&Value>,
     replace_key: Option<&str>,
     array_index: usize,
-    tab_size: usize,
+    indent: impl Into<JsonIndent>,
 ) -> (Range<usize>, String) {
+    let indent = indent.into();
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_json::LANGUAGE.into())
@@ -400,7 +453,10 @@ pub fn replace_top_level_array_value_in_json_text(
         if !cursor.goto_next_sibling() {
             let json_value = construct_json_value(key_path, new_value);
             let json_value = serde_json::json!([json_value]);
-            return (0..text.len(), to_pretty_json(&json_value, tab_size, 0));
+            return (
+                0..text.len(),
+                to_pretty_json_with_indent(&json_value, indent, ""),
+            );
         }
     }
 
@@ -424,7 +480,7 @@ pub fn replace_top_level_array_value_in_json_text(
         }
         if !cursor.goto_next_sibling() {
             if let Some(new_value) = new_value {
-                return append_top_level_array_value_in_json_text(text, new_value, tab_size);
+                return append_top_level_array_value_in_json_text(text, new_value, indent);
             } else {
                 return (0..0, String::new());
             }
@@ -471,18 +527,21 @@ pub fn replace_top_level_array_value_in_json_text(
             key_path,
             new_value,
             replace_key,
-            tab_size,
+            indent,
         ) {
             return array_replacement;
         }
         let (mut replace_range, mut replace_value) =
-            replace_value_in_json_text(value_str, key_path, tab_size, new_value, replace_key);
+            replace_value_in_json_text(value_str, key_path, indent, new_value, replace_key);
 
         replace_range.start += offset;
         replace_range.end += offset;
 
         if needs_indent {
-            let increased_indent = format!("\n{space:width$}", space = ' ', width = indent_width);
+            let existing_indent = line_indent_before(text, range.start_byte)
+                .map(str::to_owned)
+                .unwrap_or_else(|| " ".repeat(indent_width));
+            let increased_indent = format!("\n{existing_indent}");
             replace_value = replace_value.replace('\n', &increased_indent);
         } else {
             while let Some(idx) = replace_value.find("\n ") {
@@ -500,8 +559,9 @@ pub fn replace_top_level_array_value_in_json_text(
 pub fn append_top_level_array_value_in_json_text(
     text: &str,
     new_value: &Value,
-    tab_size: usize,
+    indent: impl Into<JsonIndent>,
 ) -> (Range<usize>, String) {
+    let indent = indent.into();
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_json::LANGUAGE.into())
@@ -517,7 +577,10 @@ pub fn append_top_level_array_value_in_json_text(
     while cursor.node().kind() != TS_ARRAY_KIND {
         if !cursor.goto_next_sibling() {
             let json_value = serde_json::json!([new_value]);
-            return (0..text.len(), to_pretty_json(&json_value, tab_size, 0));
+            return (
+                0..text.len(),
+                to_pretty_json_with_indent(&json_value, indent, ""),
+            );
         }
     }
 
@@ -553,12 +616,11 @@ pub fn append_top_level_array_value_in_json_text(
     }
 
     let (mut replace_range, mut replace_value) =
-        replace_value_in_json_text::<&str>("", &[], tab_size, Some(new_value), None);
+        replace_value_in_json_text::<&str>("", &[], indent, Some(new_value), None);
 
     replace_range.start = close_bracket_start;
     replace_range.end = close_bracket_start;
 
-    let space = ' ';
     if let Some(prev_item_range) = prev_item_range {
         let needs_newline = prev_item_range.start_point.row > 0;
         let indent_width = text[..prev_item_range.start_byte].rfind('\n').map_or(
@@ -577,10 +639,13 @@ pub fn append_top_level_array_value_in_json_text(
         }
 
         if needs_newline {
-            let increased_indent = format!("\n{space:width$}", width = indent_width);
+            let existing_indent = line_indent_before(text, prev_item_range.start_byte)
+                .map(str::to_owned)
+                .unwrap_or_else(|| " ".repeat(indent_width));
+            let increased_indent = format!("\n{existing_indent}");
             replace_value = replace_value.replace('\n', &increased_indent);
             replace_value.push('\n');
-            replace_value.insert_str(0, &format!("\n{space:width$}", width = indent_width));
+            replace_value.insert_str(0, &increased_indent);
         } else {
             while let Some(idx) = replace_value.find("\n ") {
                 replace_value.remove(idx + 1);
@@ -600,9 +665,9 @@ pub fn append_top_level_array_value_in_json_text(
         {
             replace_range.start = prev_newline;
         }
-        let indent = format!("\n{space:width$}", width = tab_size);
-        replace_value = replace_value.replace('\n', &indent);
-        replace_value.insert_str(0, &indent);
+        let indent_prefix = format!("\n{}", indent.prefix(1));
+        replace_value = replace_value.replace('\n', &indent_prefix);
+        replace_value.insert_str(0, &indent_prefix);
         replace_value.push('\n');
     }
     return (replace_range, replace_value);
@@ -617,6 +682,67 @@ pub fn append_top_level_array_value_in_json_text(
         cursor.goto_descendant(descendant_index);
         res
     }
+}
+
+pub fn infer_json_indent(text: &str) -> JsonIndent {
+    infer_json_indent_with_fallback(text, JsonIndent::Spaces(2))
+}
+
+/// Uses the first syntactic property or array item, falling back when the document has no
+/// multiline indentation to preserve.
+pub fn infer_json_indent_with_fallback(text: &str, fallback: JsonIndent) -> JsonIndent {
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_json::LANGUAGE.into())
+        .is_err()
+    {
+        return fallback;
+    }
+
+    let Some(syntax_tree) = parser.parse(text, None) else {
+        return fallback;
+    };
+
+    let mut cursor = syntax_tree.walk();
+
+    fn visit_node(cursor: &mut tree_sitter::TreeCursor, text: &str) -> Option<JsonIndent> {
+        let node = cursor.node();
+        let is_array_item = node
+            .parent()
+            .is_some_and(|parent| parent.kind() == TS_ARRAY_KIND)
+            && node.is_named()
+            && node.kind() != TS_COMMENT_KIND;
+
+        if (node.kind() == "pair" || is_array_item)
+            && let Some(whitespace) = line_indent_before(text, node.start_byte())
+            && !whitespace.is_empty()
+        {
+            if whitespace.starts_with('\t') {
+                let leading_tabs = whitespace
+                    .chars()
+                    .take_while(|character| *character == '\t')
+                    .count();
+                return Some(JsonIndent::Tabs(leading_tabs));
+            } else {
+                return Some(JsonIndent::Spaces(whitespace.len()));
+            }
+        }
+
+        if cursor.goto_first_child() {
+            loop {
+                if let Some(indent) = visit_node(cursor, text) {
+                    return Some(indent);
+                }
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+            cursor.goto_parent();
+        }
+        None
+    }
+
+    visit_node(&mut cursor, text).unwrap_or(fallback)
 }
 
 /// Infers the indentation size used in JSON text by analyzing the tree structure.
@@ -718,8 +844,20 @@ pub fn to_pretty_json(
     indent_size: usize,
     indent_prefix_len: usize,
 ) -> String {
+    to_pretty_json_with_indent(
+        value,
+        JsonIndent::Spaces(indent_size),
+        &" ".repeat(indent_prefix_len),
+    )
+}
+
+fn to_pretty_json_with_indent(
+    value: &impl Serialize,
+    indent: JsonIndent,
+    indent_prefix: &str,
+) -> String {
     let mut output = Vec::new();
-    let indent = " ".repeat(indent_size);
+    let indent = indent.unit();
     let mut ser = serde_json::Serializer::with_formatter(
         &mut output,
         serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes()),
@@ -731,7 +869,7 @@ pub fn to_pretty_json(
     let mut adjusted_text = String::new();
     for (i, line) in text.split('\n').enumerate() {
         if i > 0 {
-            adjusted_text.extend(std::iter::repeat(' ').take(indent_prefix_len));
+            adjusted_text.push_str(indent_prefix);
         }
         adjusted_text.push_str(line);
         adjusted_text.push('\n');
@@ -2631,5 +2769,108 @@ mod tests {
   "d": "value2"
 }"#;
         assert_eq!(infer_json_indent_size(json_mixed), 2);
+    }
+
+    #[test]
+    fn test_infer_json_indent() {
+        assert_eq!(
+            infer_json_indent("{\n\t\"one\": {\n\t\t\"two\": true\n\t}\n}"),
+            JsonIndent::Tabs(1)
+        );
+        assert_eq!(
+            infer_json_indent("{\n\t\t\"one\": {\n\t\t\t\t\"two\": true\n\t\t}\n}"),
+            JsonIndent::Tabs(2)
+        );
+        assert_eq!(
+            infer_json_indent("{\n    \"one\": true\n}"),
+            JsonIndent::Spaces(4)
+        );
+        assert_eq!(
+            infer_json_indent(
+                "{\n\t/*\n       A long comment can contain many\n       space-indented continuation lines\n       without defining the document's\n       indentation style.\n       */\n\t\"one\": true\n}"
+            ),
+            JsonIndent::Tabs(1)
+        );
+        assert_eq!(
+            infer_json_indent("{\n\t\"one\": true,\n  \"two\": true\n}"),
+            JsonIndent::Tabs(1)
+        );
+        assert_eq!(
+            infer_json_indent("{\n  \"one\": true,\n\t\"two\": true\n}"),
+            JsonIndent::Spaces(2)
+        );
+        assert_eq!(infer_json_indent("{}"), JsonIndent::Spaces(2));
+        assert_eq!(
+            infer_json_indent_with_fallback("{}", JsonIndent::Tabs(1)),
+            JsonIndent::Tabs(1)
+        );
+    }
+
+    #[test]
+    fn test_insert_value_preserves_tab_indentation() {
+        let input = "{\n\t\"hard_tabs\": true,\n\t\"tab_size\": 4,\n}";
+        let (range, replacement) = replace_value_in_json_text(
+            input,
+            &["languages", "Rust", "tab_size"],
+            infer_json_indent(input),
+            Some(&json!(8)),
+            None,
+        );
+        let mut output = input.to_string();
+        output.replace_range(range, &replacement);
+
+        pretty_assertions::assert_eq!(
+            output,
+            "{\n\t\"languages\": {\n\t\t\"Rust\": {\n\t\t\t\"tab_size\": 8\n\t\t}\n\t},\n\t\"hard_tabs\": true,\n\t\"tab_size\": 4,\n}"
+        );
+
+        let input = "{\n\t\"languages\": {\n\t\t\"JSON\": {}\n\t}\n}";
+        let (range, replacement) = replace_value_in_json_text(
+            input,
+            &["languages", "Rust", "tab_size"],
+            infer_json_indent(input),
+            Some(&json!(8)),
+            None,
+        );
+        let mut output = input.to_string();
+        output.replace_range(range, &replacement);
+
+        pretty_assertions::assert_eq!(
+            output,
+            "{\n\t\"languages\": {\n\t\t\"Rust\": {\n\t\t\t\"tab_size\": 8\n\t\t},\n\t\t\"JSON\": {}\n\t}\n}"
+        );
+
+        let input = "{\n\t\"languages\": {\n    \"JSON\": {}\n\t}\n}";
+        let (range, replacement) = replace_value_in_json_text(
+            input,
+            &["languages", "Rust", "tab_size"],
+            infer_json_indent(input),
+            Some(&json!(8)),
+            None,
+        );
+        let mut output = input.to_string();
+        output.replace_range(range, &replacement);
+
+        pretty_assertions::assert_eq!(
+            output,
+            "{\n\t\"languages\": {\n    \"Rust\": {\n      \"tab_size\": 8\n    },\n    \"JSON\": {}\n\t}\n}"
+        );
+    }
+
+    #[test]
+    fn test_append_array_value_preserves_tab_indentation() {
+        let input = "[\n\t{\"one\": 1}\n]";
+        let (range, replacement) = append_top_level_array_value_in_json_text(
+            input,
+            &json!({"two": {"nested": true}}),
+            infer_json_indent(input),
+        );
+        let mut output = input.to_string();
+        output.replace_range(range, &replacement);
+
+        pretty_assertions::assert_eq!(
+            output,
+            "[\n\t{\"one\": 1},\n\t{\n\t\t\"two\": {\n\t\t\t\"nested\": true\n\t\t}\n\t}\n]"
+        );
     }
 }
