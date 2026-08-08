@@ -278,15 +278,13 @@ pub fn render_breadcrumb_text(
         Some(_editor) => element
             .id("breadcrumb_container")
             .min_w_0()
+            .h(rems_from_px(22_f32))
+            .px(DynamicSpacing::Base04.rems(cx))
             .when(!multibuffer_header, |this| this.overflow_hidden())
-            .child(
-                ButtonLike::new("toggle outline view")
-                    .child(breadcrumbs)
-                    .style(ButtonStyle::Transparent),
-            )
+            .child(breadcrumbs)
             .into_any_element(),
         None => element
-            .h(rems_from_px(22_f32)) // Match the height and padding of the `ButtonLike` in the other arm.
+            .h(rems_from_px(22_f32))
             .pl_1()
             .child(breadcrumbs)
             .into_any_element(),
@@ -1120,18 +1118,140 @@ mod tests {
         let menu_bounds = cx
             .debug_bounds("breadcrumb-navigation-menu")
             .expect("menu should paint");
-        let inside = menu_bounds.center();
-        let outside = point(
-            menu_bounds.right() + px(40.),
-            menu_bounds.bottom() + px(40.),
+        // Only the thumb takes hits: this overlay scrollbar reserves no track.
+        let on_thumb = point(menu_bounds.right() - px(8.), menu_bounds.top() + px(40.));
+        let outside = point(menu_bounds.right() + px(40.), on_thumb.y + px(80.));
+
+        // A press outside whose release lands back inside must not leave the menu primed
+        // to dismiss on the next release.
+        cx.simulate_mouse_down(outside, MouseButton::Left, gpui::Modifiers::none());
+        cx.simulate_mouse_up(
+            menu_bounds.center(),
+            MouseButton::Left,
+            gpui::Modifiers::none(),
         );
-        cx.simulate_mouse_down(inside, MouseButton::Left, gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        let offset_before = menu.read_with(cx, |menu, _| menu.scroll_offset_for_test());
+        cx.simulate_mouse_down(on_thumb, MouseButton::Left, gpui::Modifiers::none());
+        cx.simulate_mouse_move(outside, MouseButton::Left, gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert_ne!(
+            offset_before,
+            menu.read_with(cx, |menu, _| menu.scroll_offset_for_test()),
+            "the drag must grab the scrollbar thumb, not a row"
+        );
+
         cx.simulate_mouse_up(outside, MouseButton::Left, gpui::Modifiers::none());
         cx.run_until_parked();
 
         assert!(
             !dismissed.load(Ordering::SeqCst),
-            "drag that starts inside the menu must not dismiss on outside release"
+            "a scrollbar drag released outside the menu must not dismiss it"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_menu_navigation_button_press_does_not_prime_dismissal(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use gpui::{MouseButton, NavigationDirection, point, px};
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "alpha.txt": "" }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let dismissed = Rc::new(AtomicBool::new(false));
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                div().size_full().child(self.menu.clone())
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        let _sub = cx.update(|_, cx| {
+            let dismissed = dismissed.clone();
+            cx.subscribe(&menu, move |_, _: &DismissEvent, _| {
+                dismissed.store(true, Ordering::SeqCst);
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        let menu_bounds = cx
+            .debug_bounds("breadcrumb-navigation-menu")
+            .expect("menu should paint");
+        let outside = point(
+            menu_bounds.right() + px(40.),
+            menu_bounds.bottom() + px(40.),
+        );
+
+        // A button the menu never dismisses on must not prime the dismissal either.
+        let back = MouseButton::Navigate(NavigationDirection::Back);
+        cx.simulate_mouse_down(outside, back, gpui::Modifiers::none());
+        cx.simulate_mouse_up(outside, back, gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        cx.simulate_mouse_down(
+            menu_bounds.center(),
+            MouseButton::Left,
+            gpui::Modifiers::none(),
+        );
+        cx.simulate_mouse_up(outside, MouseButton::Left, gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        assert!(
+            !dismissed.load(Ordering::SeqCst),
+            "a drag out of the menu must not dismiss it after an unrelated outside press"
         );
     }
 
@@ -3073,6 +3193,357 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_bar_collapses_instead_of_clipping_when_narrowed(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor_with_project;
+        use gpui::{px, size};
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "some_directory": {
+                    "another_directory": {
+                        "a_rather_long_file_name.rs": "fn main() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(
+                    path!("/root/some_directory/another_directory/a_rather_long_file_name.rs"),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct BarHost {
+            editor: Entity<Editor>,
+        }
+        impl gpui::Render for BarHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                let placeholder = vec![HighlightedText {
+                    text: "placeholder".into(),
+                    highlights: vec![],
+                }];
+                h_flex().size_full().child(render_breadcrumb_text(
+                    placeholder,
+                    None,
+                    None,
+                    &self.editor,
+                    false,
+                    cx,
+                ))
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor =
+                cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            });
+            BarHost { editor }
+        });
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        // root / some_directory / another_directory / a_rather_long_file_name.rs
+        assert!(
+            cx.debug_bounds("breadcrumb-segment-0").is_some()
+                && cx.debug_bounds("breadcrumb-segment-3").is_some(),
+            "a wide window paints the whole path"
+        );
+
+        cx.simulate_resize(size(px(320.), px(600.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        assert_eq!(
+            cx.debug_bounds("breadcrumb-segment-0"),
+            None,
+            "a narrow window must drop leading segments rather than clip the strip"
+        );
+        assert!(
+            cx.debug_bounds("breadcrumb-segment-3").is_some(),
+            "the deepest segment must survive narrowing"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_menu_keyboard_survives_click_on_popup_chrome(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use gpui::KeyBinding;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "down",
+                SelectNext,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            )]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "alpha.txt": "",
+                "beta.txt": "",
+                "gamma.txt": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        assert_eq!(menu.read_with(cx, |menu, _| menu.selected_index()), Some(0));
+
+        let menu_bounds = cx
+            .debug_bounds("breadcrumb-navigation-menu")
+            .expect("menu should paint");
+        // Padding of the filter row: popup chrome, not a row and not the filter editor.
+        cx.simulate_click(
+            point(menu_bounds.left() + px(2.), menu_bounds.top() + px(2.)),
+            gpui::Modifiers::none(),
+        );
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+
+        assert_eq!(
+            menu.read_with(cx, |menu, _| menu.selected_index()),
+            Some(1),
+            "clicking popup chrome must not take the keyboard away from the menu"
+        );
+
+        cx.simulate_input("bet");
+        cx.run_until_parked();
+        menu.read_with(cx, |menu, cx| {
+            assert_eq!(
+                menu.filter(cx),
+                "bet",
+                "typing must still reach the filter editor"
+            );
+            assert_eq!(
+                menu.filtered_entry_names(cx)
+                    .iter()
+                    .map(|name| name.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["beta.txt"],
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_menu_drill_from_filtered_row_selects_first_child(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use gpui::KeyBinding;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::{path, rel_path::rel_path};
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "right",
+                SelectChild,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            )]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "nested": {
+                    "inner_a.txt": "",
+                    "inner_b.txt": "",
+                },
+                "zebra.txt": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        cx.simulate_input("nest");
+        cx.run_until_parked();
+        menu.read_with(cx, |menu, cx| {
+            assert_eq!(
+                menu.filtered_entry_names(cx)
+                    .iter()
+                    .map(|name| name.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["nested"],
+            );
+        });
+
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.simulate_keystrokes("right");
+        cx.run_until_parked();
+
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(
+                menu.listing(),
+                &BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: rel_path("nested").into_arc(),
+                },
+            );
+            assert_eq!(
+                menu.entry_names()
+                    .iter()
+                    .map(|name| name.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["inner_a.txt", "inner_b.txt"],
+            );
+            assert_eq!(
+                menu.selected_index(),
+                Some(0),
+                "drilling out of a filtered row must still select a row in the new listing"
+            );
+        });
     }
 
     #[gpui::test]
