@@ -7172,6 +7172,8 @@ dependencies = [
  "gpui_util",
  "nucleo",
  "path",
+ "unicode-normalization",
+ "unicode-segmentation",
 ]
 
 [[package]]
