@@ -109,6 +109,7 @@ actions!(
     dev,
     [
         /// Opens the language server protocol logs viewer.
+        #[action(keywords = "lsp")]
         OpenLanguageServerLogs
     ]
 );
