@@ -169,6 +169,7 @@
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
       "alt-enter": "editor::OpenSelectionsInMultibuffer",
       "alt-cmd-f": "text_finder::Toggle",
+      "cmd-alt-shift-p": "editor::OpenBreadcrumbNavigation",
     },
   },
   {
@@ -1237,6 +1238,20 @@
       // ToggleActionsMenu) live in keymaps/specific-overrides-macos.json, which
       // is loaded after the base keymap so they win over conflicting base-keymap
       // Editor bindings.
+    },
+  },
+  {
+    "context": "BreadcrumbNavigationMenu > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
+      "left": "menu::SelectParent",
+      "right": "menu::SelectChild",
+      "home": "menu::SelectFirst",
+      "end": "menu::SelectLast",
+      "enter": "menu::Confirm",
+      "escape": "menu::Cancel",
     },
   },
   {

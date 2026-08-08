@@ -48,7 +48,10 @@ pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
-    git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
+    git_traversal::{
+        ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal, WorktreeChildListingEntry,
+        WorktreeChildListingOptions, worktree_child_listing,
+    },
     is_submodule_git_dir, linked_worktree_short_name, repo_identity_path,
     worktrees_directory_for_repo,
 };

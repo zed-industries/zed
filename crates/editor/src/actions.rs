@@ -944,6 +944,8 @@ actions!(
         SaveLocation,
         /// Toggles breadcrumbs display.
         ToggleBreadcrumb,
+        /// Opens breadcrumb navigation for the active file.
+        OpenBreadcrumbNavigation,
     ]
 );
 
