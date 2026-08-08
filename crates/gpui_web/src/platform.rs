@@ -306,7 +306,7 @@ impl Platform for WebPlatform {
         log::warn!("WebPlatform::quit called, but quitting is not supported in the browser .");
     }
 
-    fn restart(&self, _binary_path: Option<PathBuf>) {}
+    fn restart(&self, _binary_path: Option<PathBuf>, _arguments: Vec<std::ffi::OsString>) {}
 
     fn activate(&self, _ignoring_other_apps: bool) {}
 
