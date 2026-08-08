@@ -967,6 +967,8 @@
       "ctrl-w n": "workspace::NewFileSplitHorizontal",
       "g t": "vim::GoToTab",
       "g shift-t": "vim::GoToPreviousTab",
+      "g tab": "pane::ToggleLastActiveItem",
+      "g shift-tab": "pane::ToggleLastActiveItem",
     },
   },
   {
