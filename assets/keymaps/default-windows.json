@@ -12,7 +12,6 @@
       "ctrl-n": "menu::SelectNext",
       "tab": "menu::SelectNext",
       "down": "menu::SelectNext",
-      "ctrl-p": "menu::SelectPrevious",
       "shift-tab": "menu::SelectPrevious",
       "up": "menu::SelectPrevious",
       "enter": "menu::Confirm",
@@ -866,7 +865,6 @@
     "context": "Editor && (showing_code_actions || showing_completions)",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-p": "editor::ContextMenuPrevious",
       "up": "editor::ContextMenuPrevious",
       "ctrl-n": "editor::ContextMenuNext",
       "down": "editor::ContextMenuNext",
