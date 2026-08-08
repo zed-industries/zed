@@ -255,6 +255,38 @@ pub struct ThemeColors {
     pub editor_diff_hunk_deleted_hollow_border: Hsla,
 
     // ===
+    // Agent Panel
+    // ===
+    /// Background color for code blocks in the agent panel.
+    pub agent_panel_code_block_background: Hsla,
+    /// Border color for code blocks in the agent panel.
+    pub agent_panel_code_block_border: Hsla,
+    /// Foreground color for code blocks in the agent panel.
+    pub agent_panel_code_block_foreground: Hsla,
+    /// Background color for inline code in the agent panel.
+    pub agent_panel_inline_code_background: Hsla,
+    /// Foreground color for inline code in the agent panel.
+    pub agent_panel_inline_code_foreground: Hsla,
+    /// Background color for user messages in the agent panel.
+    pub agent_panel_user_message_background: Hsla,
+    /// Border color for user messages in the agent panel.
+    pub agent_panel_user_message_border: Hsla,
+    /// Foreground color for user messages in the agent panel.
+    pub agent_panel_user_message_foreground: Hsla,
+    /// Foreground color for body text in the agent panel.
+    pub agent_panel_text_foreground: Hsla,
+    /// Foreground color for muted text in the agent panel.
+    pub agent_panel_muted_text_foreground: Hsla,
+    /// Foreground color for links in the agent panel.
+    pub agent_panel_link_foreground: Hsla,
+    /// Background color for links in the agent panel.
+    pub agent_panel_link_background: Hsla,
+    /// Underline color for links in the agent panel.
+    pub agent_panel_link_underline: Hsla,
+    /// Color for horizontal rules in the agent panel.
+    pub agent_panel_rule: Hsla,
+
+    // ===
     // Terminal
     // ===
     /// Terminal layout background color.
@@ -419,6 +451,20 @@ pub enum ThemeColorField {
     EditorDocumentHighlightReadBackground,
     EditorDocumentHighlightWriteBackground,
     EditorDocumentHighlightBracketBackground,
+    AgentPanelCodeBlockBackground,
+    AgentPanelCodeBlockBorder,
+    AgentPanelCodeBlockForeground,
+    AgentPanelInlineCodeBackground,
+    AgentPanelInlineCodeForeground,
+    AgentPanelUserMessageBackground,
+    AgentPanelUserMessageBorder,
+    AgentPanelUserMessageForeground,
+    AgentPanelTextForeground,
+    AgentPanelMutedTextForeground,
+    AgentPanelLinkForeground,
+    AgentPanelLinkBackground,
+    AgentPanelLinkUnderline,
+    AgentPanelRule,
     TerminalBackground,
     TerminalForeground,
     TerminalBrightForeground,
@@ -545,6 +591,34 @@ impl ThemeColors {
             ThemeColorField::EditorDocumentHighlightBracketBackground => {
                 self.editor_document_highlight_bracket_background
             }
+            ThemeColorField::AgentPanelCodeBlockBackground => {
+                self.agent_panel_code_block_background
+            }
+            ThemeColorField::AgentPanelCodeBlockBorder => self.agent_panel_code_block_border,
+            ThemeColorField::AgentPanelCodeBlockForeground => {
+                self.agent_panel_code_block_foreground
+            }
+            ThemeColorField::AgentPanelInlineCodeBackground => {
+                self.agent_panel_inline_code_background
+            }
+            ThemeColorField::AgentPanelInlineCodeForeground => {
+                self.agent_panel_inline_code_foreground
+            }
+            ThemeColorField::AgentPanelUserMessageBackground => {
+                self.agent_panel_user_message_background
+            }
+            ThemeColorField::AgentPanelUserMessageBorder => self.agent_panel_user_message_border,
+            ThemeColorField::AgentPanelUserMessageForeground => {
+                self.agent_panel_user_message_foreground
+            }
+            ThemeColorField::AgentPanelTextForeground => self.agent_panel_text_foreground,
+            ThemeColorField::AgentPanelMutedTextForeground => {
+                self.agent_panel_muted_text_foreground
+            }
+            ThemeColorField::AgentPanelLinkForeground => self.agent_panel_link_foreground,
+            ThemeColorField::AgentPanelLinkBackground => self.agent_panel_link_background,
+            ThemeColorField::AgentPanelLinkUnderline => self.agent_panel_link_underline,
+            ThemeColorField::AgentPanelRule => self.agent_panel_rule,
             ThemeColorField::TerminalBackground => self.terminal_background,
             ThemeColorField::TerminalForeground => self.terminal_foreground,
             ThemeColorField::TerminalBrightForeground => self.terminal_bright_foreground,

@@ -243,6 +243,30 @@ pub fn theme_colors_refinement(
         .border
         .as_ref()
         .and_then(|color| try_parse_color(color).ok());
+    let border_variant = this
+        .border_variant
+        .as_ref()
+        .and_then(|color| try_parse_color(color).ok());
+    let text = this
+        .text
+        .as_ref()
+        .and_then(|color| try_parse_color(color).ok());
+    let text_muted = this
+        .text_muted
+        .as_ref()
+        .and_then(|color| try_parse_color(color).ok());
+    let text_accent = this
+        .text_accent
+        .as_ref()
+        .and_then(|color| try_parse_color(color).ok());
+    let editor_foreground = this
+        .editor_foreground
+        .as_ref()
+        .and_then(|color| try_parse_color(color).ok());
+    let editor_background = this
+        .editor_background
+        .as_ref()
+        .and_then(|color| try_parse_color(color).ok());
     let editor_document_highlight_read_background = this
         .editor_document_highlight_read_background
         .as_ref()
@@ -311,10 +335,7 @@ pub fn theme_colors_refinement(
     };
     ThemeColorsRefinement {
         border,
-        border_variant: this
-            .border_variant
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
+        border_variant: border_variant,
         border_focused: this
             .border_focused
             .as_ref()
@@ -392,14 +413,8 @@ pub fn theme_colors_refinement(
             .ghost_element_disabled
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
-        text: this
-            .text
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
-        text_muted: this
-            .text_muted
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
+        text,
+        text_muted,
         text_placeholder: this
             .text_placeholder
             .as_ref()
@@ -408,10 +423,7 @@ pub fn theme_colors_refinement(
             .text_disabled
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
-        text_accent: this
-            .text_accent
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
+        text_accent,
         icon: this
             .icon
             .as_ref()
@@ -537,14 +549,8 @@ pub fn theme_colors_refinement(
             .as_ref()
             .and_then(|color| try_parse_color(color).ok())
             .or(scrollbar_thumb_border),
-        editor_foreground: this
-            .editor_foreground
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
-        editor_background: this
-            .editor_background
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
+        editor_foreground,
+        editor_background,
         editor_gutter_background: this
             .editor_gutter_background
             .as_ref()
@@ -637,6 +643,76 @@ pub fn theme_colors_refinement(
             .as_ref()
             .and_then(|color| try_parse_color(color).ok())
             .or_else(|| version_control_deleted.map(|c| c.opacity(hunk_hollow_border))),
+        agent_panel_code_block_background: this
+            .agent_panel_code_block_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(editor_background),
+        agent_panel_code_block_border: this
+            .agent_panel_code_block_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(border_variant),
+        agent_panel_code_block_foreground: this
+            .agent_panel_code_block_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(text),
+        agent_panel_inline_code_background: this
+            .agent_panel_inline_code_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or_else(|| editor_foreground.map(|color| color.opacity(0.08))),
+        agent_panel_inline_code_foreground: this
+            .agent_panel_inline_code_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(text),
+        agent_panel_user_message_background: this
+            .agent_panel_user_message_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(editor_background),
+        agent_panel_user_message_border: this
+            .agent_panel_user_message_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(border),
+        agent_panel_user_message_foreground: this
+            .agent_panel_user_message_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(text),
+        agent_panel_text_foreground: this
+            .agent_panel_text_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(text),
+        agent_panel_muted_text_foreground: this
+            .agent_panel_muted_text_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(text_muted),
+        agent_panel_link_foreground: this
+            .agent_panel_link_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(text_accent),
+        agent_panel_link_background: this
+            .agent_panel_link_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or_else(|| editor_foreground.map(|color| color.opacity(0.025))),
+        agent_panel_link_underline: this
+            .agent_panel_link_underline
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or_else(|| text_accent.map(|color| color.opacity(0.5))),
+        agent_panel_rule: this
+            .agent_panel_rule
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(border),
         terminal_background: this
             .terminal_background
             .as_ref()
@@ -1102,5 +1178,74 @@ mod tests {
             override_refinement.vim_helix_jump_label_foreground,
             Some(override_color)
         );
+    }
+
+    #[test]
+    fn agent_panel_colors_cascade_from_editor_and_border() {
+        let editor_background = parse_color("#111111");
+        let editor_foreground = parse_color("#eeeeee");
+        let border = parse_color("#222222");
+        let border_variant = parse_color("#333333");
+        let text = parse_color("#aaaaaa");
+        let text_muted = parse_color("#888888");
+        let text_accent = parse_color("#3366ff");
+        let agent_code_block = parse_color("#444444");
+        let agent_code_block_foreground = parse_color("#bbbbbb");
+
+        let mut colors = ThemeColorsContent::default();
+        colors.editor_background = Some("#111111".into());
+        colors.editor_foreground = Some("#eeeeee".into());
+        colors.border = Some("#222222".into());
+        colors.border_variant = Some("#333333".into());
+        colors.text = Some("#aaaaaa".into());
+        colors.text_muted = Some("#888888".into());
+        colors.text_accent = Some("#3366ff".into());
+        colors.agent_panel_code_block_background = Some("#444444".into());
+        colors.agent_panel_code_block_foreground = Some("#bbbbbb".into());
+
+        let refinement = theme_colors_refinement(
+            &colors,
+            &status_colors_refinement(&StatusColorsContent::default()),
+            true,
+        );
+
+        assert_eq!(
+            refinement.agent_panel_code_block_background,
+            Some(agent_code_block)
+        );
+        assert_eq!(
+            refinement.agent_panel_code_block_border,
+            Some(border_variant)
+        );
+        assert_eq!(
+            refinement.agent_panel_code_block_foreground,
+            Some(agent_code_block_foreground)
+        );
+        assert_eq!(
+            refinement.agent_panel_inline_code_background,
+            Some(editor_foreground.opacity(0.08))
+        );
+        assert_eq!(
+            refinement.agent_panel_inline_code_foreground,
+            Some(text)
+        );
+        assert_eq!(
+            refinement.agent_panel_user_message_background,
+            Some(editor_background)
+        );
+        assert_eq!(refinement.agent_panel_user_message_border, Some(border));
+        assert_eq!(refinement.agent_panel_user_message_foreground, Some(text));
+        assert_eq!(refinement.agent_panel_text_foreground, Some(text));
+        assert_eq!(refinement.agent_panel_muted_text_foreground, Some(text_muted));
+        assert_eq!(refinement.agent_panel_link_foreground, Some(text_accent));
+        assert_eq!(
+            refinement.agent_panel_link_background,
+            Some(editor_foreground.opacity(0.025))
+        );
+        assert_eq!(
+            refinement.agent_panel_link_underline,
+            Some(text_accent.opacity(0.5))
+        );
+        assert_eq!(refinement.agent_panel_rule, Some(border));
     }
 }
