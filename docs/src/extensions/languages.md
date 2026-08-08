@@ -294,6 +294,12 @@ For example, in JavaScript, we also disable auto-closing of single quotes within
 (comment) @comment.inclusive
 ```
 
+If you only want the range to be inclusive at its start, use the `.inclusive_start` suffix instead. This makes a scope take effect when the cursor sits on the node's first character while keeping the end exclusive. JSX uses it so that toggling comments on an element's opening `<` picks the `element` scope, without the scope leaking onto the token right after the element's end:
+
+```scheme
+(jsx_element) @element.inclusive_start
+```
+
 ### Text objects
 
 The `textobjects.scm` file defines rules for navigating by text objects. This was added in Zed v0.165 and is currently used only in Vim mode.
