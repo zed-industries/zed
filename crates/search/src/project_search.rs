@@ -390,31 +390,50 @@ impl ProjectSearch {
     ) -> Subscription {
         cx.subscribe(excerpts, |this, _, event, cx| {
             if matches!(event, multi_buffer::Event::FileHandleChanged) {
-                this.remove_deleted_buffers(cx);
+                this.remove_stale_buffers(None, cx);
             }
         })
     }
 
-    fn remove_deleted_buffers(&mut self, cx: &mut Context<Self>) {
-        let deleted_buffer_ids = self
+    fn remove_stale_buffers(
+        &mut self,
+        workspace: Option<&Entity<Workspace>>,
+        cx: &mut Context<Self>,
+    ) {
+        let stale_buffer_ids = self
             .excerpts
             .read(cx)
             .all_buffers_iter()
             .filter(|buffer| {
-                buffer
-                    .read(cx)
-                    .file()
-                    .is_some_and(|file| file.disk_state().is_deleted())
+                let buffer_ctx = buffer.read(cx);
+
+                if let Some(file) = buffer_ctx.file() {
+                    file.disk_state().is_deleted()
+                } else if let Some(workspace) = workspace {
+                    !workspace
+                        .read(cx)
+                        .items_of_type::<Editor>(cx)
+                        .any(|editor| {
+                            editor
+                                .read(cx)
+                                .buffer()
+                                .read(cx)
+                                .buffer(buffer_ctx.remote_id())
+                                .is_some()
+                        })
+                } else {
+                    false
+                }
             })
             .map(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
 
-        if deleted_buffer_ids.is_empty() {
+        if stale_buffer_ids.is_empty() {
             return;
         }
 
         let snapshot = self.excerpts.update(cx, |excerpts, cx| {
-            for buffer_id in deleted_buffer_ids {
+            for buffer_id in stale_buffer_ids {
                 excerpts.remove_excerpts_for_buffer(buffer_id, cx);
             }
             excerpts.snapshot(cx)
@@ -1053,6 +1072,20 @@ impl ProjectSearchView {
                 SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
             (search_options, false)
         };
+
+        if let Some(workspace) = workspace.upgrade() {
+            subscriptions.push(cx.subscribe_in(
+                &workspace,
+                window,
+                |this, workspace, event, _window, cx| {
+                    if let workspace::Event::ItemRemoved { .. } = event {
+                        this.entity.update(cx, |project_search, cx| {
+                            project_search.remove_stale_buffers(Some(workspace), cx);
+                        });
+                    }
+                },
+            ));
+        }
 
         {
             let entity = entity.read(cx);
