@@ -527,6 +527,16 @@ pub struct StatusBarSettingsContent {
     pub active_encoding_button: Option<EncodingDisplayOptions>,
 }
 
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq, Eq)]
+pub struct ActivityBarSettingsContent {
+    /// Whether to show the activity bar: the vertical panel icon rail on the
+    /// left edge of the workspace.
+    ///
+    /// Default: true
+    pub show: Option<bool>,
+}
+
 #[derive(
     Copy,
     Clone,

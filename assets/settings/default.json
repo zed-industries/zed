@@ -1858,6 +1858,12 @@
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
   },
+  // Activity bar-related settings.
+  "activity_bar": {
+    // Whether to show the activity bar: the vertical panel icon rail
+    // on the left edge of the workspace.
+    "show": true,
+  },
   // Settings specific to the terminal
   "terminal": {
     // What shell to use when opening a terminal. May take 3 values:
