@@ -120,6 +120,7 @@ struct WindowInvalidatorInner {
     pub dirty_views: FxHashSet<EntityId>,
     pub update_count: usize,
     pub frame_dirty: FrameDirtyAccumulator,
+    pub platform_waker: Option<Rc<dyn Fn()>>,
 }
 
 /// Per-frame invalidation bookkeeping, drained at draw time and emitted to the
@@ -146,6 +147,7 @@ impl WindowInvalidator {
                 dirty_views: FxHashSet::default(),
                 update_count: 0,
                 frame_dirty: FrameDirtyAccumulator::default(),
+                platform_waker: None,
             })),
         }
     }
@@ -156,8 +158,14 @@ impl WindowInvalidator {
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
             Self::record_frame_dirty(&mut inner);
+            let became_dirty = !inner.dirty;
             inner.dirty = true;
+            let waker = became_dirty.then(|| inner.platform_waker.clone()).flatten();
+            drop(inner);
             cx.push_effect(Effect::Notify { emitter: entity });
+            if let Some(waker) = waker {
+                waker();
+            }
             true
         } else {
             false
@@ -170,10 +178,36 @@ impl WindowInvalidator {
 
     pub fn set_dirty(&self, dirty: bool) {
         let mut inner = self.inner.borrow_mut();
+        let became_dirty = dirty && !inner.dirty;
         inner.dirty = dirty;
         if dirty {
             inner.update_count += 1;
             Self::record_frame_dirty(&mut inner);
+        }
+        let waker = became_dirty.then(|| inner.platform_waker.clone()).flatten();
+        drop(inner);
+        if let Some(waker) = waker {
+            waker();
+        }
+    }
+
+    pub fn set_platform_waker(&self, waker: Option<Rc<dyn Fn()>>) {
+        let mut inner = self.inner.borrow_mut();
+        inner.platform_waker = waker;
+        let waker = inner.dirty.then(|| inner.platform_waker.clone()).flatten();
+        drop(inner);
+        if let Some(waker) = waker {
+            waker();
+        }
+    }
+
+    /// Wakes the platform's frame-request source so a frame request is
+    /// delivered even if the platform stops requesting frames for idle
+    /// windows. No-op on platforms without a frame waker.
+    pub fn wake_platform(&self) {
+        let waker = self.inner.borrow().platform_waker.clone();
+        if let Some(waker) = waker {
+            waker();
         }
     }
 
@@ -1104,6 +1138,8 @@ pub struct Window {
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
+    is_resizable: bool,
+    is_minimizable: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
@@ -1175,7 +1211,7 @@ pub struct Window {
 #[derive(Clone, Debug, Default)]
 struct ModifierState {
     modifiers: Modifiers,
-    saw_keystroke: bool,
+    saw_other_input: bool,
 }
 
 /// Tracks input event timestamps to determine if input is arriving at a high rate.
@@ -1617,13 +1653,10 @@ impl Window {
 
                 // Throttle frame rate based on conditions:
                 // - Thermal pressure (Serious/Critical): cap to ~60fps
-                // - Inactive window (not focused): cap to ~30fps to save energy,
-                //   unless input is arriving at a high rate (e.g. scrolling an
-                //   unfocused window, which is delivered to the window under
-                //   the pointer).
-                let min_frame_interval = if !force_render
-                    && !request_frame_options.require_presentation
-                    && next_frame_callbacks.borrow().is_empty()
+                // - Inactive window (not focused): cap to ~30fps to save energy
+                let min_frame_interval = if request_frame_options.require_presentation
+                    || (!request_frame_options.force_render
+                        && next_frame_callbacks.borrow().is_empty())
                 {
                     None
                 } else if !active.get() && !input_rate_tracker.borrow_mut().is_high_rate() {
@@ -1648,16 +1681,21 @@ impl Window {
                         handle
                             .update(&mut cx, |_, window, _| window.complete_frame())
                             .log_err();
+                        // The demand that entered this branch (a deferred forced
+                        // render or pending next-frame callbacks) is still
+                        // unserved; platforms that stop requesting frames for
+                        // idle windows need a wakeup to deliver the retry.
+                        invalidator.wake_platform();
                         return;
                     }
                 }
                 last_frame_time.set(Some(now));
 
-                let next_frame_callbacks = next_frame_callbacks.take();
-                if !next_frame_callbacks.is_empty() {
+                let pending_next_frame_callbacks = next_frame_callbacks.take();
+                if !pending_next_frame_callbacks.is_empty() {
                     handle
                         .update(&mut cx, |_, window, cx| {
-                            for callback in next_frame_callbacks {
+                            for callback in pending_next_frame_callbacks {
                                 callback(window, cx);
                             }
                         })
@@ -1697,8 +1735,18 @@ impl Window {
                         window.complete_frame();
                     })
                     .log_err();
+
+                // Platforms that stop requesting frames for idle windows only
+                // deliver another request after a wakeup. If demand remains
+                // after this frame (the window was re-invalidated mid-draw, or
+                // animations scheduled next-frame callbacks), re-arm the frame
+                // source explicitly.
+                if invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty() {
+                    invalidator.wake_platform();
+                }
             }
         }));
+        invalidator.set_platform_waker(platform_window.frame_waker());
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
             move |_, _| {
@@ -1860,6 +1908,8 @@ impl Window {
             removed: false,
             platform_window,
             display_id,
+            is_resizable,
+            is_minimizable,
             sprite_atlas,
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
@@ -2168,9 +2218,11 @@ impl Window {
         self.platform_window.set_exclusive_edge(edge);
     }
 
-    /// Start a window resize operation (Wayland)
+    /// Start an interactive window resize operation if this window is resizable.
     pub fn start_window_resize(&self, edge: ResizeEdge) {
-        self.platform_window.start_window_resize(edge);
+        if self.is_resizable {
+            self.platform_window.start_window_resize(edge);
+        }
     }
 
     /// Linux (wayland) only: Set the window's input region, the area that receives pointer
@@ -2365,6 +2417,9 @@ impl Window {
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
+        // Next-frame callbacks create frame demand without dirtying the
+        // window, so the platform's frame source must be woken explicitly.
+        self.invalidator.wake_platform();
     }
 
     /// Schedule a frame to be drawn on the next animation frame.
@@ -2555,7 +2610,17 @@ impl Window {
         self.platform_window.window_decorations()
     }
 
-    /// Returns which window controls are currently visible (Wayland)
+    /// Returns whether this window is resizable.
+    pub fn is_resizable(&self) -> bool {
+        self.is_resizable
+    }
+
+    /// Returns whether this window is minimizable.
+    pub fn is_minimizable(&self) -> bool {
+        self.is_minimizable
+    }
+
+    /// Returns the controls supported by the platform.
     pub fn window_controls(&self) -> WindowControls {
         self.platform_window.window_controls()
     }
@@ -4034,6 +4099,45 @@ impl Window {
         }
     }
 
+    fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {
+        let radii = &quad.corner_radii;
+        let widths = &quad.border_widths;
+        let edge_radii = Edges {
+            top: radii.top_left.max(radii.top_right),
+            right: radii.top_right.max(radii.bottom_right),
+            bottom: radii.bottom_left.max(radii.bottom_right),
+            left: radii.top_left.max(radii.bottom_left),
+        };
+
+        let antialias_inset = point(ScaledPixels(1.0), ScaledPixels(1.0));
+        let inset_bounds = |top_left_inset, bottom_right_inset| {
+            Bounds::from_corners(
+                quad.bounds.origin + top_left_inset + antialias_inset,
+                quad.bounds.bottom_right() - bottom_right_inset - antialias_inset,
+            )
+        };
+
+        // Rounded corners need only be excluded on one axis. Either candidate
+        // is empty of border pixels, so use the larger interior.
+        let horizontal_band = inset_bounds(
+            point(widths.left, widths.top.max(edge_radii.top)),
+            point(widths.right, widths.bottom.max(edge_radii.bottom)),
+        );
+        let vertical_band = inset_bounds(
+            point(widths.left.max(edge_radii.left), widths.top),
+            point(widths.right.max(edge_radii.right), widths.bottom),
+        );
+
+        let area = |bounds: &Bounds<ScaledPixels>| {
+            bounds.size.width.0.max(0.) * bounds.size.height.0.max(0.)
+        };
+        if area(&horizontal_band) >= area(&vertical_band) {
+            horizontal_band
+        } else {
+            vertical_band
+        }
+    }
+
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
     /// see [`fill`], [`outline`], and [`quad`] to construct this type.
@@ -4065,29 +4169,10 @@ impl Window {
             return;
         }
 
-        // We're drawing a quad with a border but no fill color. Painting this quad would run the quad shader for every
-        // transparent interior pixel, which is especially costly when the quad is large.
-        // Instead, split it into four non-overlapping strips that cover the regions where borders are painted:
-        // the side strips own the straight left and right edges, while the top and bottom strips own the horizontal
-        // edges and the rounded corners.
-        let radii = &quad.corner_radii;
-        let widths = &quad.border_widths;
-
-        let antialias_slack = point(ScaledPixels(1.0), ScaledPixels(1.0));
-        let top_left_inset = point(
-            widths.left,
-            widths.top.max(radii.top_left).max(radii.top_right),
-        ) + antialias_slack;
-        let bottom_right_inset = point(
-            widths.right,
-            widths.bottom.max(radii.bottom_left).max(radii.bottom_right),
-        ) + antialias_slack;
-
+        // Splitting a border-only quad around its empty interior avoids shading
+        // every transparent pixel inside large outlines.
         let outer_bounds = quad.bounds;
-        let inner_bounds = Bounds::from_corners(
-            outer_bounds.origin + top_left_inset,
-            outer_bounds.bottom_right() - bottom_right_inset,
-        );
+        let inner_bounds = Self::largest_border_interior(&quad);
 
         if inner_bounds.is_empty() {
             self.next_frame.scene.insert_primitive(quad);
@@ -4583,6 +4668,21 @@ impl Window {
         Ok(())
     }
 
+    /// Returns whether every frame of an image is present in the sprite atlas.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_image_atlas_entry(&self, data: &RenderImage) -> bool {
+        data.frame_count() > 0
+            && (0..data.frame_count()).all(|frame_index| {
+                self.sprite_atlas.contains(
+                    &RenderImageParams {
+                        image_id: data.id,
+                        frame_index,
+                    }
+                    .into(),
+                )
+            })
+    }
+
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during
     /// calls to the [`Element::request_layout`] trait method and enables any element to participate in layout.
@@ -5021,12 +5121,14 @@ impl Window {
             PlatformInput::FileDrop(file_drop) => match file_drop {
                 FileDropEvent::Entered { position, paths } => {
                     self.mouse_position = position;
-                    if cx.active_drag.is_none() {
+                    let source_window = self.handle.window_id();
+                    if !cx.restore_platform_drag(source_window) && cx.active_drag.is_none() {
                         cx.active_drag = Some(AnyDrag {
                             value: Arc::new(paths.clone()),
                             view: cx.new(|_| paths).into(),
                             cursor_offset: position,
                             cursor_style: None,
+                            external_payload_source: None,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
@@ -5054,8 +5156,16 @@ impl Window {
                     })
                 }
                 FileDropEvent::Exited => {
-                    cx.active_drag.take();
+                    if !cx.hand_restored_drag_to_platform(self.handle.window_id()) {
+                        cx.active_drag.take();
+                    }
+                    self.refresh();
                     PlatformInput::FileDrop(FileDropEvent::Exited)
+                }
+                FileDropEvent::Ended => {
+                    cx.end_platform_drag(self.handle.window_id());
+                    self.refresh();
+                    PlatformInput::FileDrop(FileDropEvent::Ended)
                 }
             },
             PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
@@ -5067,6 +5177,10 @@ impl Window {
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
         }
+
+        // Must run after the move is dispatched: the platform owns the gesture afterwards, so this
+        // is the last chance for drag listeners to see the pointer leave and reset their state.
+        self.promote_external_drag_to_platform(&event, cx);
 
         if self.invalidator.update_count() > update_count_before {
             self.input_rate_tracker.borrow_mut().record_input();
@@ -5081,6 +5195,36 @@ impl Window {
         DispatchEventResult {
             propagate: cx.propagate_event,
             default_prevented: self.default_prevented,
+        }
+    }
+
+    fn promote_external_drag_to_platform(&mut self, event: &PlatformInput, cx: &mut App) {
+        let PlatformInput::MouseMove(mouse_move) = event else {
+            return;
+        };
+        if mouse_move.pressed_button != Some(MouseButton::Left) {
+            return;
+        }
+        if Bounds::new(Point::default(), self.viewport_size).contains(&mouse_move.position) {
+            return;
+        }
+        if !self.platform_window.can_start_external_drag() {
+            return;
+        }
+        let Some(payload_source) = cx
+            .active_drag
+            .as_mut()
+            .and_then(|drag| drag.external_payload_source.take())
+        else {
+            return;
+        };
+        let Some(payload) = payload_source(self, cx) else {
+            return;
+        };
+        if self.platform_window.start_external_drag(&payload)
+            && cx.hand_active_drag_to_platform(self.handle.window_id())
+        {
+            self.refresh();
         }
     }
 
@@ -5155,7 +5299,7 @@ impl Window {
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
             if event.modifiers.number_of_modifiers() == 0
                 && self.pending_modifier.modifiers.number_of_modifiers() == 1
-                && !self.pending_modifier.saw_keystroke
+                && !self.pending_modifier.saw_other_input
             {
                 let key = match self.pending_modifier.modifiers {
                     modifiers if modifiers.shift => Some("shift"),
@@ -5177,11 +5321,13 @@ impl Window {
             if self.pending_modifier.modifiers.number_of_modifiers() == 0
                 && event.modifiers.number_of_modifiers() == 1
             {
-                self.pending_modifier.saw_keystroke = false
+                self.pending_modifier.saw_other_input = false
+            } else if event.modifiers.number_of_modifiers() > 1 {
+                self.pending_modifier.saw_other_input = true
             }
             self.pending_modifier.modifiers = event.modifiers
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-            self.pending_modifier.saw_keystroke = true;
+            self.pending_modifier.saw_other_input = true;
             keystroke = Some(key_down_event.keystroke.clone());
             if key_down_event.keystroke.key_char.is_some()
                 && matches!(
@@ -5902,7 +6048,8 @@ impl Window {
     /// Perform titlebar double-click action.
     /// This is macOS specific.
     pub fn titlebar_double_click(&self) {
-        self.platform_window.titlebar_double_click();
+        self.platform_window
+            .titlebar_double_click(self.is_resizable, self.is_minimizable);
     }
 
     /// Gets the window's title at the platform level.
@@ -6765,12 +6912,19 @@ pub fn outline(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        path::PathBuf,
+        rc::Rc,
+    };
 
     use crate::{
-        AppContext as _, Bounds, Context, FocusHandle, InteractiveElement as _, IntoElement,
-        ParentElement, Pixels, Render, Styled, TestAppContext, Window, WindowAppearance,
-        WindowOptions, canvas, div, px, size,
+        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty,
+        ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
+        InputEvent as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+        MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
+        StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
+        WindowOptions, canvas, div, point, px, size,
     };
 
     struct EmptyView;
@@ -6829,6 +6983,100 @@ mod tests {
         // subsequent draws of both windows work against a fresh arena.
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .unwrap();
+    }
+
+    /// Platforms that stop requesting frames for idle windows (currently web)
+    /// rely on the frame waker firing whenever frame demand arises; a demand
+    /// source that skips the waker shows up there as a window that silently
+    /// stops repainting until unrelated activity wakes it.
+    #[gpui::test]
+    fn test_frame_waker_fires_on_frame_demand(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let test_window = cx.test_window(window.into());
+
+        // Windows start dirty, and that can predate waker installation;
+        // installing the waker must deliver the pending wake or the first
+        // frame would never be requested.
+        assert!(
+            test_window.frame_wake_count() >= 1,
+            "opening a window must wake the frame source for the initial frame"
+        );
+
+        // Serve outstanding demand (present the frame drawn by `add_window`).
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+
+        // An idle window must not wake on clean frames or plain updates, or
+        // the frame source could never stop.
+        let baseline = test_window.frame_wake_count();
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+        window.update(cx, |_, _, _| {}).unwrap();
+        assert_eq!(
+            test_window.frame_wake_count(),
+            baseline,
+            "clean frames and non-notifying updates must not wake the frame source"
+        );
+
+        // Notifying a view in an idle window is the core demand signal.
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        assert!(
+            test_window.frame_wake_count() > baseline,
+            "notifying a view in an idle window must wake the frame source"
+        );
+
+        // Serving that demand returns to idle without further wakes.
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+        let baseline = test_window.frame_wake_count();
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+        assert_eq!(
+            test_window.frame_wake_count(),
+            baseline,
+            "serving demand must return the window to idle"
+        );
+
+        // Next-frame callbacks create demand without dirtying the window.
+        window
+            .update(cx, |_, window, _| window.on_next_frame(|_, _| {}))
+            .unwrap();
+        assert!(
+            test_window.frame_wake_count() > baseline,
+            "scheduling a next-frame callback in an idle window must wake the frame source"
+        );
+    }
+
+    /// A frame request that arrives while next-frame callbacks are pending
+    /// must never strand them: either the frame runs them, or (when the
+    /// inactive-window frame-rate throttle defers the frame) the waker fires
+    /// so another request is delivered.
+    #[gpui::test]
+    fn test_pending_next_frame_callbacks_are_not_stranded(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let test_window = cx.test_window(window.into());
+        // Establish a recent last-frame time so the inactive-window throttle
+        // can engage on the next request.
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+
+        let callback_ran = Rc::new(Cell::new(false));
+        window
+            .update(cx, {
+                let callback_ran = callback_ran.clone();
+                move |_, window, _| {
+                    window.on_next_frame(move |_, _| callback_ran.set(true));
+                }
+            })
+            .unwrap();
+
+        let baseline = test_window.frame_wake_count();
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+        // The test window is inactive, so this request throttles to ~30fps
+        // when it lands within the throttle interval of the previous frame
+        // (the common case here, but timing-dependent): the callback is
+        // deferred and the waker must re-arm the frame source. On a slow run
+        // the request instead lands outside the interval and runs the
+        // callback directly.
+        assert!(
+            test_window.frame_wake_count() > baseline || callback_ran.get(),
+            "a frame request with pending next-frame callbacks must either run them or re-arm the frame source"
+        );
     }
 
     #[gpui::test]
@@ -6919,6 +7167,312 @@ mod tests {
         .unwrap();
 
         assert_eq!(child_bounds.get().size, size(px(300.), px(200.)));
+    }
+
+    struct FileDragView {
+        path: PathBuf,
+        observed_drag_moves: Rc<RefCell<Vec<Point<Pixels>>>>,
+        observed_drops: Rc<RefCell<Vec<PathBuf>>>,
+    }
+
+    impl Render for FileDragView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("file-drag")
+                .size_full()
+                .on_drag(self.path.clone(), |_, _, _, cx| cx.new(|_| Empty))
+                .external_drag_payload(|path: &PathBuf, _, _| {
+                    Some(ExternalDragPayload::Files(FileDragPaths::new([(
+                        path.clone(),
+                        true,
+                    )])))
+                })
+                .on_drag_move({
+                    let observed_drag_moves = self.observed_drag_moves.clone();
+                    move |event: &DragMoveEvent<PathBuf>, _, _| {
+                        observed_drag_moves.borrow_mut().push(event.event.position);
+                    }
+                })
+                .on_drop({
+                    let observed_drops = self.observed_drops.clone();
+                    move |path: &PathBuf, _, _| observed_drops.borrow_mut().push(path.clone())
+                })
+        }
+    }
+
+    #[gpui::test]
+    fn file_drag_is_promoted_once_and_restored_in_source_window(cx: &mut TestAppContext) {
+        struct Drag {
+            window: AnyWindowHandle,
+            observed_drag_moves: Rc<RefCell<Vec<Point<Pixels>>>>,
+            observed_drops: Rc<RefCell<Vec<PathBuf>>>,
+        }
+
+        fn start_drag(cx: &mut TestAppContext, path: PathBuf, platform_result: bool) -> Drag {
+            let observed_drag_moves = Rc::new(RefCell::new(Vec::new()));
+            let observed_drops = Rc::new(RefCell::new(Vec::new()));
+            let window: AnyWindowHandle = cx
+                .add_window({
+                    let observed_drag_moves = observed_drag_moves.clone();
+                    let observed_drops = observed_drops.clone();
+                    move |_, _| FileDragView {
+                        path,
+                        observed_drag_moves,
+                        observed_drops,
+                    }
+                })
+                .into();
+            cx.test_window(window)
+                .set_start_external_drag_result(platform_result);
+
+            let update_result = cx.update_window(window, |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.dispatch_event(
+                    MouseDownEvent {
+                        position: point(px(10.), px(10.)),
+                        button: MouseButton::Left,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(20.), px(20.)),
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                assert!(cx.active_drag.is_some());
+            });
+            assert!(
+                update_result.is_ok(),
+                "failed to start drag: {update_result:?}"
+            );
+
+            assert!(cx.test_window(window).external_drag_files().is_empty());
+            Drag {
+                window,
+                observed_drag_moves,
+                observed_drops,
+            }
+        }
+
+        let successful_path = PathBuf::from("/tmp/successful-drag");
+        let successful = start_drag(cx, successful_path.clone(), true);
+        let outside_position = point(px(-1.), px(20.));
+        let update_result = cx.update_window(successful.window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: outside_position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_none());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to promote drag: {update_result:?}"
+        );
+        assert_eq!(
+            cx.test_window(successful.window).external_drag_files(),
+            [(successful_path.clone(), true)]
+        );
+        // Views must still see the move that leaves the window, otherwise they never learn to tear
+        // down the drag state they built up while the pointer was inside.
+        assert_eq!(
+            successful.observed_drag_moves.borrow().last(),
+            Some(&outside_position)
+        );
+
+        let destination: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        let reentry_position = point(px(30.), px(30.));
+        let external_paths = || ExternalPaths([successful_path.clone()].into_iter().collect());
+        let update_result = cx.update_window(destination, |_, window, cx| {
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<ExternalPaths>().is_some())
+            );
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to handle drag in destination window: {update_result:?}"
+        );
+
+        let update_result = cx.update_window(successful.window, |_, window, cx| {
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
+            );
+            assert_eq!(
+                successful.observed_drag_moves.borrow().last(),
+                Some(&reentry_position)
+            );
+
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
+            );
+
+            window.dispatch_event(
+                FileDropEvent::Submit {
+                    position: reentry_position,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert_eq!(
+                successful.observed_drops.borrow().as_slice(),
+                std::slice::from_ref(&successful_path)
+            );
+            assert!(cx.active_drag.is_none());
+
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+            window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<ExternalPaths>().is_some())
+            );
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to restore drag in source window: {update_result:?}"
+        );
+
+        let cancelled_path = PathBuf::from("/tmp/cancelled-drag");
+        let cancelled = start_drag(cx, cancelled_path.clone(), true);
+        let update_result = cx.update_window(cancelled.window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: outside_position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_none());
+
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: ExternalPaths([cancelled_path].into_iter().collect()),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
+            );
+            assert!(cx.stop_active_drag(window));
+            assert!(cx.active_drag.is_none());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to cancel restored drag: {update_result:?}"
+        );
+        assert!(!cx.update(|cx| cx.end_platform_drag(cancelled.window.window_id())));
+
+        let removed_path = PathBuf::from("/tmp/removed-window-drag");
+        let removed = start_drag(cx, removed_path, true);
+        let removed_window_id = removed.window.window_id();
+        let update_result = cx.update_window(removed.window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: outside_position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_none());
+            window.remove_window();
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to remove drag source window: {update_result:?}"
+        );
+        assert!(!cx.update(|cx| cx.end_platform_drag(removed_window_id)));
+
+        let failed_path = PathBuf::from("/tmp/failed-drag");
+        let failed = start_drag(cx, failed_path.clone(), false);
+        let update_result = cx.update_window(failed.window, |_, window, cx| {
+            for x_position in [-1., -2.] {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(x_position), px(20.)),
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            }
+            assert!(cx.active_drag.is_some());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to retain drag after platform failure: {update_result:?}"
+        );
+        assert_eq!(
+            cx.test_window(failed.window).external_drag_files(),
+            [(failed_path, true)]
+        );
     }
 
     struct FocusForwarder {

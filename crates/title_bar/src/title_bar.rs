@@ -9,7 +9,7 @@ use crate::application_menu::{ApplicationMenu, show_menus};
 use crate::plan_chip::PlanChip;
 use agent_settings::{AgentSettings, WindowLayout};
 use arrayvec::ArrayVec;
-use git_ui::worktree_picker::WorktreePicker;
+use git_ui_core::worktree_picker::WorktreePicker;
 pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
@@ -1049,14 +1049,12 @@ impl TitleBar {
 
                 PopoverMenu::new("branch-menu")
                     .menu(move |window, cx| {
-                        Some(git_ui::git_picker::popover(
+                        git_ui_core::build_branch_picker(
                             workspace.downgrade(),
                             effective_repository.clone(),
-                            git_ui::git_picker::GitPickerTab::Branches,
-                            gpui::rems(34.),
                             window,
                             cx,
-                        ))
+                        )
                     })
                     .trigger_with_tooltip(trigger, move |_window, cx| {
                         let meta = if is_detached_head {
