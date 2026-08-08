@@ -190,6 +190,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "activity_bar"
+version = "0.1.0"
+dependencies = [
+ "fs",
+ "gpui",
+ "project",
+ "serde_json",
+ "settings",
+ "terminal_view",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+ "zlog",
+]
+
+[[package]]
 name = "activity_indicator"
 version = "0.1.0"
 dependencies = [
@@ -23282,6 +23301,7 @@ dependencies = [
  "acp_thread",
  "acp_tools",
  "action_log",
+ "activity_bar",
  "activity_indicator",
  "agent",
  "agent-client-protocol",

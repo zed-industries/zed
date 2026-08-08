@@ -1389,6 +1389,7 @@ pub struct Workspace {
     pub(crate) modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
+    activity_bar_item: Option<AnyView>,
     titlebar_focus_handle: FocusHandle,
     region_focus_handles: RegionFocusHandles,
     notifications: Notifications,
@@ -1842,6 +1843,7 @@ impl Workspace {
             modal_layer,
             toast_layer,
             titlebar_item: None,
+            activity_bar_item: None,
             titlebar_focus_handle: cx.focus_handle(),
             region_focus_handles: RegionFocusHandles::new(cx),
             notifications: Notifications::default(),
@@ -2976,6 +2978,15 @@ impl Workspace {
     pub fn set_titlebar_item(&mut self, item: AnyView, _: &mut Window, cx: &mut Context<Self>) {
         self.titlebar_item = Some(item);
         cx.notify();
+    }
+
+    pub fn set_activity_bar_item(&mut self, item: AnyView, _: &mut Window, cx: &mut Context<Self>) {
+        self.activity_bar_item = Some(item);
+        cx.notify();
+    }
+
+    pub fn activity_bar_item(&self) -> Option<AnyView> {
+        self.activity_bar_item.clone()
     }
 
     pub fn set_prompt_for_new_path(&mut self, prompt: PromptForNewPath) {
@@ -9210,6 +9221,7 @@ impl Render for Workspace {
                                                 .flex_row()
                                                 .flex_1()
                                                 .overflow_hidden()
+                                                .children(self.activity_bar_item.clone())
                                                 .children(self.render_dock(
                                                     DockPosition::Left,
                                                     &self.left_dock,
@@ -9259,6 +9271,7 @@ impl Render for Workspace {
                                         .flex()
                                         .flex_row()
                                         .h_full()
+                                        .children(self.activity_bar_item.clone())
                                         .child(
                                             div()
                                                 .flex()
@@ -9326,6 +9339,7 @@ impl Render for Workspace {
                                         .flex()
                                         .flex_row()
                                         .h_full()
+                                        .children(self.activity_bar_item.clone())
                                         .children(self.render_dock(
                                             DockPosition::Left,
                                             &self.left_dock,
@@ -9393,6 +9407,7 @@ impl Render for Workspace {
                                         .flex()
                                         .flex_row()
                                         .h_full()
+                                        .children(self.activity_bar_item.clone())
                                         .children(self.render_dock(
                                             DockPosition::Left,
                                             &self.left_dock,

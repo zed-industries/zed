@@ -4,6 +4,7 @@ members = [
     "crates/acp_thread",
     "crates/acp_tools",
     "crates/action_log",
+    "crates/activity_bar",
     "crates/activity_indicator",
     "crates/agent",
     "crates/agent_servers",
@@ -276,6 +277,7 @@ edition = "2024"
 acp_tools = { path = "crates/acp_tools" }
 acp_thread = { path = "crates/acp_thread" }
 action_log = { path = "crates/action_log" }
+activity_bar = { path = "crates/activity_bar" }
 activity_indicator = { path = "crates/activity_indicator" }
 agent = { path = "crates/agent" }
 agent_servers = { path = "crates/agent_servers" }
