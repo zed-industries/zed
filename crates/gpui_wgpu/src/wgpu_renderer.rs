@@ -1169,11 +1169,21 @@ impl WgpuRenderer {
         let bytes_per_row = width
             .checked_mul(4)
             .ok_or_else(|| anyhow::anyhow!("Headless render target row size overflowed"))?;
-        let padded_bytes_per_row =
-            bytes_per_row.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let padded_bytes_per_row = bytes_per_row
+            .checked_next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            .ok_or_else(|| anyhow::anyhow!("Headless padded row size overflowed"))?;
         let buffer_size = u64::from(padded_bytes_per_row)
             .checked_mul(u64::from(height))
             .ok_or_else(|| anyhow::anyhow!("Headless readback buffer size overflowed"))?;
+        if buffer_size > self.max_buffer_size {
+            anyhow::bail!(
+                "Headless readback buffer size {} exceeds maximum buffer size {}",
+                buffer_size,
+                self.max_buffer_size
+            );
+        }
+        let pixel_capacity = usize::try_from(u64::from(bytes_per_row) * u64::from(height))
+            .map_err(|_| anyhow::anyhow!("Headless image size exceeds addressable memory"))?;
         let resources = self.resources();
         let readback_buffer = resources.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("headless_readback_buffer"),
@@ -1235,7 +1245,7 @@ impl WgpuRenderer {
         }
 
         let mapped_data = readback_buffer.slice(..).get_mapped_range();
-        let mut pixels = Vec::with_capacity(bytes_per_row as usize * height as usize);
+        let mut pixels = Vec::with_capacity(pixel_capacity);
         for row in mapped_data
             .chunks_exact(padded_bytes_per_row as usize)
             .take(height as usize)
@@ -1302,7 +1312,7 @@ impl WgpuRenderer {
         let target_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         self.atlas.before_frame();
-        self.draw_to_view(scene, &target_view)?;
+        self.draw_to_view(scene, &target_view, wgpu::Color::BLACK)?;
         Ok(texture)
     }
 
@@ -1385,7 +1395,7 @@ impl WgpuRenderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        if let Err(error) = self.draw_to_view(scene, &frame_view) {
+        if let Err(error) = self.draw_to_view(scene, &frame_view, wgpu::Color::TRANSPARENT) {
             log::error!("{error}");
         }
         frame.present();
@@ -1396,6 +1406,7 @@ impl WgpuRenderer {
         &mut self,
         scene: &Scene,
         target_view: &wgpu::TextureView,
+        clear_color: wgpu::Color,
     ) -> anyhow::Result<()> {
         self.ensure_intermediate_textures();
 
@@ -1464,7 +1475,7 @@ impl WgpuRenderer {
                         view: target_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            load: wgpu::LoadOp::Clear(clear_color),
                             store: wgpu::StoreOp::Store,
                         },
                         depth_slice: None,
