@@ -12,6 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::SharedString;
 use util::markdown::{MarkdownEscaped, MarkdownInlineCode};
+use util::size::format_file_size;
 
 use crate::sandboxing::{NetworkRequest, SandboxRequest};
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
@@ -26,6 +27,10 @@ enum ContentType {
 /// The maximum number of HTTP redirects the fetch tool will follow. Each hop is
 /// re-authorized against the shared network grants before being followed.
 const MAX_REDIRECTS: usize = 20;
+
+/// Responses larger than this are rejected outright rather than truncated,
+/// since partially converted content is rarely useful to the model.
+const MAX_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
 
 /// The outcome of a single (non-redirect-following) HTTP request.
 enum FetchStep {
@@ -106,9 +111,15 @@ impl FetchTool {
         let mut body = Vec::new();
         response
             .body_mut()
+            .take(MAX_RESPONSE_BYTES as u64 + 1)
             .read_to_end(&mut body)
             .await
             .context("error reading response body")?;
+        anyhow::ensure!(
+            body.len() <= MAX_RESPONSE_BYTES,
+            "response body exceeds the {} limit; fetch a more specific URL instead",
+            format_file_size(MAX_RESPONSE_BYTES as u64, true)
+        );
 
         if status.is_client_error() {
             let text = String::from_utf8_lossy(body.as_slice());

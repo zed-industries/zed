@@ -16,6 +16,7 @@ use crate::sandboxing::{
     sandbox_worktree_writable_paths, sandboxing_available_for_project,
     sandboxing_enabled_for_project,
 };
+use crate::tool_output::truncate_tool_result;
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{
     AgentProfileId, AgentProfileSettings, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
@@ -3613,7 +3614,7 @@ impl Thread {
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_input, tool_event_stream, cx);
         cx.foreground_executor().spawn(async move {
-            let (is_error, output) = match tool_result.await {
+            let (is_error, mut output) = match tool_result.await {
                 Ok(mut output) => {
                     let contains_image = output
                         .llm_output
@@ -3655,6 +3656,7 @@ impl Thread {
                 }
                 Err(output) => (true, output),
             };
+            truncate_tool_result(&mut output.llm_output);
 
             (
                 owning_message_ix,

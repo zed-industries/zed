@@ -1,3 +1,4 @@
+use crate::tool_output::truncate_line;
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use acp_thread::MentionUri;
 use agent_client_protocol::schema::v1 as acp;
@@ -121,6 +122,7 @@ impl AgentTool for GrepTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         const CONTEXT_LINES: u32 = 2;
         const MAX_ANCESTOR_LINES: u32 = 10;
+        const MAX_MATCH_LINE_LEN: usize = 500;
 
         let project = self.project.clone();
         cx.spawn(async move |cx|  {
@@ -184,6 +186,7 @@ impl AgentTool for GrepTool {
             let mut skips_remaining = input.offset;
             let mut matches_found = 0;
             let mut has_more_matches = false;
+            let mut lines_truncated = false;
 
             'outer: loop {
                 let search_result = futures::select! {
@@ -324,8 +327,16 @@ impl AgentTool for GrepTool {
 
                     let snippet: String = snapshot.text_for_range(range.clone()).collect();
                     output.push_str("```\n");
-                    output.push_str(&snippet);
-                    output.push_str("\n```\n");
+                    for line in snippet.lines() {
+                        let (line, truncated) = truncate_line(line, MAX_MATCH_LINE_LEN);
+                        output.push_str(line);
+                        if truncated {
+                            output.push('…');
+                            lines_truncated = true;
+                        }
+                        output.push('\n');
+                    }
+                    output.push_str("```\n");
 
                     if let Some(abs_path) = &abs_path {
                         let uri = MentionUri::Selection {
@@ -364,6 +375,10 @@ impl AgentTool for GrepTool {
 
                     matches_found += 1;
                 }
+            }
+
+            if lines_truncated {
+                writeln!(output, "\nSome matched lines were truncated to {MAX_MATCH_LINE_LEN} characters. Use read_file to see full lines.").ok();
             }
 
             if !content.is_empty() {
@@ -999,6 +1014,38 @@ mod tests {
             "#
         .unindent();
         assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_grep_truncates_long_lines(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "long_line.txt": format!("needle {}", "x".repeat(2000))
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let input = GrepToolInput {
+            regex: "needle".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+        };
+
+        let result = run_grep_tool(input, project, cx).await;
+        let matched_line = result
+            .lines()
+            .find(|line| line.starts_with("needle"))
+            .unwrap();
+        assert_eq!(matched_line.chars().count(), 501); // 500 chars + '…'
+        assert!(matched_line.ends_with('…'));
+        assert!(result.contains("Some matched lines were truncated to 500 characters"));
     }
 
     async fn run_grep_tool(
