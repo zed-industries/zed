@@ -58,6 +58,8 @@ impl OpenCodeSubscription {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     // -- Anthropic protocol models --
+    #[serde(rename = "claude-opus-5")]
+    ClaudeOpus5,
     #[serde(rename = "claude-opus-4-8")]
     ClaudeOpus4_8,
     #[serde(rename = "claude-opus-4-7")]
@@ -66,8 +68,6 @@ pub enum Model {
     ClaudeOpus4_6,
     #[serde(rename = "claude-opus-4-5")]
     ClaudeOpus4_5,
-    #[serde(rename = "claude-opus-4-1")]
-    ClaudeOpus4_1,
     #[default]
     #[serde(rename = "claude-sonnet-4-6")]
     ClaudeSonnet4_6,
@@ -129,8 +129,12 @@ pub enum Model {
     Gemini3_1Pro,
     #[serde(rename = "gemini-3-flash")]
     Gemini3Flash,
+    #[serde(rename = "gemini-3.5-flash-lite")]
+    Gemini3_5FlashLite,
     #[serde(rename = "gemini-3.5-flash")]
     Gemini3_5Flash,
+    #[serde(rename = "gemini-3.6-flash")]
+    Gemini3_6Flash,
 
     // -- OpenAI Chat Completions protocol models --
     #[serde(rename = "deepseek-v4-pro")]
@@ -155,6 +159,8 @@ pub enum Model {
     KimiK2_6,
     #[serde(rename = "kimi-k2.7-code")]
     KimiK2_7Code,
+    #[serde(rename = "kimi-k3")]
+    KimiK3,
     #[serde(rename = "minimax-m2.7")]
     MiniMaxM2_7,
     #[serde(rename = "minimax-m3")]
@@ -175,6 +181,10 @@ pub enum Model {
     Qwen3_7Plus,
     #[serde(rename = "qwen3.7-max")]
     Qwen3_7Max,
+    #[serde(rename = "qwen3.8-max")]
+    Qwen3_8Max,
+    #[serde(rename = "hy3")]
+    Hy3,
 
     // -- Custom model --
     #[serde(rename = "custom")]
@@ -216,18 +226,24 @@ impl Model {
             // Models available in both Zen and Go
             Self::Glm5_1
             | Self::Glm5_2
+            | Self::Grok4_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
+            | Self::KimiK3
             | Self::MiniMaxM2_7
             | Self::MiniMaxM3
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
+            | Self::Gpt5_6Luna
             | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
             // Go-only models
-            Self::MimoV2_5Pro | Self::MimoV2_5 | Self::Qwen3_7Plus | Self::Qwen3_7Max => {
-                &[OpenCodeSubscription::Go]
-            }
+            Self::MimoV2_5Pro
+            | Self::MimoV2_5
+            | Self::Qwen3_7Plus
+            | Self::Qwen3_7Max
+            | Self::Qwen3_8Max
+            | Self::Hy3 => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
             Self::Glm5 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus => {
@@ -247,11 +263,11 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
+            Self::ClaudeOpus5 => "claude-opus-5",
             Self::ClaudeOpus4_8 => "claude-opus-4-8",
             Self::ClaudeOpus4_7 => "claude-opus-4-7",
             Self::ClaudeOpus4_6 => "claude-opus-4-6",
             Self::ClaudeOpus4_5 => "claude-opus-4-5",
-            Self::ClaudeOpus4_1 => "claude-opus-4-1",
             Self::ClaudeSonnet4_6 => "claude-sonnet-4-6",
             Self::ClaudeSonnet4_5 => "claude-sonnet-4-5",
             Self::ClaudeSonnet4 => "claude-sonnet-4",
@@ -282,7 +298,9 @@ impl Model {
 
             Self::Gemini3_1Pro => "gemini-3.1-pro",
             Self::Gemini3Flash => "gemini-3-flash",
+            Self::Gemini3_5FlashLite => "gemini-3.5-flash-lite",
             Self::Gemini3_5Flash => "gemini-3.5-flash",
+            Self::Gemini3_6Flash => "gemini-3.6-flash",
 
             Self::DeepSeekV4Pro => "deepseek-v4-pro",
             Self::DeepSeekV4Flash => "deepseek-v4-flash",
@@ -295,6 +313,7 @@ impl Model {
             Self::KimiK2_5 => "kimi-k2.5",
             Self::KimiK2_6 => "kimi-k2.6",
             Self::KimiK2_7Code => "kimi-k2.7-code",
+            Self::KimiK3 => "kimi-k3",
             Self::MiniMaxM2_7 => "minimax-m2.7",
             Self::MiniMaxM3 => "minimax-m3",
             Self::MimoV2_5Pro => "mimo-v2.5-pro",
@@ -303,6 +322,8 @@ impl Model {
             Self::Qwen3_6Plus => "qwen3.6-plus",
             Self::Qwen3_7Plus => "qwen3.7-plus",
             Self::Qwen3_7Max => "qwen3.7-max",
+            Self::Qwen3_8Max => "qwen3.8-max",
+            Self::Hy3 => "hy3",
             Self::BigPickle => "big-pickle",
             Self::Nemotron3UltraFree => "nemotron-3-ultra-free",
 
@@ -312,11 +333,11 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
+            Self::ClaudeOpus5 => "Claude Opus 5",
             Self::ClaudeOpus4_8 => "Claude Opus 4.8",
             Self::ClaudeOpus4_7 => "Claude Opus 4.7",
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
             Self::ClaudeOpus4_5 => "Claude Opus 4.5",
-            Self::ClaudeOpus4_1 => "Claude Opus 4.1",
             Self::ClaudeSonnet4_6 => "Claude Sonnet 4.6",
             Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
@@ -347,7 +368,9 @@ impl Model {
 
             Self::Gemini3_1Pro => "Gemini 3.1 Pro",
             Self::Gemini3Flash => "Gemini 3 Flash",
+            Self::Gemini3_5FlashLite => "Gemini 3.5 Flash Lite",
             Self::Gemini3_5Flash => "Gemini 3.5 Flash",
+            Self::Gemini3_6Flash => "Gemini 3.6 Flash",
 
             Self::DeepSeekV4Pro => "DeepSeek V4 Pro",
             Self::DeepSeekV4Flash => "DeepSeek V4 Flash",
@@ -360,6 +383,7 @@ impl Model {
             Self::KimiK2_5 => "Kimi K2.5",
             Self::KimiK2_6 => "Kimi K2.6",
             Self::KimiK2_7Code => "Kimi K2.7 Code",
+            Self::KimiK3 => "Kimi K3",
             Self::MiniMaxM2_7 => "MiniMax M2.7",
             Self::MiniMaxM3 => "MiniMax M3",
             Self::MimoV2_5Pro => "MiMo V2.5 Pro",
@@ -368,6 +392,8 @@ impl Model {
             Self::Qwen3_6Plus => "Qwen3.6 Plus",
             Self::Qwen3_7Plus => "Qwen3.7 Plus",
             Self::Qwen3_7Max => "Qwen3.7 Max",
+            Self::Qwen3_8Max => "Qwen3.8 Max",
+            Self::Hy3 => "Hy3",
             Self::BigPickle => "Big Pickle",
             Self::Nemotron3UltraFree => "Nemotron 3 Ultra Free",
 
@@ -390,11 +416,11 @@ impl Model {
             }
 
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
             | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_1
             | Self::ClaudeSonnet5
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
@@ -422,26 +448,35 @@ impl Model {
             | Self::Gpt5Codex
             | Self::Gpt5Nano => ApiProtocol::OpenAiResponses,
 
-            Self::Gemini3_1Pro | Self::Gemini3Flash | Self::Gemini3_5Flash => ApiProtocol::Google,
+            Self::Gemini3_1Pro
+            | Self::Gemini3Flash
+            | Self::Gemini3_5FlashLite
+            | Self::Gemini3_5Flash
+            | Self::Gemini3_6Flash => ApiProtocol::Google,
 
-            Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
-                ApiProtocol::Anthropic
-            }
+            Self::Qwen3_8Max
+            | Self::Qwen3_7Max
+            | Self::Qwen3_7Plus
+            | Self::Qwen3_6Plus
+            | Self::Qwen3_5Plus => ApiProtocol::Anthropic,
 
             Self::Glm5
             | Self::Glm5_1
             | Self::Glm5_2
             | Self::GrokBuild0_1
-            | Self::Grok4_5
             | Self::KimiK2_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
+            | Self::KimiK3
             | Self::MimoV2_5Pro
             | Self::MimoV2_5
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
+            | Self::Hy3
             | Self::BigPickle
             | Self::Nemotron3UltraFree => ApiProtocol::OpenAiChat,
+
+            Self::Grok4_5 => ApiProtocol::OpenAiResponses,
 
             Self::Custom { protocol, .. } => *protocol,
         }
@@ -454,6 +489,7 @@ impl Model {
             | Self::KimiK2_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
+            | Self::KimiK3
             | Self::MimoV2_5
             | Self::MimoV2_5Pro
             | Self::Glm5
@@ -477,11 +513,10 @@ impl Model {
     pub fn max_token_count(&self, subscription: OpenCodeSubscription) -> u64 {
         match self {
             // Anthropic models
-            Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7 => 1_000_000,
+            Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7 => 1_000_000,
             Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 1_000_000,
             Self::ClaudeSonnet4_5 => 1_000_000,
             Self::ClaudeOpus4_5 | Self::ClaudeHaiku4_5 => 200_000,
-            Self::ClaudeOpus4_1 => 200_000,
             Self::ClaudeSonnet4 => 1_000_000,
             Self::ClaudeSonnet5 => 1_000_000,
             Self::ClaudeFable5 => 1_000_000,
@@ -500,9 +535,11 @@ impl Model {
             Self::Gpt5 | Self::Gpt5Codex | Self::Gpt5Nano => 400_000,
 
             // Google models
-            Self::Gemini3_1Pro => 1_048_576,
-            Self::Gemini3Flash => 1_048_576,
-            Self::Gemini3_5Flash => 1_048_576,
+            Self::Gemini3_1Pro
+            | Self::Gemini3Flash
+            | Self::Gemini3_5FlashLite
+            | Self::Gemini3_5Flash
+            | Self::Gemini3_6Flash => 1_048_576,
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => 204_800,
@@ -523,6 +560,7 @@ impl Model {
             }
             Self::Glm5_2 => 1_000_000,
             Self::KimiK2_6 | Self::KimiK2_5 | Self::KimiK2_7Code => 262_144,
+            Self::KimiK3 => 1_048_576,
             Self::GrokBuild0_1 => 256_000,
             Self::Grok4_5 => 500_000,
             Self::MimoV2_5Pro => 1_048_576,
@@ -535,7 +573,8 @@ impl Model {
                     262_144
                 }
             }
-            Self::Qwen3_7Max | Self::Qwen3_7Plus => 1_000_000,
+            Self::Qwen3_8Max | Self::Qwen3_7Max | Self::Qwen3_7Plus => 1_000_000,
+            Self::Hy3 => 256_000,
             Self::BigPickle => 200_000,
             Self::Nemotron3UltraFree => 1_000_000,
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
@@ -547,13 +586,14 @@ impl Model {
     pub fn max_output_tokens(&self, subscription: OpenCodeSubscription) -> Option<u64> {
         match self {
             // Anthropic models
-            Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7 | Self::ClaudeOpus4_6 => Some(128_000),
+            Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7 | Self::ClaudeOpus4_6 => {
+                Some(128_000)
+            }
             Self::ClaudeOpus4_5
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeHaiku4_5
             | Self::ClaudeSonnet4 => Some(64_000),
-            Self::ClaudeOpus4_1 => Some(32_000),
             Self::ClaudeSonnet5 => Some(128_000),
             Self::ClaudeFable5 => Some(128_000),
 
@@ -580,7 +620,11 @@ impl Model {
             | Self::Gpt5Nano => Some(128_000),
 
             // Google models
-            Self::Gemini3_1Pro | Self::Gemini3Flash | Self::Gemini3_5Flash => Some(65_536),
+            Self::Gemini3_1Pro
+            | Self::Gemini3Flash
+            | Self::Gemini3_5FlashLite
+            | Self::Gemini3_5Flash
+            | Self::Gemini3_6Flash => Some(65_536),
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => Some(131_072),
@@ -609,14 +653,17 @@ impl Model {
             Self::BigPickle => Some(32_000),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::KimiK2_7Code => Some(262_144),
+            Self::KimiK3 => Some(131_072),
             Self::GrokBuild0_1 => Some(256_000),
             Self::Grok4_5 => Some(500_000),
             Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
                 Some(65_536)
             }
+            Self::Qwen3_8Max => Some(131_072),
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
             Self::Nemotron3UltraFree => Some(128_000),
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
+            Self::Hy3 => Some(64_000),
 
             Self::Custom {
                 max_output_tokens, ..
@@ -631,11 +678,11 @@ impl Model {
     pub fn supports_images(&self) -> bool {
         match self {
             // Anthropic models support images
-            Self::ClaudeOpus4_8
+            Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
             | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_1
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
@@ -668,10 +715,15 @@ impl Model {
             Self::Gpt5_3Spark => false,
 
             // Google models support images
-            Self::Gemini3_1Pro | Self::Gemini3Flash | Self::Gemini3_5Flash => true,
+            Self::Gemini3_1Pro
+            | Self::Gemini3Flash
+            | Self::Gemini3_5FlashLite
+            | Self::Gemini3_5Flash
+            | Self::Gemini3_6Flash => true,
 
             // OpenAI-compatible models with image support
             Self::KimiK2_6
+            | Self::KimiK3
             | Self::KimiK2_7Code
             | Self::KimiK2_5
             | Self::GrokBuild0_1
@@ -680,6 +732,7 @@ impl Model {
             | Self::Qwen3_5Plus
             | Self::Qwen3_6Plus
             | Self::Qwen3_7Plus
+            | Self::Qwen3_8Max
             | Self::MiniMaxM3 => true,
 
             // OpenAI-compatible models without image support
@@ -692,6 +745,7 @@ impl Model {
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
             | Self::Qwen3_7Max
+            | Self::Hy3
             | Self::BigPickle
             | Self::Nemotron3UltraFree => false,
 
@@ -709,6 +763,7 @@ impl Model {
         match self {
             // Anthropic models
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeSonnet5 => Some(vec![
@@ -789,7 +844,10 @@ impl Model {
             ]),
 
             // Google models
-            Self::Gemini3Flash | Self::Gemini3_5Flash => Some(vec![
+            Self::Gemini3Flash
+            | Self::Gemini3_5FlashLite
+            | Self::Gemini3_5Flash
+            | Self::Gemini3_6Flash => Some(vec![
                 ReasoningEffort::Minimal,
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
@@ -808,6 +866,9 @@ impl Model {
                 ReasoningEffort::High,
                 ReasoningEffort::Max,
             ]),
+
+            // Moonshot AI models
+            Self::KimiK3 => Some(vec![ReasoningEffort::Max]),
 
             // MiniMax models
             Self::MiniMaxM3 => Some(vec![ReasoningEffort::None]),
@@ -828,6 +889,13 @@ impl Model {
 
             // Z AI models
             Self::Glm5_2 => Some(vec![ReasoningEffort::High, ReasoningEffort::Max]),
+
+            // Tencent models
+            Self::Hy3 => Some(vec![
+                ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::High,
+            ]),
 
             // SpaceXAI models
             Self::Grok4_5 => Some(vec![
