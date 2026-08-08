@@ -210,7 +210,7 @@ impl NeovimConnection {
             .await
             .expect("Could not set nvim cursor position");
 
-        if !selection.is_empty() {
+        if selection.start != selection.end {
             self.nvim
                 .input("v")
                 .await
