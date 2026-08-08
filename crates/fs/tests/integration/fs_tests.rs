@@ -320,7 +320,7 @@ async fn test_copy_recursive_with_filter(executor: BackgroundExecutor) {
         Path::new(path!("/outer copy")),
         RecursiveCopyOptions {
             copy_options: CopyOptions::default(),
-            filter: SkipBAndInner2,
+            filter: &SkipBAndInner2,
         },
     )
     .await

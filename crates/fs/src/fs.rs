@@ -293,16 +293,16 @@ impl CopyFilter for NoFilter {
 }
 
 #[derive(Copy, Clone)]
-pub struct RecursiveCopyOptions<F = NoFilter> {
+pub struct RecursiveCopyOptions<'a> {
     pub copy_options: CopyOptions,
-    pub filter: F,
+    pub filter: &'a dyn CopyFilter,
 }
 
-impl Default for RecursiveCopyOptions {
+impl Default for RecursiveCopyOptions<'_> {
     fn default() -> Self {
         Self {
             copy_options: CopyOptions::default(),
-            filter: NoFilter,
+            filter: &NoFilter,
         }
     }
 }
@@ -3417,13 +3417,13 @@ impl Fs for FakeFs {
     }
 }
 
-pub async fn copy_recursive<'a, F: CopyFilter>(
+pub async fn copy_recursive<'a>(
     fs: &'a dyn Fs,
     source: &'a Path,
     target: &'a Path,
-    options: RecursiveCopyOptions<F>,
+    options: RecursiveCopyOptions<'_>,
 ) -> Result<()> {
-    for (item, is_dir) in read_dir_items(fs, source, &options.filter).await? {
+    for (item, is_dir) in read_dir_items(fs, source, options.filter).await? {
         let Ok(item_relative_path) = item.strip_prefix(source) else {
             continue;
         };
@@ -3466,20 +3466,20 @@ pub async fn copy_recursive<'a, F: CopyFilter>(
 /// Recursively reads all of the paths in the given directory that match the filter.
 ///
 /// Returns a vector of tuples of (path, is_dir). Rejected directories are not traversed.
-pub async fn read_dir_items<'a, F: CopyFilter>(
+pub async fn read_dir_items<'a>(
     fs: &'a dyn Fs,
     source: &'a Path,
-    filter: &'a F,
+    filter: &'a dyn CopyFilter,
 ) -> Result<Vec<(PathBuf, bool)>> {
     let mut items = Vec::new();
     read_recursive(fs, source, filter, &mut items).await?;
     Ok(items)
 }
 
-fn read_recursive<'a, F: CopyFilter>(
+fn read_recursive<'a>(
     fs: &'a dyn Fs,
     source: &'a Path,
-    filter: &'a F,
+    filter: &'a dyn CopyFilter,
     output: &'a mut Vec<(PathBuf, bool)>,
 ) -> BoxFuture<'a, Result<()>> {
     use futures::future::FutureExt;
