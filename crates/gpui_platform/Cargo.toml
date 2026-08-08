@@ -14,7 +14,7 @@ path = "src/gpui_platform.rs"
 [features]
 default = []
 font-kit = ["gpui_macos/font-kit"]
-test-support = ["gpui/test-support", "gpui_macos/test-support"]
+test-support = ["gpui/test-support", "gpui_macos/test-support", "gpui_wgpu/test-support"]
 screen-capture = ["gpui/screen-capture", "gpui_macos/screen-capture", "gpui_windows/screen-capture", "gpui_linux/screen-capture"]
 runtime_shaders = ["gpui_macos/runtime_shaders"]
 wayland = ["gpui_linux/wayland"]
@@ -22,16 +22,21 @@ x11 = ["gpui_linux/x11"]
 
 [dependencies]
 gpui.workspace = true
+log.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 gpui_macos.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 gpui_windows.workspace = true
+gpui_wgpu.workspace = true
 gpui = { workspace = true, features = ["windows-manifest"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 gpui_linux.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui_wgpu.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 gpui_web.workspace = true
