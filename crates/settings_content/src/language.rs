@@ -466,6 +466,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: false
     pub hard_tabs: Option<bool>,
+    /// Whether to automatically detect indentation per buffer.
+    ///
+    /// Default: false
+    pub detect_indentation: Option<bool>,
     /// How to soft-wrap long lines of text.
     ///
     /// Default: none
