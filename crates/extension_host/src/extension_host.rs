@@ -321,7 +321,7 @@ impl ExtensionStore {
         let (reload_tx, mut reload_rx) = unbounded();
         let (connection_registered_tx, mut connection_registered_rx) = unbounded();
         let mut this = Self {
-            proxy: extension_host_proxy.clone(),
+            proxy: extension_host_proxy,
             extension_index: Default::default(),
             installed_dir,
             staging_dir,
@@ -330,14 +330,7 @@ impl ExtensionStore {
             outstanding_operations: Default::default(),
             modified_extensions: Default::default(),
             reload_complete_senders: Vec::new(),
-            wasm_host: WasmHost::new(
-                fs.clone(),
-                http_client.clone(),
-                node_runtime,
-                extension_host_proxy,
-                work_dir,
-                cx,
-            ),
+            wasm_host: WasmHost::new(fs.clone(), http_client.clone(), node_runtime, work_dir, cx),
             wasm_extensions: Vec::new(),
             fs,
             http_client,

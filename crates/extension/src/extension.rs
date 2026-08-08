@@ -12,7 +12,7 @@ use ::lsp::LanguageServerName;
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use gpui::{App, Task};
-use language::LanguageName;
+use language::{BinaryStatus, LanguageName};
 use semver::Version;
 use task::{SpawnInTerminal, ZedDebugConfig};
 use util::rel_path::RelPath;
@@ -36,6 +36,10 @@ pub trait WorktreeDelegate: Send + Sync + 'static {
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn which(&self, binary_name: String) -> Option<String>;
     async fn shell_env(&self) -> Vec<(String, String)>;
+}
+
+pub trait LanguageServerStatusDelegate: Send + Sync + 'static {
+    fn update_status(&self, server_name: LanguageServerName, status: BinaryStatus);
 }
 
 pub trait ProjectDelegate: Send + Sync + 'static {
@@ -64,6 +68,7 @@ pub trait Extension: Send + Sync + 'static {
         language_server_id: LanguageServerName,
         language_name: LanguageName,
         worktree: Arc<dyn WorktreeDelegate>,
+        status_delegate: Arc<dyn LanguageServerStatusDelegate>,
     ) -> Result<Command>;
 
     async fn language_server_initialization_options(

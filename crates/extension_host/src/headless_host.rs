@@ -49,7 +49,6 @@ impl HeadlessExtensionStore {
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
-                extension_host_proxy.clone(),
                 extension_dir.join("work"),
                 cx,
             ),

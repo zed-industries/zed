@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
-    DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, KeyValueStoreDelegate,
+    DebugTaskDefinition, ExtensionCapability, KeyValueStoreDelegate, LanguageServerStatusDelegate,
     ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
     WorktreeDelegate,
 };
@@ -23,7 +23,7 @@ use futures::{
 };
 use gpui::{App, AsyncApp, BackgroundExecutor, Task};
 use http_client::HttpClient;
-use language::LanguageName;
+use language::{BinaryStatus, LanguageName};
 use lsp::LanguageServerName;
 use moka::sync::Cache;
 use node_runtime::NodeRuntime;
@@ -50,7 +50,6 @@ pub struct WasmHost {
     release_channel: ReleaseChannel,
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
-    pub(crate) proxy: Arc<ExtensionHostProxy>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
     /// The capabilities granted to extensions running on the host.
@@ -90,10 +89,12 @@ impl extension::Extension for WasmExtension {
         language_server_id: LanguageServerName,
         language_name: LanguageName,
         worktree: Arc<dyn WorktreeDelegate>,
+        status_delegate: Arc<dyn LanguageServerStatusDelegate>,
     ) -> Result<Command> {
         self.call(|extension, store| {
             async move {
                 let resource = store.data_mut().table.push(worktree)?;
+                store.data_mut().language_server_status_delegate = Some(status_delegate);
                 let command = extension
                     .call_language_server_command(
                         store,
@@ -101,8 +102,9 @@ impl extension::Extension for WasmExtension {
                         &language_name,
                         resource,
                     )
-                    .await?
-                    .map_err(|err| store.data().extension_error(err))?;
+                    .await;
+                store.data_mut().language_server_status_delegate = None;
+                let command = command?.map_err(|err| store.data().extension_error(err))?;
 
                 Ok(command.into())
             }
@@ -535,6 +537,23 @@ pub struct WasmState {
     ctx: WasiCtx,
     pub host: Arc<WasmHost>,
     pub(crate) capability_granter: CapabilityGranter,
+    language_server_status_delegate: Option<Arc<dyn LanguageServerStatusDelegate>>,
+}
+
+impl WasmState {
+    fn update_language_server_status(
+        &self,
+        server_name: LanguageServerName,
+        status: BinaryStatus,
+    ) -> wasmtime::Result<()> {
+        let Some(delegate) = &self.language_server_status_delegate else {
+            return Err(anyhow!(
+                "language server installation status was updated outside of language_server_command"
+            ));
+        };
+        delegate.update_status(server_name, status);
+        Ok(())
+    }
 }
 
 type MainThreadCall = Box<dyn Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, ()>>;
@@ -603,7 +622,6 @@ impl WasmHost {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
-        proxy: Arc<ExtensionHostProxy>,
         work_dir: PathBuf,
         cx: &mut App,
     ) -> Arc<Self> {
@@ -622,7 +640,6 @@ impl WasmHost {
             work_dir,
             http_client,
             node_runtime,
-            proxy,
             release_channel: ReleaseChannel::global(cx),
             granted_capabilities: extension_settings.granted_capabilities.clone(),
             _main_thread_message_task: task,
@@ -668,6 +685,7 @@ impl WasmHost {
                         this.granted_capabilities.clone(),
                         manifest.clone(),
                     ),
+                    language_server_status_delegate: None,
                 },
             );
             // Store will yield after 1 tick, and get a new deadline of 1 tick after each yield.
@@ -996,7 +1014,6 @@ impl CacheStore for IncrementalCompilationCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use extension::ExtensionHostProxy;
     use fs::FakeFs;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
@@ -1038,7 +1055,6 @@ mod tests {
                 fs.clone(),
                 FakeHttpClient::with_200_response(),
                 NodeRuntime::unavailable(),
-                Arc::new(ExtensionHostProxy::default()),
                 PathBuf::from("/work"),
                 cx,
             )
