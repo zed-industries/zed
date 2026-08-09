@@ -7,7 +7,7 @@ use editor::{
     AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, ExcerptRange, MultiBufferSnapshot,
     RangeToAnchorExt, SelectionEffects,
     display_map::ToDisplayPoint,
-    items::{entry_git_aware_label_color, entry_label_color},
+    items::{entry_git_aware_label_color, entry_label_color, folder_indicator_element},
     scroll::{Autoscroll, ScrollAnchor},
 };
 use file_icons::FileIcons;
@@ -2387,13 +2387,13 @@ impl OutlinePanel {
                     directory.entry.is_ignored,
                     is_active,
                 );
-                let icon = if settings.folder_icons {
-                    FileIcons::get_folder_icon(is_expanded, directory.entry.path.as_std_path(), cx)
-                } else {
-                    FileIcons::get_chevron_icon(is_expanded, cx)
-                }
-                .map(Icon::from_path)
-                .map(|icon| icon.color(color).into_any_element());
+                let icon = folder_indicator_element(
+                    settings.folder_indicator,
+                    is_expanded,
+                    directory.entry.path.as_std_path(),
+                    color,
+                    cx,
+                );
                 (
                     ElementId::from(directory.entry.id.to_proto() as usize),
                     HighlightedLabel::new(
@@ -2484,13 +2484,13 @@ impl OutlinePanel {
                 .map(|entry| entry.git_summary)
                 .unwrap_or_default();
             let color = entry_git_aware_label_color(git_status, is_ignored, is_active);
-            let icon = if settings.folder_icons {
-                FileIcons::get_folder_icon(is_expanded, &Path::new(&name), cx)
-            } else {
-                FileIcons::get_chevron_icon(is_expanded, cx)
-            }
-            .map(Icon::from_path)
-            .map(|icon| icon.color(color).into_any_element());
+            let icon = folder_indicator_element(
+                settings.folder_indicator,
+                is_expanded,
+                Path::new(&name),
+                color,
+                cx,
+            );
             (
                 ElementId::from(
                     folded_dir
@@ -2659,7 +2659,7 @@ impl OutlinePanel {
                     .toggle_state(is_active)
                     .child(
                         h_flex()
-                            .child(h_flex().w(px(16.)).justify_center().child(icon_element))
+                            .child(h_flex().min_w(px(16.)).justify_center().child(icon_element))
                             .child(h_flex().h_6().child(label_element).ml_1()),
                     )
                     .on_secondary_mouse_down(cx.listener(
