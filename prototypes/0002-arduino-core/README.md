@@ -22,7 +22,7 @@ avrdude -c arduino -p atmega328p -P /dev/ttyACM0 -b 115200 -U flash:w:build/firm
 
 - `avrdude` による書き込み・ベリファイ成功
 - 13番ピン(オンボードLED)の点滅を目視確認済み
-- `avr-size` 実測値: text=2376 bytes(0001のtext=274 bytesとの差分がArduinoコア分のコスト)
+- `avr-size` 実測値: text=1056 bytes(0001のtext=274 bytesとの差分がArduinoコア分のコスト。以前はコアオブジェクトを直接リンクしていたため`--gc-sections`が未使用コード[例: `HardwareSerial0.cpp`のISR/グローバルコンストラクタ]を刈れずtext=2376 bytesだった。`core.a`にアーカイブしてからリンクする方式に修正し、この値まで縮小した)
 
 `-P` はシリアルポートに合わせて変更する。
 
