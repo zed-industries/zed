@@ -6,7 +6,9 @@ pub mod build_pipeline;
 use std::path::Path;
 use std::sync::Arc;
 
-use board_detect::{BoardIdentity, GlobalBoardMonitor, UnverifiedChipDetected};
+use board_detect::{
+    BoardIdentity, GlobalBoardMonitor, SignatureReadFailed, UnverifiedChipDetected,
+};
 use board_registry::{avrdude_defaults, board_kind_from_display_name};
 use build_pipeline::{BuildTarget, build_and_flash};
 use gpui::{Action, App, AssetSource, Context, SharedString, Subscription, WeakEntity, actions};
@@ -94,7 +96,7 @@ fn start_build_and_upload(workspace: &mut Workspace, cx: &mut Context<Workspace>
     let Some(mmcu) = detected.mmcu else {
         show_error_toast_in_workspace(
             workspace,
-            "Could not read the chip signature yet. Wait a moment and try again.",
+            "Could not read this board's chip signature. Try disconnecting and reconnecting it.",
             cx,
         );
         return;
@@ -143,6 +145,11 @@ fn start_build_and_upload(workspace: &mut Workspace, cx: &mut Context<Workspace>
     };
     let asset_source = cx.asset_source().clone();
 
+    // ponytail: build/flash runs in a cx.background_spawn task inside this process, not a
+    // separate persistent backend process -- keeps the UI live (a hung avrdude can't block a
+    // keystroke) but doesn't survive an IDE crash with the port held open. Upgrade path if that
+    // becomes a real problem: a dedicated persistent backend process per RFC 0002's "Process
+    // isolation" failsafe layer.
     cx.spawn(async move |workspace, cx| {
         let extract_result = cx
             .background_spawn({
@@ -195,7 +202,16 @@ fn extract_core_sources_if_needed(
     const ASSET_DIR: &str = "arduino-core/ArduinoCore-avr";
     let asset_prefix = format!("{ASSET_DIR}/");
 
-    for asset_path in asset_source.list(ASSET_DIR)? {
+    let asset_paths = asset_source.list(ASSET_DIR)?;
+    if asset_paths.is_empty() {
+        anyhow::bail!(
+            "ArduinoCore-avr assets are missing from this build — was the \
+             assets/arduino-core/ArduinoCore-avr git submodule initialized? \
+             (`git submodule update --init`)"
+        );
+    }
+
+    for asset_path in asset_paths {
         let Some(relative_path) = asset_path.strip_prefix(&asset_prefix) else {
             continue;
         };
@@ -226,16 +242,26 @@ impl BoardIndicator {
     fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
         let monitor = cx.global::<GlobalBoardMonitor>().0.clone();
         let observe_subscription = cx.observe(&monitor, |_, _, cx| cx.notify());
-        let subscribe_subscription = cx.subscribe(
+        let unverified_chip_subscription = cx.subscribe(
             &monitor,
             |this, _monitor, _event: &UnverifiedChipDetected, cx| {
                 this.show_unverified_chip_toast(cx);
             },
         );
+        let signature_read_failed_subscription = cx.subscribe(
+            &monitor,
+            |this, _monitor, event: &SignatureReadFailed, cx| {
+                this.show_signature_read_failed_toast(&event.port_name, cx);
+            },
+        );
 
         Self {
             workspace: workspace.weak_handle(),
-            _subscriptions: vec![observe_subscription, subscribe_subscription],
+            _subscriptions: vec![
+                observe_subscription,
+                unverified_chip_subscription,
+                signature_read_failed_subscription,
+            ],
         }
     }
 
@@ -245,6 +271,20 @@ impl BoardIndicator {
                 show_error_toast_in_workspace(
                     workspace,
                     "Connected chip does not match a verified part signature. Builds may not work correctly.",
+                    cx,
+                );
+            })
+            .log_err();
+    }
+
+    fn show_signature_read_failed_toast(&self, port_name: &str, cx: &mut App) {
+        self.workspace
+            .update(cx, |workspace, cx| {
+                show_error_toast_in_workspace(
+                    workspace,
+                    format!(
+                        "Could not read the chip signature on {port_name}. Try disconnecting and reconnecting the board."
+                    ),
                     cx,
                 );
             })

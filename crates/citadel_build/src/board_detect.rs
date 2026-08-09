@@ -159,6 +159,19 @@ pub struct UnverifiedChipDetected;
 
 impl EventEmitter<UnverifiedChipDetected> for BoardMonitor {}
 
+/// Emitted when `begin_identify`'s chip-signature read fails (e.g. the port
+/// is claimed by another process, or the board doesn't speak the expected
+/// bootloader protocol). `BoardMonitor` has no `Workspace` handle to show a
+/// toast directly, so it emits this event instead; the toast display lives
+/// in `citadel_build.rs`. A port is only probed once per physical connect
+/// event (see `apply_poll`'s `newly_connected_ports` diff), so this is the
+/// only signal the user gets that the probe failed.
+pub struct SignatureReadFailed {
+    pub port_name: String,
+}
+
+impl EventEmitter<SignatureReadFailed> for BoardMonitor {}
+
 pub fn init(cx: &mut App) {
     let board_monitor = cx.new(BoardMonitor::new);
     cx.set_global(GlobalBoardMonitor(board_monitor));
@@ -212,10 +225,11 @@ impl BoardMonitor {
 
         cx.spawn(async move |this, cx| {
             let signature_port_name = port_name.clone();
-            let signature = cx
+            let signature_result = cx
                 .background_spawn(async move { read_chip_signature(&signature_port_name).await })
-                .await
-                .log_err();
+                .await;
+            let signature_read_failed = signature_result.is_err();
+            let signature = signature_result.log_err();
 
             this.update(cx, move |this, cx| {
                 let chip = signature.and_then(lookup_chip);
@@ -223,7 +237,7 @@ impl BoardMonitor {
                 let mmcu = chip.map(|chip| chip.mmcu);
 
                 this.detected = Some(DetectedBoard {
-                    port_name,
+                    port_name: port_name.clone(),
                     vid_pid,
                     identity,
                     chip_verified,
@@ -232,6 +246,10 @@ impl BoardMonitor {
 
                 if let Some(verified) = chip_verified {
                     this.maybe_warn_unverified_chip(vid_pid, verified, cx);
+                }
+
+                if signature_read_failed {
+                    cx.emit(SignatureReadFailed { port_name });
                 }
 
                 cx.notify();

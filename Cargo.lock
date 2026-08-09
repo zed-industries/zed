@@ -23283,6 +23283,7 @@ dependencies = [
  "call",
  "channel",
  "chrono",
+ "citadel_build",
  "citadel_new_project",
  "clap",
  "cli",

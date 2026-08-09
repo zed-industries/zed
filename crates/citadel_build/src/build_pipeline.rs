@@ -562,19 +562,27 @@ mod tests {
         .expect("should compile");
 
         assert_eq!(spec.program, "avr-gcc");
-        assert!(spec.args.contains(&"-std=gnu11".to_string()));
-        assert!(spec.args.contains(&"-Os".to_string()));
-        assert!(spec.args.contains(&"-w".to_string()));
-        assert!(spec.args.contains(&"-ffunction-sections".to_string()));
-        assert!(spec.args.contains(&"-fdata-sections".to_string()));
-        assert!(spec.args.contains(&"-DF_CPU=16000000L".to_string()));
-        assert!(spec.args.contains(&"-DARDUINO=10808".to_string()));
-        assert!(spec.args.contains(&"-DARDUINO_AVR_UNO".to_string()));
-        assert!(spec.args.contains(&"-DARDUINO_ARCH_AVR".to_string()));
-        assert!(spec.args.contains(&"-Ivendor/cores/arduino".to_string()));
-        assert!(spec.args.contains(&"-Ivendor/variants/standard".to_string()));
-        assert!(spec.args.contains(&"src/main.c".to_string()));
-        assert!(spec.args.contains(&"build/main.c.o".to_string()));
+        assert_eq!(
+            spec.args,
+            vec![
+                "-mmcu=atmega328p".to_string(),
+                "-Os".to_string(),
+                "-w".to_string(),
+                "-std=gnu11".to_string(),
+                "-ffunction-sections".to_string(),
+                "-fdata-sections".to_string(),
+                "-DF_CPU=16000000L".to_string(),
+                "-DARDUINO=10808".to_string(),
+                "-DARDUINO_AVR_UNO".to_string(),
+                "-DARDUINO_ARCH_AVR".to_string(),
+                "-Ivendor/cores/arduino".to_string(),
+                "-Ivendor/variants/standard".to_string(),
+                "-c".to_string(),
+                "src/main.c".to_string(),
+                "-o".to_string(),
+                "build/main.c.o".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -589,14 +597,30 @@ mod tests {
         .expect("should compile");
 
         assert_eq!(spec.program, "avr-g++");
-        assert!(spec.args.contains(&"-std=gnu++11".to_string()));
-        assert!(spec.args.contains(&"-fpermissive".to_string()));
-        assert!(spec.args.contains(&"-fno-exceptions".to_string()));
-        assert!(spec.args.contains(&"-fno-threadsafe-statics".to_string()));
-        assert!(spec.args.contains(&"-Os".to_string()));
-        assert!(spec.args.contains(&"-w".to_string()));
-        assert!(spec.args.contains(&"-ffunction-sections".to_string()));
-        assert!(spec.args.contains(&"-fdata-sections".to_string()));
+        assert_eq!(
+            spec.args,
+            vec![
+                "-mmcu=atmega328p".to_string(),
+                "-Os".to_string(),
+                "-w".to_string(),
+                "-std=gnu++11".to_string(),
+                "-fpermissive".to_string(),
+                "-fno-exceptions".to_string(),
+                "-fno-threadsafe-statics".to_string(),
+                "-ffunction-sections".to_string(),
+                "-fdata-sections".to_string(),
+                "-DF_CPU=16000000L".to_string(),
+                "-DARDUINO=10808".to_string(),
+                "-DARDUINO_AVR_UNO".to_string(),
+                "-DARDUINO_ARCH_AVR".to_string(),
+                "-Ivendor/cores/arduino".to_string(),
+                "-Ivendor/variants/standard".to_string(),
+                "-c".to_string(),
+                "src/main.cpp".to_string(),
+                "-o".to_string(),
+                "build/main.cpp.o".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -611,11 +635,27 @@ mod tests {
         .expect("should compile");
 
         assert_eq!(spec.program, "avr-gcc");
-        assert!(spec.args.contains(&"-x".to_string()));
-        assert!(spec.args.contains(&"assembler-with-cpp".to_string()));
-        assert!(spec.args.contains(&"-w".to_string()));
-        assert!(spec.args.contains(&"-ffunction-sections".to_string()));
-        assert!(spec.args.contains(&"-fdata-sections".to_string()));
+        assert_eq!(
+            spec.args,
+            vec![
+                "-mmcu=atmega328p".to_string(),
+                "-x".to_string(),
+                "assembler-with-cpp".to_string(),
+                "-w".to_string(),
+                "-ffunction-sections".to_string(),
+                "-fdata-sections".to_string(),
+                "-DF_CPU=16000000L".to_string(),
+                "-DARDUINO=10808".to_string(),
+                "-DARDUINO_AVR_UNO".to_string(),
+                "-DARDUINO_ARCH_AVR".to_string(),
+                "-Ivendor/cores/arduino".to_string(),
+                "-Ivendor/variants/standard".to_string(),
+                "-c".to_string(),
+                "src/main.S".to_string(),
+                "-o".to_string(),
+                "build/main.S.o".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -646,10 +686,15 @@ mod tests {
         let spec = core_archive_args(archive, &objects);
 
         assert_eq!(spec.program, "avr-ar");
-        assert_eq!(spec.args[0], "rcs");
-        assert!(spec.args.contains(&"build/core.a".to_string()));
-        assert!(spec.args.contains(&"build/core/a.o".to_string()));
-        assert!(spec.args.contains(&"build/core/b.o".to_string()));
+        assert_eq!(
+            spec.args,
+            vec![
+                "rcs".to_string(),
+                "build/core.a".to_string(),
+                "build/core/a.o".to_string(),
+                "build/core/b.o".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -663,19 +708,29 @@ mod tests {
         );
 
         assert_eq!(spec.program, "avr-g++");
-        assert!(spec.args.contains(&"-std=gnu++11".to_string()));
-        assert!(spec.args.contains(&"-fpermissive".to_string()));
-        assert!(spec.args.contains(&"-fno-exceptions".to_string()));
-        assert!(spec.args.contains(&"-fno-threadsafe-statics".to_string()));
-        assert!(spec.args.contains(&"-Os".to_string()));
-        assert!(spec.args.contains(&"-ffunction-sections".to_string()));
-        assert!(spec.args.contains(&"-fdata-sections".to_string()));
-        assert!(spec.args.contains(&"-DF_CPU=16000000L".to_string()));
-        assert!(spec.args.contains(&"-DARDUINO=10808".to_string()));
-        assert!(spec.args.contains(&"-DARDUINO_AVR_UNO".to_string()));
-        assert!(spec.args.contains(&"-DARDUINO_ARCH_AVR".to_string()));
-        assert!(spec.args.contains(&"cpp/sketch.cpp".to_string()));
-        assert!(spec.args.contains(&"build/sketch.o".to_string()));
+        assert_eq!(
+            spec.args,
+            vec![
+                "-mmcu=atmega328p".to_string(),
+                "-Os".to_string(),
+                "-std=gnu++11".to_string(),
+                "-fpermissive".to_string(),
+                "-fno-exceptions".to_string(),
+                "-fno-threadsafe-statics".to_string(),
+                "-ffunction-sections".to_string(),
+                "-fdata-sections".to_string(),
+                "-DF_CPU=16000000L".to_string(),
+                "-DARDUINO=10808".to_string(),
+                "-DARDUINO_AVR_UNO".to_string(),
+                "-DARDUINO_ARCH_AVR".to_string(),
+                "-Ivendor/cores/arduino".to_string(),
+                "-Ivendor/variants/standard".to_string(),
+                "-c".to_string(),
+                "cpp/sketch.cpp".to_string(),
+                "-o".to_string(),
+                "build/sketch.o".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -688,12 +743,17 @@ mod tests {
             spec.env.get("RUSTFLAGS"),
             Some(&"-C target-cpu=atmega328p".to_string())
         );
-        assert!(spec.args.contains(&"build".to_string()));
-        assert!(spec.args.contains(&"--release".to_string()));
-        assert!(spec.args.contains(&"-Z".to_string()));
-        assert!(spec.args.contains(&"build-std=core".to_string()));
-        assert!(spec.args.contains(&"--target".to_string()));
-        assert!(spec.args.contains(&"avr-none".to_string()));
+        assert_eq!(
+            spec.args,
+            vec![
+                "build".to_string(),
+                "--release".to_string(),
+                "-Z".to_string(),
+                "build-std=core".to_string(),
+                "--target".to_string(),
+                "avr-none".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -708,16 +768,20 @@ mod tests {
         );
 
         assert_eq!(spec.program, "avr-g++");
-        assert!(spec.args.contains(&"-mmcu=atmega328p".to_string()));
-        assert!(spec.args.contains(&"-Os".to_string()));
-        assert!(spec.args.contains(&"-Wl,--gc-sections".to_string()));
-        assert!(spec.args.contains(&"build/sketch.o".to_string()));
-        assert!(spec.args.contains(&"build/core.a".to_string()));
-        assert!(spec
-            .args
-            .contains(&"-Lrust/target/avr-none/release".to_string()));
-        assert!(spec.args.contains(&"-lcitadel_logic".to_string()));
-        assert!(spec.args.contains(&"build/firmware.elf".to_string()));
+        assert_eq!(
+            spec.args,
+            vec![
+                "-mmcu=atmega328p".to_string(),
+                "-Os".to_string(),
+                "-Wl,--gc-sections".to_string(),
+                "-o".to_string(),
+                "build/firmware.elf".to_string(),
+                "build/sketch.o".to_string(),
+                "build/core.a".to_string(),
+                "-Lrust/target/avr-none/release".to_string(),
+                "-lcitadel_logic".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -725,12 +789,17 @@ mod tests {
         let spec = objcopy_args(Path::new("build/firmware.elf"), Path::new("build/firmware.hex"));
 
         assert_eq!(spec.program, "avr-objcopy");
-        assert_eq!(spec.args[0], "-O");
-        assert_eq!(spec.args[1], "ihex");
-        assert_eq!(spec.args[2], "-R");
-        assert_eq!(spec.args[3], ".eeprom");
-        assert!(spec.args.contains(&"build/firmware.elf".to_string()));
-        assert!(spec.args.contains(&"build/firmware.hex".to_string()));
+        assert_eq!(
+            spec.args,
+            vec![
+                "-O".to_string(),
+                "ihex".to_string(),
+                "-R".to_string(),
+                ".eeprom".to_string(),
+                "build/firmware.elf".to_string(),
+                "build/firmware.hex".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -744,18 +813,21 @@ mod tests {
         );
 
         assert_eq!(spec.program, "avrdude");
-        assert!(spec.args.contains(&"-c".to_string()));
-        assert!(spec.args.contains(&"arduino".to_string()));
-        assert!(spec.args.contains(&"-p".to_string()));
-        assert!(spec.args.contains(&"atmega328p".to_string()));
-        assert!(spec.args.contains(&"-P".to_string()));
-        assert!(spec.args.contains(&"/dev/ttyUSB0".to_string()));
-        assert!(spec.args.contains(&"-b".to_string()));
-        assert!(spec.args.contains(&"115200".to_string()));
-        assert!(spec.args.contains(&"-U".to_string()));
-        assert!(spec
-            .args
-            .contains(&"flash:w:build/firmware.hex:i".to_string()));
+        assert_eq!(
+            spec.args,
+            vec![
+                "-c".to_string(),
+                "arduino".to_string(),
+                "-p".to_string(),
+                "atmega328p".to_string(),
+                "-P".to_string(),
+                "/dev/ttyUSB0".to_string(),
+                "-b".to_string(),
+                "115200".to_string(),
+                "-U".to_string(),
+                "flash:w:build/firmware.hex:i".to_string(),
+            ]
+        );
     }
 
     #[test]
