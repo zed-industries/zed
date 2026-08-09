@@ -27,27 +27,18 @@ fn create_table_cell(
     cx: &Context<'_, CsvPreviewView>,
 ) -> gpui::Stateful<Div> {
     div()
-        .id(ElementId::Name(
-            format!(
-                "csv-display-cell-{}-{}",
-                *display_cell_id.row, *display_cell_id.col
-            )
-            .into(),
+        .id(ElementId::NamedInteger(
+            format!("csv-display-cell-{}", *display_cell_id.row).into(),
+            *display_cell_id.col as u64,
         ))
         .cursor_pointer()
         .flex()
         .h_full()
         .px_1()
-        .bg(cx.theme().colors().editor_background)
-        .border_b_1()
         .border_color(cx.theme().colors().border_variant)
         .map(|div| match vertical_alignment {
             VerticalAlignment::Top => div.items_start(),
             VerticalAlignment::Center => div.items_center(),
-        })
-        .map(|div| match vertical_alignment {
-            VerticalAlignment::Top => div.content_start(),
-            VerticalAlignment::Center => div.content_center(),
         })
         .font_buffer(cx)
         .tooltip(Tooltip::text(cell_content.clone()))

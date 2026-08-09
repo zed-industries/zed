@@ -79,6 +79,7 @@ pub struct FakeGitRepositoryState {
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
+    pub commit_template: Option<GitCommitTemplate>,
 }
 
 impl FakeGitRepositoryState {
@@ -104,6 +105,7 @@ impl FakeGitRepositoryState {
             commit_data: Default::default(),
             commit_history: Vec::new(),
             stash_entries: Default::default(),
+            commit_template: None,
         }
     }
 }
@@ -163,7 +165,7 @@ impl FakeGitRepository {
 
 impl GitRepository for FakeGitRepository {
     fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
-        async { Ok(None) }.boxed()
+        self.with_state_async(false, |state| Ok(state.commit_template.clone()))
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
@@ -205,28 +207,43 @@ impl GitRepository for FakeGitRepository {
         async move { fut.await.unwrap_or_default() }.boxed()
     }
 
-    fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
-        let mut entries = HashMap::default();
-        self.with_state_async(false, |state| {
-            for (path, content) in &state.head_contents {
-                let status = if let Some((oid, original)) = state
-                    .merge_base_contents
-                    .get(path)
-                    .map(|oid| (oid, &state.oids[oid]))
-                {
-                    if original == content {
-                        continue;
+    fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
+        let worktree_contents =
+            matches!(request, DiffTreeType::MergeBaseWithWorktree { .. }).then(|| {
+                let workdir_path = self.dot_git_path.parent().unwrap();
+                self.fs
+                    .files()
+                    .iter()
+                    .filter_map(|path| {
+                        let path_in_repo = path.strip_prefix(workdir_path).ok()?;
+                        let path_in_repo = RelPath::new(path_in_repo, PathStyle::local()).ok()?;
+                        let content = String::from_utf8(self.fs.read_file_sync(path).ok()?).ok()?;
+                        Some((RepoPath::from_rel_path(&path_in_repo), content))
+                    })
+                    .collect::<HashMap<_, _>>()
+            });
+        self.with_state_async(false, move |state| {
+            let contents = worktree_contents.as_ref().unwrap_or(&state.head_contents);
+            let tracked_paths = state
+                .merge_base_contents
+                .keys()
+                .chain(state.head_contents.keys())
+                .chain(state.index_contents.keys())
+                .collect::<HashSet<_>>();
+            let mut entries = HashMap::default();
+            for path in tracked_paths {
+                let status = match (state.merge_base_contents.get(path), contents.get(path)) {
+                    (Some(oid), Some(content)) => {
+                        if state.oids.get(oid).context("merge-base blob is missing")? == content {
+                            continue;
+                        }
+                        TreeDiffStatus::Modified { old: *oid }
                     }
-                    TreeDiffStatus::Modified { old: *oid }
-                } else {
-                    TreeDiffStatus::Added
+                    (Some(oid), None) => TreeDiffStatus::Deleted { old: *oid },
+                    (None, Some(_)) => TreeDiffStatus::Added,
+                    (None, None) => continue,
                 };
                 entries.insert(path.clone(), status);
-            }
-            for (path, oid) in &state.merge_base_contents {
-                if !entries.contains_key(path) {
-                    entries.insert(path.clone(), TreeDiffStatus::Deleted { old: *oid });
-                }
             }
             Ok(TreeDiff { entries })
         })
@@ -1156,6 +1173,7 @@ impl GitRepository for FakeGitRepository {
 
     fn diff_stat(
         &self,
+        diff: git::repository::DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<git::status::GitDiffStat>> {
         fn count_lines(s: &str) -> u32 {
@@ -1203,22 +1221,43 @@ impl GitRepository for FakeGitRepository {
 
         self.with_state_async(false, move |state| {
             let mut entries = Vec::new();
-            let all_paths: HashSet<&RepoPath> = state
-                .head_contents
-                .keys()
-                .chain(
-                    worktree_files
-                        .keys()
-                        .filter(|p| state.index_contents.contains_key(*p)),
-                )
-                .collect();
+            let (old_files, new_files) = match diff {
+                git::repository::DiffStatType::HeadToIndex => {
+                    (&state.head_contents, &state.index_contents)
+                }
+                git::repository::DiffStatType::HeadToWorktree => {
+                    (&state.head_contents, &worktree_files)
+                }
+                git::repository::DiffStatType::IndexToWorktree => {
+                    (&state.index_contents, &worktree_files)
+                }
+            };
+            let all_paths: HashSet<&RepoPath> = match diff {
+                git::repository::DiffStatType::HeadToIndex => state
+                    .head_contents
+                    .keys()
+                    .chain(state.index_contents.keys())
+                    .collect(),
+                git::repository::DiffStatType::HeadToWorktree => state
+                    .head_contents
+                    .keys()
+                    .chain(
+                        worktree_files
+                            .keys()
+                            .filter(|path| state.index_contents.contains_key(*path)),
+                    )
+                    .collect(),
+                git::repository::DiffStatType::IndexToWorktree => {
+                    state.index_contents.keys().collect()
+                }
+            };
             for path in all_paths {
                 if !matches_prefixes(path, &path_prefixes) {
                     continue;
                 }
-                let head = state.head_contents.get(path);
-                let worktree = worktree_files.get(path);
-                match (head, worktree) {
+                let old_file = old_files.get(path);
+                let new_file = new_files.get(path);
+                match (old_file, new_file) {
                     (Some(old), Some(new)) if old != new => {
                         entries.push((
                             path.clone(),

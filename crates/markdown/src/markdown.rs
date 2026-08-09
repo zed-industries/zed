@@ -22,6 +22,7 @@ use theme_settings::ThemeSettings;
 use util::maybe;
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::mem;
 use std::ops::Range;
@@ -37,7 +38,7 @@ use gpui::{
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
     StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, WrappedLineLayout, actions, img, point, quad,
+    TextStyle, TextStyleRefinement, WrappedLineLayout, actions, canvas, img, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -53,12 +54,22 @@ use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
 
+const MERMAID_MAX_ZOOM: f32 = 2.0;
+/// Zoom levels within this distance of 1.0 snap back to exactly 1.0 so users
+/// can easily return to the default size.
+const MERMAID_ZOOM_SNAP_TOLERANCE: f32 = 0.05;
+const MERMAID_ZOOM_DEBOUNCE: Duration = Duration::from_millis(300);
+
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
 pub type CodeSpanLinkCallback = Arc<dyn Fn(&str, &App) -> Option<SharedString> + 'static>;
+type UrlHoverCallback = Rc<dyn Fn(Option<SharedString>, &mut Window, &mut App)>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
+/// Invoked when a mermaid diagram's zoom level changes (via scroll gesture or
+/// the reset button), so a scroll container can keep the diagram anchored.
+pub type MermaidZoomCallback = Rc<dyn Fn(&mut Window, &mut App)>;
 
 #[derive(Clone, Copy, Default)]
 pub struct BlockQuoteKindColors {
@@ -186,15 +197,15 @@ impl MarkdownStyle {
             ),
         };
 
-        let body_font_family = if is_preview {
-            theme_settings.markdown_preview_font_family().clone()
-        } else {
-            theme_settings.ui_font.family.clone()
+        let body_font_family = match font {
+            MarkdownFont::Preview => theme_settings.markdown_preview_font_family().clone(),
+            MarkdownFont::Agent => theme_settings.agent_ui_font_family().clone(),
+            MarkdownFont::Editor => theme_settings.ui_font.family.clone(),
         };
-        let code_font_family = if is_preview {
-            theme_settings.markdown_preview_code_font_family().clone()
-        } else {
-            theme_settings.buffer_font.family.clone()
+        let code_font_family = match font {
+            MarkdownFont::Preview => theme_settings.markdown_preview_code_font_family().clone(),
+            MarkdownFont::Agent => theme_settings.agent_buffer_font_family().clone(),
+            MarkdownFont::Editor => theme_settings.buffer_font.family.clone(),
         };
 
         let mut text_style = window.text_style();
@@ -371,10 +382,66 @@ impl MarkdownStyle {
         self
     }
 
+    pub fn with_agent_buffer_font(mut self, cx: &App) -> Self {
+        let theme_settings = ThemeSettings::get_global(cx);
+        self.base_text_style.font_family = theme_settings.agent_buffer_font_family().clone();
+        self.base_text_style.font_fallbacks = theme_settings.buffer_font.fallbacks.clone();
+        self.base_text_style.font_features = theme_settings.buffer_font.features.clone();
+        self.base_text_style.font_weight = theme_settings.buffer_font.weight;
+        self
+    }
+
     pub fn with_muted_text(mut self, cx: &App) -> Self {
         let colors = cx.theme().colors();
         self.base_text_style.color = colors.text_muted;
         self
+    }
+}
+
+/// Per-diagram view state, keyed by source offset in [`Markdown::mermaid_views`].
+struct MermaidViewState {
+    /// Whether the source code is shown instead of the rendered diagram.
+    showing_code: bool,
+    /// The display scale relative to the diagram's natural size; 1.0 is 1:1.
+    zoom: f32,
+    /// Whether the user zoomed out to the fit-to-width floor. While set, the
+    /// zoom tracks the container width so the diagram stays fully visible
+    /// when the container is resized, instead of keeping a stale absolute
+    /// zoom computed against the old width.
+    zoomed_to_fit: bool,
+    /// Horizontal scroll position, used when the diagram overflows.
+    scroll_handle: ScrollHandle,
+    /// The pending debounced re-raster scheduled by the last zoom change.
+    debounce_task: Option<Task<()>>,
+    /// Overrides the scroll container width, which tests can't obtain from
+    /// the scroll handle since its bounds are only set during layout.
+    #[cfg(test)]
+    container_width_for_test: Option<Pixels>,
+}
+
+impl MermaidViewState {
+    /// The width of the diagram's scroll container as of the last layout,
+    /// if it has been laid out.
+    fn container_width(&self) -> Option<Pixels> {
+        #[cfg(test)]
+        if let Some(width) = self.container_width_for_test {
+            return Some(width);
+        }
+        Some(self.scroll_handle.bounds().size.width).filter(|width| *width > px(0.))
+    }
+}
+
+impl Default for MermaidViewState {
+    fn default() -> Self {
+        Self {
+            showing_code: false,
+            zoom: 1.0,
+            zoomed_to_fit: false,
+            scroll_handle: ScrollHandle::new(),
+            debounce_task: None,
+            #[cfg(test)]
+            container_width_for_test: None,
+        }
     }
 }
 
@@ -384,6 +451,8 @@ pub struct Markdown {
     pressed_link: Option<RenderedLink>,
     pressed_footnote_ref: Option<RenderedFootnoteRef>,
     autoscroll_request: Option<usize>,
+    pending_heading_scroll: Option<SharedString>,
+    pending_autoscroll: Option<usize>,
     active_root_block: Option<usize>,
     parsed_markdown: ParsedMarkdown,
     images_by_source_offset: HashMap<usize, Arc<Image>>,
@@ -395,7 +464,12 @@ pub struct Markdown {
     options: MarkdownOptions,
     mermaid_state: MermaidState,
     _mermaid_theme_subscription: Option<Subscription>,
-    mermaid_showing_code: HashSet<usize>,
+    /// Per-diagram view state (current tab, zoom, scroll position, and pending
+    /// debounced re-raster) keyed by source offset. Distinct from
+    /// [`MermaidState`], which caches the rendered diagrams themselves keyed by
+    /// contents. All entries are retained against the parsed diagrams on each
+    /// reparse, so a single map keeps that bookkeeping in one place.
+    mermaid_views: HashMap<usize, MermaidViewState>,
     copied_code_blocks: HashSet<ElementId>,
     wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
@@ -577,6 +651,8 @@ impl Markdown {
             pressed_link: None,
             pressed_footnote_ref: None,
             autoscroll_request: None,
+            pending_heading_scroll: None,
+            pending_autoscroll: None,
             active_root_block: None,
             should_reparse: false,
             images_by_source_offset: Default::default(),
@@ -588,7 +664,7 @@ impl Markdown {
             options,
             mermaid_state: MermaidState::default(),
             _mermaid_theme_subscription: theme_subscription,
-            mermaid_showing_code: HashSet::default(),
+            mermaid_views: HashMap::default(),
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
@@ -645,19 +721,159 @@ impl Markdown {
             return;
         }
 
-        self.mermaid_state.clear();
-        self.mermaid_state.update(&self.parsed_markdown, cx);
+        self.mermaid_state.clear(cx);
+        let mermaid_views = &self.mermaid_views;
+        self.mermaid_state.update(
+            &self.parsed_markdown,
+            |source_offset| {
+                mermaid_views
+                    .get(&source_offset)
+                    .map_or(1.0, |view| view.zoom)
+            },
+            cx,
+        );
         cx.notify();
     }
 
     pub(crate) fn is_mermaid_showing_code(&self, source_offset: usize) -> bool {
-        self.mermaid_showing_code.contains(&source_offset)
+        self.mermaid_views
+            .get(&source_offset)
+            .is_some_and(|view| view.showing_code)
     }
 
     pub(crate) fn toggle_mermaid_tab(&mut self, source_offset: usize) {
-        if !self.mermaid_showing_code.remove(&source_offset) {
-            self.mermaid_showing_code.insert(source_offset);
+        let view = self.mermaid_views.entry(source_offset).or_default();
+        view.showing_code = !view.showing_code;
+    }
+
+    pub(crate) fn mermaid_zoom_level(&self, source_offset: usize) -> f32 {
+        self.mermaid_views
+            .get(&source_offset)
+            .map_or(1.0, |view| view.zoom)
+    }
+
+    /// The smallest zoom level for a diagram: the scale that makes it span
+    /// the content width, capped at 1.0 so diagrams that already fit are
+    /// never zoomed out below their natural size. Falls back to 1.0 when the
+    /// diagram has no raster yet or the container hasn't been laid out.
+    fn mermaid_min_zoom_level(&self, source_offset: usize) -> f32 {
+        let Some(diagram) = self.parsed_markdown.mermaid_diagrams.get(&source_offset) else {
+            return 1.0;
+        };
+        let Some(natural_size) = self.mermaid_state.natural_size(&diagram.contents) else {
+            return 1.0;
+        };
+        let Some(container_width) = self
+            .mermaid_views
+            .get(&source_offset)
+            .and_then(|view| view.container_width())
+        else {
+            return 1.0;
+        };
+        if natural_size.width <= container_width {
+            return 1.0;
         }
+        container_width / natural_size.width
+    }
+
+    pub(crate) fn set_mermaid_zoom_level(
+        &mut self,
+        source_offset: usize,
+        zoom: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let min_zoom = self.mermaid_min_zoom_level(source_offset);
+        let requested_zoom = zoom;
+        let mut zoom = zoom.clamp(min_zoom, MERMAID_MAX_ZOOM);
+        if (zoom - 1.0).abs() <= MERMAID_ZOOM_SNAP_TOLERANCE {
+            zoom = 1.0;
+        }
+        // The user zoomed out to (or past) the fit-to-width floor. From here
+        // on the zoom tracks the container width (see
+        // `effective_mermaid_zoom_level`), until the user zooms back in. A
+        // zoom landing exactly at 1.0 only sticks when it was clamped, so
+        // resetting to the natural size never turns tracking on.
+        let zoomed_to_fit = requested_zoom < min_zoom || (zoom <= min_zoom && zoom < 1.0);
+
+        let debounce_task = self.schedule_mermaid_rerasterize(source_offset, cx);
+        let view = self.mermaid_views.entry(source_offset).or_default();
+        view.zoom = zoom;
+        view.zoomed_to_fit = zoomed_to_fit;
+        view.debounce_task = Some(debounce_task);
+        cx.notify();
+    }
+
+    /// The zoom level to display a diagram at, syncing a fit-to-width zoom
+    /// with the current container width. Called at render time so that a
+    /// fully zoomed-out diagram stays stuck to the container width when the
+    /// container is resized, rather than keeping a stale absolute zoom.
+    pub(crate) fn effective_mermaid_zoom_level(
+        &mut self,
+        source_offset: usize,
+        cx: &mut Context<Self>,
+    ) -> f32 {
+        let zoom = self.mermaid_zoom_level(source_offset);
+        let zoomed_to_fit = self
+            .mermaid_views
+            .get(&source_offset)
+            .is_some_and(|view| view.zoomed_to_fit);
+        if !zoomed_to_fit {
+            return zoom;
+        }
+        let min_zoom = self.mermaid_min_zoom_level(source_offset);
+        if (min_zoom - zoom).abs() < 0.001 {
+            return zoom;
+        }
+        let debounce_task = self.schedule_mermaid_rerasterize(source_offset, cx);
+        if let Some(view) = self.mermaid_views.get_mut(&source_offset) {
+            view.zoom = min_zoom;
+            view.debounce_task = Some(debounce_task);
+        }
+        min_zoom
+    }
+
+    /// Schedules a debounced re-raster of a diagram at its current zoom.
+    /// Storing the returned task in `MermaidViewState::debounce_task`
+    /// replaces (and thereby cancels) the previous timer, debouncing the
+    /// expensive re-raster until zoom changes settle. Until then, the
+    /// existing raster is displayed scaled to the new zoom.
+    fn schedule_mermaid_rerasterize(
+        &self,
+        source_offset: usize,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(MERMAID_ZOOM_DEBOUNCE).await;
+            this.update(cx, |this, cx| {
+                if let Some(view) = this.mermaid_views.get_mut(&source_offset) {
+                    view.debounce_task = None;
+                }
+                this.rerasterize_mermaid_diagram(source_offset, cx);
+            })
+            .ok();
+        })
+    }
+
+    pub(crate) fn mermaid_scroll_handle(&mut self, source_offset: usize) -> ScrollHandle {
+        self.mermaid_views
+            .entry(source_offset)
+            .or_default()
+            .scroll_handle
+            .clone()
+    }
+
+    /// Re-rasterizes a single mermaid diagram at exactly the scale it is
+    /// displayed at, reusing the cached parsed SVG so that neither mermaid
+    /// layout nor SVG parsing is re-run. While the new raster is pending, the
+    /// previous image keeps being displayed.
+    fn rerasterize_mermaid_diagram(&mut self, source_offset: usize, cx: &mut Context<Self>) {
+        let Some(diagram) = self.parsed_markdown.mermaid_diagrams.get(&source_offset) else {
+            return;
+        };
+        let contents = diagram.contents.clone();
+        let zoom = self.mermaid_zoom_level(source_offset);
+        self.mermaid_state.rerasterize_diagram(&contents, zoom, cx);
+        cx.notify();
     }
 
     fn clear_code_block_scroll_handles(&mut self) {
@@ -692,6 +908,14 @@ impl Markdown {
 
     pub fn is_parsing(&self) -> bool {
         self.pending_parse.is_some()
+    }
+
+    pub fn scroll_to_heading_when_parsed(&mut self, slug: SharedString, cx: &mut Context<Self>) {
+        if self.pending_parse.is_some() || self.source.is_empty() {
+            self.pending_heading_scroll = Some(slug);
+        } else {
+            self.scroll_to_heading(&slug, cx);
+        }
     }
 
     pub fn scroll_to_heading(&mut self, slug: &str, cx: &mut Context<Self>) -> Option<usize> {
@@ -745,7 +969,11 @@ impl Markdown {
         source_index: usize,
         cx: &mut Context<Self>,
     ) {
-        self.autoscroll_request = Some(source_index);
+        if self.pending_parse.is_some() {
+            self.pending_autoscroll = Some(source_index);
+        } else {
+            self.autoscroll_request = Some(source_index);
+        }
         cx.refresh_windows();
     }
 
@@ -773,11 +1001,24 @@ impl Markdown {
 
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
         if &source == self.source() {
+            if self.pending_parse.is_none() {
+                if let Some(slug) = self.pending_heading_scroll.take() {
+                    self.pending_autoscroll = None;
+                    self.scroll_to_heading(&slug, cx);
+                } else if let Some(source_index) = self.pending_autoscroll.take() {
+                    self.autoscroll_request = Some(source_index);
+                    cx.refresh_windows();
+                }
+            }
             return;
+        }
+        if !self.source.is_empty() {
+            self.pending_heading_scroll = None;
         }
         self.source = source;
         self.selection = Selection::default();
         self.autoscroll_request = None;
+        self.pending_autoscroll = None;
         self.pending_parse = None;
         self.should_reparse = false;
         self.search_highlights.clear();
@@ -929,13 +1170,15 @@ impl Markdown {
         if self.source.is_empty() {
             self.should_reparse = false;
             self.pending_parse.take();
+            self.pending_heading_scroll = None;
+            self.pending_autoscroll = None;
             self.parsed_markdown = ParsedMarkdown {
                 source: self.source.clone(),
                 ..Default::default()
             };
             self.active_root_block = None;
             self.images_by_source_offset.clear();
-            self.mermaid_state.clear();
+            self.mermaid_state.clear(cx);
             cx.notify();
             cx.refresh_windows();
             return;
@@ -1079,16 +1322,33 @@ impl Markdown {
                 }
                 if this.options.render_mermaid_diagrams {
                     let parsed_markdown = this.parsed_markdown.clone();
-                    this.mermaid_state.update(&parsed_markdown, cx);
-                    this.mermaid_showing_code
-                        .retain(|offset| parsed_markdown.mermaid_diagrams.contains_key(offset));
+                    this.mermaid_views
+                        .retain(|offset, _| parsed_markdown.mermaid_diagrams.contains_key(offset));
+                    let mermaid_views = &this.mermaid_views;
+                    this.mermaid_state.update(
+                        &parsed_markdown,
+                        |source_offset| {
+                            mermaid_views
+                                .get(&source_offset)
+                                .map_or(1.0, |view| view.zoom)
+                        },
+                        cx,
+                    );
                 } else {
-                    this.mermaid_state.clear();
-                    this.mermaid_showing_code.clear();
+                    this.mermaid_state.clear(cx);
+                    this.mermaid_views.clear();
                 }
                 this.pending_parse.take();
                 if this.should_reparse {
                     this.parse(cx);
+                } else if let Some(slug) = this.pending_heading_scroll.take()
+                    && let Some(source_index) =
+                        this.parsed_markdown.heading_slugs.get(&slug).copied()
+                {
+                    this.pending_autoscroll = None;
+                    this.autoscroll_request = Some(source_index);
+                } else if let Some(source_index) = this.pending_autoscroll.take() {
+                    this.autoscroll_request = Some(source_index);
                 }
                 cx.notify();
                 cx.refresh_windows();
@@ -1246,12 +1506,19 @@ pub struct MarkdownElement {
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
     on_url_click: Option<Rc<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_url_hover: Option<UrlHoverCallback>,
     code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
+    on_mermaid_zoom: Option<MermaidZoomCallback>,
     image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
+    /// Test-only hook to observe the laid-out text when this element is
+    /// rendered beneath a view, where the layout state isn't otherwise
+    /// reachable.
+    #[cfg(test)]
+    on_render: Option<Box<dyn Fn(RenderedText)>>,
 }
 
 impl MarkdownElement {
@@ -1265,12 +1532,16 @@ impl MarkdownElement {
                 border: false,
             },
             on_url_click: None,
+            on_url_hover: None,
             code_span_link: None,
             on_source_click: None,
             on_checkbox_toggle: None,
+            on_mermaid_zoom: None,
             image_resolver: None,
             show_root_block_markers: false,
             autoscroll: AutoscrollBehavior::Propagate,
+            #[cfg(test)]
+            on_render: None,
         }
     }
 
@@ -1300,11 +1571,27 @@ impl MarkdownElement {
         self
     }
 
+    /// Registers a test-only callback invoked with the laid-out text each
+    /// time this element runs layout.
+    #[cfg(test)]
+    pub(crate) fn on_render(mut self, callback: impl Fn(RenderedText) + 'static) -> Self {
+        self.on_render = Some(Box::new(callback));
+        self
+    }
+
     pub fn on_url_click(
         mut self,
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_url_click = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn on_url_hover(
+        mut self,
+        handler: impl Fn(Option<SharedString>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_url_hover = Some(Rc::new(handler));
         self
     }
 
@@ -1329,6 +1616,14 @@ impl MarkdownElement {
         handler: impl Fn(Range<usize>, bool, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_checkbox_toggle = Some(Rc::new(handler));
+        self
+    }
+
+    /// Registers a callback invoked when a mermaid diagram's zoom level changes.
+    /// Consumers that scroll the markdown can use this to keep the diagram's
+    /// position anchored while it grows or shrinks.
+    pub fn on_mermaid_zoom(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_mermaid_zoom = Some(Rc::new(handler));
         self
     }
 
@@ -1416,8 +1711,21 @@ impl MarkdownElement {
                 let click_url = url.clone();
                 let markdown = self.markdown.clone();
                 let url_click = self.on_url_click.clone();
+                let bounds = Rc::new(Cell::new(None));
+                builder.push_image_link(url.clone(), bounds.clone());
                 wrapper
+                    .relative()
                     .cursor_pointer()
+                    .child(
+                        canvas(
+                            move |image_bounds, _window, _cx| bounds.set(Some(image_bounds)),
+                            |_, _, _, _| {},
+                        )
+                        .size_full()
+                        .absolute()
+                        .top_0()
+                        .left_0(),
+                    )
                     .on_click(move |_, window, cx| {
                         if let Some(ref on_url_click) = url_click {
                             on_url_click(click_url.clone(), window, cx);
@@ -1791,15 +2099,18 @@ impl MarkdownElement {
 
         let is_hovering_clickable = hitbox.is_hovered(window)
             && !self.markdown.read(cx).selection.pending
-            && rendered_text
-                .source_index_for_position(window.mouse_position())
-                .ok()
-                .is_some_and(|source_index| {
-                    rendered_text.link_for_source_index(source_index).is_some()
-                        || rendered_text
-                            .footnote_ref_for_source_index(source_index)
-                            .is_some()
-                });
+            && (rendered_text
+                .image_link_for_position(window.mouse_position())
+                .is_some()
+                || rendered_text
+                    .source_index_for_position(window.mouse_position())
+                    .ok()
+                    .is_some_and(|source_index| {
+                        rendered_text.link_for_source_index(source_index).is_some()
+                            || rendered_text
+                                .footnote_ref_for_source_index(source_index)
+                                .is_some()
+                    }));
 
         if is_hovering_clickable {
             window.set_cursor_style(CursorStyle::PointingHand, hitbox);
@@ -1808,6 +2119,7 @@ impl MarkdownElement {
         }
 
         let on_open_url = self.on_url_click.take();
+        let on_url_hover = self.on_url_hover.take();
         let on_source_click = self.on_source_click.take();
 
         self.on_mouse_event(window, cx, {
@@ -1936,16 +2248,30 @@ impl MarkdownElement {
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
-                    let is_hovering_clickable = hitbox.is_hovered(window)
-                        && rendered_text
-                            .source_index_for_position(event.position)
-                            .ok()
-                            .is_some_and(|source_index| {
-                                rendered_text.link_for_source_index(source_index).is_some()
-                                    || rendered_text
-                                        .footnote_ref_for_source_index(source_index)
-                                        .is_some()
-                            });
+                    let is_hitbox_hovered = hitbox.is_hovered(window);
+                    let source_index = is_hitbox_hovered
+                        .then(|| rendered_text.source_index_for_position(event.position).ok())
+                        .flatten();
+                    let hovered_url = is_hitbox_hovered
+                        .then(|| rendered_text.image_link_for_position(event.position))
+                        .flatten()
+                        .map(|image| image.destination_url.clone())
+                        .or_else(|| {
+                            source_index
+                                .and_then(|source_index| {
+                                    rendered_text.link_for_source_index(source_index)
+                                })
+                                .map(|link| link.destination_url.clone())
+                        });
+                    let is_hovering_clickable = hovered_url.is_some()
+                        || source_index.is_some_and(|source_index| {
+                            rendered_text
+                                .footnote_ref_for_source_index(source_index)
+                                .is_some()
+                        });
+                    if let Some(on_url_hover) = on_url_hover.as_ref() {
+                        on_url_hover(hovered_url, window, cx);
+                    }
                     if is_hovering_clickable != was_hovering_clickable {
                         cx.notify();
                     }
@@ -2225,8 +2551,13 @@ impl Element for MarkdownElement {
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
                             {
-                                let showing_code =
-                                    self.markdown.read(cx).is_mermaid_showing_code(range.start);
+                                let (showing_code, zoom) =
+                                    self.markdown.update(cx, |markdown, cx| {
+                                        (
+                                            markdown.is_mermaid_showing_code(range.start),
+                                            markdown.effective_mermaid_zoom_level(range.start, cx),
+                                        )
+                                    });
                                 let copy_button_visibility = match &self.code_block_renderer {
                                     CodeBlockRenderer::Default {
                                         copy_button_visibility,
@@ -2243,7 +2574,11 @@ impl Element for MarkdownElement {
                                         self.markdown.clone(),
                                         range.start,
                                         showing_code,
+                                        zoom,
                                         copy_button_visibility,
+                                        self.on_mermaid_zoom.clone(),
+                                        window,
+                                        cx,
                                     ),
                                 );
                                 rendered_mermaid_block = true;
@@ -2315,13 +2650,12 @@ impl Element for MarkdownElement {
                                     let code_block = div()
                                         .id(("code-block", range.start))
                                         .rounded_lg()
-                                        .map(|mut code_block| {
+                                        .map(|code_block| {
                                             if let Some(scroll_handle) = scroll_handle.as_ref() {
-                                                code_block.style().restrict_scroll_to_axis =
-                                                    Some(true);
                                                 code_block
                                                     .flex()
                                                     .overflow_x_scroll()
+                                                    .restrict_scroll_to_axis()
                                                     .track_scroll(scroll_handle)
                                             } else {
                                                 code_block.w_full()
@@ -2482,7 +2816,14 @@ impl Element for MarkdownElement {
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
-                                    .overflow_hidden(),
+                                    .restrict_scroll_to_axis()
+                                    .custom_scrollbars(
+                                        Scrollbars::new(ScrollAxes::Horizontal)
+                                            .id(("markdown-table-scrollbar", range.start))
+                                            .notify_content(),
+                                        window,
+                                        cx,
+                                    ),
                                 range,
                                 markdown_end,
                             );
@@ -2777,6 +3118,10 @@ impl Element for MarkdownElement {
                 .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
         }
         let mut rendered_markdown = builder.build();
+        #[cfg(test)]
+        if let Some(on_render) = self.on_render.as_ref() {
+            on_render(rendered_markdown.text.clone());
+        }
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
         let layout_id = window.request_layout(gpui::Style::default(), [child_layout_id], cx);
         (layout_id, rendered_markdown)
@@ -3124,6 +3469,7 @@ struct MarkdownElementBuilder {
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
+    rendered_image_links: Vec<RenderedImageLink>,
     rendered_footnote_refs: Vec<RenderedFootnoteRef>,
     current_source_index: usize,
     html_comment: bool,
@@ -3183,6 +3529,7 @@ impl MarkdownElementBuilder {
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),
+            rendered_image_links: Vec::new(),
             rendered_footnote_refs: Vec::new(),
             current_source_index: 0,
             html_comment: false,
@@ -3373,6 +3720,17 @@ impl MarkdownElementBuilder {
         });
     }
 
+    fn push_image_link(
+        &mut self,
+        destination_url: SharedString,
+        bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    ) {
+        self.rendered_image_links.push(RenderedImageLink {
+            bounds,
+            destination_url,
+        });
+    }
+
     fn push_footnote_ref(&mut self, label: SharedString, source_range: Range<usize>) {
         self.rendered_footnote_refs.push(RenderedFootnoteRef {
             source_range,
@@ -3538,6 +3896,7 @@ impl MarkdownElementBuilder {
             text: RenderedText {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
+                image_links: self.rendered_image_links.into(),
                 footnote_refs: self.rendered_footnote_refs.into(),
             },
         }
@@ -3737,6 +4096,7 @@ pub struct RenderedMarkdown {
 struct RenderedText {
     lines: Rc<[RenderedLine]>,
     links: Rc<[RenderedLink]>,
+    image_links: Rc<[RenderedImageLink]>,
     footnote_refs: Rc<[RenderedFootnoteRef]>,
 }
 
@@ -3750,6 +4110,14 @@ struct WrappedLineSegment {
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct RenderedLink {
     source_range: Range<usize>,
+    destination_url: SharedString,
+}
+
+#[derive(Clone)]
+struct RenderedImageLink {
+    // Populated once the image's `canvas` overlay is painted; images aren't part of the
+    // text layout, so their hit-test region can't be derived from a source range.
+    bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     destination_url: SharedString,
 }
 
@@ -3952,17 +4320,15 @@ impl RenderedText {
 
     fn position_for_source_index(&self, source_index: usize) -> Option<(Point<Pixels>, Pixels)> {
         for line in self.lines.iter() {
-            let line_source_start = line.source_mappings.first().unwrap().source_index;
-            if source_index < line_source_start {
-                break;
-            } else if source_index > line.source_end {
+            if source_index > line.source_end {
                 continue;
-            } else {
-                let line_height = line.layout.line_height();
-                let rendered_index_within_line = line.rendered_index_for_source_index(source_index);
-                let position = line.layout.position_for_index(rendered_index_within_line)?;
-                return Some((position, line_height));
             }
+            let line_source_start = line.source_mappings.first().unwrap().source_index;
+            let source_index = source_index.max(line_source_start);
+            let line_height = line.layout.line_height();
+            let rendered_index_within_line = line.rendered_index_for_source_index(source_index);
+            let position = line.layout.position_for_index(rendered_index_within_line)?;
+            return Some((position, line_height));
         }
         None
     }
@@ -4066,6 +4432,15 @@ impl RenderedText {
             .find(|link| link.source_range.contains(&source_index))
     }
 
+    fn image_link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedImageLink> {
+        self.image_links.iter().find(|image| {
+            image
+                .bounds
+                .get()
+                .is_some_and(|bounds| bounds.contains(&position))
+        })
+    }
+
     fn footnote_ref_for_source_index(&self, source_index: usize) -> Option<&RenderedFootnoteRef> {
         self.footnote_refs
             .iter()
@@ -4076,8 +4451,12 @@ impl RenderedText {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{RenderImage, TestAppContext, UpdateGlobal, size};
+    use gpui::{
+        Modifiers, RenderImage, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase,
+        UpdateGlobal, size,
+    };
     use language::{Language, LanguageConfig, LanguageMatcher};
+    use std::cell::RefCell;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -4091,6 +4470,106 @@ mod tests {
         }
     }
 
+    struct MarkdownTestView {
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        code_span_link: Option<CodeSpanLinkCallback>,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+    }
+
+    impl Render for MarkdownTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut markdown_element =
+                MarkdownElement::new(self.markdown.clone(), self.style.clone());
+            if let Some(code_span_link) = self.code_span_link.clone() {
+                markdown_element =
+                    markdown_element.on_code_span_link(move |text, cx| code_span_link(text, cx));
+            }
+            CapturingMarkdownElement {
+                markdown_element: markdown_element.code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    },
+                ),
+                rendered_text: self.rendered_text.clone(),
+            }
+        }
+    }
+
+    struct CapturingMarkdownElement {
+        markdown_element: MarkdownElement,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+    }
+
+    impl IntoElement for CapturingMarkdownElement {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl Element for CapturingMarkdownElement {
+        type RequestLayoutState = RenderedMarkdown;
+        type PrepaintState = Hitbox;
+
+        fn id(&self) -> Option<ElementId> {
+            self.markdown_element.id()
+        }
+
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            self.markdown_element.source_location()
+        }
+
+        fn request_layout(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&gpui::InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+            self.markdown_element
+                .request_layout(id, inspector_id, window, cx)
+        }
+
+        fn prepaint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&gpui::InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            rendered_markdown: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            self.markdown_element
+                .prepaint(id, inspector_id, bounds, rendered_markdown, window, cx)
+        }
+
+        fn paint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&gpui::InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            rendered_markdown: &mut Self::RequestLayoutState,
+            hitbox: &mut Self::PrepaintState,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            self.markdown_element.paint(
+                id,
+                inspector_id,
+                bounds,
+                rendered_markdown,
+                hitbox,
+                window,
+                cx,
+            );
+            *self.rendered_text.borrow_mut() = Some(rendered_markdown.text.clone());
+        }
+    }
+
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
             if !cx.has_global::<settings::SettingsStore>() {
@@ -4100,6 +4579,30 @@ mod tests {
                 theme_settings::init(theme::LoadThemes::JustBase, cx);
             }
         });
+    }
+
+    fn render_markdown_entity_in_view(
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        code_span_link: Option<CodeSpanLinkCallback>,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let rendered_text = rendered_text.clone();
+            move |_, _| MarkdownTestView {
+                markdown,
+                style,
+                code_span_link,
+                rendered_text,
+            }
+        });
+        cx.run_until_parked();
+
+        rendered_text
+            .borrow()
+            .clone()
+            .expect("markdown should be rendered in the test view")
     }
 
     #[gpui::test]
@@ -4283,23 +4786,9 @@ mod tests {
     ) -> RenderedText {
         ensure_theme_initialized(cx);
 
-        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
-            Default::default(),
-            size(px(600.0), px(600.0)),
-            |_window, _cx| {
-                MarkdownElement::new(markdown, style)
-                    .on_code_span_link(callback)
-                    .code_block_renderer(CodeBlockRenderer::Default {
-                        copy_button_visibility: CopyButtonVisibility::Hidden,
-                        wrap_button_visibility: WrapButtonVisibility::Hidden,
-                        border: false,
-                    })
-            },
-        );
-        rendered.text
+        render_markdown_entity_in_view(markdown, style, Some(Arc::new(callback)), cx)
     }
 
     fn render_markdown_with_language_registry(
@@ -4318,7 +4807,6 @@ mod tests {
     ) -> RenderedText {
         ensure_theme_initialized(cx);
 
-        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown = cx.new(|cx| {
             Markdown::new_with_options(
                 markdown.to_string().into(),
@@ -4329,20 +4817,7 @@ mod tests {
             )
         });
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
-            Default::default(),
-            size(px(600.0), px(600.0)),
-            |_window, _cx| {
-                MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
-                    CodeBlockRenderer::Default {
-                        copy_button_visibility: CopyButtonVisibility::Hidden,
-                        wrap_button_visibility: WrapButtonVisibility::Hidden,
-                        border: false,
-                    },
-                )
-            },
-        );
-        rendered.text
+        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, cx)
     }
 
     fn render_markdown_with_image_resolver(
@@ -4915,10 +5390,11 @@ mod tests {
         let javascript_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "JavaScript".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["js".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 word_characters: ['$', '#'].into_iter().collect(),
                 ..Default::default()
             },
@@ -5290,6 +5766,101 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_url_hover_callback(cx: &mut TestAppContext) {
+        struct HoverTestView {
+            markdown: Entity<Markdown>,
+            hovered_urls: Rc<RefCell<Vec<Option<SharedString>>>>,
+        }
+
+        impl Render for HoverTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let hovered_urls = self.hovered_urls.clone();
+                div().size_full().child(
+                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                        .on_url_hover(move |url, _, _| {
+                            hovered_urls.borrow_mut().push(url);
+                        }),
+                )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let hovered_urls = Rc::new(RefCell::new(Vec::new()));
+        let (_, cx) = cx.add_window_view({
+            let hovered_urls = hovered_urls.clone();
+            move |_, cx| HoverTestView {
+                markdown: cx
+                    .new(|cx| Markdown::new("[link](https://example.com)".into(), None, None, cx)),
+                hovered_urls,
+            }
+        });
+        cx.run_until_parked();
+
+        cx.simulate_mouse_move(point(px(8.), px(8.)), None, gpui::Modifiers::default());
+        assert_eq!(
+            hovered_urls.borrow().last().cloned().flatten().as_deref(),
+            Some("https://example.com")
+        );
+
+        cx.simulate_mouse_move(point(px(500.), px(500.)), None, gpui::Modifiers::default());
+        assert_eq!(hovered_urls.borrow().last(), Some(&None));
+    }
+
+    #[gpui::test]
+    fn test_url_hover_callback_for_linked_image(cx: &mut TestAppContext) {
+        struct HoverTestView {
+            markdown: Entity<Markdown>,
+            hovered_urls: Rc<RefCell<Vec<Option<SharedString>>>>,
+        }
+
+        impl Render for HoverTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let hovered_urls = self.hovered_urls.clone();
+                div().size_full().child(
+                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                        .image_resolver(|_| Some(loaded_image_source()))
+                        .on_url_hover(move |url, _, _| {
+                            hovered_urls.borrow_mut().push(url);
+                        }),
+                )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let hovered_urls = Rc::new(RefCell::new(Vec::new()));
+        let (_, cx) = cx.add_window_view({
+            let hovered_urls = hovered_urls.clone();
+            move |_, cx| HoverTestView {
+                markdown: cx.new(|cx| {
+                    Markdown::new(
+                        "[![badge](https://example.com/badge.png)](https://example.com)".into(),
+                        None,
+                        None,
+                        cx,
+                    )
+                }),
+                hovered_urls,
+            }
+        });
+        cx.run_until_parked();
+
+        cx.simulate_mouse_move(point(px(4.), px(4.)), None, gpui::Modifiers::default());
+        assert_eq!(
+            hovered_urls.borrow().last().cloned().flatten().as_deref(),
+            Some("https://example.com")
+        );
+
+        cx.simulate_mouse_move(point(px(8.), px(8.)), None, gpui::Modifiers::default());
+        assert_eq!(
+            hovered_urls.borrow().last().cloned().flatten().as_deref(),
+            Some("https://example.com")
+        );
+
+        cx.simulate_mouse_move(point(px(500.), px(500.)), None, gpui::Modifiers::default());
+        assert_eq!(hovered_urls.borrow().last(), Some(&None));
+    }
+
+    #[gpui::test]
     fn test_capture_for_context_menu(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
@@ -5622,5 +6193,81 @@ mod tests {
                 px(24.0)
             );
         });
+    }
+
+    #[gpui::test]
+    fn test_wide_table_scrolls_horizontally(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let source = indoc::indoc! {r#"
+            | left | right |
+            | --- | --- |
+            | value | far_right_cell_content_that_is_much_wider_than_the_viewport |
+        "#};
+        let left_cell_start = source.find("left").expect("left cell should be present");
+        let left_cell_range = left_cell_start..left_cell_start + "left".len();
+        let right_cell = "far_right_cell_content_that_is_much_wider_than_the_viewport";
+        let right_cell_start = source
+            .find(right_cell)
+            .expect("right cell should be present");
+        let right_cell_range = right_cell_start..right_cell_start + right_cell.len();
+
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let rendered_text = rendered_text.clone();
+            move |_, _| MarkdownTestView {
+                markdown,
+                style: MarkdownStyle {
+                    table_columns_min_size: true,
+                    ..MarkdownStyle::default()
+                },
+                code_span_link: None,
+                rendered_text,
+            }
+        });
+        cx.simulate_resize(size(px(300.), px(200.)));
+        cx.run_until_parked();
+
+        let (event_position, right_cell_before_scroll) = {
+            let rendered_text = rendered_text.borrow();
+            let rendered_text = rendered_text
+                .as_ref()
+                .expect("markdown should be rendered before scrolling");
+            let event_position = rendered_text
+                .bounds_for_source_range(left_cell_range)
+                .into_iter()
+                .next()
+                .expect("left cell should have bounds")
+                .center();
+            let right_cell_bounds = rendered_text
+                .bounds_for_source_range(right_cell_range.clone())
+                .into_iter()
+                .next()
+                .expect("right cell should have bounds");
+            (event_position, right_cell_bounds)
+        };
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: event_position,
+            delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        });
+        cx.run_until_parked();
+
+        let right_cell_after_scroll = rendered_text
+            .borrow()
+            .as_ref()
+            .expect("markdown should be rendered after scrolling")
+            .bounds_for_source_range(right_cell_range)
+            .into_iter()
+            .next()
+            .expect("right cell should have bounds after scrolling");
+
+        assert!(right_cell_after_scroll.left() < right_cell_before_scroll.left());
+        assert_eq!(
+            right_cell_after_scroll.top(),
+            right_cell_before_scroll.top()
+        );
     }
 }

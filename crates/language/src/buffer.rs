@@ -1,4 +1,7 @@
+mod bracket_ranges;
 pub mod row_chunk;
+
+pub use bracket_ranges::BracketMatch;
 
 use crate::{
     ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
@@ -23,7 +26,7 @@ pub use crate::{
 use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use encoding_rs::Encoding;
 use fs::MTime;
 use futures::channel::oneshot;
@@ -144,25 +147,21 @@ pub struct Buffer {
 #[derive(Debug)]
 pub struct TreeSitterData {
     chunks: RowChunks,
-    brackets_by_chunks: Mutex<Vec<Option<Vec<BracketMatch<usize>>>>>,
+    brackets_by_chunks: Mutex<HashMap<usize, Vec<BracketMatch>>>,
 }
 
 const MAX_ROWS_IN_A_CHUNK: u32 = 50;
 
 impl TreeSitterData {
     fn clear(&mut self, snapshot: &text::BufferSnapshot) {
-        self.chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
+        self.chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
         self.brackets_by_chunks.get_mut().clear();
-        self.brackets_by_chunks
-            .get_mut()
-            .resize(self.chunks.len(), None);
     }
 
     fn new(snapshot: &text::BufferSnapshot) -> Self {
-        let chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
         Self {
-            brackets_by_chunks: Mutex::new(vec![None; chunks.len()]),
-            chunks,
+            chunks: RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK),
+            brackets_by_chunks: Mutex::new(HashMap::default()),
         }
     }
 
@@ -951,19 +950,14 @@ impl EditPreview {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BracketMatch<T> {
-    pub open_range: Range<T>,
-    pub close_range: Range<T>,
-    pub newline_only: bool,
-    pub syntax_layer_depth: usize,
-    pub color_index: Option<usize>,
-}
-
-impl<T> BracketMatch<T> {
-    pub fn bracket_ranges(self) -> (Range<T>, Range<T>) {
-        (self.open_range, self.close_range)
-    }
+/// Which pre-existing line to exclude from auto-indentation when inserting
+/// text.
+#[derive(Clone, Copy, Debug)]
+pub enum AutoIndentExclusion {
+    /// Exclude the preceding line when the inserted text starts with a newline.
+    PrecedingLine,
+    /// Exclude the following line when the inserted text ends with a newline.
+    FollowingLine,
 }
 
 impl Buffer {
@@ -1880,7 +1874,12 @@ impl Buffer {
                 language.clone(),
                 sync_parse_timeout,
             ) {
-                self.did_finish_parsing(syntax_snapshot, Some(Duration::from_millis(300)), cx);
+                self.did_finish_parsing(
+                    syntax_snapshot,
+                    Some(Duration::from_millis(300)),
+                    false,
+                    cx,
+                );
                 self.reparse = None;
                 return;
             }
@@ -1912,7 +1911,7 @@ impl Buffer {
                 let parse_again = this.version.changed_since(&parsed_version)
                     || language_registry_changed()
                     || grammar_changed();
-                this.did_finish_parsing(new_syntax_map, None, cx);
+                this.did_finish_parsing(new_syntax_map, None, parse_again, cx);
                 this.reparse = None;
                 if parse_again {
                     this.reparse(cx, false);
@@ -1926,13 +1925,21 @@ impl Buffer {
         &mut self,
         syntax_snapshot: SyntaxSnapshot,
         block_budget: Option<Duration>,
+        parse_again: bool,
         cx: &mut Context<Self>,
     ) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.was_changed();
-        self.request_autoindent(cx, block_budget);
-        self.parse_status.0.send(ParseStatus::Idle).unwrap();
+
+        let parsing_complete = !parse_again || self.language.is_none();
+        if self.language.is_none() {
+            self.syntax_map.lock().clear(&self.text);
+        }
+        if parsing_complete {
+            self.request_autoindent(cx, block_budget);
+            self.parse_status.0.send(ParseStatus::Idle).unwrap();
+        }
         Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, &self.text.snapshot());
         cx.emit(BufferEvent::Reparsed);
         cx.notify();
@@ -2748,7 +2755,35 @@ impl Buffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.edit_internal(edits_iter, autoindent_mode, true, cx)
+        self.edit_internal(
+            edits_iter,
+            autoindent_mode,
+            true,
+            AutoIndentExclusion::PrecedingLine,
+            cx,
+        )
+    }
+
+    /// Like [`edit`](Self::edit), but preserves the following line's
+    /// indentation when the inserted text ends with a newline.
+    pub fn edit_before<I, S, T>(
+        &mut self,
+        edits_iter: I,
+        autoindent_mode: Option<AutoindentMode>,
+        cx: &mut Context<Self>,
+    ) -> Option<clock::Lamport>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        self.edit_internal(
+            edits_iter,
+            autoindent_mode,
+            true,
+            AutoIndentExclusion::FollowingLine,
+            cx,
+        )
     }
 
     /// Like [`edit`](Self::edit), but does not coalesce adjacent edits.
@@ -2763,7 +2798,13 @@ impl Buffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.edit_internal(edits_iter, autoindent_mode, false, cx)
+        self.edit_internal(
+            edits_iter,
+            autoindent_mode,
+            false,
+            AutoIndentExclusion::PrecedingLine,
+            cx,
+        )
     }
 
     fn edit_internal<I, S, T>(
@@ -2771,6 +2812,7 @@ impl Buffer {
         edits_iter: I,
         autoindent_mode: Option<AutoindentMode>,
         coalesce_adjacent: bool,
+        autoindent_exclusion: AutoIndentExclusion,
         cx: &mut Context<Self>,
     ) -> Option<clock::Lamport>
     where
@@ -2875,11 +2917,21 @@ impl Buffer {
                         first_line_is_new = false;
                     }
 
-                    // When inserting text starting with a newline, avoid auto-indenting the
-                    // previous line.
-                    if new_text.starts_with('\n') {
-                        range_of_insertion_to_indent.start += 1;
-                        first_line_is_new = true;
+                    // When the insertion introduces a line boundary, exclude
+                    // the adjacent pre-existing line from auto-indentation.
+                    match autoindent_exclusion {
+                        AutoIndentExclusion::PrecedingLine => {
+                            if new_text.starts_with('\n') {
+                                range_of_insertion_to_indent.start += 1;
+                                first_line_is_new = true;
+                            }
+                        }
+                        AutoIndentExclusion::FollowingLine => {
+                            if new_text.ends_with('\n') {
+                                range_of_insertion_to_indent.end -= 1;
+                                first_line_is_new = true;
+                            }
+                        }
                     }
 
                     let mut original_indent_column = None;
@@ -3167,16 +3219,15 @@ impl Buffer {
                 if triggers.is_empty() {
                     self.completion_triggers_per_language_server
                         .remove(&server_id);
-                    self.completion_triggers = self
-                        .completion_triggers_per_language_server
-                        .values()
-                        .flat_map(|triggers| triggers.iter().cloned())
-                        .collect();
                 } else {
                     self.completion_triggers_per_language_server
-                        .insert(server_id, triggers.iter().cloned().collect());
-                    self.completion_triggers.extend(triggers);
+                        .insert(server_id, triggers.into_iter().collect());
                 }
+                self.completion_triggers = self
+                    .completion_triggers_per_language_server
+                    .values()
+                    .flat_map(|triggers| triggers.iter().cloned())
+                    .collect();
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
             Operation::UpdateLineEnding {
@@ -3348,16 +3399,15 @@ impl Buffer {
         if triggers.is_empty() {
             self.completion_triggers_per_language_server
                 .remove(&server_id);
-            self.completion_triggers = self
-                .completion_triggers_per_language_server
-                .values()
-                .flat_map(|triggers| triggers.iter().cloned())
-                .collect();
         } else {
             self.completion_triggers_per_language_server
                 .insert(server_id, triggers.clone());
-            self.completion_triggers.extend(triggers.iter().cloned());
         }
+        self.completion_triggers = self
+            .completion_triggers_per_language_server
+            .values()
+            .flat_map(|triggers| triggers.iter().cloned())
+            .collect();
         self.send_operation(
             Operation::UpdateCompletionTriggers {
                 triggers: triggers.into_iter().collect(),
@@ -3436,7 +3486,7 @@ impl Buffer {
         self.text.fast_forward(edited.text);
         if edited.snapshot.language == self.language {
             self.reparse = None;
-            self.did_finish_parsing(edited.snapshot.syntax, None, cx);
+            self.did_finish_parsing(edited.snapshot.syntax, None, false, cx);
             if did_edit {
                 cx.emit(BufferEvent::Edited {
                     source: BufferEditSource::User,
@@ -3624,7 +3674,12 @@ impl BufferSnapshot {
         let indent_configs = matches
             .grammars()
             .iter()
-            .map(|grammar| grammar.indents_config.as_ref().unwrap())
+            .map(|grammar| {
+                grammar
+                    .indents_config
+                    .as_ref()
+                    .expect("grammar in indent match set has indents_config")
+            })
             .collect::<Vec<_>>();
 
         let mut indent_ranges = Vec::<Range<Point>>::new();
@@ -4767,307 +4822,6 @@ impl BufferSnapshot {
         self.syntax.matches(range, self, query)
     }
 
-    /// Finds all [`RowChunks`] applicable to the given range, then returns all bracket pairs that intersect with those chunks.
-    /// Hence, may return more bracket pairs than the range contains.
-    ///
-    /// Will omit known chunks.
-    /// The resulting bracket match collections are not ordered.
-    pub fn fetch_bracket_ranges(
-        &self,
-        range: Range<usize>,
-        known_chunks: Option<&HashSet<Range<BufferRow>>>,
-    ) -> HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>> {
-        let mut all_bracket_matches = HashMap::default();
-
-        for chunk in self
-            .tree_sitter_data
-            .chunks
-            .applicable_chunks(&[range.to_point(self)])
-        {
-            if known_chunks.is_some_and(|chunks| chunks.contains(&chunk.row_range())) {
-                continue;
-            }
-            let chunk_range = chunk.anchor_range();
-            let chunk_range = chunk_range.to_offset(&self);
-
-            if let Some(cached_brackets) =
-                &self.tree_sitter_data.brackets_by_chunks.lock()[chunk.id]
-            {
-                all_bracket_matches.insert(chunk.row_range(), cached_brackets.clone());
-                continue;
-            }
-
-            let mut all_brackets: Vec<(BracketMatch<usize>, usize, bool)> = Vec::new();
-            let mut opens = Vec::new();
-            let mut color_pairs = Vec::new();
-
-            let mut matches = self.syntax.matches_with_options(
-                chunk_range.clone(),
-                &self.text,
-                TreeSitterOptions {
-                    max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
-                    max_start_depth: None,
-                },
-                |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
-            );
-            let configs = matches
-                .grammars()
-                .iter()
-                .map(|grammar| grammar.brackets_config.as_ref().unwrap())
-                .collect::<Vec<_>>();
-
-            // Group matches by open range so we can either trust grammar output
-            // or repair it by picking a single closest close per open.
-            let mut open_to_close_ranges = BTreeMap::new();
-            while let Some(mat) = matches.peek() {
-                let mut open = None;
-                let mut close = None;
-                let syntax_layer_depth = mat.depth;
-                let pattern_index = mat.pattern_index;
-                let config = configs[mat.grammar_index];
-                let pattern = &config.patterns[pattern_index];
-                for capture in mat.captures {
-                    if capture.index == config.open_capture_ix {
-                        open = Some(capture.node.byte_range());
-                    } else if capture.index == config.close_capture_ix {
-                        close = Some(capture.node.byte_range());
-                    }
-                }
-
-                matches.advance();
-
-                let Some((open_range, close_range)) = open.zip(close) else {
-                    continue;
-                };
-
-                let bracket_range = open_range.start..=close_range.end;
-                if !bracket_range.overlaps(&chunk_range) {
-                    continue;
-                }
-
-                open_to_close_ranges
-                    .entry((open_range.start, open_range.end, pattern_index))
-                    .or_insert_with(BTreeMap::new)
-                    .insert(
-                        (close_range.start, close_range.end),
-                        BracketMatch {
-                            open_range: open_range.clone(),
-                            close_range: close_range.clone(),
-                            syntax_layer_depth,
-                            newline_only: pattern.newline_only,
-                            color_index: None,
-                        },
-                    );
-
-                all_brackets.push((
-                    BracketMatch {
-                        open_range,
-                        close_range,
-                        syntax_layer_depth,
-                        newline_only: pattern.newline_only,
-                        color_index: None,
-                    },
-                    pattern_index,
-                    pattern.rainbow_exclude,
-                ));
-            }
-
-            let has_bogus_matches = open_to_close_ranges
-                .iter()
-                .any(|(_, end_ranges)| end_ranges.len() > 1);
-            if has_bogus_matches {
-                // Grammar is producing bogus matches where one open is paired with multiple
-                // closes. Build a valid stack by walking through positions in order.
-                // For each close, we know the expected open_len from tree-sitter matches.
-
-                // Map each close to its expected open length (for inferring opens)
-                let close_to_open_len: HashMap<(usize, usize, usize), usize> = all_brackets
-                    .iter()
-                    .map(|(bracket_match, pattern_index, _)| {
-                        (
-                            (
-                                bracket_match.close_range.start,
-                                bracket_match.close_range.end,
-                                *pattern_index,
-                            ),
-                            bracket_match.open_range.len(),
-                        )
-                    })
-                    .collect();
-
-                // Collect unique opens and closes within this chunk
-                let mut unique_opens: HashSet<(usize, usize, usize)> = all_brackets
-                    .iter()
-                    .map(|(bracket_match, pattern_index, _)| {
-                        (
-                            bracket_match.open_range.start,
-                            bracket_match.open_range.end,
-                            *pattern_index,
-                        )
-                    })
-                    .filter(|(start, _, _)| chunk_range.contains(start))
-                    .collect();
-
-                let mut unique_closes: Vec<(usize, usize, usize)> = all_brackets
-                    .iter()
-                    .map(|(bracket_match, pattern_index, _)| {
-                        (
-                            bracket_match.close_range.start,
-                            bracket_match.close_range.end,
-                            *pattern_index,
-                        )
-                    })
-                    .filter(|(start, _, _)| chunk_range.contains(start))
-                    .collect();
-                unique_closes.sort_unstable();
-                unique_closes.dedup();
-
-                // Build valid pairs by walking through closes in order
-                let mut unique_opens_vec: Vec<_> = unique_opens.iter().copied().collect();
-                unique_opens_vec.sort();
-
-                let mut valid_pairs: HashSet<((usize, usize, usize), (usize, usize, usize))> =
-                    HashSet::default();
-                let mut open_stacks: HashMap<usize, Vec<(usize, usize)>> = HashMap::default();
-                let mut open_idx = 0;
-
-                for close in &unique_closes {
-                    // Push all opens before this close onto stack
-                    while open_idx < unique_opens_vec.len()
-                        && unique_opens_vec[open_idx].0 < close.0
-                    {
-                        let (start, end, pattern_index) = unique_opens_vec[open_idx];
-                        open_stacks
-                            .entry(pattern_index)
-                            .or_default()
-                            .push((start, end));
-                        open_idx += 1;
-                    }
-
-                    // Try to match with most recent open
-                    let (close_start, close_end, pattern_index) = *close;
-                    if let Some(open) = open_stacks
-                        .get_mut(&pattern_index)
-                        .and_then(|open_stack| open_stack.pop())
-                    {
-                        valid_pairs.insert(((open.0, open.1, pattern_index), *close));
-                    } else if let Some(&open_len) = close_to_open_len.get(close) {
-                        // No open on stack - infer one based on expected open_len
-                        if close_start >= open_len {
-                            let inferred = (close_start - open_len, close_start, pattern_index);
-                            unique_opens.insert(inferred);
-                            valid_pairs.insert((inferred, *close));
-                            all_brackets.push((
-                                BracketMatch {
-                                    open_range: inferred.0..inferred.1,
-                                    close_range: close_start..close_end,
-                                    newline_only: false,
-                                    syntax_layer_depth: 0,
-                                    color_index: None,
-                                },
-                                pattern_index,
-                                false,
-                            ));
-                        }
-                    }
-                }
-
-                all_brackets.retain(|(bracket_match, pattern_index, _)| {
-                    let open = (
-                        bracket_match.open_range.start,
-                        bracket_match.open_range.end,
-                        *pattern_index,
-                    );
-                    let close = (
-                        bracket_match.close_range.start,
-                        bracket_match.close_range.end,
-                        *pattern_index,
-                    );
-                    valid_pairs.contains(&(open, close))
-                });
-            }
-
-            let mut all_brackets = all_brackets
-                .into_iter()
-                .enumerate()
-                .map(|(index, (bracket_match, _, rainbow_exclude))| {
-                    // Certain languages have "brackets" that are not brackets, e.g. tags. and such
-                    // bracket will match the entire tag with all text inside.
-                    // For now, avoid highlighting any pair that has more than single char in each bracket.
-                    // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
-                    let should_color = !rainbow_exclude
-                        && (bracket_match.open_range.len() == 1
-                            || bracket_match.close_range.len() == 1);
-                    if should_color {
-                        opens.push(bracket_match.open_range.clone());
-                        color_pairs.push((
-                            bracket_match.open_range.clone(),
-                            bracket_match.close_range.clone(),
-                            index,
-                        ));
-                    }
-                    bracket_match
-                })
-                .collect::<Vec<_>>();
-
-            opens.sort_by_key(|r| (r.start, r.end));
-            opens.dedup_by(|a, b| a.start == b.start && a.end == b.end);
-            color_pairs.sort_by_key(|(_, close, _)| close.end);
-
-            let mut open_stack = Vec::new();
-            let mut open_index = 0;
-            for (open, close, index) in color_pairs {
-                while open_index < opens.len() && opens[open_index].start < close.start {
-                    open_stack.push(opens[open_index].clone());
-                    open_index += 1;
-                }
-
-                if open_stack.last() == Some(&open) {
-                    let depth_index = open_stack.len() - 1;
-                    all_brackets[index].color_index = Some(depth_index);
-                    open_stack.pop();
-                }
-            }
-
-            all_brackets.sort_by_key(|bracket_match| {
-                (bracket_match.open_range.start, bracket_match.open_range.end)
-            });
-
-            if let empty_slot @ None =
-                &mut self.tree_sitter_data.brackets_by_chunks.lock()[chunk.id]
-            {
-                *empty_slot = Some(all_brackets.clone());
-            }
-            all_bracket_matches.insert(chunk.row_range(), all_brackets);
-        }
-
-        all_bracket_matches
-    }
-
-    pub fn all_bracket_ranges(
-        &self,
-        range: Range<usize>,
-    ) -> impl Iterator<Item = BracketMatch<usize>> {
-        self.fetch_bracket_ranges(range.clone(), None)
-            .into_values()
-            .flatten()
-            .filter(move |bracket_match| {
-                let bracket_range = bracket_match.open_range.start..bracket_match.close_range.end;
-                bracket_range.overlaps(&range)
-            })
-    }
-
-    /// Returns bracket range pairs overlapping or adjacent to `range`
-    pub fn bracket_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = BracketMatch<usize>> + '_ {
-        // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_previous_offset(self)..range.end.to_next_offset(self);
-        self.all_bracket_ranges(range)
-            .filter(|pair| !pair.newline_only)
-    }
-
     pub fn debug_variables_query<T: ToOffset>(
         &self,
         range: Range<T>,
@@ -5201,61 +4955,6 @@ impl BufferSnapshot {
                 matches.advance();
             }
         })
-    }
-
-    /// Returns enclosing bracket ranges containing the given range
-    pub fn enclosing_bracket_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = BracketMatch<usize>> + '_ {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-
-        let result: Vec<_> = self.bracket_ranges(range.clone()).collect();
-        let max_depth = result
-            .iter()
-            .map(|mat| mat.syntax_layer_depth)
-            .max()
-            .unwrap_or(0);
-        result.into_iter().filter(move |pair| {
-            pair.open_range.start <= range.start
-                && pair.close_range.end >= range.end
-                && pair.syntax_layer_depth == max_depth
-        })
-    }
-
-    /// Returns the smallest enclosing bracket ranges containing the given range or None if no brackets contain range
-    ///
-    /// Can optionally pass a range_filter to filter the ranges of brackets to consider
-    pub fn innermost_enclosing_bracket_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-        range_filter: Option<&dyn Fn(Range<usize>, Range<usize>) -> bool>,
-    ) -> Option<(Range<usize>, Range<usize>)> {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-
-        // Get the ranges of the innermost pair of brackets.
-        let mut result: Option<(Range<usize>, Range<usize>)> = None;
-
-        for pair in self.enclosing_bracket_ranges(range) {
-            if let Some(range_filter) = range_filter
-                && !range_filter(pair.open_range.clone(), pair.close_range.clone())
-            {
-                continue;
-            }
-
-            let len = pair.close_range.end - pair.open_range.start;
-
-            if let Some((existing_open, existing_close)) = &result {
-                let existing_len = existing_close.end - existing_open.start;
-                if len > existing_len {
-                    continue;
-                }
-            }
-
-            result = Some((pair.open_range, pair.close_range));
-        }
-
-        result
     }
 
     /// Returns anchor ranges for any matches of the redaction query.

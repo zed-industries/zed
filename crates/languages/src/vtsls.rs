@@ -57,9 +57,15 @@ impl VtslsLspAdapter {
             Self::TYPESCRIPT_TSDK_PATH
         };
 
+        // vtsls doesn't support TypeScript 7+, which no longer ships `tsserver.js`.
         if self
             .fs
-            .is_dir(&adapter.worktree_root_path().join(tsdk_path))
+            .is_file(
+                &adapter
+                    .worktree_root_path()
+                    .join(tsdk_path)
+                    .join("tsserver.js"),
+            )
             .await
         {
             Some(tsdk_path)
@@ -275,7 +281,7 @@ impl LspAdapter for VtslsLspAdapter {
                 "showOnAllFunctions": true
             },
             "tsserver": {
-                "maxTsServerMemory": 8092
+                "maxTsServerMemory": 8192
             },
         });
 
