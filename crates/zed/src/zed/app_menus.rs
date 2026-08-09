@@ -261,6 +261,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                         reveal_target: None,
                     },
                 ),
+                MenuItem::action("Build and Upload", citadel_build::BuildAndUpload),
                 MenuItem::action("Start Debugger", debugger_ui::Start),
                 MenuItem::separator(),
                 MenuItem::action("Edit tasks.json…", zed_actions::OpenProjectTasks),
