@@ -14,6 +14,7 @@ use rust_embed::RustEmbed;
 #[include = "sounds/**/*"]
 #[include = "prompts/**/*"]
 #[include = "*.md"]
+#[include = "arduino-core/**/*"]
 #[exclude = "*.DS_Store"]
 pub struct Assets;
 
