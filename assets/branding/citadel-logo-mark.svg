@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+  <title>Citadel</title>
+  <defs>
+    <linearGradient id="mintGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6ee7b7"/>
+      <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- outer shield outline (double line, matches the source's layered-line crest) -->
+  <path d="M50,55 L120,28 L190,55 L202,130 L120,218 L38,130 Z"
+        fill="none" stroke="#1e3a5f" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M58,62 L120,40 L182,62 L192,128 L120,205 L48,128 Z"
+        fill="none" stroke="#16293f" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- glowing circuit hexagon -->
+  <g filter="url(#glow)">
+    <path d="M173.7,97 L120,66 L66.3,97 L66.3,159 L120,190 L173.7,159 Z"
+          fill="url(#mintGradient)"/>
+  </g>
+
+  <!-- circuit trace details -->
+  <path d="M75,105 L92,105 L92,122" fill="none" stroke="#a7f3d0" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="92" cy="105" r="3" fill="#a7f3d0"/>
+  <path d="M165,150 L148,150 L148,133" fill="none" stroke="#a7f3d0" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="148" cy="150" r="3" fill="#a7f3d0"/>
+
+  <!-- small gear glyphs -->
+  <g stroke="#065f46" stroke-width="2" stroke-linecap="round">
+    <circle cx="85" cy="150" r="7" fill="none"/>
+    <path d="M85,140 L85,144 M85,156 L85,160 M75,150 L79,150 M91,150 L95,150
+             M78,143 L80.5,145.5 M89.5,154.5 L92,157 M78,157 L80.5,154.5 M89.5,145.5 L92,143"/>
+  </g>
+  <g stroke="#065f46" stroke-width="2" stroke-linecap="round">
+    <circle cx="155" cy="105" r="7" fill="none"/>
+    <path d="M155,95 L155,99 M155,111 L155,115 M145,105 L149,105 M161,105 L165,105
+             M148,98 L150.5,100.5 M159.5,109.5 L162,112 M148,112 L150.5,109.5 M159.5,100.5 L162,98"/>
+  </g>
+
+  <!-- bold Z-bolt mark -->
+  <path d="M100,90 L148,90 L100,166 L148,166"
+        fill="none" stroke="#0f1b2d" stroke-width="14" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M100,90 L148,90 L100,166 L148,166"
+        fill="none" stroke="#065f46" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

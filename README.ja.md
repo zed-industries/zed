@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./assets/branding/citadel-logo-full.svg" alt="Citadel — Embedded Rust IDE, no C++ logic allowed" width="320">
+</p>
+
 # Citadel
 
 *[English](./README.md)*
