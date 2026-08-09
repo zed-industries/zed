@@ -1,0 +1,3 @@
+[submodule "prototypes/0002-arduino-core/vendor/ArduinoCore-avr"]
+	path = prototypes/0002-arduino-core/vendor/ArduinoCore-avr
+	url = https://github.com/arduino/ArduinoCore-avr.git

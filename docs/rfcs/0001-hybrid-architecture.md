@@ -13,18 +13,21 @@ No part of the design is a research risk — every piece has prior art (mainly [
 `rustc`'s AVR backend (`avr-none` / historically `avr-unknown-gnu-atmega328`) isn't on stable — it needs `cargo +nightly build -Z build-std=core --target ...`. Citadel has to pin and vendor a specific nightly rather than relying on whatever's installed, since the LLVM AVR backend has had regressions across nightlies historically.
 
 - **Needs:** a toolchain-pinning strategy (bundled nightly, or a checked `rust-toolchain.toml` the IDE enforces) and a smoke-test suite run against nightly updates before Citadel bumps its pinned version.
+- **Resolved (proof of mechanism):** [`prototypes/0001-hello-blink/rust-toolchain.toml`](../../prototypes/0001-hello-blink/rust-toolchain.toml) pins `nightly-2026-08-06`; `build.sh` builds against exactly that toolchain with `-Z build-std=core --target avr-none -C target-cpu=atmega328p`. What's still open: the smoke-test suite that runs against nightly *updates* before Citadel bumps its pin doesn't exist yet — this only proves one nightly works, not the update process.
 
 ### 2. `.hex` generation is `avr-objcopy`, not `avr-gcc`, directly
 
 The build-flow diagram says "avr-gcc merges both into one .hex," but avr-gcc only produces the linked ELF; `avr-objcopy -O ihex` converts that to `.hex`. Arduino's own build already hides this step behind one command — Citadel needs to replicate it, not invent it.
 
 - **Needs:** no design work, just an implementation task (link ELF, then objcopy).
+- **Resolved:** implemented in [`prototypes/0001-hello-blink/build.sh`](../../prototypes/0001-hello-blink/build.sh) (link with `avr-g++`, then `avr-objcopy -O ihex -R .eeprom`).
 
 ### 3. Binary size with two toolchains and no cross-LTO
 
 GCC (avr-g++) and LLVM (rustc) can't LTO across each other, so each brings its own copies of runtime helpers (e.g. software multiply/divide, memcpy). On flash-constrained chips (ATmega328p / Arduino Uno, 32 KB) this could matter; on larger chips (ATmega2560 / Mega, 256 KB) it's likely noise.
 
 - **Needs:** a real measurement — build a representative sketch + Rust logic crate, compare `.hex` size against a hypothetical single-toolchain build, before deciding whether size is actually a problem worth solving.
+- **Data point, not resolved:** `prototypes/0001-hello-blink` (`avr-size`) measures `text=274 bytes, bss=5 bytes` — about 0.8% of the ATmega328P's 32 KB flash. This is a minimal blink-only program, not a representative sketch, so it doesn't yet answer whether duplicated runtime helpers (multiply/divide/memcpy) become a real problem once a sketch is large enough to pull them in from both toolchains. Still open until measured against something more representative.
 
 ### 4. Static analysis that rejects logic in user C/C++
 
@@ -35,12 +38,19 @@ The IDE must parse the user's sketch (not vendored libraries — those are allow
 - Edge case: is a trivial `for` in `setup()` (e.g. initializing N pins) actually banned, or only in `loop()`? Needs an explicit decision, not just "no for anywhere."
 
 - **Needs:** a design decision on scope + macro policy, then a tree-sitter-based lint pass (prior art: Zed's existing diagnostics/language-server plumbing).
+- **Data point, not resolved:** [`prototypes/0003-boundary-lint`](../../prototypes/0003-boundary-lint) is a standalone tree-sitter-cpp CLI (not wired into the IDE) that detects and rejects `if`/`for`/`while`/`do-while`/ternary/function-like-macro plus a "computed intermediate variable" rule (a declaration initializer containing a `binary_expression`). It correctly reports zero violations against the two boundary-compliant sketches ([`0001-hello-blink/cpp/io.cpp`](../../prototypes/0001-hello-blink/cpp/io.cpp), [`0002-arduino-core/cpp/sketch.cpp`](../../prototypes/0002-arduino-core/cpp/sketch.cpp)) and exactly six violations against a deliberately bad fixture — the core AST-walk detection mechanism works, verified against the real grammar rather than assumed. This does not resolve the item; it sharpens the open questions above and surfaces new ones:
+  - **IDE integration is still untouched.** Citadel's diagnostics pipeline (`crates/language`/`crates/project`) is entirely LSP-shaped; there is no pattern today for a non-LSP static-analysis pass to push diagnostics into the editor. Wiring this prototype's detection into an actual squiggly-underline experience is separate, unstarted work.
+  - **The macro policy needs to go further than "ban function-like macros."** Object-like macros (`#define BLINK_IF_HOT if (...) { ... }`) are just as capable of hiding logic — tree-sitter parses a `#define`'s body as an opaque token, not as statements, so this passes valid, compiling C++ undetected. The original function-like-macro-only proposal above is confirmed insufficient by this prototype.
+  - **The `setup()` scope question generalizes to a runtime/user-sketch distinction, not just a `setup()` exception.** Running the lint against `0001-hello-blink`'s own [`cpp/runtime.cpp`](../../prototypes/0001-hello-blink/cpp/runtime.cpp) — the file that owns `main()` and the `for (;;) { citadel_loop(); }` scaffolding, analogous to the vendored Arduino core's own `main.cpp` — reports a `for` violation. Any real lint needs a way to exempt IDE/runtime-owned scaffolding from the rule, not just carve out `setup()`.
+  - **`switch` is a gap the original "if/for/while/ternaries/etc." wording didn't call out explicitly**, and it's exercisable in valid, idiomatic Arduino state-machine code without triggering any of the prototype's six rules.
+  - **Compile-time-evaluable expressions false-positive against the "computed intermediate variable" rule as implemented.** `const uint8_t MASK = (1 << PB5);` — the standard AVR board-constant idiom already used in `0001-hello-blink`'s own `io.cpp` when written as a named constant rather than inline — has no runtime decision or calculation, but a naive "any `binary_expression` in a declaration initializer" rule rejects it anyway. Any real rule needs a constant-expression carve-out; the CLAUDE.md/README boundary text's "board-specific constants" allowance already anticipates this but the naive AST rule doesn't implement it yet.
 
 ### 5. ABI/link interop between avr-g++ objects and rustc-LLVM objects
 
 Both target the same AVR calling convention, so this is expected to work, but needs an actual prototype to confirm: who owns `main()` (the Arduino C++ runtime should, with Rust compiled as a `#![no_std]` `staticlib` exposing only `extern "C"` functions), what the linker script/memory layout looks like, and how C++ static initializers and Rust's own init (`#[panic_handler]`, no `alloc` unless proven necessary) coexist without both trying to run startup code.
 
 - **Needs:** a minimal end-to-end prototype — one sketch, one Rust crate, one linked `.hex`, flashed and verified on real hardware — before this item can be marked resolved.
+- **Resolved:** [`prototypes/0001-hello-blink`](../../prototypes/0001-hello-blink) builds one `.cpp` I/O layer + one `#![no_std]` Rust logic crate, links them with `avr-g++`, and produces a `.hex`. `avr-nm` confirms `citadel_setup`/`citadel_loop`/`citadel_tick` all resolve across the toolchain boundary with zero undefined symbols — this answers the ABI-compatibility half of the question. The ownership/init-coexistence design decided here: a small `cpp/runtime.cpp` owns `main()` and the only loop construct in the whole prototype (analogous to the vendored Arduino core's `wiring.c`), calling into `citadel_setup()`/`citadel_loop()` in `cpp/io.cpp`, which are themselves branch-free straight-line I/O hand-off (matching the boundary rule in §4/README). Flashed to an ELEGOO UNO R3 (Arduino Uno-compatible board) via `avrdude`; write and verify succeeded and the onboard LED blink was visually confirmed — the end-to-end hardware loop is proven.
 
 ## Definition of done for this RFC
 

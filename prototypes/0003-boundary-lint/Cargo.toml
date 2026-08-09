@@ -1,0 +1,10 @@
+[workspace]
+
+[package]
+name = "boundary-lint"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tree-sitter = "0.26.9"
+tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }

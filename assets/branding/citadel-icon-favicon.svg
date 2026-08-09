@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Citadel</title>
+  <path d="M14,15 L32,8 L50,15 L53,35 L32,58 L11,35 Z"
+        fill="#142842" stroke="#34d399" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M44.99,25.5 L32,18 L19.01,25.5 L19.01,40.5 L32,48 L44.99,40.5 Z"
+        fill="#34d399"/>
+  <path d="M23,21 L41,21 L23,45 L41,45"
+        fill="none" stroke="#0f1b2d" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>
