@@ -85,7 +85,7 @@ channel = "nightly-2026-08-06"
 components = ["rust-src"]
 ```
 
-**`rust/Cargo.toml`** (`<name>` = the selected directory's name, sanitized to a valid Cargo package name: lowercase the name, replace every run of one-or-more characters that are not `a-z`/`0-9` with a single `_`, then trim leading/trailing `_`; if the result is empty, use `project`. E.g. `My Project!` → `my_project`, `123!!!` → `project`):
+**`rust/Cargo.toml`** (`<name>` = the selected directory's name, sanitized to a valid Cargo package name: lowercase the name, replace every run of one-or-more characters that are not `a-z`/`0-9` with a single `_`, then trim leading/trailing `_`; if the result is empty, use `project`. E.g. `My Project!` → `my_project`, `123` → `123` (digits pass through unchanged), `!!!` → `project` (no alphanumeric characters at all)):
 ```toml
 [workspace]
 
@@ -160,7 +160,7 @@ Mirrors `clone_and_open` (`crates/git_ui/src/clone.rs:8-159`), simplified — th
 
 ## Testing
 
-- **Scaffold content generation** (a pure function mapping project name → list of `(relative_path, content)` pairs, no `Fs`/GPUI involved) gets plain `#[test]` unit tests: assert the exact file list, assert `.claude/CLAUDE.md`/`cpp/io.cpp`/`rust/Cargo.toml` content, assert crate-name sanitization per the rule above (e.g. `My Project!` → package name `my_project_logic`; `123!!!` → `project_logic`).
+- **Scaffold content generation** (a pure function mapping project name → list of `(relative_path, content)` pairs, no `Fs`/GPUI involved) gets plain `#[test]` unit tests: assert the exact file list, assert `.claude/CLAUDE.md`/`cpp/io.cpp`/`rust/Cargo.toml` content, assert crate-name sanitization per the rule above (e.g. `My Project!` → package name `my_project_logic`; `!!!` → `project_logic`).
 - **Directory writing + empty-check + git init** get `#[gpui::test]`s using `FakeFs::new` + `insert_tree` (pattern: `crates/workspace/src/workspace.rs:11704-11796`, `test_tracking_active_path`) to seed an empty vs. non-empty fake directory and assert the resulting file contents / the rejection behavior.
 - **Opening as a new workspace** gets a `#[gpui::test]` using `Project::test` + `Workspace::test_new` (`crates/project/src/project.rs:2068`, `crates/workspace/src/workspace.rs:7906`), asserting the new project's worktree is present after the action completes.
 
