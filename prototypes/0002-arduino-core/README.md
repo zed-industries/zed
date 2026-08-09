@@ -9,7 +9,9 @@
 - `rust/` — ロジック層。`#![no_std]` staticlib。`citadel_tick()` がLED状態(0/1)をトグルする。0001と違い、点滅のタイミングはRust側のカウンタではなく `sketch.cpp` の `delay(500)` が担う。
 - `build.sh` — `cores/arduino/` 配下の全ソースをコンパイル(`arduino-builder`と同じ方式)→ スケッチをコンパイル → `cargo +nightly` でRustをビルド → リンク(`-Wl,--gc-sections` で未使用コアシンボルを刈る)→ `.hex` 生成、を一括実行する。
 
-## 実機での検証手順(手動)
+## 実機での検証結果
+
+ELEGOO UNO R3(Arduino Uno互換ボード)で実機検証済み。
 
 ```sh
 git submodule update --init vendor/ArduinoCore-avr
@@ -17,7 +19,11 @@ git submodule update --init vendor/ArduinoCore-avr
 avrdude -c arduino -p atmega328p -P /dev/ttyACM0 -b 115200 -U flash:w:build/firmware.hex:i
 ```
 
-`-P` はシリアルポートに合わせて変更する。書き込み後、13番ピン(オンボードLED)が一定間隔で点滅すれば成功。
+- `avrdude` による書き込み・ベリファイ成功
+- 13番ピン(オンボードLED)の点滅を目視確認済み
+- `avr-size` 実測値: text=2376 bytes(0001のtext=274 bytesとの差分がArduinoコア分のコスト)
+
+`-P` はシリアルポートに合わせて変更する。
 
 ## ライセンスについて
 

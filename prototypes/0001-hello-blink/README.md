@@ -34,5 +34,5 @@ avrdude -c arduino -p atmega328p -P /dev/ttyACM0 -b 115200 -U flash:w:build/firm
 
 ## このプロトタイプが実証していないこと
 
-- 本物のArduinoコア(`Arduino.h`/`pinMode`/`digitalWrite`)は使っていない。`avr/io.h` によるレジスタ直叩き。Arduinoコアのベンダリングは別タスク。
+- 本物のArduinoコア(`Arduino.h`/`pinMode`/`digitalWrite`)は[`prototypes/0002-arduino-core`](../0002-arduino-core)で別途検証済み。このプロトタイプ自体は意図的に`avr/io.h`直叩きのまま(ABI境界の最小検証に集中するため)。
 - C/C++の静的解析によるロジック拒否(RFC 0001 §4)はこのプロトタイプの対象外。
