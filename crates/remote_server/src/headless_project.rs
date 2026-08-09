@@ -1346,7 +1346,7 @@ impl HeadlessProject {
             });
             TerminalSettings::get(settings_location, cx).shell.clone()
         });
-        log::debug!("Resolved remote terminal shell setting: {shell:?}");
+        log::debug!("handle_get_terminal_shell: resolved remote terminal shell setting: {shell:?}");
 
         Ok(proto::TerminalShell {
             shell: Some(task::shell_to_proto(shell)),

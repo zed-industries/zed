@@ -399,7 +399,9 @@ impl Project {
                     .context("remote server returned no terminal shell")?;
                 let shell = task::shell_from_proto(shell)
                     .context("remote server returned an invalid terminal shell")?;
-                log::debug!("Using remote terminal shell setting: {shell:?}");
+                log::debug!(
+                    "create_terminal_shell_internal: using remote terminal shell setting: {shell:?}"
+                );
                 Some(shell)
             } else {
                 None
@@ -659,11 +661,6 @@ fn create_remote_shell(
         Some((program, args)) => (Some(program.clone()), args),
         None => (None, &Vec::new()),
     };
-
-    log::debug!(
-        "Creating remote shell command: program={program:?}, argument_count={}, working_directory={working_directory:?}",
-        args.len()
-    );
 
     let command = remote_client.read(cx).build_command(
         program,
