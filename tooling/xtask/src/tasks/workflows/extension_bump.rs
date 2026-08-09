@@ -7,8 +7,8 @@ use crate::tasks::workflows::{
     steps::{
         self, BASH_SHELL, CommonJobConditions, CommonPermissionSets,
         DEFAULT_REPOSITORY_OWNER_GUARD, GitHubScriptStep, GitRef, NamedJob, RefSha,
-        RepositoryTarget, cache_rust_dependencies_namespace, checkout_repo, create_ref,
-        dependant_job, generate_token, named,
+        RepositoryTarget, TokenPermissions, cache_rust_dependencies_namespace, checkout_repo,
+        create_ref, dependant_job, generate_token, named,
     },
     vars::{
         JobOutput, StepOutput, WorkflowInput, WorkflowSecret,
@@ -126,7 +126,10 @@ fn create_version_label(
     app_secret: &WorkflowSecret,
 ) -> (NamedJob, StepOutput) {
     let (generate_token, generated_token) =
-        generate_token(&app_id.to_string(), &app_secret.to_string()).into();
+        generate_token(&app_id.to_string(), &app_secret.to_string())
+            .for_repository(RepositoryTarget::current())
+            .with_permissions([(TokenPermissions::Contents, Level::Write)])
+            .into();
     let (determine_tag_step, tag) = determine_tag(current_version);
     let job = steps::dependant_job(dependencies)
         .defaults(extension_job_defaults())
@@ -215,7 +218,13 @@ fn bump_extension_version(
     app_secret: &WorkflowSecret,
 ) -> NamedJob {
     let (generate_token, generated_token) =
-        generate_token(&app_id.to_string(), &app_secret.to_string()).into();
+        generate_token(&app_id.to_string(), &app_secret.to_string())
+            .for_repository(RepositoryTarget::current())
+            .with_permissions([
+                (TokenPermissions::Contents, Level::Write),
+                (TokenPermissions::PullRequests, Level::Write),
+            ])
+            .into();
     let (bump_version, _new_version, title, body, branch_name) =
         bump_version(current_version, bump_type);
 
@@ -330,6 +339,12 @@ fn trigger_release(
     let (generate_token, generated_token) =
         generate_token(&app_id.to_string(), &app_secret.to_string())
             .for_repository(extension_registry)
+            .with_permissions([
+                (TokenPermissions::Contents, Level::Write),
+                (TokenPermissions::Issues, Level::Write),
+                (TokenPermissions::Members, Level::Read),
+                (TokenPermissions::PullRequests, Level::Write),
+            ])
             .into();
     let (get_extension_id, extension_id) = get_extension_id();
     let (release_action, pull_request_number) = release_action(extension_id, tag, &generated_token);

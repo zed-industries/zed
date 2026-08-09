@@ -1119,7 +1119,7 @@ impl CompletionsMenu {
                                     .child(
                                         h_flex()
                                             .min_w_0()
-                                            .w_full()
+                                            .flex_grow_1()
                                             .when(left_aligned_suffix, |this| this.justify_start())
                                             .when(right_aligned_suffix, |this| {
                                                 this.justify_between()
@@ -1134,7 +1134,15 @@ impl CompletionsMenu {
                                                 this.child(div().truncate().child(suffix))
                                             }),
                                     )
-                                    .end_slot::<Label>(documentation_label),
+                                    .when_some(documentation_label, |this, doc| {
+                                        this.child(
+                                            div()
+                                                .flex_shrink(1.0)
+                                                .ml_auto()
+                                                .min_w_0()
+                                                .child(doc.truncate()),
+                                        )
+                                    }),
                             )
                             .into_any_element()
                     })
@@ -1554,8 +1562,8 @@ fn render_completion_kind_letter(
         .flex_none()
         .w(IconSize::XSmall.rems())
         .text_center()
-        .text_size(rems_from_px(11.))
-        .line_height(rems_from_px(14.));
+        .text_size(rems_from_px(11_f32))
+        .line_height(rems_from_px(14_f32));
 
     let Some(kind) = kind else {
         return badge.into_any_element();

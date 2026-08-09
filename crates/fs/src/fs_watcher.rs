@@ -1046,35 +1046,37 @@ impl GlobalWatcher {
     }
 
     fn ensure_native_watcher(&self) -> anyhow::Result<()> {
-        if self.native_watcher.lock().is_some() {
-            return Ok(());
+        // The lock is held across creation: with a check-then-insert under two
+        // separate lock acquisitions, concurrent callers could each create a
+        // watcher and the loser's insert would silently drop the winner's
+        // watcher along with every path registered on it.
+        let mut native_watcher = self.native_watcher.lock();
+        if native_watcher.is_none() {
+            // CORE excludes Access events, which Zed discards anyway. Without this,
+            // the default mask subscribes to inotify OPEN/CLOSE_* on Linux, so every
+            // file read in a watched directory would queue events, increasing the
+            // risk of queue overflows (and thus full rescans) under read-heavy
+            // workloads like grep or language server indexing.
+            let config = notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
+            let watcher = <notify::RecommendedWatcher as notify::Watcher>::new(
+                |event| global_watcher().enqueue(WatcherMode::Native, event),
+                config,
+            )?;
+            *native_watcher = Some(Box::new(watcher));
         }
-
-        // CORE excludes Access events, which Zed discards anyway. Without this,
-        // the default mask subscribes to inotify OPEN/CLOSE_* on Linux, so every
-        // file read in a watched directory would queue events, increasing the
-        // risk of queue overflows (and thus full rescans) under read-heavy
-        // workloads like grep or language server indexing.
-        let config = notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
-        let watcher = <notify::RecommendedWatcher as notify::Watcher>::new(
-            |event| global_watcher().enqueue(WatcherMode::Native, event),
-            config,
-        )?;
-        *self.native_watcher.lock() = Some(Box::new(watcher));
         Ok(())
     }
 
     fn ensure_poll_watcher(&self) -> anyhow::Result<()> {
-        if self.poll_watcher.lock().is_some() {
-            return Ok(());
+        let mut poll_watcher = self.poll_watcher.lock();
+        if poll_watcher.is_none() {
+            let config = notify::Config::default().with_poll_interval(*POLL_INTERVAL);
+            let watcher = notify::PollWatcher::new(
+                |event| global_watcher().enqueue(WatcherMode::Poll, event),
+                config,
+            )?;
+            *poll_watcher = Some(Box::new(watcher));
         }
-
-        let config = notify::Config::default().with_poll_interval(*POLL_INTERVAL);
-        let watcher = notify::PollWatcher::new(
-            |event| global_watcher().enqueue(WatcherMode::Poll, event),
-            config,
-        )?;
-        *self.poll_watcher.lock() = Some(Box::new(watcher));
         Ok(())
     }
 }
