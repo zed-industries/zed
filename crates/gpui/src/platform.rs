@@ -9,8 +9,8 @@ pub mod layer_shell;
 /// Types for configuring parent-anchored popup windows such as menus, dropdowns and tooltips.
 pub mod popup;
 
-#[cfg(any(test, feature = "bench"))]
-mod bench_dispatcher;
+#[cfg(any(test, feature = "test-support"))]
+mod threaded_dispatcher;
 
 #[cfg(any(test, feature = "test-support"))]
 mod test;
@@ -175,8 +175,8 @@ pub(crate) use test::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
-#[cfg(any(test, feature = "bench"))]
-pub use bench_dispatcher::BenchDispatcher;
+#[cfg(any(test, feature = "test-support"))]
+pub use threaded_dispatcher::ThreadedDispatcher;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
@@ -926,6 +926,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn zoom(&self);
     fn toggle_fullscreen(&self);
     fn is_fullscreen(&self) -> bool;
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        None
+    }
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
@@ -978,7 +981,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     #[cfg(target_os = "macos")]
     fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
     fn show_character_palette(&self) {}
-    fn titlebar_double_click(&self) {}
+    fn titlebar_double_click(&self, _is_resizable: bool, _is_minimizable: bool) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
     fn on_merge_all_windows(&self, _callback: Box<dyn FnMut()>) {}
     fn on_select_previous_tab(&self, _callback: Box<dyn FnMut()>) {}
@@ -1154,10 +1157,10 @@ pub trait PlatformDispatcher: Send + Sync {
         None
     }
 
-    // This cfg must match the `bench_dispatcher` module's, which implements
+    // This cfg must match the `threaded_dispatcher` module's, which implements
     // this method whenever it compiles.
-    #[cfg(any(test, feature = "bench"))]
-    fn as_bench(&self) -> Option<&BenchDispatcher> {
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_threaded(&self) -> Option<&ThreadedDispatcher> {
         None
     }
 }

@@ -22,7 +22,7 @@ use editor::{
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
-    Action, AnyElement, App, AsyncApp, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
+    Action, AnyElement, App, AsyncApp, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point,
     Render, SharedString, Styled, Subscription, Task, TaskExt, UpdateGlobal, WeakEntity, Window,
     actions, div,
@@ -51,7 +51,7 @@ use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*,
     utils::SearchInputWidth,
 };
-use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
+use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
@@ -227,6 +227,17 @@ pub fn init(cx: &mut App) {
             ProjectSearchView::new_search(workspace, action, window, cx);
             cx.notify();
         });
+        workspace.register_action(
+            move |workspace, action: &zed_actions::search::NewSearchInDirectory, window, cx| {
+                ProjectSearchView::new_search_with_filter(
+                    workspace,
+                    action.directory.clone(),
+                    window,
+                    cx,
+                );
+                cx.notify();
+            },
+        );
     })
     .detach();
 }
@@ -1193,14 +1204,12 @@ impl ProjectSearchView {
         this
     }
 
-    pub fn new_search_in_directory(
+    pub fn new_search_with_filter(
         workspace: &mut Workspace,
-        dir_path: &RelPath,
+        filter_str: String,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let filter_str = dir_path.display(workspace.path_style(cx));
-
         let weak_workspace = cx.entity().downgrade();
 
         let entity = cx.new(|cx| ProjectSearch::new(workspace.project().clone(), cx));
@@ -1768,7 +1777,7 @@ impl ProjectSearchView {
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(range_to_select)
                     });
-                    editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
+                    editor.scroll(Point::default(), window, cx);
                 }
             });
             if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
@@ -2426,7 +2435,7 @@ impl Render for ProjectSearchBar {
                 div()
                     .id("matches")
                     .ml_2()
-                    .min_w(rems_from_px(40.))
+                    .min_w(rems_from_px(40_f32))
                     .child(
                         h_flex()
                             .gap_1p5()
@@ -4143,9 +4152,20 @@ pub mod tests {
                 .clone()
         });
         assert!(a_dir_entry.is_dir());
-        workspace.update_in(cx, |workspace, window, cx| {
-            ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry.path, window, cx)
+        let directory = cx.update(|_, cx| {
+            a_dir_entry
+                .path
+                .display(workspace.read(cx).path_style(cx))
+                .into_owned()
         });
+        window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(
+                    Box::new(zed_actions::search::NewSearchInDirectory { directory }),
+                    cx,
+                );
+            })
+            .unwrap();
 
         let Some(search_view) = cx.read(|cx| {
             workspace
@@ -5037,12 +5057,7 @@ pub mod tests {
                     assert_eq!(results_editor.scroll_position(cx), Point::default());
 
                     // Scroll results all the way down
-                    results_editor.scroll(
-                        Point::new(0., f64::MAX),
-                        Some(Axis::Vertical),
-                        window,
-                        cx,
-                    );
+                    results_editor.scroll(Point::new(0., f64::MAX), window, cx);
                 });
             })
             .expect("unable to update search view");

@@ -14,19 +14,18 @@ use crate::{
 
 const MIN_THREADS: usize = 2;
 
-/// A multithreaded [`PlatformDispatcher`] for benchmarks.
+/// A multithreaded [`PlatformDispatcher`] for tests and benchmarks.
 ///
 /// Background tasks run in parallel on a pool of worker threads and timers fire
 /// in real time on a dedicated timer thread, mirroring the production
 /// dispatchers (see `LinuxDispatcher`). Main-thread tasks are queued until the
-/// benchmark thread drains them via [`Self::run_until_idle`], since there is no
+/// creating thread drains them via [`Self::run_until_idle`], since there is no
 /// platform run loop pumping them.
 ///
 /// Unlike [`TestDispatcher`](crate::TestDispatcher), which runs everything on a
 /// single thread with a virtual clock, work dispatched through this dispatcher
-/// executes with production concurrency, so wall-clock measurements reflect
-/// real parallelism.
-pub struct BenchDispatcher {
+/// executes with production concurrency.
+pub struct ThreadedDispatcher {
     background_sender: PriorityQueueSender<RunnableVariant>,
     main_sender: PriorityQueueSender<RunnableVariant>,
     main_receiver: Mutex<PriorityQueueReceiver<RunnableVariant>>,
@@ -36,7 +35,7 @@ pub struct BenchDispatcher {
 }
 
 /// Tracks how many background and timer runnables are queued or running so
-/// [`BenchDispatcher::run_until_idle`] knows when to stop waiting.
+/// [`ThreadedDispatcher::run_until_idle`] knows when to stop waiting.
 #[derive(Default)]
 struct IdleTracker {
     inflight: Mutex<usize>,
@@ -112,17 +111,17 @@ impl Ord for TimerEntry {
     }
 }
 
-impl Default for BenchDispatcher {
+impl Default for ThreadedDispatcher {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl BenchDispatcher {
+impl ThreadedDispatcher {
     /// Creates a dispatcher whose main thread is the calling thread.
     ///
     /// Worker and timer threads live for the lifetime of the process; the
-    /// dispatcher is expected to be created once and reused across benchmarks.
+    /// dispatcher is expected to be created once and reused.
     pub fn new() -> Self {
         let (background_sender, background_receiver) = PriorityQueueReceiver::new();
         let (main_sender, main_receiver) = PriorityQueueReceiver::new();
@@ -134,7 +133,7 @@ impl BenchDispatcher {
             let mut receiver: PriorityQueueReceiver<RunnableVariant> = background_receiver.clone();
             let idle = idle.clone();
             thread::Builder::new()
-                .name(format!("BenchWorker-{i}"))
+                .name(format!("ThreadedDispatcherWorker-{i}"))
                 .spawn(move || {
                     while let Ok(runnable) = receiver.pop() {
                         let _decrement = idle.decrement_on_drop();
@@ -145,7 +144,7 @@ impl BenchDispatcher {
                         profiler::save_task_timing();
                     }
                 })
-                .expect("failed to spawn benchmark worker thread");
+                .expect("failed to spawn threaded dispatcher worker");
         }
         drop(background_receiver);
 
@@ -160,7 +159,7 @@ impl BenchDispatcher {
             let timers = timers.clone();
             let idle = idle.clone();
             thread::Builder::new()
-                .name("BenchTimer".to_owned())
+                .name("ThreadedDispatcherTimer".to_owned())
                 .spawn(move || {
                     let mut state = timers.state.lock();
                     loop {
@@ -196,7 +195,7 @@ impl BenchDispatcher {
                         state = timers.state.lock();
                     }
                 })
-                .expect("failed to spawn benchmark timer thread");
+                .expect("failed to spawn threaded dispatcher timer");
         }
 
         Self {
@@ -221,7 +220,7 @@ impl BenchDispatcher {
     pub fn run_until_idle(&self) {
         assert!(
             self.is_main_thread(),
-            "run_until_idle must be called on the benchmark main thread"
+            "run_until_idle must be called on the threaded dispatcher's main thread"
         );
         loop {
             if self.drain_main_queue() {
@@ -258,18 +257,91 @@ impl BenchDispatcher {
         }
     }
 
-    /// Runs all main-thread tasks that are queued right now, without waiting for
-    /// background work or timers to finish.
+    /// Drives main-thread work until `ready` returns a value.
+    ///
+    /// Unlike [`Self::run_until_idle`], this waits across temporary quiescence.
+    /// This is required when completion can arrive from an external worker that
+    /// is not represented in the dispatcher's in-flight count.
+    ///
+    /// Readiness is checked before every main-thread runnable, so this returns
+    /// as soon as `ready` observes completion rather than after the queue
+    /// drains — deferred work that re-queues itself (idle sweeps, pollers)
+    /// must not extend a benchmark's measured interval past the completion it
+    /// awaits.
+    #[cfg(any(test, feature = "bench"))]
+    pub(crate) fn run_until<R>(&self, mut ready: impl FnMut() -> Option<R>) -> R {
+        assert!(
+            self.is_main_thread(),
+            "run_until must be called on the threaded dispatcher's main thread"
+        );
+        loop {
+            if let Some(result) = ready() {
+                return result;
+            }
+            if self.run_one_main_task() {
+                continue;
+            }
+
+            let mut inflight = self.idle.inflight.lock();
+            if self.main_queue_has_work() {
+                continue;
+            }
+            self.idle.condvar.wait(&mut inflight);
+        }
+    }
+
+    /// Runs at most one queued main-thread task, returning whether one ran.
+    ///
+    /// [`Self::run_until`] steps tasks one at a time so it can observe
+    /// readiness between them: a task that perpetually re-queues itself (like
+    /// an idle-time sweep) would otherwise keep [`Self::drain_main_queue`]
+    /// looping past the completion the caller is waiting for.
+    #[cfg(any(test, feature = "bench"))]
+    fn run_one_main_task(&self) -> bool {
+        let runnable = self.main_receiver.lock().try_pop();
+        match runnable {
+            Ok(Some(runnable)) => {
+                let location = runnable.metadata().location;
+                let spawned = runnable.metadata().spawned;
+                profiler::update_running_task(spawned, location);
+                runnable.run();
+                profiler::save_task_timing();
+                true
+            }
+            Ok(None) | Err(_) => false,
+        }
+    }
+
+    /// Runs the main-thread tasks that were queued when the call began,
+    /// returning whether any ran. Tasks dispatched while running (e.g. a task
+    /// re-queuing itself after yielding) are left for the next call, as on
+    /// the platform run loops.
     pub fn run_ready_main_tasks(&self) -> bool {
         assert!(
             self.is_main_thread(),
-            "run_ready_main_tasks must be called on the benchmark main thread"
+            "run_ready_main_tasks must be called on the threaded dispatcher's main thread"
         );
-        self.drain_main_queue()
+        let pending = self.main_receiver.lock().len();
+        let mut ran_any = false;
+        for _ in 0..pending {
+            let runnable = self.main_receiver.lock().try_pop();
+            match runnable {
+                Ok(Some(runnable)) => {
+                    let location = runnable.metadata().location;
+                    let spawned = runnable.metadata().spawned;
+                    profiler::update_running_task(spawned, location);
+                    runnable.run();
+                    profiler::save_task_timing();
+                    ran_any = true;
+                }
+                Ok(None) | Err(_) => break,
+            }
+        }
+        ran_any
     }
 
-    /// Cancels all pending timers so timers armed by one benchmark can't fire
-    /// during a later benchmark sharing this process-lifetime dispatcher.
+    /// Cancels all pending timers so timers armed by one workload can't fire
+    /// during a later workload sharing this process-lifetime dispatcher.
     ///
     /// Dropping a timer runnable drops its completion sender, waking the task
     /// awaiting the timer. Call [`Self::run_until_idle`] after this method to
@@ -287,13 +359,13 @@ impl BenchDispatcher {
     }
 
     /// Describes the dispatcher's idle-tracking state, for diagnosing
-    /// benchmarks that fail to reach quiescence.
+    /// workloads that fail to reach quiescence.
     pub fn debug_state(&self) -> String {
         let inflight = *self.idle.inflight.lock();
         let timers = self.timers.state.lock().heap.len();
         let main_queue_has_work = self.main_queue_has_work();
         format!(
-            "BenchDispatcher {{ inflight: {inflight}, pending_timers: {timers}, \
+            "ThreadedDispatcher {{ inflight: {inflight}, pending_timers: {timers}, \
              main_queue_has_work: {main_queue_has_work} }}"
         )
     }
@@ -331,7 +403,7 @@ impl BenchDispatcher {
     }
 }
 
-impl PlatformDispatcher for BenchDispatcher {
+impl PlatformDispatcher for ThreadedDispatcher {
     fn is_main_thread(&self) -> bool {
         thread::current().id() == self.main_thread_id
     }
@@ -340,7 +412,7 @@ impl PlatformDispatcher for BenchDispatcher {
         self.idle.increment();
         self.background_sender
             .send(priority, runnable)
-            .unwrap_or_else(|_| panic!("benchmark worker threads are no longer running"));
+            .unwrap_or_else(|_| panic!("threaded dispatcher workers are no longer running"));
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
@@ -369,29 +441,30 @@ impl PlatformDispatcher for BenchDispatcher {
     }
 
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
-        // Benchmarks don't need realtime scheduling priority; a plain thread
-        // keeps this portable.
+        // This dispatcher does not need realtime scheduling priority; a plain
+        // thread keeps it portable.
         thread::Builder::new()
-            .name("BenchRealtime".to_owned())
+            .name("ThreadedDispatcherRealtime".to_owned())
             .spawn(f)
-            .expect("failed to spawn benchmark realtime thread");
+            .expect("failed to spawn threaded dispatcher realtime thread");
     }
 
-    fn as_bench(&self) -> Option<&BenchDispatcher> {
+    fn as_threaded(&self) -> Option<&ThreadedDispatcher> {
         Some(self)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::future::Future;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use super::*;
     use crate::{BackgroundExecutor, ForegroundExecutor};
 
     #[test]
     fn run_ready_main_tasks_does_not_wait_for_background_handoffs() {
-        let dispatcher = Arc::new(BenchDispatcher::new());
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
         let background = BackgroundExecutor::new(dispatcher.clone());
         let foreground = ForegroundExecutor::new(dispatcher.clone());
 
@@ -423,7 +496,7 @@ mod tests {
 
     #[test]
     fn run_until_idle_completes_background_to_main_handoffs() {
-        let dispatcher = Arc::new(BenchDispatcher::new());
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
         let background = BackgroundExecutor::new(dispatcher.clone());
         let foreground = ForegroundExecutor::new(dispatcher.clone());
 
@@ -451,8 +524,120 @@ mod tests {
     }
 
     #[test]
+    fn run_until_waits_for_untracked_external_wakes() {
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
+        let foreground = ForegroundExecutor::new(dispatcher.clone());
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        let sender_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            sender
+                .send(())
+                .expect("foreground receiver should remain alive");
+        });
+
+        let completed = Arc::new(AtomicBool::new(false));
+        foreground
+            .spawn({
+                let completed = completed.clone();
+                async move {
+                    receiver
+                        .await
+                        .expect("external sender should deliver its wake");
+                    completed.store(true, Ordering::SeqCst);
+                }
+            })
+            .detach();
+
+        dispatcher.run_until(|| completed.load(Ordering::SeqCst).then_some(()));
+        sender_thread.join().expect("sender thread should finish");
+        assert!(completed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn run_until_returns_at_readiness_despite_requeuing_main_work() {
+        const REQUEUE_LIMIT: usize = 10_000;
+
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
+        let foreground = ForegroundExecutor::new(dispatcher.clone());
+
+        // Mirrors main-thread work that yields and immediately re-queues
+        // itself (e.g. an idle-time sweep): the main queue never drains until
+        // such work finishes every iteration, so readiness must be observed
+        // between runnables rather than only at quiescence.
+        let iterations = Arc::new(AtomicUsize::new(0));
+        foreground
+            .spawn({
+                let iterations = iterations.clone();
+                async move {
+                    for _ in 0..REQUEUE_LIMIT {
+                        iterations.fetch_add(1, Ordering::SeqCst);
+                        yield_once().await;
+                    }
+                }
+            })
+            .detach();
+
+        let completed = Arc::new(AtomicBool::new(false));
+        foreground
+            .spawn({
+                let completed = completed.clone();
+                async move {
+                    completed.store(true, Ordering::SeqCst);
+                }
+            })
+            .detach();
+
+        dispatcher.run_until(|| completed.load(Ordering::SeqCst).then_some(()));
+        assert!(
+            iterations.load(Ordering::SeqCst) < REQUEUE_LIMIT,
+            "run_until should return at readiness instead of draining re-queued main work"
+        );
+    }
+
+    /// Completes after one re-schedule: the poll returns `Pending` and wakes
+    /// immediately, so the runnable re-enters the main queue.
+    fn yield_once() -> impl Future<Output = ()> {
+        let mut yielded = false;
+        std::future::poll_fn(move |poll_context| {
+            if yielded {
+                std::task::Poll::Ready(())
+            } else {
+                yielded = true;
+                poll_context.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }
+        })
+    }
+
+    #[test]
+    fn run_ready_main_tasks_advances_requeuing_work_one_batch_per_call() {
+        const REQUEUE_LIMIT: usize = 10_000;
+
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
+        let foreground = ForegroundExecutor::new(dispatcher.clone());
+
+        let iterations = Arc::new(AtomicUsize::new(0));
+        foreground
+            .spawn({
+                let iterations = iterations.clone();
+                async move {
+                    for _ in 0..REQUEUE_LIMIT {
+                        iterations.fetch_add(1, Ordering::SeqCst);
+                        yield_once().await;
+                    }
+                }
+            })
+            .detach();
+
+        assert!(dispatcher.run_ready_main_tasks());
+        assert_eq!(iterations.load(Ordering::SeqCst), 1);
+        assert!(dispatcher.run_ready_main_tasks());
+        assert_eq!(iterations.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
     fn timers_fire_in_real_time() {
-        let dispatcher = Arc::new(BenchDispatcher::new());
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
         let background = BackgroundExecutor::new(dispatcher);
 
         let fired = Arc::new(AtomicBool::new(false));
@@ -476,7 +661,7 @@ mod tests {
 
     #[test]
     fn cancel_pending_timers_wakes_waiters_without_waiting_for_deadline() {
-        let dispatcher = Arc::new(BenchDispatcher::new());
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
         let background = BackgroundExecutor::new(dispatcher.clone());
 
         let fired = Arc::new(AtomicBool::new(false));

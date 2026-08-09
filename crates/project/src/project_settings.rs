@@ -484,6 +484,10 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: settings::GitHunkStyleSetting,
+    /// Which base git features diff against.
+    ///
+    /// Default: head
+    pub diff_base: settings::GitDiffBaseSetting,
     /// How file paths are displayed in the git gutter.
     ///
     /// Default: file_name_first
@@ -708,6 +712,7 @@ impl Settings for ProjectSettings {
                 }
             },
             hunk_style: git.hunk_style.unwrap(),
+            diff_base: git.diff_base.unwrap_or_default(),
             path_style: git.path_style.unwrap().into(),
             show_stage_restore_buttons: git.show_stage_restore_buttons.unwrap_or(true),
             worktree_directory: git

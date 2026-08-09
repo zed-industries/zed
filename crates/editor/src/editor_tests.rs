@@ -16,7 +16,7 @@ use crate::{
     },
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::Fs as _;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
@@ -2886,44 +2886,44 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
         assert_selection_ranges("use std::ˇstr::{foo, bar}\n\n  {ˇbaz.qux()}", editor, cx);
 
         editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges("use stdˇ::str::{foo, bar}\n\nˇ  {baz.qux()}", editor, cx);
+        assert_selection_ranges("use stdˇ::str::{foo, bar}\n\n  ˇ{baz.qux()}", editor, cx);
 
         editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges("use ˇstd::str::{foo, bar}\nˇ\n  {baz.qux()}", editor, cx);
+        assert_selection_ranges("use ˇstd::str::{foo, bar}\n\nˇ  {baz.qux()}", editor, cx);
+
+        editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
+        assert_selection_ranges("ˇuse std::str::{foo, bar}\nˇ\n  {baz.qux()}", editor, cx);
 
         editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
         assert_selection_ranges("ˇuse std::str::{foo, barˇ}\n\n  {baz.qux()}", editor, cx);
 
-        editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges("ˇuse std::str::{foo, ˇbar}\n\n  {baz.qux()}", editor, cx);
+        editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
+        assert_selection_ranges("useˇ std::str::{foo, bar}ˇ\n\n  {baz.qux()}", editor, cx);
 
         editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
-        assert_selection_ranges("useˇ std::str::{foo, barˇ}\n\n  {baz.qux()}", editor, cx);
+        assert_selection_ranges("use stdˇ::str::{foo, bar}\nˇ\n  {baz.qux()}", editor, cx);
 
         editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
-        assert_selection_ranges("use stdˇ::str::{foo, bar}ˇ\n\n  {baz.qux()}", editor, cx);
-
-        editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
-        assert_selection_ranges("use std::ˇstr::{foo, bar}\nˇ\n  {baz.qux()}", editor, cx);
+        assert_selection_ranges("use std::ˇstr::{foo, bar}\n\n  {ˇbaz.qux()}", editor, cx);
 
         editor.move_right(&MoveRight, window, cx);
         editor.select_to_previous_word_start(&SelectToPreviousWordStart, window, cx);
         assert_selection_ranges(
-            "use std::«ˇs»tr::{foo, bar}\n«ˇ\n»  {baz.qux()}",
+            "use std::«ˇs»tr::{foo, bar}\n\n  {«ˇb»az.qux()}",
             editor,
             cx,
         );
 
         editor.select_to_previous_word_start(&SelectToPreviousWordStart, window, cx);
         assert_selection_ranges(
-            "use std«ˇ::s»tr::{foo, bar«ˇ}\n\n»  {baz.qux()}",
+            "use std«ˇ::s»tr::{foo, bar}\n\n  «ˇ{b»az.qux()}",
             editor,
             cx,
         );
 
         editor.select_to_next_word_end(&SelectToNextWordEnd, window, cx);
         assert_selection_ranges(
-            "use std::«ˇs»tr::{foo, bar}«ˇ\n\n»  {baz.qux()}",
+            "use std::«ˇs»tr::{foo, bar}\n\n  {«ˇb»az.qux()}",
             editor,
             cx,
         );
@@ -10774,7 +10774,6 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
         );
 }
 
-#[gpui::test]
 /// A different number of tabs can align the same column on each row, so a cursor has to
 /// be placed by the column the tabs expand to. Counting a tab as a single column lands it
 /// wherever that many characters happen to reach on the next row.
@@ -10806,6 +10805,115 @@ async fn test_add_selection_below_with_tab_aligned_columns(cx: &mut TestAppConte
     cx.assert_editor_state(
         "\t\t\t\t\t\tcurrent.rgb.r\t\t\tˇ= p[0] >> 8;\n\t\t\t\t\t\tresiduals[run].rgb.r\tˇ= p[0] & 0xff;\n",
     );
+}
+
+#[gpui::test]
+/// Regression test for a panic ("display point out of range"): with a multi-line fold,
+/// buffer rows below the fold exceed the fold map's max row, so they must be converted
+/// to tab map rows instead of being used directly.
+async fn test_add_selection_above_below_with_fold(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc!(
+        r#"fn foo() {
+            aaaa
+            bbbb
+        }
+        one
+        twoˇ"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_creases(
+            vec![Crease::simple(
+                Point::new(0, 10)..Point::new(3, 0),
+                FoldPlaceholder::test(),
+            )],
+            true,
+            window,
+            cx,
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"fn foo() {
+            aaaa
+            bbbb
+        }
+        oneˇ
+        twoˇ"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"fn ˇfoo() {
+            aaaa
+            bbbb
+        }
+        oneˇ
+        twoˇ"#
+    ));
+
+    cx.set_state(indoc!(
+        r#"fn fˇoo() {
+            aaaa
+            bbbb
+        }
+        one
+        two"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_creases(
+            vec![Crease::simple(
+                Point::new(0, 10)..Point::new(3, 0),
+                FoldPlaceholder::test(),
+            )],
+            true,
+            window,
+            cx,
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"fn fˇoo() {
+            aaaa
+            bbbb
+        }
+        oneˇ
+        two"#
+    ));
 }
 
 #[gpui::test]
@@ -26692,6 +26800,91 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_merge_base_diff_hunks_are_read_only(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "file.rs": "worktree\n",
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", "head\n".to_string())],
+    );
+    fs.set_merge_base_content_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", "base\n".to_string())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multi_buffer, window, cx)
+    });
+
+    cx.update(|_window, cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.git.get_or_insert_default().diff_base =
+                    Some(settings::GitDiffBaseSetting::DefaultBranch);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, cx| {
+        let diff = editor
+            .buffer()
+            .read(cx)
+            .diff_for(buffer_id)
+            .expect("buffer should have a display diff");
+        assert!(!diff.read(cx).is_stageable());
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+        editor.git_restore(&Default::default(), window, cx);
+        editor.toggle_staged_selected_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        editor.read_with(cx, |editor, cx| editor.text(cx)),
+        "worktree\n"
+    );
+    let index_contents = fs
+        .with_git_state(
+            std::path::Path::new(path!("/project/.git")),
+            false,
+            |state| state.index_contents.clone(),
+        )
+        .unwrap();
+    assert_eq!(
+        index_contents,
+        [(
+            ::git::repository::repo_path("file.rs"),
+            "head\n".to_string(),
+        )]
+        .into_iter()
+        .collect::<HashMap<_, _>>()
+    );
+}
+
+#[gpui::test]
 async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -28926,7 +29119,7 @@ async fn test_expand_first_line_diff_hunk_keeps_deleted_lines_visible(
     cx.set_state("ˇnew\nsecond\nthird\n");
     cx.set_head_text("old\nsecond\nthird\n");
     cx.update_editor(|editor, window, cx| {
-        editor.scroll(gpui::Point { x: 0., y: 0. }, None, window, cx);
+        editor.scroll(gpui::Point { x: 0., y: 0. }, window, cx);
     });
     executor.run_until_parked();
     assert_eq!(cx.update_editor(|e, _, cx| e.scroll_position(cx)).y, 0.0);
@@ -34879,7 +35072,10 @@ async fn test_indent_after_input_for_bash(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
     let language = languages::language("bash", tree_sitter_bash::LANGUAGE.into());
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language), cx);
+        buffer.set_sync_parse_timeout(None);
+    });
 
     // test indents on comment insert
     cx.set_state(indoc! {"
@@ -37546,7 +37742,7 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            e.scroll(gpui::Point { x: 0., y: offset }, window, cx);
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
@@ -37635,7 +37831,7 @@ async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppConte
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            e.scroll(gpui::Point { x: 0., y: offset }, window, cx);
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
@@ -37698,7 +37894,7 @@ async fn test_sticky_scroll_anchors_multiline_c_signature_on_name_row(cx: &mut T
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|editor, window, cx| {
-            editor.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            editor.scroll(gpui::Point { x: 0., y: offset }, window, cx);
         });
         cx.run_until_parked();
         cx.update_editor(|editor, window, cx| {
@@ -37781,7 +37977,7 @@ async fn test_sticky_scroll_with_expanded_deleted_diff_hunks(
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            e.scroll(gpui::Point { x: 0., y: offset }, window, cx);
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
@@ -37837,7 +38033,7 @@ async fn test_no_duplicated_sticky_headers(cx: &mut TestAppContext) {
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            e.scroll(gpui::Point { x: 0., y: offset }, window, cx);
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
@@ -38133,7 +38329,6 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
                     x: 0.,
                     y: scroll_offset,
                 },
-                None,
                 window,
                 cx,
             );
@@ -38225,7 +38420,7 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
     // The text "impl Bar {" starts at column 0, so column 5 = 'B'.
     let click_x = text_origin_x + em_width * 5.5;
     cx.update_editor(|e, window, cx| {
-        e.scroll(gpui::Point { x: 0., y: 4.5 }, None, window, cx);
+        e.scroll(gpui::Point { x: 0., y: 4.5 }, window, cx);
     });
     cx.run_until_parked();
     cx.simulate_click(
@@ -38299,7 +38494,7 @@ async fn test_clicking_sticky_header_sets_character_select_mode(cx: &mut TestApp
         editor.end_selection(window, cx);
 
         // Scroll down one row to make `fn foo() {` a sticky header
-        editor.scroll(gpui::Point { x: 0., y: 1. }, None, window, cx);
+        editor.scroll(gpui::Point { x: 0., y: 1. }, window, cx);
     });
     cx.run_until_parked();
 
