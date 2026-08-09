@@ -245,10 +245,7 @@ mod tests {
     #[test]
     fn label_for_picks_first_matching_pattern() {
         let labels = CustomLabels::from_patterns([
-            (
-                "**/src/routes/**/+page.svelte",
-                "/${dirname} - Page",
-            ),
+            ("**/src/routes/**/+page.svelte", "/${dirname} - Page"),
             ("**/*.svelte", "${filename} (svelte)"),
         ]);
         assert_eq!(
