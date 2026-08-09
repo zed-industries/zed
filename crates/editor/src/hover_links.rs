@@ -1,11 +1,10 @@
 use crate::{
-    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
-    GoToDefinitionSplit, GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind,
-    HighlightKey, Navigated, PointForPosition, SelectPhase,
-    editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
+    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinitionSplit,
+    GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind, HighlightKey, Navigated,
+    PointForPosition, SelectPhase, editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
 };
 use gpui::{
-    App, AsyncWindowContext, Context, Entity, HighlightStyle, Modifiers, Pixels, Task,
+    App, AsyncWindowContext, Context, Entity, Focusable, HighlightStyle, Modifiers, Pixels, Task,
     UnderlineStyle, Window, px,
 };
 use language::{Bias, ToOffset};
@@ -207,26 +206,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        let focus_handle = self.focus_handle(cx);
         let reveal_task = self.cmd_click_reveal_task(point, modifiers, window, cx);
-        cx.spawn_in(window, async move |editor, cx| {
+        cx.spawn_in(window, async move |_, cx| {
             let definition_revealed = reveal_task.await.log_err().unwrap_or(Navigated::No);
-            let find_references = editor
-                .update_in(cx, |editor, window, cx| {
-                    if definition_revealed == Navigated::Yes {
-                        return None;
-                    }
-                    match EditorSettings::get_global(cx).go_to_definition_fallback {
-                        GoToDefinitionFallback::None => None,
-                        GoToDefinitionFallback::FindAllReferences => {
-                            editor.find_all_references(&FindAllReferences::default(), window, cx)
-                        }
-                    }
-                })
-                .ok()
-                .flatten();
-            if let Some(find_references) = find_references {
-                find_references.await.log_err();
+            if definition_revealed == Navigated::Yes {
+                return;
             }
+            cx.update(|window, cx| {
+                match EditorSettings::get_global(cx).go_to_definition_fallback {
+                    GoToDefinitionFallback::None => {}
+                    GoToDefinitionFallback::FindAllReferences => {
+                        focus_handle.dispatch_action(&FindAllReferences::default(), window, cx);
+                    }
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -328,7 +323,9 @@ impl Editor {
                 }
                 (true, false) => self.go_to_type_definition(&GoToTypeDefinition, window, cx),
                 (false, true) => self.go_to_definition_split(&GoToDefinitionSplit, window, cx),
-                (false, false) => self.go_to_definition(&GoToDefinition::default(), window, cx),
+                (false, false) => {
+                    self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, window, cx)
+                }
             }
         } else {
             Task::ready(Ok(Navigated::No))

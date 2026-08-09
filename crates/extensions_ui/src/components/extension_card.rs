@@ -626,7 +626,7 @@ impl RenderOnce for ExtensionCard {
             v_flex()
                 .mt_4()
                 .w_full()
-                .h(rems_from_px(110.))
+                .h(rems_from_px(110_f32))
                 .p_3()
                 .gap_2()
                 .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))

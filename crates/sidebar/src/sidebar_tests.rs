@@ -561,12 +561,7 @@ fn visible_entries_as_strings(
                     ""
                 };
                 match entry {
-                    ListEntry::ProjectHeader {
-                        label,
-                        key,
-                        highlight_positions: _,
-                        ..
-                    } => {
+                    ListEntry::ProjectHeader { label, key, .. } => {
                         let icon = if sidebar.is_group_collapsed(key, cx) {
                             ">"
                         } else {
