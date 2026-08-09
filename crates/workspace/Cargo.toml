@@ -37,6 +37,7 @@ collections.workspace = true
 component.workspace = true
 db.workspace = true
 dirs.workspace = true
+extension_host.workspace = true
 futures-lite.workspace = true
 fs.workspace = true
 futures.workspace = true

@@ -50,6 +50,7 @@ use client::{
 };
 use collections::{HashMap, HashSet, TypeIdHashMap, hash_map};
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
+use extension_host::ExtensionStore;
 use fs::Fs;
 use futures::{
     Future, FutureExt, StreamExt,
@@ -10830,6 +10831,14 @@ async fn open_remote_project_inner(
     source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
 ) -> Result<(Entity<Workspace>, Vec<Option<Box<dyn ItemHandle>>>)> {
+    cx.update(|cx| {
+        if let Some(client) = project.read(cx).remote_client()
+            && let Some(extension_store) = ExtensionStore::try_global(cx)
+        {
+            extension_store.update(cx, |store, cx| store.register_remote_client(client, cx));
+        }
+    });
+
     let mut project_paths_to_open = vec![];
     let mut project_path_errors = vec![];
 
