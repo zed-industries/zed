@@ -202,8 +202,13 @@ pub fn render_breadcrumb_text(
     }
 
     let symbol_segments = align_symbol_segments(&segments, symbol_segments);
-    let kinds =
-        classify_breadcrumb_segment_kinds(segments.len(), file_segment_index, has_root_segment);
+    // A multibuffer header lists symbols only; without this the first symbol would be
+    // classified - and coloured - as the file segment.
+    let kinds = classify_breadcrumb_segment_kinds(
+        segments.len(),
+        (!multibuffer_header).then_some(file_segment_index),
+        has_root_segment,
+    );
     let protected_index = menu_listing.as_ref().and_then(|listing| {
         symbol_segments
             .iter()
@@ -1587,7 +1592,7 @@ mod tests {
 
     #[test]
     fn test_classify_breadcrumb_segment_kinds() {
-        let kinds = classify_breadcrumb_segment_kinds(6, 3, true);
+        let kinds = classify_breadcrumb_segment_kinds(6, Some(3), true);
         assert_eq!(
             kinds,
             vec![
@@ -1600,7 +1605,7 @@ mod tests {
             ]
         );
 
-        let kinds = classify_breadcrumb_segment_kinds(3, 1, false);
+        let kinds = classify_breadcrumb_segment_kinds(3, Some(1), false);
         assert_eq!(
             kinds,
             vec![
@@ -1610,7 +1615,18 @@ mod tests {
             ]
         );
 
-        let kinds = classify_breadcrumb_segment_kinds(1, 0, false);
+        // Multibuffer headers list symbols with no file segment among them.
+        let kinds = classify_breadcrumb_segment_kinds(3, None, false);
+        assert_eq!(
+            kinds,
+            vec![
+                BreadcrumbSegmentKind::Middle,
+                BreadcrumbSegmentKind::Middle,
+                BreadcrumbSegmentKind::Middle,
+            ]
+        );
+
+        let kinds = classify_breadcrumb_segment_kinds(1, Some(0), false);
         assert_eq!(kinds, vec![BreadcrumbSegmentKind::File]);
     }
 
@@ -1629,7 +1645,7 @@ mod tests {
         let symbol_segments = align_symbol_segments(&segments, symbol_segments);
         assert_eq!(symbol_segments.len(), segments.len());
 
-        let kinds = classify_breadcrumb_segment_kinds(segments.len(), 99, true);
+        let kinds = classify_breadcrumb_segment_kinds(segments.len(), Some(99), true);
 
         let (segments, symbol_segments, kinds, file_segment_index) =
             hard_cap_middle_segments(segments, symbol_segments, kinds, 99, None);
@@ -1643,7 +1659,7 @@ mod tests {
                 })
                 .collect();
             let symbol_segments = vec![None; segments.len()];
-            let kinds = classify_breadcrumb_segment_kinds(segments.len(), 99, true);
+            let kinds = classify_breadcrumb_segment_kinds(segments.len(), Some(99), true);
             let (capped, _, _, _) =
                 hard_cap_middle_segments(segments, symbol_segments, kinds, 99, Some(50));
             let labels: Vec<&str> = capped.iter().map(|segment| segment.text.as_ref()).collect();
@@ -1668,7 +1684,7 @@ mod tests {
             })
             .collect();
         let symbol_segments = vec![None; segments.len()];
-        let kinds = classify_breadcrumb_segment_kinds(segments.len(), 3, true);
+        let kinds = classify_breadcrumb_segment_kinds(segments.len(), Some(3), true);
 
         let (segments, symbol_segments, kinds, file_segment_index) =
             hard_cap_middle_segments(segments, symbol_segments, kinds, 3, None);
@@ -1846,7 +1862,8 @@ mod tests {
             })
             .collect();
         let symbol_segments = vec![None; segment_count];
-        let kinds = classify_breadcrumb_segment_kinds(segment_count, file_segment_index, true);
+        let kinds =
+            classify_breadcrumb_segment_kinds(segment_count, Some(file_segment_index), true);
 
         let (capped, _, kinds, new_file_index) = hard_cap_middle_segments(
             segments,

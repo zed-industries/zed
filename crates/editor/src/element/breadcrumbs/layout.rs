@@ -15,15 +15,20 @@ pub(crate) enum BreadcrumbSegmentKind {
 
 pub(crate) fn classify_breadcrumb_segment_kinds(
     segment_count: usize,
-    file_segment_index: usize,
+    file_segment_index: Option<usize>,
     has_root_segment: bool,
 ) -> Vec<BreadcrumbSegmentKind> {
     (0..segment_count)
-        .map(|index| match index.cmp(&file_segment_index) {
-            Ordering::Greater => BreadcrumbSegmentKind::Symbol,
-            Ordering::Equal => BreadcrumbSegmentKind::File,
-            Ordering::Less if has_root_segment && index == 0 => BreadcrumbSegmentKind::Root,
-            Ordering::Less => BreadcrumbSegmentKind::Middle,
+        .map(|index| {
+            let Some(file_segment_index) = file_segment_index else {
+                return BreadcrumbSegmentKind::Middle;
+            };
+            match index.cmp(&file_segment_index) {
+                Ordering::Greater => BreadcrumbSegmentKind::Symbol,
+                Ordering::Equal => BreadcrumbSegmentKind::File,
+                Ordering::Less if has_root_segment && index == 0 => BreadcrumbSegmentKind::Root,
+                Ordering::Less => BreadcrumbSegmentKind::Middle,
+            }
         })
         .collect()
 }
@@ -244,10 +249,10 @@ pub(super) fn breadcrumb_path_is_navigable(
     has_project_path && !worktree_is_single_file.unwrap_or(false)
 }
 
-// Negative margins cancel the trigger padding out of layout; the bar stays text-sized.
 pub(super) const SEGMENT_TRIGGER_PADDING_X: f32 = 2.;
-pub(super) const SEGMENT_TRIGGER_PADDING_TOP: f32 = 3.;
-pub(super) const SEGMENT_TRIGGER_PADDING_BOTTOM: f32 = 4.;
+// The trigger fills the bar so its hover and hit area cover the whole row; `ButtonSize::None`
+// would otherwise pin it to 16px inside a 22px bar and leave the edges dead.
+pub(super) const SEGMENT_TRIGGER_HEIGHT: f32 = 22.;
 
 #[derive(Clone)]
 pub(super) struct PreparedBreadcrumbSegment {
@@ -496,13 +501,8 @@ impl BreadcrumbStrip {
         let trigger = ButtonLike::new(("breadcrumb-segment", index))
             .style(ButtonStyle::Subtle)
             .size(ButtonSize::None)
-            .child(
-                div()
-                    .px(px(SEGMENT_TRIGGER_PADDING_X))
-                    .pt(px(SEGMENT_TRIGGER_PADDING_TOP))
-                    .pb(px(SEGMENT_TRIGGER_PADDING_BOTTOM))
-                    .child(label),
-            )
+            .height(px(SEGMENT_TRIGGER_HEIGHT).into())
+            .child(div().px(px(SEGMENT_TRIGGER_PADDING_X)).child(label))
             .when(!menu_open, |this| {
                 this.tooltip(move |_, cx| {
                     Tooltip::with_meta(tooltip_title.clone(), None, tooltip_meta.clone(), cx)
@@ -527,9 +527,7 @@ impl BreadcrumbStrip {
         let mut wrapper = div()
             .id(("breadcrumb-segment-hit", index))
             .debug_selector(move || format!("breadcrumb-segment-{index}"))
-            .mx(px(-SEGMENT_TRIGGER_PADDING_X))
-            .mt(px(-SEGMENT_TRIGGER_PADDING_TOP))
-            .mb(px(-SEGMENT_TRIGGER_PADDING_BOTTOM));
+            .mx(px(-SEGMENT_TRIGGER_PADDING_X));
 
         {
             let editor = editor.clone();
