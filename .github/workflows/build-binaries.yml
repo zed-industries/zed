@@ -16,6 +16,11 @@ on:
 
 permissions:
   contents: write
+env:
+  # auto_update.rs reads this at compile time, so fork-built binaries query
+  # this repository's GitHub releases instead of zed.dev.
+  ZED_FORK_REPO: ${{ github.repository }}
+
 
 concurrency:
   group: build-binaries
