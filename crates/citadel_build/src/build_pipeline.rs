@@ -338,6 +338,16 @@ impl std::error::Error for BuildError {}
 async fn run(step: BuildStep, spec: &CommandSpec) -> Result<(), BuildError> {
     let mut command = new_command(spec.program);
     command.args(&spec.args);
+    // Citadel's own process is itself launched under a pinned rustup
+    // toolchain (its own rust-toolchain.toml), which sets RUSTUP_TOOLCHAIN
+    // in this process's environment. That variable takes precedence over
+    // rustup's file-based `rust-toolchain.toml` discovery, so without
+    // clearing it here, spawning `cargo` for the *user's* rust/ crate would
+    // silently build with Citadel's own toolchain instead of the project's
+    // pinned one (surfacing as "the -Z flag is only accepted on nightly").
+    // Harmless to remove for the non-cargo tools in this pipeline (avr-gcc,
+    // avr-g++, avr-ar, avr-objcopy, avrdude), which don't read it.
+    command.env_remove("RUSTUP_TOOLCHAIN");
     command.envs(&spec.env);
     if let Some(current_dir) = &spec.current_dir {
         command.current_dir(current_dir);
