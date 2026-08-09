@@ -670,19 +670,18 @@ mod tests {
             })
             .unwrap();
 
-        cx.update(|cx| {
-            let extension_store = ExtensionStore::global(cx);
-            let registered = extension_store.read(cx).remote_clients.iter().any(|client| {
+        let extension_store = cx.update(|cx| ExtensionStore::global(cx));
+        let registered = extension_store.read_with(cx, |store, _cx| {
+            store.remote_clients.iter().any(|client| {
                 client
                     .upgrade()
                     .is_some_and(|client| client == remote_client)
-            });
-            assert!(
-                registered,
-                "opening a remote project should register its client with the ExtensionStore \
-                 so extension-provided language servers get synced to the remote host"
-            );
+            })
         });
+        assert!(
+            registered,
+            "opening a remote project should register its client with the ExtensionStore"
+        );
     }
 
     #[gpui::test]
@@ -712,7 +711,9 @@ mod tests {
         // previously-broken call sites (Agent Panel project picker, the
         // remote servers modal, the git worktree picker) assumes.
         let local_fs = FakeFs::new(cx.executor());
-        local_fs.insert_tree(path!("/local"), json!({ "file.txt": "" })).await;
+        local_fs
+            .insert_tree(path!("/local"), json!({ "file.txt": "" }))
+            .await;
         let local_project = project::Project::test(local_fs, [path!("/local").as_ref()], cx).await;
         let window_handle =
             cx.add_window(|window, cx| MultiWorkspace::test_new(local_project, window, cx));
@@ -788,21 +789,19 @@ mod tests {
             );
         });
 
-        cx.update(|cx| {
-            let extension_store = ExtensionStore::global(cx);
-            let registered = extension_store.read(cx).remote_clients.iter().any(|client| {
+        let extension_store = cx.update(|cx| ExtensionStore::global(cx));
+        let registered = extension_store.read_with(cx, |store, _cx| {
+            store.remote_clients.iter().any(|client| {
                 client
                     .upgrade()
                     .is_some_and(|client| client == remote_client)
-            });
-            assert!(
-                registered,
-                "open_remote_project_with_existing_connection should register its client with \
-                 the ExtensionStore too, not just open_remote_project_with_new_connection -- \
-                 this is the path the Agent Panel, remote servers modal, and git worktree \
-                 picker all use, and was the one missing registration before the fix"
-            );
+            })
         });
+        assert!(
+            registered,
+            "open_remote_project_with_existing_connection should register its client with \
+             the ExtensionStore"
+        );
     }
 
     #[gpui::test]
