@@ -4,6 +4,7 @@ use crate::{
     kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
     ns_string, renderer,
 };
+use anyhow::Context as _;
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
 use block::ConcreteBlock;
@@ -22,15 +23,16 @@ use cocoa::{
         NSUserDefaults,
     },
 };
+use collections::{FxHashMap, FxHashSet};
 use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
     ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
-    WindowParams, point, px, size,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformNativeSurface,
+    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size,
+    SystemWindowTab, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowKind, WindowParams, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -562,15 +564,14 @@ struct MacWindowState {
     background_executor: BackgroundExecutor,
     native_window: id,
     native_view: NonNull<Object>,
-    overlay_view: Option<NonNull<Object>>,
-    overlay_input_active: Arc<AtomicBool>,
+    base_composition_surface: Option<gpui::CompositionSurfaceId>,
+    gpui_composition_surfaces: FxHashMap<gpui::CompositionSurfaceId, MacGpuiSurface>,
     blurred_view: Option<id>,
     background_appearance: WindowBackgroundAppearance,
     cursor_style: CursorStyle,
     cursor_visible: Arc<AtomicBool>,
     frame_source: Option<WindowFrameSource>,
     renderer: renderer::Renderer,
-    overlay_renderer: Option<renderer::Renderer>,
     renderer_context: renderer::Context,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
@@ -611,11 +612,63 @@ struct MacWindowState {
     sheet_parent: Option<id>,
 }
 
+struct MacGpuiSurface {
+    view: NonNull<Object>,
+    renderer: renderer::Renderer,
+    input_active: Arc<AtomicBool>,
+}
+
+unsafe fn create_gpui_composition_surface(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    state: &mut MacWindowState,
+) -> anyhow::Result<MacGpuiSurface> {
+    let input_active = Arc::new(AtomicBool::new(false));
+    let native_view = state.native_view.as_ptr() as id;
+    let view: id = unsafe { msg_send![OVERLAY_VIEW_CLASS, alloc] };
+    let view = unsafe { NSView::initWithFrame_(view, NSView::bounds(native_view)) };
+    anyhow::ensure!(!view.is_null(), "failed to create GPUI composition view");
+    unsafe {
+        (*view).set_ivar(
+            WINDOW_STATE_IVAR,
+            Arc::into_raw(window_state.clone()) as *const c_void,
+        );
+        (*view).set_ivar(
+            OVERLAY_INPUT_IVAR,
+            Arc::into_raw(input_active.clone()) as *const c_void,
+        );
+    }
+
+    let mut renderer =
+        renderer::new_overlay_renderer(state.renderer_context.clone(), &state.renderer);
+    let scale_factor = state.scale_factor();
+    renderer.update_drawable_size(state.content_size().to_device_pixels(scale_factor));
+    if let Some(layer) = renderer.layer() {
+        unsafe {
+            let _: () = msg_send![layer, setContentsScale: scale_factor as f64];
+        }
+    }
+    unsafe {
+        view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
+        view.setWantsLayer(YES);
+        let _: () = msg_send![view, setLayer: renderer.layer_ptr()];
+        let _: () = msg_send![
+            view,
+            setLayerContentsRedrawPolicy: NSViewLayerContentsRedrawDuringViewResize
+        ];
+        view.autorelease();
+    }
+    Ok(MacGpuiSurface {
+        view: NonNull::new(view).context("GPUI composition view is null")?,
+        renderer,
+        input_active,
+    })
+}
+
 impl MacWindowState {
     fn set_presents_with_transaction(&mut self, enabled: bool) {
         self.renderer.set_presents_with_transaction(enabled);
-        if let Some(renderer) = self.overlay_renderer.as_mut() {
-            renderer.set_presents_with_transaction(enabled);
+        for surface in self.gpui_composition_surfaces.values_mut() {
+            surface.renderer.set_presents_with_transaction(enabled);
         }
     }
 
@@ -832,6 +885,62 @@ unsafe impl Send for MacWindowState {}
 
 pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 
+struct MacNativeSurface {
+    window_state: Weak<Mutex<MacWindowState>>,
+    view: NonNull<Object>,
+}
+
+impl PlatformNativeSurface for MacNativeSurface {
+    fn set_bounds(&self, bounds: Bounds<gpui::DevicePixels>) -> anyhow::Result<()> {
+        let window_state = self
+            .window_state
+            .upgrade()
+            .context("native surface window has been released")?;
+        let window_state = window_state.lock();
+        let bounds = bounds.map(|value| px(value.0 as f32 / window_state.scale_factor()));
+        unsafe {
+            let parent: id = msg_send![self.view.as_ptr(), superview];
+            let parent = if parent.is_null() {
+                window_state.native_view.as_ptr()
+            } else {
+                parent
+            };
+            let parent_bounds = NSView::bounds(parent);
+            let frame = NSRect::new(
+                NSPoint::new(
+                    f64::from(bounds.origin.x),
+                    parent_bounds.size.height
+                        - f64::from(bounds.origin.y)
+                        - f64::from(bounds.size.height),
+                ),
+                NSSize::new(f64::from(bounds.size.width), f64::from(bounds.size.height)),
+            );
+            let _: () = msg_send![self.view.as_ptr(), setFrame: frame];
+        }
+        Ok(())
+    }
+
+    fn set_visible(&self, visible: bool) -> anyhow::Result<()> {
+        unsafe {
+            let _: () = msg_send![self.view.as_ptr(), setHidden: if visible { NO } else { YES }];
+        }
+        Ok(())
+    }
+
+    fn platform_handle(&self) -> anyhow::Result<Box<dyn std::any::Any>> {
+        Ok(Box::new(self.view.as_ptr() as usize))
+    }
+}
+
+impl Drop for MacNativeSurface {
+    fn drop(&mut self) {
+        unsafe {
+            NSView::removeFromSuperview(self.view.as_ptr());
+            let _: () = msg_send![self.view.as_ptr(), release];
+        }
+    }
+}
+
 impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
@@ -969,8 +1078,8 @@ impl MacWindow {
                 background_executor,
                 native_window,
                 native_view: NonNull::new_unchecked(native_view),
-                overlay_view: None,
-                overlay_input_active: Arc::new(AtomicBool::new(false)),
+                base_composition_surface: None,
+                gpui_composition_surfaces: FxHashMap::default(),
                 blurred_view: None,
                 background_appearance: WindowBackgroundAppearance::Opaque,
                 cursor_style: CursorStyle::Arrow,
@@ -983,7 +1092,6 @@ impl MacWindow {
                     bounds.size.map(|pixels| pixels.as_f32()),
                     false,
                 ),
-                overlay_renderer: None,
                 renderer_context,
                 request_frame_callback: None,
                 event_callback: None,
@@ -1834,81 +1942,155 @@ impl PlatformWindow for MacWindow {
         this.renderer.draw(scene);
     }
 
-    fn draw_layered(&self, scene: &gpui::Scene, overlay_start: usize) {
+    fn draw_composed(&self, scene: gpui::ComposedScene<'_>) {
         let mut this = self.0.lock();
-        if this.overlay_renderer.is_none() {
-            this.renderer.draw(scene);
+        if this.base_composition_surface.is_none() {
+            this.renderer.draw(scene.scene());
             return;
         }
-
-        let split = overlay_start.min(scene.len());
-        let mut base_scene = gpui::Scene::default();
-        base_scene.replay(0..split, scene);
-        base_scene.finish();
-
-        let mut overlay_scene = gpui::Scene::default();
-        overlay_scene.replay(split..scene.len(), scene);
-        overlay_scene.finish();
-
-        this.overlay_input_active
-            .store(!overlay_scene.is_empty(), Ordering::Release);
-        this.renderer.draw(&base_scene);
-        this.overlay_renderer
-            .as_mut()
-            .expect("overlay renderer checked above")
-            .draw(&overlay_scene);
+        for layer in scene.layers() {
+            let mut surface_scene = gpui::Scene::default();
+            for range in &layer.ranges {
+                surface_scene.replay(range.clone(), scene.scene());
+            }
+            surface_scene.finish();
+            if this.base_composition_surface == Some(layer.surface) {
+                this.renderer.draw(&surface_scene);
+            } else if let Some(surface) = this.gpui_composition_surfaces.get_mut(&layer.surface) {
+                surface
+                    .input_active
+                    .store(!surface_scene.is_empty(), Ordering::Release);
+                surface.renderer.draw(&surface_scene);
+            } else {
+                log::error!(
+                    "missing AppKit GPUI composition surface {:?}",
+                    layer.surface
+                );
+            }
+        }
     }
 
-    fn enable_scene_overlay(&self) -> anyhow::Result<()> {
-        let window_state = self.0.clone();
-        let mut this = self.0.lock();
-        if this.overlay_renderer.is_some() {
-            return Ok(());
-        }
+    fn enable_window_composition(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn create_native_surface(&self) -> anyhow::Result<Rc<dyn PlatformNativeSurface>> {
+        self.enable_window_composition()?;
+        let this = self.0.lock();
+        let parent = this.native_view;
 
         unsafe {
-            let native_view = this.native_view.as_ptr() as id;
-            let frame = NSView::bounds(native_view);
-            let overlay_view: id = msg_send![OVERLAY_VIEW_CLASS, alloc];
-            let overlay_view = NSView::initWithFrame_(overlay_view, frame);
-            anyhow::ensure!(
-                !overlay_view.is_null(),
-                "failed to create GPUI overlay NSView"
+            let view: id = msg_send![class!(NSView), alloc];
+            let view = NSView::initWithFrame_(
+                view,
+                NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.)),
             );
-            (*overlay_view).set_ivar(
-                WINDOW_STATE_IVAR,
-                Arc::into_raw(window_state) as *const c_void,
-            );
-            (*overlay_view).set_ivar(
-                OVERLAY_INPUT_IVAR,
-                Arc::into_raw(this.overlay_input_active.clone()) as *const c_void,
-            );
+            anyhow::ensure!(!view.is_null(), "failed to create native surface container");
+            view.setWantsLayer(YES);
+            let layer: id = msg_send![view, layer];
+            let _: () = msg_send![layer, setMasksToBounds: YES];
+            parent.as_ptr().addSubview_(view);
 
-            let mut overlay_renderer =
-                renderer::new_overlay_renderer(this.renderer_context.clone(), &this.renderer);
-            let scale_factor = this.scale_factor();
-            overlay_renderer
-                .update_drawable_size(this.content_size().to_device_pixels(scale_factor));
-            if let Some(layer) = overlay_renderer.layer() {
-                let _: () = msg_send![layer, setContentsScale: scale_factor as f64];
+            Ok(Rc::new(MacNativeSurface {
+                window_state: Arc::downgrade(&self.0),
+                view: NonNull::new(view).context("native surface container is null")?,
+            }))
+        }
+    }
+
+    fn set_composition_order(
+        &self,
+        surfaces: &[gpui::PlatformCompositionSurface],
+    ) -> anyhow::Result<()> {
+        let mut this = self.0.lock();
+        let base_surface = surfaces.iter().find_map(|surface| match surface.content {
+            gpui::PlatformCompositionSurfaceContent::Gpui => Some(surface.id),
+            gpui::PlatformCompositionSurfaceContent::Platform(_) => None,
+        });
+        let base_surface = base_surface.context("composition has no GPUI base surface")?;
+        this.base_composition_surface = Some(base_surface);
+
+        let active_gpui_surfaces = surfaces
+            .iter()
+            .filter_map(|surface| match surface.content {
+                gpui::PlatformCompositionSurfaceContent::Gpui if surface.id != base_surface => {
+                    Some(surface.id)
+                }
+                _ => None,
+            })
+            .collect::<FxHashSet<_>>();
+        let removed_surfaces = this
+            .gpui_composition_surfaces
+            .keys()
+            .filter(|id| !active_gpui_surfaces.contains(id))
+            .copied()
+            .collect::<Vec<_>>();
+        for id in removed_surfaces {
+            if let Some(surface) = this.gpui_composition_surfaces.remove(&id) {
+                unsafe { NSView::removeFromSuperview(surface.view.as_ptr()) };
             }
-
-            overlay_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
-            overlay_view.setWantsLayer(YES);
-            let _: () = msg_send![overlay_view, setLayer: overlay_renderer.layer_ptr()];
-            let _: () = msg_send![
-                overlay_view,
-                setLayerContentsRedrawPolicy: NSViewLayerContentsRedrawDuringViewResize
-            ];
-
-            // wry has already inserted WKWebView by the time this API is called.
-            // Adding the overlay last places it above the WebView in AppKit's
-            // back-to-front subview order.
-            native_view.addSubview_(overlay_view.autorelease());
-            this.overlay_view = NonNull::new(overlay_view);
-            this.overlay_renderer = Some(overlay_renderer);
         }
 
+        for surface in surfaces {
+            if !matches!(
+                surface.content,
+                gpui::PlatformCompositionSurfaceContent::Gpui
+            ) {
+                continue;
+            }
+            if surface.id == base_surface
+                || this.gpui_composition_surfaces.contains_key(&surface.id)
+            {
+                continue;
+            }
+            let created_surface = unsafe { create_gpui_composition_surface(&self.0, &mut this)? };
+            this.gpui_composition_surfaces
+                .insert(surface.id, created_surface);
+        }
+
+        let views = surfaces
+            .iter()
+            .filter_map(|surface| match &surface.content {
+                gpui::PlatformCompositionSurfaceContent::Gpui => this
+                    .gpui_composition_surfaces
+                    .get(&surface.id)
+                    .map(|gpui_surface| Ok((surface.id, gpui_surface.view.as_ptr() as id))),
+                gpui::PlatformCompositionSurfaceContent::Platform(platform_surface) => {
+                    Some(platform_surface.platform_handle().and_then(|handle| {
+                        handle
+                            .downcast::<usize>()
+                            .map(|view| (surface.id, *view as id))
+                            .map_err(|_| {
+                                anyhow::anyhow!("native surface is not backed by an AppKit view")
+                            })
+                    }))
+                }
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let views_by_id = views.iter().copied().collect::<FxHashMap<_, _>>();
+
+        unsafe {
+            for (_, view) in &views {
+                NSView::removeFromSuperview(*view);
+            }
+            for surface in surfaces {
+                let Some(view) = views_by_id.get(&surface.id).copied() else {
+                    continue;
+                };
+                let parent = surface
+                    .parent
+                    .and_then(|parent| views_by_id.get(&parent).copied())
+                    .unwrap_or(this.native_view.as_ptr());
+                parent.addSubview_(view);
+                if matches!(
+                    surface.content,
+                    gpui::PlatformCompositionSurfaceContent::Gpui
+                ) {
+                    let _: () = msg_send![view, setFrame: NSView::bounds(parent)];
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2789,13 +2971,13 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
     }
 
     lock.renderer.update_drawable_size(drawable_size);
-    if let Some(renderer) = lock.overlay_renderer.as_mut() {
-        if let Some(layer) = renderer.layer() {
+    for surface in lock.gpui_composition_surfaces.values_mut() {
+        if let Some(layer) = surface.renderer.layer() {
             unsafe {
                 let _: () = msg_send![layer, setContentsScale: scale_factor as f64];
             }
         }
-        renderer.update_drawable_size(drawable_size);
+        surface.renderer.update_drawable_size(drawable_size);
     }
 
     if let Some(mut callback) = lock.resize_callback.take() {
@@ -2966,8 +3148,8 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let scale_factor = lock.scale_factor();
     let drawable_size = new_size.to_device_pixels(scale_factor);
     lock.renderer.update_drawable_size(drawable_size);
-    if let Some(renderer) = lock.overlay_renderer.as_mut() {
-        renderer.update_drawable_size(drawable_size);
+    for surface in lock.gpui_composition_surfaces.values_mut() {
+        surface.renderer.update_drawable_size(drawable_size);
     }
 
     if let Some(mut callback) = lock.resize_callback.take() {

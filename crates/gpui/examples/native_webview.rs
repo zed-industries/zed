@@ -14,8 +14,9 @@ mod macos {
     };
     use gpui::{
         App, Bounds, Context, Div, Element, ElementId, GlobalElementId, IntoElement, LayoutId,
-        MouseButton, Pixels, Stateful, Style, Window, WindowBounds, WindowOptions, deferred, div,
-        prelude::*, px, relative, rgb, size,
+        MouseButton, Pixels, Stateful, Style, Window, WindowBounds, WindowComposition,
+        WindowCompositionSurface, WindowOptions, deferred, div, prelude::*, px, relative, rgb,
+        size,
     };
     use gpui_platform::application;
     use objc::{class, msg_send, sel, sel_impl};
@@ -27,19 +28,26 @@ mod macos {
     const PAGE: &str = include_str!("native_webview.html");
 
     struct NativeWebView {
-        parent: id,
+        gpui_view: id,
+        surface: WindowCompositionSurface,
         view: id,
     }
 
     impl NativeWebView {
-        fn new(window: &Window) -> anyhow::Result<Self> {
+        fn new(window: &Window, composition: &WindowComposition<'_>) -> anyhow::Result<Self> {
             let window_handle = HasWindowHandle::window_handle(window).map_err(|error| {
                 anyhow::anyhow!("failed to get AppKit window handle: {error:?}")
             })?;
-            let parent = match window_handle.as_raw() {
+            let gpui_view = match window_handle.as_raw() {
                 RawWindowHandle::AppKit(handle) => handle.ns_view.as_ptr() as id,
                 _ => anyhow::bail!("native_webview requires an AppKit window"),
             };
+            let surface = composition.create_native_surface()?;
+            let surface_handle = surface.platform_surface()?.platform_handle()?;
+            let parent = surface_handle
+                .downcast::<usize>()
+                .map(|handle| *handle as id)
+                .map_err(|_| anyhow::anyhow!("native surface did not provide an AppKit view"))?;
 
             unsafe {
                 let configuration: id = msg_send![class!(WKWebViewConfiguration), new];
@@ -58,6 +66,9 @@ mod macos {
                 }
 
                 let _: () = msg_send![view, setWantsLayer: YES];
+                view.setAutoresizingMask_(
+                    cocoa::appkit::NSViewWidthSizable | cocoa::appkit::NSViewHeightSizable,
+                );
                 let layer: id = msg_send![view, layer];
                 let border_color: id = msg_send![
                     class!(NSColor),
@@ -72,6 +83,10 @@ mod macos {
                 let _: () = msg_send![layer, setBorderWidth: 1.];
                 let _: () = msg_send![layer, setBorderColor: border_color];
 
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "the owned NSString is explicitly released after loading"
+                )]
                 let html = NSString::alloc(nil).init_str(PAGE);
                 let _: id = msg_send![view, loadHTMLString: html baseURL: nil];
                 parent.addSubview_(view);
@@ -79,31 +94,25 @@ mod macos {
                 let _: () = msg_send![html, release];
                 let _: () = msg_send![configuration, release];
 
-                Ok(Self { parent, view })
+                Ok(Self {
+                    gpui_view,
+                    surface,
+                    view,
+                })
             }
         }
 
-        fn set_bounds(&self, bounds: Bounds<Pixels>) {
-            unsafe {
-                let parent_bounds = NSView::bounds(self.parent);
-                let frame = NSRect::new(
-                    NSPoint::new(
-                        f64::from(bounds.origin.x),
-                        parent_bounds.size.height
-                            - f64::from(bounds.origin.y)
-                            - f64::from(bounds.size.height),
-                    ),
-                    NSSize::new(f64::from(bounds.size.width), f64::from(bounds.size.height)),
-                );
-                let _: () = msg_send![self.view, setFrame: frame];
-            }
+        fn set_bounds(&self, bounds: Bounds<Pixels>, scale_factor: f32) -> anyhow::Result<()> {
+            self.surface
+                .platform_surface()?
+                .set_bounds(bounds.to_device_pixels(scale_factor))
         }
 
         fn focus_parent(&self) {
             unsafe {
                 let window: id = msg_send![self.view, window];
                 if !window.is_null() {
-                    let _: bool = msg_send![window, makeFirstResponder: self.parent];
+                    let _: bool = msg_send![window, makeFirstResponder: self.gpui_view];
                 }
             }
         }
@@ -161,10 +170,12 @@ mod macos {
             _inspector_id: Option<&gpui::InspectorElementId>,
             bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
-            _window: &mut Window,
+            window: &mut Window,
             _cx: &mut App,
         ) -> Self::PrepaintState {
-            self.webview.set_bounds(bounds);
+            if let Err(error) = self.webview.set_bounds(bounds, window.scale_factor()) {
+                log::error!("failed to update native WebView surface bounds: {error:#}");
+            }
         }
 
         fn paint(
@@ -632,11 +643,8 @@ mod macos {
                     ..Default::default()
                 },
                 |window, cx| {
-                    let webview = Rc::new(NativeWebView::new(window).unwrap());
-
-                    // Insert the transparent GPUI overlay after the native
-                    // WebView so AppKit places it above the browser view.
-                    window.enable_scene_overlay().unwrap();
+                    let composition = window.enable_window_composition().unwrap();
+                    let webview = Rc::new(NativeWebView::new(window, &composition).unwrap());
 
                     cx.new(|_| NativeWebViewExample {
                         webview,

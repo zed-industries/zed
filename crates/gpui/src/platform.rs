@@ -81,7 +81,58 @@ pub trait PlatformNativeSurface {
     fn set_visible(&self, visible: bool) -> Result<()>;
     /// Returns the platform attachment object, such as an
     /// `IDCompositionVisual` on Windows.
-    fn platform_handle(&self) -> Box<dyn Any>;
+    fn platform_handle(&self) -> Result<Box<dyn Any>>;
+}
+
+/// The ranges of a GPUI scene rendered onto one composition surface.
+#[derive(Clone)]
+pub struct ComposedSceneLayer {
+    /// The GPUI composition surface receiving these scene ranges.
+    pub surface: crate::CompositionSurfaceId,
+    /// Paint-operation ranges belonging to the surface.
+    pub ranges: Vec<Range<usize>>,
+}
+
+/// A scene split across GPUI surfaces in composition order.
+pub struct ComposedScene<'a> {
+    scene: &'a Scene,
+    layers: Vec<ComposedSceneLayer>,
+}
+
+impl<'a> ComposedScene<'a> {
+    pub(crate) fn new(scene: &'a Scene, layers: Vec<ComposedSceneLayer>) -> Self {
+        Self { scene, layers }
+    }
+
+    /// Returns the complete scene containing all GPUI planes.
+    pub fn scene(&self) -> &'a Scene {
+        self.scene
+    }
+
+    /// Returns the GPUI surface layers in composition order.
+    pub fn layers(&self) -> &[ComposedSceneLayer] {
+        &self.layers
+    }
+}
+
+/// A platform surface participating in window composition.
+#[derive(Clone)]
+pub struct PlatformCompositionSurface {
+    /// Stable identity in the window composition tree.
+    pub id: crate::CompositionSurfaceId,
+    /// Parent surface, or `None` for a root surface.
+    pub parent: Option<crate::CompositionSurfaceId>,
+    /// Renderer or attachment supplying this surface's content.
+    pub content: PlatformCompositionSurfaceContent,
+}
+
+/// Content attached to a platform composition surface.
+#[derive(Clone)]
+pub enum PlatformCompositionSurfaceContent {
+    /// A surface rendered by GPUI.
+    Gpui,
+    /// A native or external GPU surface supplied by a platform adapter.
+    Platform(Rc<dyn PlatformNativeSurface>),
 }
 use strum::EnumIter;
 use uuid::Uuid;
@@ -864,19 +915,21 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     ///
     /// Platforms without layered scene support fall back to drawing the complete
     /// scene on their primary surface.
-    fn draw_layered(&self, scene: &Scene, _overlay_start: usize) {
-        self.draw(scene);
+    fn draw_composed(&self, scene: ComposedScene<'_>) {
+        self.draw(scene.scene());
     }
-    /// Enables a transparent GPUI surface above native child views.
-    ///
-    /// This is currently an experimental capability for embedding native
-    /// surfaces between GPUI's base and deferred-overlay paint planes.
-    fn enable_scene_overlay(&self) -> anyhow::Result<()> {
-        anyhow::bail!("layered GPUI scenes are not supported on this platform")
+    /// Enables multi-surface window composition.
+    fn enable_window_composition(&self) -> anyhow::Result<()> {
+        anyhow::bail!("window composition is not supported on this platform")
     }
-    /// Creates a native surface slot between GPUI's base and overlay planes.
+    /// Creates a platform surface slot for native or external GPU content.
     fn create_native_surface(&self) -> Result<Rc<dyn PlatformNativeSurface>> {
         anyhow::bail!("native surface portals are not supported on this platform")
+    }
+    /// Applies the parent relationships and bottom-to-top sibling order of the
+    /// composition tree.
+    fn set_composition_order(&self, _surfaces: &[PlatformCompositionSurface]) -> Result<()> {
+        anyhow::bail!("surface ordering is not supported on this platform")
     }
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
