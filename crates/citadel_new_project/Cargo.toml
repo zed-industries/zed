@@ -11,3 +11,18 @@ workspace = true
 [lib]
 name = "citadel_new_project"
 path = "src/citadel_new_project.rs"
+
+[dependencies]
+anyhow.workspace = true
+fs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+notifications.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
