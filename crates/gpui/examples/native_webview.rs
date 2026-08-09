@@ -5,7 +5,9 @@ fn main() {
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod platform {
-    use std::{rc::Rc, sync::mpsc};
+    use std::rc::Rc;
+    #[cfg(target_os = "windows")]
+    use std::sync::mpsc;
 
     #[cfg(target_os = "macos")]
     use cocoa::{
@@ -37,6 +39,10 @@ mod platform {
     #[cfg(target_os = "windows")]
     use windows::{
         Win32::Foundation::{E_ABORT, E_POINTER, HWND, POINT, RECT},
+        Win32::UI::{
+            Input::KeyboardAndMouse::{GetFocus, SetFocus},
+            WindowsAndMessaging::{XBUTTON1, XBUTTON2},
+        },
         core::Interface,
     };
 
@@ -73,6 +79,8 @@ mod platform {
         surface: WindowCompositionSurface,
         #[cfg(target_os = "macos")]
         view: id,
+        #[cfg(target_os = "windows")]
+        hwnd: HWND,
         #[cfg(target_os = "windows")]
         controller: ICoreWebView2CompositionController,
         #[cfg(target_os = "windows")]
@@ -211,6 +219,7 @@ mod platform {
 
             Ok(Self {
                 surface,
+                hwnd,
                 controller,
                 webview_controller,
                 webview,
@@ -246,7 +255,24 @@ mod platform {
         }
 
         #[cfg(target_os = "windows")]
-        fn focus_parent(&self) {}
+        fn focus_parent(&self) {
+            unsafe {
+                if let Err(error) = SetFocus(Some(self.hwnd))
+                    && GetFocus() != self.hwnd
+                {
+                    log::error!("failed to return keyboard focus to the GPUI window: {error}");
+                }
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        fn navigation_mouse_data(button: MouseButton) -> u32 {
+            match button {
+                MouseButton::Navigate(NavigationDirection::Back) => u32::from(XBUTTON1),
+                MouseButton::Navigate(NavigationDirection::Forward) => u32::from(XBUTTON2),
+                _ => 0,
+            }
+        }
 
         #[cfg(target_os = "windows")]
         fn send_mouse_input(
@@ -371,14 +397,16 @@ mod platform {
             &mut self,
             _id: Option<&GlobalElementId>,
             _inspector_id: Option<&gpui::InspectorElementId>,
-            bounds: Bounds<Pixels>,
+            _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             _prepaint: &mut Self::PrepaintState,
-            window: &mut Window,
+            _window: &mut Window,
             _cx: &mut App,
         ) {
             #[cfg(target_os = "windows")]
             {
+                let bounds = _bounds;
+                let window = _window;
                 let scale_factor = window.scale_factor();
                 let webview = self.webview.clone();
                 window.on_mouse_event({
@@ -404,7 +432,7 @@ mod platform {
                                 event_kind,
                                 Some(event.button),
                                 event.modifiers,
-                                0,
+                                NativeWebView::navigation_mouse_data(event.button),
                                 event.position,
                                 bounds,
                                 scale_factor,
@@ -433,7 +461,7 @@ mod platform {
                                 event_kind,
                                 Some(event.button),
                                 event.modifiers,
-                                0,
+                                NativeWebView::navigation_mouse_data(event.button),
                                 event.position,
                                 bounds,
                                 scale_factor,
@@ -959,6 +987,28 @@ mod platform {
             }
             cx.activate(true);
         });
+    }
+
+    #[cfg(all(test, target_os = "windows"))]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn navigation_mouse_buttons_include_their_xbutton_identity() {
+            assert_eq!(
+                NativeWebView::navigation_mouse_data(MouseButton::Navigate(
+                    NavigationDirection::Back
+                )),
+                u32::from(XBUTTON1)
+            );
+            assert_eq!(
+                NativeWebView::navigation_mouse_data(MouseButton::Navigate(
+                    NavigationDirection::Forward
+                )),
+                u32::from(XBUTTON2)
+            );
+            assert_eq!(NativeWebView::navigation_mouse_data(MouseButton::Left), 0);
+        }
     }
 }
 

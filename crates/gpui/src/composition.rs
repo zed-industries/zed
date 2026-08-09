@@ -257,74 +257,70 @@ mod tests {
     use super::*;
 
     #[test]
-    fn composition_surfaces_have_stable_identity_and_explicit_order() {
+    fn composition_surfaces_have_stable_identity_and_explicit_order() -> Result<()> {
         let mut tree = CompositionTree::new();
-        let base = tree.insert(CompositionSurfaceKind::Gpui, None).unwrap();
-        let webview = tree.insert(CompositionSurfaceKind::Native, None).unwrap();
-        let overlay = tree.insert(CompositionSurfaceKind::Gpui, None).unwrap();
+        let base = tree.insert(CompositionSurfaceKind::Gpui, None)?;
+        let webview = tree.insert(CompositionSurfaceKind::Native, None)?;
+        let overlay = tree.insert(CompositionSurfaceKind::Gpui, None)?;
 
-        tree.place_below(overlay, webview).unwrap();
+        tree.place_below(overlay, webview)?;
 
         assert_eq!(tree.flattened(), [base, overlay, webview]);
-        assert_eq!(tree.kind(webview).unwrap(), CompositionSurfaceKind::Native);
+        assert_eq!(tree.kind(webview)?, CompositionSurfaceKind::Native);
+        Ok(())
     }
 
     #[test]
-    fn composition_surfaces_can_be_nested_and_reparented() {
+    fn composition_surfaces_can_be_nested_and_reparented() -> Result<()> {
         let mut tree = CompositionTree::new();
-        let base = tree.insert(CompositionSurfaceKind::Gpui, None).unwrap();
-        let pane = tree
-            .insert(CompositionSurfaceKind::Native, Some(base))
-            .unwrap();
-        let video = tree
-            .insert(CompositionSurfaceKind::ExternalGpu, None)
-            .unwrap();
+        let base = tree.insert(CompositionSurfaceKind::Gpui, None)?;
+        let pane = tree.insert(CompositionSurfaceKind::Native, Some(base))?;
+        let video = tree.insert(CompositionSurfaceKind::ExternalGpu, None)?;
 
-        tree.reparent(video, Some(pane)).unwrap();
+        tree.reparent(video, Some(pane))?;
 
-        assert_eq!(tree.parent(video).unwrap(), Some(pane));
-        assert_eq!(tree.children(Some(pane)).unwrap(), [video]);
+        assert_eq!(tree.parent(video)?, Some(pane));
+        assert_eq!(tree.children(Some(pane))?, [video]);
         assert_eq!(tree.flattened(), [base, pane, video]);
+        Ok(())
     }
 
     #[test]
-    fn composition_tree_rejects_cycles_and_cross_parent_ordering() {
+    fn composition_tree_rejects_cycles_and_cross_parent_ordering() -> Result<()> {
         let mut tree = CompositionTree::new();
-        let parent = tree.insert(CompositionSurfaceKind::Gpui, None).unwrap();
-        let child = tree
-            .insert(CompositionSurfaceKind::Native, Some(parent))
-            .unwrap();
-        let sibling = tree.insert(CompositionSurfaceKind::Gpui, None).unwrap();
+        let parent = tree.insert(CompositionSurfaceKind::Gpui, None)?;
+        let child = tree.insert(CompositionSurfaceKind::Native, Some(parent))?;
+        let sibling = tree.insert(CompositionSurfaceKind::Gpui, None)?;
 
         assert!(tree.reparent(parent, Some(child)).is_err());
         assert!(tree.place_above(child, sibling).is_err());
-        assert_eq!(tree.parent(parent).unwrap(), None);
-        assert_eq!(tree.parent(child).unwrap(), Some(parent));
+        assert_eq!(tree.parent(parent)?, None);
+        assert_eq!(tree.parent(child)?, Some(parent));
+        Ok(())
     }
 
     #[test]
-    fn removing_a_surface_preserves_and_reparents_its_children() {
+    fn removing_a_surface_preserves_and_reparents_its_children() -> Result<()> {
         let mut tree = CompositionTree::new();
-        let parent = tree.insert(CompositionSurfaceKind::Gpui, None).unwrap();
-        let child = tree
-            .insert(CompositionSurfaceKind::Native, Some(parent))
-            .unwrap();
+        let parent = tree.insert(CompositionSurfaceKind::Gpui, None)?;
+        let child = tree.insert(CompositionSurfaceKind::Native, Some(parent))?;
 
-        tree.remove(parent).unwrap();
+        tree.remove(parent)?;
 
-        assert_eq!(tree.parent(child).unwrap(), None);
+        assert_eq!(tree.parent(child)?, None);
         assert_eq!(tree.flattened(), [child]);
+        Ok(())
     }
 
     #[test]
-    fn scene_ranges_follow_tree_order_and_preserve_repeated_segments() {
+    fn scene_ranges_follow_tree_order_and_preserve_repeated_segments() -> Result<()> {
         let mut tree = CompositionTree::new();
-        let base = tree.insert(CompositionSurfaceKind::Gpui, None).unwrap();
-        let native = tree.insert(CompositionSurfaceKind::Native, None).unwrap();
-        let overlay = tree.insert(CompositionSurfaceKind::Gpui, None).unwrap();
+        let base = tree.insert(CompositionSurfaceKind::Gpui, None)?;
+        let native = tree.insert(CompositionSurfaceKind::Native, None)?;
+        let overlay = tree.insert(CompositionSurfaceKind::Gpui, None)?;
         let starts = [(base, 0), (overlay, 4), (base, 7)];
 
-        let layers = composed_scene_layers(&tree, &starts, 10).unwrap();
+        let layers = composed_scene_layers(&tree, &starts, 10)?;
 
         let [base_layer, overlay_layer] = layers.as_slice() else {
             panic!("expected base and overlay scene layers");
@@ -333,16 +329,18 @@ mod tests {
         assert_eq!(base_layer.ranges, [0..4, 7..10]);
         assert_eq!(overlay_layer.surface, overlay);
         assert_eq!(overlay_layer.ranges, [4..7]);
-        assert_eq!(tree.kind(native).unwrap(), CompositionSurfaceKind::Native);
+        assert_eq!(tree.kind(native)?, CompositionSurfaceKind::Native);
+        Ok(())
     }
 
     #[test]
-    fn scene_ranges_reject_non_gpui_targets_and_non_monotonic_markers() {
+    fn scene_ranges_reject_non_gpui_targets_and_non_monotonic_markers() -> Result<()> {
         let mut tree = CompositionTree::new();
-        let base = tree.insert(CompositionSurfaceKind::Gpui, None).unwrap();
-        let native = tree.insert(CompositionSurfaceKind::Native, None).unwrap();
+        let base = tree.insert(CompositionSurfaceKind::Gpui, None)?;
+        let native = tree.insert(CompositionSurfaceKind::Native, None)?;
 
         assert!(composed_scene_layers(&tree, &[(native, 0)], 1).is_err());
         assert!(composed_scene_layers(&tree, &[(base, 2), (base, 1)], 2).is_err());
+        Ok(())
     }
 }
