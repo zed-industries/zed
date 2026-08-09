@@ -1,6 +1,6 @@
 # Design: Board auto-detection and one-button build & flash
 
-Status: **draft**, pending user review before an implementation plan is written.
+Status: **implemented, hardware-verified (2026-08-10)**. See the "Implementation status" section at the top of [the implementation plan](../plans/2026-08-09-board-detect-build-flash.md) for verification results, a bug found and fixed during hardware testing, and the deferred/backlog items.
 
 ## Motivation
 
