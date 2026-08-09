@@ -973,8 +973,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_cmd_click_fallback_honors_lsp_results_location(cx: &mut TestAppContext) {
-        // The action handlers attach to editors created after `init` runs, so
-        // register them before the test context builds its editor.
         cx.update(crate::init);
         let mut cx = rust_cx(
             lsp::ServerCapabilities {

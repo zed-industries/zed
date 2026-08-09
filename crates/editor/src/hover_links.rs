@@ -4,7 +4,7 @@ use crate::{
     PointForPosition, SelectPhase, editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
 };
 use gpui::{
-    Action as _, App, AsyncWindowContext, Context, Entity, HighlightStyle, Modifiers, Pixels, Task,
+    App, AsyncWindowContext, Context, Entity, Focusable, HighlightStyle, Modifiers, Pixels, Task,
     UnderlineStyle, Window, px,
 };
 use language::{Bias, ToOffset};
@@ -206,25 +206,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        let focus_handle = self.focus_handle(cx);
         let reveal_task = self.cmd_click_reveal_task(point, modifiers, window, cx);
-        cx.spawn_in(window, async move |editor, cx| {
+        cx.spawn_in(window, async move |_, cx| {
             let definition_revealed = reveal_task.await.log_err().unwrap_or(Navigated::No);
-            editor
-                .update_in(cx, |_, window, cx| {
-                    if definition_revealed == Navigated::Yes {
-                        return;
+            if definition_revealed == Navigated::Yes {
+                return;
+            }
+            cx.update(|window, cx| {
+                match EditorSettings::get_global(cx).go_to_definition_fallback {
+                    GoToDefinitionFallback::None => {}
+                    GoToDefinitionFallback::FindAllReferences => {
+                        focus_handle.dispatch_action(&FindAllReferences::default(), window, cx);
                     }
-                    match EditorSettings::get_global(cx).go_to_definition_fallback {
-                        GoToDefinitionFallback::None => {}
-                        GoToDefinitionFallback::FindAllReferences => {
-                            // Dispatch the action instead of calling the method so
-                            // handlers registered on the editor (like the LSP
-                            // results picker) can intercept it.
-                            window.dispatch_action(FindAllReferences::default().boxed_clone(), cx);
-                        }
-                    }
-                })
-                .ok();
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -326,10 +323,6 @@ impl Editor {
                 }
                 (true, false) => self.go_to_type_definition(&GoToTypeDefinition, window, cx),
                 (false, true) => self.go_to_definition_split(&GoToDefinitionSplit, window, cx),
-                // Skip go_to_definition's internal references fallback: the
-                // click path handles the fallback itself in
-                // handle_click_hovered_link, via an action dispatch that the
-                // LSP results picker can intercept.
                 (false, false) => {
                     self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, window, cx)
                 }
