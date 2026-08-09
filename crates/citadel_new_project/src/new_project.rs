@@ -173,7 +173,7 @@ pub fn new_project(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &m
                         .detach_and_log_err(cx);
                     },
                 )
-                .detach();
+                .detach_and_log_err(cx);
             });
 
             if let Err(error) = workspace_result {
