@@ -160,7 +160,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `http.proxy`               | `proxy`                                                  |
 | `npm.packageManager`       | `node.npm_path`                                          |
 | `telemetry.telemetryLevel` | `telemetry.metrics`, `telemetry.diagnostics`             |
-| `outline.icons`            | `outline_panel.file_icons`, `outline_panel.folder_icons` |
+| `outline.icons`            | `outline_panel.file_icons`, `outline_panel.folder_indicator` |
 | `chat.agent.enabled`       | `agent.enabled`                                          |
 | `mcp`                      | `context_servers`                                        |
 
