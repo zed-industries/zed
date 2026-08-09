@@ -2019,22 +2019,22 @@ impl WorkspaceDb {
     pub async fn recent_project_workspaces_ungrouped(
         &self,
         fs: Arc<dyn Fs>,
-        _: BackgroundExecutor,
+        executor: BackgroundExecutor,
     ) -> Result<Vec<RecentWorkspace>> {
         let remote_connections = self.remote_connections()?;
-        let mut result = Vec::new();
+        let mut tasks = Vec::new();
         for (id, paths, identity_paths_hint, remote_connection_id, _session_id, timestamp) in
             self.recent_workspaces()?
         {
             if let Some(remote_connection_id) = remote_connection_id {
                 if let Some(connection_options) = remote_connections.get(&remote_connection_id) {
-                    result.push(RecentWorkspace {
+                    tasks.push(Task::ready(Some(RecentWorkspace {
                         workspace_id: id,
                         location: SerializedWorkspaceLocation::Remote(connection_options.clone()),
                         paths: paths.clone(),
                         identity_paths: identity_paths_hint.unwrap_or(paths),
                         timestamp,
-                    });
+                    })));
                 }
                 continue;
             }
@@ -2043,22 +2043,32 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if Self::all_paths_exist_with_a_directory(paths.paths(), fs.as_ref()).await {
-                let identity_paths = resolve_local_workspace_identity(fs.as_ref(), &paths)
-                    .await
-                    .or(identity_paths_hint)
-                    .unwrap_or_else(|| paths.clone());
-                result.push(RecentWorkspace {
-                    workspace_id: id,
-                    location: SerializedWorkspaceLocation::Local,
-                    paths,
-                    identity_paths,
-                    timestamp,
-                });
-            }
+            tasks.push(executor.spawn({
+                let fs = fs.clone();
+                async move {
+                    if !Self::all_paths_exist_with_a_directory(paths.paths(), fs.as_ref()).await {
+                        return None;
+                    }
+                    let identity_paths = resolve_local_workspace_identity(fs.as_ref(), &paths)
+                        .await
+                        .or(identity_paths_hint)
+                        .unwrap_or_else(|| paths.clone());
+                    Some(RecentWorkspace {
+                        workspace_id: id,
+                        location: SerializedWorkspaceLocation::Local,
+                        paths,
+                        identity_paths,
+                        timestamp,
+                    })
+                }
+            }));
         }
 
-        Ok(result)
+        Ok(futures::future::join_all(tasks)
+            .await
+            .into_iter()
+            .flatten()
+            .collect())
     }
 
     // Returns the recent project workspaces suitable for recent-project UIs.
