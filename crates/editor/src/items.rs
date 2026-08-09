@@ -31,7 +31,7 @@ use project::{
 };
 use rope::TextSummary;
 use rpc::proto::{self, update_view};
-use settings::Settings;
+use settings::{FolderIndicator, Settings};
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
@@ -2252,6 +2252,33 @@ pub fn entry_git_aware_label_color(git_status: GitSummary, ignored: bool, select
         Color::Ignored
     } else {
         entry_label_color(selected)
+    }
+}
+
+/// Builds what a panel draws ahead of a directory's name, for panels that render the
+/// indicator into a single slot. `project_panel` places the chevron and icon itself so
+/// it can decorate the folder icon independently.
+pub fn folder_indicator_element(
+    indicator: FolderIndicator,
+    expanded: bool,
+    path: &Path,
+    color: Color,
+    cx: &App,
+) -> Option<AnyElement> {
+    let indicators = FileIcons::get_folder_indicators(indicator, expanded, path, cx);
+    let render_indicator = |icon_path| Icon::from_path(icon_path).color(color);
+
+    match (indicators.chevron, indicators.icon) {
+        (Some(chevron), Some(icon)) => Some(
+            h_flex()
+                .flex_none()
+                .gap_0p5()
+                .child(render_indicator(chevron))
+                .child(render_indicator(icon))
+                .into_any_element(),
+        ),
+        (Some(only), None) | (None, Some(only)) => Some(render_indicator(only).into_any_element()),
+        (None, None) => None,
     }
 }
 
