@@ -495,7 +495,8 @@ impl BreadcrumbNavigationMenu {
         };
         self.directory_entries = breadcrumb_directory_entries(&project, &worktree, path, cx);
         self.rebuild_filter_candidates();
-        self.loading = false;
+        // `expand_entry` itself emits the worktree updates that land here, so a listing
+        // taken now can be partial; only the load that requested the expansion may end it.
         if !self.filter_is_empty(cx) {
             self.ranked_matches.clear();
             self.selected_index = None;
@@ -674,7 +675,8 @@ impl BreadcrumbNavigationMenu {
     ) {
         self.all_symbol_items.clear();
         self.listed_symbol_indices.clear();
-        self.symbol_trail.clear();
+        // The trail must outlive the reload: it is what the bar paints the menu's anchor
+        // segment from, and a frame without an anchor dismisses the menu.
         self.load_epoch = self.load_epoch.wrapping_add(1);
         let epoch = self.load_epoch;
         self.loading = true;
@@ -875,10 +877,21 @@ impl BreadcrumbNavigationMenu {
         let query = self.filter_query(cx);
 
         if query.is_empty() {
+            // `selected_index` addresses the ranked matches while a query is active and the
+            // listing itself once it is gone, so carry the selection over by identity.
+            let unranked_selection = self
+                .selected_index
+                .and_then(|position| self.ranked_matches.get(position))
+                .map(|match_| match_.candidate_id);
             self.ranked_matches.clear();
             self.filter_match_truncated = false;
             self.filter_task = None;
             self.ranked_epoch = epoch;
+            if let Some(position) = unranked_selection {
+                self.selected_index = Some(position);
+                self.scroll_handle
+                    .scroll_to_item(position, ScrollStrategy::Nearest);
+            }
             if self.selected_index.is_none() {
                 self.apply_initial_selection_if_needed(cx);
             } else {
@@ -1308,6 +1321,20 @@ impl BreadcrumbNavigationMenu {
         let Some(project_path) = editor.read(cx).active_project_path(cx) else {
             return;
         };
+        // A single-file worktree paints no directory segments, so a directory listing here
+        // would have nothing to anchor to and the menu would dismiss itself.
+        let is_single_file = editor
+            .read(cx)
+            .project()
+            .and_then(|project| {
+                project
+                    .read(cx)
+                    .worktree_for_id(project_path.worktree_id, cx)
+            })
+            .is_some_and(|worktree| worktree.read(cx).is_single_file());
+        if is_single_file {
+            return;
+        }
         let parent_path = project_path
             .path
             .parent()

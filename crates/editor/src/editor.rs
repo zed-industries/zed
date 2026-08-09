@@ -11145,7 +11145,7 @@ impl Editor {
             }
         };
 
-        if !self.breadcrumbs_visible() {
+        if !self.breadcrumbs_visible() || self.workspace().is_none() {
             toggle_outline(window, cx);
             return;
         }

@@ -1511,7 +1511,7 @@ mod tests {
         use crate::editor_tests::init_test;
         use crate::test::build_editor;
         use project::{FakeFs, Project};
-        use util::{path, rel_path::rel_path};
+        use util::path;
         use workspace::Workspace;
 
         init_test(cx, |_| {});
@@ -2069,7 +2069,7 @@ mod tests {
         use crate::test::build_editor;
         use project::{FakeFs, Project};
         use serde_json::json;
-        use util::{path, rel_path::rel_path};
+        use util::path;
         use workspace::Workspace;
 
         init_test(cx, |_| {});
@@ -2132,7 +2132,7 @@ mod tests {
         use project::{FakeFs, Project};
         use serde_json::json;
         use settings::SettingsStore;
-        use util::{path, rel_path::rel_path};
+        use util::path;
         use workspace::Workspace;
 
         init_test(cx, |_| {});
@@ -3383,6 +3383,125 @@ mod tests {
                     .map(|name| name.as_ref())
                     .collect::<Vec<_>>(),
                 vec!["beta.txt"],
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_menu_clearing_filter_keeps_the_selected_entry(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use gpui::KeyBinding;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            cx.bind_keys([
+                KeyBinding::new(
+                    "down",
+                    SelectNext,
+                    Some("BreadcrumbNavigationMenu > Editor"),
+                ),
+                KeyBinding::new("backspace", crate::actions::Backspace, Some("Editor")),
+            ]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "aa.txt": "",
+                "bb.txt": "",
+                "zeta_one.txt": "",
+                "zeta_two.txt": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        cx.simulate_input("zeta");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+
+        let selected_while_filtering = menu.read_with(cx, |menu, cx| {
+            let names = menu.filtered_entry_names(cx);
+            assert_eq!(
+                names.iter().map(|name| name.as_ref()).collect::<Vec<_>>(),
+                vec!["zeta_two.txt", "zeta_one.txt"],
+            );
+            names[menu.selected_index().expect("a row is selected")].clone()
+        });
+        assert_eq!(selected_while_filtering.as_ref(), "zeta_one.txt");
+
+        cx.simulate_keystrokes("backspace backspace backspace backspace");
+        cx.run_until_parked();
+
+        menu.read_with(cx, |menu, cx| {
+            assert_eq!(menu.filter(cx), "");
+            let names = menu.entry_names();
+            assert_eq!(
+                names.iter().map(|name| name.as_ref()).collect::<Vec<_>>(),
+                vec!["aa.txt", "bb.txt", "zeta_one.txt", "zeta_two.txt"],
+            );
+            assert_eq!(
+                names[menu.selected_index().expect("a row stays selected")].clone(),
+                selected_while_filtering,
+                "clearing the query must keep the same entry selected, not the same row index"
             );
         });
     }
