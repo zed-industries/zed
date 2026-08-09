@@ -2706,6 +2706,7 @@ impl Terminal {
             {
                 self.events
                     .push_back(InternalEvent::UpdateSelection(position));
+                self.selection_phase = SelectionPhase::Selecting;
             }
 
             if e.button == MouseButton::Left && setting.copy_on_select {
@@ -3932,7 +3933,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_terminal_mouse_up_finishes_drag_without_mouse_move(cx: &mut TestAppContext) {
-        let terminal = init_ctrl_click_hyperlink_test(cx, b"hello world\r\n");
+        let terminal = init_ctrl_click_hyperlink_test(
+            cx,
+            b"\x1b]8;;https://zed.dev\x1b\\hello world\x1b]8;;\x1b\\\r\n",
+        );
 
         cx.update_global(|store: &mut settings::SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
@@ -3941,10 +3945,23 @@ mod tests {
         });
 
         terminal.update(cx, |terminal, cx| {
-            left_mouse_down_at(terminal, point(px(50.0), px(10.0)), cx);
+            let release_position = point(px(90.0), px(0.0));
+            let release_index = content_index_for_mouse(
+                release_position - terminal.last_content.terminal_bounds.bounds.origin,
+                &terminal.last_content.terminal_bounds,
+            );
+            assert!(
+                terminal
+                    .last_content
+                    .cells
+                    .get(release_index)
+                    .and_then(|cell| cell.hyperlink())
+                    .is_some()
+            );
+            left_mouse_down_at(terminal, point(px(10.0), px(0.0)), cx);
             terminal.events.clear();
 
-            left_mouse_up_at(terminal, point(px(90.0), px(10.0)), cx);
+            left_mouse_up_at(terminal, release_position, cx);
 
             assert!(matches!(
                 terminal.events.front(),
@@ -3955,6 +3972,8 @@ mod tests {
                 Some(InternalEvent::Copy(Some(true)))
             ));
         });
+
+        assert_eq!(cx.opened_url(), None);
     }
 
     /// With mouse tracking active (e.g. htop), Shift is the escape hatch to
