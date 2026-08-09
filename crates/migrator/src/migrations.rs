@@ -364,3 +364,9 @@ pub(crate) mod m_2026_05_04 {
 
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
+
+pub(crate) mod m_2026_08_09 {
+    mod settings;
+
+    pub(crate) use settings::rename_folder_icons_to_folder_indicator;
+}

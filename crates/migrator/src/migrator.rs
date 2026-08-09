@@ -257,6 +257,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2026_05_04::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2026_05_04,
         ),
+        MigrationType::Json(migrations::m_2026_08_09::rename_folder_icons_to_folder_indicator),
     ];
     run_migrations(text, migrations)
 }
@@ -5420,6 +5421,213 @@ mod tests {
             "#
             .unindent(),
             None,
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_in_all_panels() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_09::rename_folder_icons_to_folder_indicator,
+            )],
+            &r#"
+            {
+                "project_panel": {
+                    "folder_icons": true
+                },
+                "outline_panel": {
+                    "folder_icons": false
+                },
+                "git_panel": {
+                    "folder_icons": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "folder_indicator": "icon"
+                    },
+                    "outline_panel": {
+                        "folder_indicator": "chevron"
+                    },
+                    "git_panel": {
+                        "folder_indicator": "icon"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    // The shared JSON migration driver applies a rename as a delete plus an add, and
+    // added keys are written to the front of their object. Comments and sibling values
+    // survive; only the renamed key's position moves.
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_preserves_comments_and_siblings() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_09::rename_folder_icons_to_folder_indicator,
+            )],
+            &r#"
+            {
+                // Keep this comment.
+                "project_panel": {
+                    "file_icons": true,
+                    "folder_icons": false,
+                    "indent_size": 20
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    // Keep this comment.
+                    "project_panel": {
+                        "folder_indicator": "chevron",
+                        "file_icons": true,
+                        "indent_size": 20
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_in_platform_overrides() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_09::rename_folder_icons_to_folder_indicator,
+            )],
+            &r#"
+            {
+                "macos": {
+                    "project_panel": {
+                        "folder_icons": false
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "project_panel": {
+                            "folder_indicator": "chevron"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_does_not_clobber_new_key() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_08_09::rename_folder_icons_to_folder_indicator,
+            )],
+            &r#"
+            {
+                "project_panel": {
+                    "folder_icons": true,
+                    "folder_indicator": "both"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "folder_indicator": "both"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_no_change_cases() {
+        let migrations = &[MigrationType::Json(
+            migrations::m_2026_08_09::rename_folder_icons_to_folder_indicator,
+        )];
+
+        // Already migrated.
+        assert_migrate_with_migrations(
+            migrations,
+            &r#"
+            {
+                "project_panel": {
+                    "folder_indicator": "both"
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // A non-boolean value is already invalid; leave it rather than guess.
+        assert_migrate_with_migrations(
+            migrations,
+            &r#"
+            {
+                "project_panel": {
+                    "folder_icons": 3
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // `folder_icons` outside the three panels is not ours to rename.
+        assert_migrate_with_migrations(
+            migrations,
+            &r#"
+            {
+                "terminal": {
+                    "folder_icons": true
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_rename_folder_icons_to_folder_indicator_is_registered() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "project_panel": {
+                    "folder_icons": false
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "project_panel": {
+                        "folder_indicator": "chevron"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
         );
     }
 }
