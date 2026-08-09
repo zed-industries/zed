@@ -98,16 +98,30 @@ pub fn new_project(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &m
 
     window
         .spawn(cx, async move |cx| {
-            // Two fallible layers wrapped in the oneshot receiver:
-            // `.ok()` collapses each into an `Option` (`log_err()` so a
-            // dropped sender / platform dialog error is at least visible in
-            // the log instead of vanishing) and the three `?`s unwrap, in
-            // order: the receiver's own `Result` (sender dropped), the
-            // platform's `Result` (e.g. dialog failed to open), and finally
-            // the `Option` the platform uses to signal user cancellation.
-            // `paths` is non-empty here since `multiple: false` and a
-            // cancelled/empty selection is already filtered out above.
-            let mut paths = destination_prompt.await.log_err()?.log_err()??;
+            // The receiver's own `Result` (sender dropped) is collapsed with
+            // `log_err()` since there's no workspace-level error to show for
+            // it. The platform `Result` (e.g. missing xdg-desktop-portal
+            // implementation on Linux) is shown to the user the same way
+            // `Workspace::prompt_for_open_path` does, via `PortalError`. The
+            // final `?` unwraps the `Option` the platform uses to signal
+            // user cancellation; `paths` is non-empty here since
+            // `multiple: false` and a cancelled/empty selection is already
+            // filtered out above.
+            let prompt_result = destination_prompt.await.log_err()?;
+            let mut paths = match prompt_result {
+                Ok(paths) => paths,
+                Err(error) => {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_error(
+                                workspace::workspace_error::PortalError::new(error.to_string()),
+                                cx,
+                            );
+                        })
+                        .ok()?;
+                    return None;
+                }
+            }?;
             let destination = paths.pop()?;
 
             let fs = workspace
