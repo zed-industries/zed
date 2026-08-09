@@ -4737,15 +4737,13 @@ impl GitPanel {
             ]
         };
 
-        // Keep Staged/Unstaged headers pinned even when empty (as long as there's
-        // anything to show at all) so the layout stays stable while staging.
+        // Keep the Unstaged section pinned even when empty (as long as there's
+        // anything to show at all) so it never disappears mid-staging workflow.
         let has_any_section_entries = section_entries
             .iter()
             .any(|(_, entries)| !entries.is_empty());
         let show_when_empty = |section: Section| {
-            group_by_staging_state
-                && has_any_section_entries
-                && matches!(section, Section::Staged | Section::Unstaged)
+            group_by_staging_state && has_any_section_entries && section == Section::Unstaged
         };
 
         match &mut self.view_mode {
@@ -9987,10 +9985,6 @@ mod tests {
                         ..
                     }),
                     Header(GitHeaderEntry {
-                        header: Section::Staged
-                    }),
-                    EmptySection(Section::Staged),
-                    Header(GitHeaderEntry {
                         header: Section::Unstaged
                     }),
                     EmptySection(Section::Unstaged),
@@ -10020,10 +10014,6 @@ mod tests {
                         status: FileStatus::Unmerged(..),
                         ..
                     }),
-                    Header(GitHeaderEntry {
-                        header: Section::Staged
-                    }),
-                    EmptySection(Section::Staged),
                     Header(GitHeaderEntry {
                         header: Section::Unstaged
                     }),
