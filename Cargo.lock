@@ -3080,6 +3080,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c638459986b83c2b885179bd4ea6a2cbb05697b001501a56adb3a3d230803b"
 
 [[package]]
+name = "citadel_new_project"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs",
+ "futures 0.3.32",
+ "gpui",
+ "notifications",
+ "serde_json",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "clang-sys"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -23180,6 +23195,7 @@ dependencies = [
  "call",
  "channel",
  "chrono",
+ "citadel_new_project",
  "clap",
  "cli",
  "client",
