@@ -568,7 +568,7 @@ pub fn init(cx: &mut App) {
     )
     .detach();
 
-    // Subscribe to worktree additions to register remote clients with the extension host
+    // Subscribe to worktree additions to register remote clients with the extension store
     cx.observe_new(
         |workspace: &mut Workspace, _window: Option<&mut Window>, cx: &mut Context<Workspace>| {
             if let Some(client) = workspace.project().read(cx).remote_client()
