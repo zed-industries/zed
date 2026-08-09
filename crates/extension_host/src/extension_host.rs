@@ -1960,7 +1960,11 @@ impl ExtensionStore {
         client: Entity<RemoteClient>,
         _cx: &mut Context<Self>,
     ) {
-        self.remote_clients.push(client.downgrade());
+        let client = client.downgrade();
+        if self.remote_clients.contains(&client) {
+            return;
+        }
+        self.remote_clients.push(client);
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }
