@@ -1,12 +1,13 @@
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn main() {
-    eprintln!("The native_webview example is only available on macOS.");
+    eprintln!("The native_webview example is only available on macOS and Windows.");
 }
 
-#[cfg(target_os = "macos")]
-mod macos {
-    use std::rc::Rc;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod platform {
+    use std::{rc::Rc, sync::mpsc};
 
+    #[cfg(target_os = "macos")]
     use cocoa::{
         appkit::NSView,
         base::{YES, id, nil},
@@ -19,9 +20,27 @@ mod macos {
         relative, rgb, size,
     };
     use gpui_platform::application;
+    #[cfg(target_os = "macos")]
     use objc::{class, msg_send, sel, sel_impl};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+    #[cfg(target_os = "windows")]
+    use gpui::{
+        DispatchPhase, Modifiers, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+        NavigationDirection, ScrollDelta, ScrollWheelEvent,
+    };
+    #[cfg(target_os = "windows")]
+    use webview2_com::{
+        CoTaskMemPWSTR, CreateCoreWebView2CompositionControllerCompletedHandler,
+        CreateCoreWebView2EnvironmentCompletedHandler, Microsoft::Web::WebView2::Win32::*,
+    };
+    #[cfg(target_os = "windows")]
+    use windows::{
+        Win32::Foundation::{E_ABORT, E_POINTER, HWND, POINT, RECT},
+        core::Interface,
+    };
+
+    #[cfg(target_os = "macos")]
     #[link(name = "WebKit", kind = "framework")]
     unsafe extern "C" {}
 
@@ -49,12 +68,22 @@ mod macos {
     }
 
     struct NativeWebView {
+        #[cfg(target_os = "macos")]
         gpui_view: id,
         surface: WindowCompositionSurface,
+        #[cfg(target_os = "macos")]
         view: id,
+        #[cfg(target_os = "windows")]
+        controller: ICoreWebView2CompositionController,
+        #[cfg(target_os = "windows")]
+        webview_controller: ICoreWebView2Controller,
+        #[cfg(target_os = "windows")]
+        #[allow(dead_code)]
+        webview: ICoreWebView2,
     }
 
     impl NativeWebView {
+        #[cfg(target_os = "macos")]
         fn new(window: &Window, composition: &WindowComposition<'_>) -> anyhow::Result<Self> {
             let window_handle = HasWindowHandle::window_handle(window).map_err(|error| {
                 anyhow::anyhow!("failed to get AppKit window handle: {error:?}")
@@ -123,12 +152,90 @@ mod macos {
             }
         }
 
+        #[cfg(target_os = "windows")]
+        fn new(window: &Window, composition: &WindowComposition<'_>) -> anyhow::Result<Self> {
+            let window_handle = HasWindowHandle::window_handle(window)
+                .map_err(|error| anyhow::anyhow!("failed to get Win32 window handle: {error:?}"))?;
+            let hwnd = match window_handle.as_raw() {
+                RawWindowHandle::Win32(handle) => HWND(handle.hwnd.get() as _),
+                _ => anyhow::bail!("native_webview requires a Win32 window"),
+            };
+            let surface = composition.create_native_surface()?;
+            let visual = surface.platform_surface()?.platform_handle()?;
+            let visual = visual.downcast::<windows::core::IUnknown>().map_err(|_| {
+                anyhow::anyhow!("native surface did not provide a DirectComposition visual")
+            })?;
+
+            let (environment_sender, environment_receiver) = mpsc::channel();
+            CreateCoreWebView2EnvironmentCompletedHandler::wait_for_async_operation(
+                Box::new(|handler| unsafe {
+                    CreateCoreWebView2Environment(&handler)
+                        .map_err(webview2_com::Error::WindowsError)
+                }),
+                Box::new(move |error, environment| {
+                    let result = error.and_then(|_| {
+                        environment.ok_or_else(|| windows::core::Error::from(E_POINTER))
+                    });
+                    environment_sender
+                        .send(result)
+                        .map_err(|_| windows::core::Error::from(E_ABORT))?;
+                    Ok(())
+                }),
+            )?;
+            let environment = webview2_com::wait_with_pump(environment_receiver)??;
+            let environment = environment.cast::<ICoreWebView2Environment3>()?;
+            let (controller_sender, controller_receiver) = mpsc::channel();
+            CreateCoreWebView2CompositionControllerCompletedHandler::wait_for_async_operation(
+                Box::new(move |handler| unsafe {
+                    environment
+                        .CreateCoreWebView2CompositionController(hwnd, &handler)
+                        .map_err(webview2_com::Error::WindowsError)
+                }),
+                Box::new(move |error, controller| {
+                    let result = error.and_then(|_| {
+                        controller.ok_or_else(|| windows::core::Error::from(E_POINTER))
+                    });
+                    controller_sender
+                        .send(result)
+                        .map_err(|_| windows::core::Error::from(E_ABORT))?;
+                    Ok(())
+                }),
+            )?;
+            let controller = webview2_com::wait_with_pump(controller_receiver)??;
+            unsafe { controller.SetRootVisualTarget(&*visual)? };
+            let webview_controller = controller.cast::<ICoreWebView2Controller>()?;
+            unsafe { webview_controller.SetIsVisible(true)? };
+            let webview = unsafe { webview_controller.CoreWebView2()? };
+            let html = CoTaskMemPWSTR::from(PAGE);
+            unsafe { webview.NavigateToString(*html.as_ref().as_pcwstr())? };
+
+            Ok(Self {
+                surface,
+                controller,
+                webview_controller,
+                webview,
+            })
+        }
+
         fn set_bounds(&self, bounds: Bounds<Pixels>, scale_factor: f32) -> anyhow::Result<()> {
             self.surface
                 .platform_surface()?
-                .set_bounds(bounds.to_device_pixels(scale_factor))
+                .set_bounds(bounds.to_device_pixels(scale_factor))?;
+            #[cfg(target_os = "windows")]
+            unsafe {
+                let device_bounds = bounds.to_device_pixels(scale_factor);
+                self.webview_controller.SetBounds(RECT {
+                    left: 0,
+                    top: 0,
+                    right: device_bounds.size.width.0,
+                    bottom: device_bounds.size.height.0,
+                })?;
+                self.webview_controller.SetIsVisible(true)?;
+            }
+            Ok(())
         }
 
+        #[cfg(target_os = "macos")]
         fn focus_parent(&self) {
             unsafe {
                 let window: id = msg_send![self.view, window];
@@ -137,13 +244,74 @@ mod macos {
                 }
             }
         }
+
+        #[cfg(target_os = "windows")]
+        fn focus_parent(&self) {}
+
+        #[cfg(target_os = "windows")]
+        fn send_mouse_input(
+            &self,
+            event_kind: COREWEBVIEW2_MOUSE_EVENT_KIND,
+            button: Option<MouseButton>,
+            modifiers: Modifiers,
+            mouse_data: u32,
+            position: gpui::Point<Pixels>,
+            bounds: Bounds<Pixels>,
+            scale_factor: f32,
+        ) {
+            if !bounds.contains(&position) {
+                return;
+            }
+            let mut virtual_keys = COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE;
+            if modifiers.control {
+                virtual_keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_CONTROL;
+            }
+            if modifiers.shift {
+                virtual_keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_SHIFT;
+            }
+            if let Some(button) = button {
+                virtual_keys |= match button {
+                    MouseButton::Left => COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_LEFT_BUTTON,
+                    MouseButton::Right => COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_RIGHT_BUTTON,
+                    MouseButton::Middle => COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_MIDDLE_BUTTON,
+                    MouseButton::Navigate(NavigationDirection::Back) => {
+                        COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_X_BUTTON1
+                    }
+                    MouseButton::Navigate(NavigationDirection::Forward) => {
+                        COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_X_BUTTON2
+                    }
+                };
+            }
+            let point = POINT {
+                x: (f32::from(position.x - bounds.origin.x) * scale_factor) as i32,
+                y: (f32::from(position.y - bounds.origin.y) * scale_factor) as i32,
+            };
+            unsafe {
+                if let Err(error) =
+                    self.controller
+                        .SendMouseInput(event_kind, virtual_keys, mouse_data, point)
+                {
+                    log::error!("failed to send mouse input to WebView2: {error}");
+                }
+            }
+        }
     }
 
     impl Drop for NativeWebView {
+        #[cfg(target_os = "macos")]
         fn drop(&mut self) {
             unsafe {
                 NSView::removeFromSuperview(self.view);
                 let _: () = msg_send![self.view, release];
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        fn drop(&mut self) {
+            unsafe {
+                if let Err(error) = self.webview_controller.Close() {
+                    log::error!("failed to close WebView2: {error}");
+                }
             }
         }
     }
@@ -203,12 +371,110 @@ mod macos {
             &mut self,
             _id: Option<&GlobalElementId>,
             _inspector_id: Option<&gpui::InspectorElementId>,
-            _bounds: Bounds<Pixels>,
+            bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             _prepaint: &mut Self::PrepaintState,
-            _window: &mut Window,
+            window: &mut Window,
             _cx: &mut App,
         ) {
+            #[cfg(target_os = "windows")]
+            {
+                let scale_factor = window.scale_factor();
+                let webview = self.webview.clone();
+                window.on_mouse_event({
+                    let webview = webview.clone();
+                    move |event: &MouseDownEvent, phase, _, _| {
+                        if phase == DispatchPhase::Bubble {
+                            let event_kind = match event.button {
+                                MouseButton::Left => COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOWN,
+                                MouseButton::Right => {
+                                    COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOWN
+                                }
+                                MouseButton::Middle => {
+                                    COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOWN
+                                }
+                                MouseButton::Navigate(NavigationDirection::Back) => {
+                                    COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_DOWN
+                                }
+                                MouseButton::Navigate(NavigationDirection::Forward) => {
+                                    COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_DOWN
+                                }
+                            };
+                            webview.send_mouse_input(
+                                event_kind,
+                                Some(event.button),
+                                event.modifiers,
+                                0,
+                                event.position,
+                                bounds,
+                                scale_factor,
+                            );
+                        }
+                    }
+                });
+                window.on_mouse_event({
+                    let webview = webview.clone();
+                    move |event: &MouseUpEvent, phase, _, _| {
+                        if phase == DispatchPhase::Bubble {
+                            let event_kind = match event.button {
+                                MouseButton::Left => COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_UP,
+                                MouseButton::Right => COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_UP,
+                                MouseButton::Middle => {
+                                    COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_UP
+                                }
+                                MouseButton::Navigate(NavigationDirection::Back) => {
+                                    COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_UP
+                                }
+                                MouseButton::Navigate(NavigationDirection::Forward) => {
+                                    COREWEBVIEW2_MOUSE_EVENT_KIND_X_BUTTON_UP
+                                }
+                            };
+                            webview.send_mouse_input(
+                                event_kind,
+                                Some(event.button),
+                                event.modifiers,
+                                0,
+                                event.position,
+                                bounds,
+                                scale_factor,
+                            );
+                        }
+                    }
+                });
+                window.on_mouse_event({
+                    let webview = webview.clone();
+                    move |event: &MouseMoveEvent, phase, _, _| {
+                        if phase == DispatchPhase::Bubble {
+                            webview.send_mouse_input(
+                                COREWEBVIEW2_MOUSE_EVENT_KIND_MOVE,
+                                event.pressed_button,
+                                event.modifiers,
+                                0,
+                                event.position,
+                                bounds,
+                                scale_factor,
+                            );
+                        }
+                    }
+                });
+                window.on_mouse_event(move |event: &ScrollWheelEvent, phase, _, _| {
+                    if phase == DispatchPhase::Bubble {
+                        let amount = match event.delta {
+                            ScrollDelta::Pixels(delta) => f32::from(delta.y),
+                            ScrollDelta::Lines(delta) => delta.y * 120.0,
+                        };
+                        webview.send_mouse_input(
+                            COREWEBVIEW2_MOUSE_EVENT_KIND_WHEEL,
+                            None,
+                            event.modifiers,
+                            amount as i32 as u32,
+                            event.position,
+                            bounds,
+                            scale_factor,
+                        );
+                    }
+                });
+            }
         }
     }
 
@@ -696,7 +962,7 @@ mod macos {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn main() {
-    macos::run();
+    platform::run();
 }

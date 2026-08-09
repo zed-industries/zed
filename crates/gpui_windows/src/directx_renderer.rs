@@ -413,9 +413,6 @@ impl DirectXRenderer {
         scene: &Scene,
         background_appearance: WindowBackgroundAppearance,
     ) -> Result<()> {
-        if self.base_composition_surface.is_none() {
-            return self.draw(scene, background_appearance);
-        }
         if self.skip_draws {
             // skip drawing this frame, we just recovered from a device lost event
             // and so likely do not have the textures anymore that are required for drawing
@@ -443,6 +440,9 @@ impl DirectXRenderer {
         scene: gpui::ComposedScene<'_>,
         background_appearance: WindowBackgroundAppearance,
     ) -> Result<()> {
+        if self.base_composition_surface.is_none() {
+            return self.draw(scene.scene(), background_appearance);
+        }
         if self.skip_draws {
             return Ok(());
         }
@@ -1312,8 +1312,13 @@ impl DirectComposition {
         }
         unsafe {
             self.root_visual.RemoveAllVisuals()?;
-            for (_, visual) in &visuals {
-                visual.RemoveAllVisuals()?;
+            for surface in surfaces {
+                if matches!(surface.content, PlatformCompositionSurfaceContent::Gpui) {
+                    visuals_by_id
+                        .get(&surface.id)
+                        .context("GPUI composition visual is missing")?
+                        .RemoveAllVisuals()?;
+                }
             }
             let mut previous_by_parent = FxHashMap::default();
             for surface in surfaces {

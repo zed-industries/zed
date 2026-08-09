@@ -140,8 +140,15 @@ scap = { workspace = true, optional = true }
 
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Power"] }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_DirectComposition",
+    "Win32_System_Power",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+webview2-com = "0.38"
 
 [dev-dependencies]
 backtrace.workspace = true
@@ -178,6 +185,10 @@ cbindgen.workspace = true
 [[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"
+
+[[example]]
+name = "native_webview"
+path = "examples/native_webview.rs"
 
 [[example]]
 name = "move_entity_between_windows"
