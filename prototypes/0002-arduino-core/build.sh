@@ -16,18 +16,18 @@ mkdir -p "$BUILD_DIR/core"
 
 echo "=== compiling ArduinoCore-avr (cores/arduino) ==="
 for src in "$CORE_DIR"/*.c; do
-    obj="$BUILD_DIR/core/$(basename "${src%.c}").o"
+    obj="$BUILD_DIR/core/$(basename "$src").o"
     avr-gcc -mmcu=$MCU -Os -w -std=gnu11 -ffunction-sections -fdata-sections \
         $CORE_DEFINES $CORE_INCLUDES -c "$src" -o "$obj"
 done
 for src in "$CORE_DIR"/*.cpp; do
-    obj="$BUILD_DIR/core/$(basename "${src%.cpp}").o"
+    obj="$BUILD_DIR/core/$(basename "$src").o"
     avr-g++ -mmcu=$MCU -Os -w -std=gnu++11 -fpermissive -fno-exceptions -fno-threadsafe-statics \
         -ffunction-sections -fdata-sections \
         $CORE_DEFINES $CORE_INCLUDES -c "$src" -o "$obj"
 done
 for src in "$CORE_DIR"/*.S; do
-    obj="$BUILD_DIR/core/$(basename "${src%.S}").o"
+    obj="$BUILD_DIR/core/$(basename "$src").o"
     avr-gcc -mmcu=$MCU -x assembler-with-cpp -w -ffunction-sections -fdata-sections \
         $CORE_DEFINES $CORE_INCLUDES -c "$src" -o "$obj"
 done
