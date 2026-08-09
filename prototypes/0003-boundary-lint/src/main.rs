@@ -59,7 +59,7 @@ fn walk(node: Node, violations: &mut Vec<Violation>) {
         }
     }
 
-    if node.kind() == "init_declarator" {
+    if node.kind() == "init_declarator" && !enclosing_declaration_is_const(node) {
         if let Some(value) = node.child_by_field_name("value") {
             if let Some(binary) = find_binary_expression(value) {
                 let point = binary.start_position();
@@ -77,6 +77,34 @@ fn walk(node: Node, violations: &mut Vec<Violation>) {
     for child in node.children(&mut cursor) {
         walk(child, violations);
     }
+}
+
+// A `const`-qualified declaration (e.g. `const uint8_t MASK = (1 << PB5);`) is
+// the board-constant idiom CLAUDE.md explicitly allows, not a runtime
+// calculation — skip the computed-intermediate check for it. This is a
+// syntactic heuristic (tree-sitter has no type/const-expression evaluation),
+// so it will also excuse a genuinely runtime-computed `const` declaration;
+// documented as a known limitation.
+fn enclosing_declaration_is_const(init_declarator: Node) -> bool {
+    let Some(declaration) = init_declarator.parent() else {
+        return false;
+    };
+    if declaration.kind() != "declaration" {
+        return false;
+    }
+    let mut cursor = declaration.walk();
+    for child in declaration.children(&mut cursor) {
+        if child.kind() != "type_qualifier" {
+            continue;
+        }
+        let mut qualifier_cursor = child.walk();
+        for qualifier in child.children(&mut qualifier_cursor) {
+            if qualifier.kind() == "const" {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn find_binary_expression(node: Node) -> Option<Node> {
@@ -234,6 +262,13 @@ mod tests {
     #[test]
     fn allows_object_like_macro() {
         let violations = check_source("#define LED_PIN 13\nvoid loop() {}").unwrap();
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn allows_const_bitshift_declaration() {
+        let violations =
+            check_source("void loop() { const uint8_t MASK = (1 << 5); }").unwrap();
         assert_eq!(violations.len(), 0);
     }
 
