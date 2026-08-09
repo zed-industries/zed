@@ -2726,15 +2726,23 @@ impl Thread {
         let mut intent = CompletionIntent::UserPrompt;
         // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
         let mut refusal_fallback_model: Option<Arc<dyn LanguageModel>> = None;
+        let mut compact_after_prompt_too_large = false;
+        let mut retried_after_prompt_too_large = false;
         loop {
-            match Self::perform_compaction_if_needed(
-                this,
-                event_stream,
-                cancellation_rx.clone(),
-                cx,
-            )
-            .await
-            {
+            let compaction = if compact_after_prompt_too_large {
+                compact_after_prompt_too_large = false;
+                Self::perform_compaction_after_prompt_too_large(
+                    this,
+                    event_stream,
+                    cancellation_rx.clone(),
+                    cx,
+                )
+                .await
+            } else {
+                Self::perform_compaction_if_needed(this, event_stream, cancellation_rx.clone(), cx)
+                    .await
+            };
+            match compaction {
                 // On success the telemetry event is deferred until the
                 // completion below reports usage, so we can record an
                 // accurate post-compaction context size (see
@@ -3030,6 +3038,22 @@ impl Thread {
             }
 
             if let Some(error) = error {
+                if matches!(error, LanguageModelCompletionError::PromptTooLarge { .. })
+                    && !retried_after_prompt_too_large
+                    && this.read_with(cx, |this, cx| this.can_compact_after_prompt_too_large(cx))?
+                {
+                    this.update(cx, |this, cx| {
+                        if let LanguageModelCompletionError::PromptTooLarge { tokens } = &error {
+                            this.mark_token_limit_exceeded(*tokens, cx);
+                        }
+                        this.pending_message = None;
+                    })?;
+                    retried_after_prompt_too_large = true;
+                    compact_after_prompt_too_large = true;
+                    intent = CompletionIntent::UserPrompt;
+                    continue;
+                }
+
                 attempt += 1;
                 match Self::retry_completion_error(
                     this,
@@ -3114,6 +3138,37 @@ impl Thread {
                 this.pending_compaction_telemetry =
                     this.build_compaction_telemetry("auto", &model, cx);
             }
+            Some((model, request, insertion_ix))
+        })?
+        else {
+            return Ok(ControlFlow::Continue(()));
+        };
+
+        Self::stream_compaction(
+            this,
+            event_stream,
+            cancellation_rx,
+            model,
+            request,
+            CompactionInsertion::Auto { insertion_ix },
+            cx,
+        )
+        .await
+    }
+
+    async fn perform_compaction_after_prompt_too_large(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        cancellation_rx: watch::Receiver<bool>,
+        cx: &mut AsyncApp,
+    ) -> Result<ControlFlow<()>> {
+        let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
+            let insertion_ix = this.prompt_too_large_compaction_target_ix(cx)?;
+            let model = this.model()?.clone();
+            let request = this.build_compaction_request(insertion_ix, &model, cx);
+            this.current_request_token_usage = TokenUsage::default();
+            this.pending_compaction_telemetry =
+                this.build_compaction_telemetry("prompt_too_large", &model, cx);
             Some((model, request, insertion_ix))
         })?
         else {
@@ -4429,6 +4484,26 @@ impl Thread {
             }
             _ => self.messages.len(),
         };
+        Some(insertion_ix)
+    }
+
+    fn can_compact_after_prompt_too_large(&self, cx: &App) -> bool {
+        self.prompt_too_large_compaction_target_ix(cx).is_some() && self.model().is_some()
+    }
+
+    fn prompt_too_large_compaction_target_ix(&self, cx: &App) -> Option<usize> {
+        if !AgentSettings::get_global(cx).auto_compact.enabled {
+            return None;
+        }
+        let insertion_ix = self.messages.len().checked_sub(1)?;
+        if insertion_ix == 0
+            || !matches!(
+                self.messages.last().map(|message| &**message),
+                Some(Message::User(_))
+            )
+        {
+            return None;
+        }
         Some(insertion_ix)
     }
 
@@ -7304,6 +7379,136 @@ mod tests {
                 ));
                 assert!(matches!(&*thread.messages[3], Message::User(_)));
             });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prompt_too_large_compacts_and_retries(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let old_user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id, "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["new prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let initial_request = model.pending_completions().pop().unwrap();
+        assert_eq!(initial_request.intent, Some(CompletionIntent::UserPrompt));
+        model.send_completion_stream_error(
+            &initial_request,
+            LanguageModelCompletionError::PromptTooLarge { tokens: None },
+        );
+        model.end_completion_stream(&initial_request);
+        cx.run_until_parked();
+
+        let compaction_request = model.pending_completions().pop().unwrap();
+        assert_eq!(
+            compaction_request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        assert_eq!(
+            request_texts_after_system(&compaction_request.messages),
+            vec![
+                "old user".to_string(),
+                "old assistant".to_string(),
+                COMPACTION_PROMPT.to_string(),
+            ]
+        );
+        model.send_completion_stream_text_chunk(&compaction_request, "compacted old context");
+        model.end_completion_stream(&compaction_request);
+        cx.run_until_parked();
+
+        let retry_request = model.pending_completions().pop().unwrap();
+        assert_eq!(retry_request.intent, Some(CompletionIntent::UserPrompt));
+        assert_eq!(
+            request_texts_after_system(&retry_request.messages),
+            vec![
+                "old user".to_string(),
+                summary_request_text("compacted old context"),
+                "new prompt".to_string(),
+            ]
+        );
+        model.send_completion_stream_text_chunk(&retry_request, "answer");
+        model.end_completion_stream(&retry_request);
+        cx.run_until_parked();
+
+        assert_eq!(model.completion_count(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_prompt_too_large_retries_only_once(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["new prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let initial_request = model.pending_completions().pop().unwrap();
+        model.send_completion_stream_error(
+            &initial_request,
+            LanguageModelCompletionError::PromptTooLarge { tokens: None },
+        );
+        model.end_completion_stream(&initial_request);
+        cx.run_until_parked();
+
+        let compaction_request = model.pending_completions().pop().unwrap();
+        model.send_completion_stream_text_chunk(&compaction_request, "summary");
+        model.end_completion_stream(&compaction_request);
+        cx.run_until_parked();
+
+        let retry_request = model.pending_completions().pop().unwrap();
+        model.send_completion_stream_error(
+            &retry_request,
+            LanguageModelCompletionError::PromptTooLarge { tokens: None },
+        );
+        model.end_completion_stream(&retry_request);
+        cx.run_until_parked();
+
+        assert_eq!(
+            model.completion_count(),
+            0,
+            "a second prompt-too-large error must not trigger another compaction or retry"
+        );
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(
+                thread
+                    .messages
+                    .iter()
+                    .filter(|message| matches!(&***message, Message::Compaction(_)))
+                    .count(),
+                1
+            );
         });
     }
 
