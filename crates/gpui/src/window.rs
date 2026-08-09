@@ -114,6 +114,22 @@ impl DispatchPhase {
     }
 }
 
+/// Whether unchanged frames may skip presentation (and re-presentation of
+/// unchanged content may be skipped). On by default; `GPUI_DISABLE_PRESENT_SKIP=1`
+/// restores the previous always-present behavior, as an escape hatch and for
+/// A/B measurements. Always disabled in benchmarks, which measure per-frame
+/// renderer submission and rely on every drawn frame being presented.
+pub(crate) fn present_skip_enabled() -> bool {
+    if cfg!(feature = "bench") {
+        return false;
+    }
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        !std::env::var("GPUI_DISABLE_PRESENT_SKIP")
+            .is_ok_and(|value| value != "0" && !value.is_empty())
+    })
+}
+
 struct WindowInvalidatorInner {
     pub dirty: bool,
     pub draw_phase: DrawPhase,
@@ -1034,6 +1050,10 @@ pub struct Window {
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    /// Whether this window has ever presented a frame. Present-skipping is
+    /// disabled until the first present: on some platforms (e.g. Wayland) a
+    /// window isn't mapped until a buffer is attached.
+    presented: bool,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
@@ -1521,10 +1541,16 @@ impl Window {
 
                 // Keep presenting if input was recently arriving at a high rate (>= 60fps).
                 // Once high-rate input is detected, we sustain presentation for 1 second
-                // to prevent display underclocking during active input.
+                // to prevent display underclocking during active input. Each of these
+                // presents re-renders the full scene on the GPU even though its content
+                // is by definition unchanged (changed content takes the dirty->draw path
+                // above), so when present-skipping is enabled we drop the sustain and
+                // let the GPU idle instead.
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
-                    || (active.get() && input_rate_tracker.borrow_mut().is_high_rate());
+                    || (active.get()
+                        && !present_skip_enabled()
+                        && input_rate_tracker.borrow_mut().is_high_rate());
 
                 if invalidator.is_dirty() || request_frame_options.force_render {
                     measure("frame duration", || {
@@ -1536,12 +1562,27 @@ impl Window {
                                     window.refresh();
                                 }
                                 let arena_clear_needed = window.draw(cx);
-                                window.present();
+                                // `draw` clears `needs_present` when the new scene is
+                                // identical to what's already on screen. Presentation is
+                                // still required when the platform reports the displayed
+                                // buffer itself is damaged (e.g. an X11 expose event).
+                                if window.needs_present.get()
+                                    || request_frame_options.require_presentation
+                                {
+                                    window.present();
+                                } else if crate::frame_debug::enabled() {
+                                    crate::frame_debug::record_skipped_present(
+                                        window.handle.window_id(),
+                                    );
+                                }
                                 arena_clear_needed.clear();
                             })
                             .log_err();
                     })
                 } else if needs_present {
+                    if crate::frame_debug::enabled() {
+                        crate::frame_debug::record_represent(handle.window_id());
+                    }
                     handle
                         .update(&mut cx, |_, window, _| window.present())
                         .log_err();
@@ -1744,6 +1785,7 @@ impl Window {
             active,
             hovered,
             needs_present,
+            presented: false,
             input_rate_tracker,
             #[cfg(feature = "input-latency-histogram")]
             input_latency_tracker: InputLatencyTracker::new()?,
@@ -1888,8 +1930,10 @@ impl Window {
     }
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
+    #[track_caller]
     pub fn refresh(&mut self) {
         if self.invalidator.not_drawing() {
+            crate::frame_debug::record_invalidation(std::panic::Location::caller());
             self.refreshing = true;
             self.invalidator.set_dirty(true);
         }
@@ -2202,7 +2246,11 @@ impl Window {
     /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
     ///
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
+    #[track_caller]
     pub fn request_animation_frame(&self) {
+        // Attribute the eventual notify to the animation's call site rather
+        // than the closure below.
+        crate::frame_debug::record_invalidation(std::panic::Location::caller());
         let entity = self.current_view();
         self.on_next_frame(move |_, cx| cx.notify(entity));
     }
@@ -2643,6 +2691,7 @@ impl Window {
         // leak into a later frame across enable/disable of frame tracing.
         let frame_dirty = self.invalidator.take_frame_dirty();
         let draw_started_at = profiler::frame_trace_enabled().then(Instant::now);
+        let frame_debug_started_at = crate::frame_debug::enabled().then(Instant::now);
 
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
@@ -2696,6 +2745,21 @@ impl Window {
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
 
+        // Diff the scenes here, while the previous frame's scene is still
+        // intact: it's cleared right after the swap below.
+        let scene_damage = (present_skip_enabled() || frame_debug_started_at.is_some()).then(|| {
+            let diff_started_at = Instant::now();
+            let damage = if self.refreshing {
+                // Resizes, appearance changes, and GPU device recovery
+                // invalidate the presented buffer, so the frame must be
+                // presented even when the scene itself is unchanged.
+                crate::SceneDamage::Full
+            } else {
+                crate::SceneDamage::between(&self.rendered_frame.scene, &self.next_frame.scene)
+            };
+            (damage, diff_started_at.elapsed())
+        });
+
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
@@ -2735,7 +2799,16 @@ impl Window {
         self.reset_cursor_style(cx);
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
-        self.needs_present.set(true);
+
+        // When the new scene is identical to what's already on screen,
+        // presenting it would only make the GPU re-render identical pixels, so
+        // skip it. Never skip before the first successful present: on some
+        // platforms (e.g. Wayland) a window isn't mapped until a buffer is
+        // attached.
+        let skip_present = present_skip_enabled()
+            && self.presented
+            && matches!(scene_damage, Some((crate::SceneDamage::Unchanged, _)));
+        self.needs_present.set(!skip_present);
 
         if let Some(draw_start) = draw_started_at {
             profiler::record_frame_timing(profiler::FrameTiming {
@@ -2745,6 +2818,19 @@ impl Window {
                 draw_start,
                 draw_end: Instant::now(),
             });
+        }
+
+        if let (Some(draw_start), Some((damage, diff_time))) =
+            (frame_debug_started_at, scene_damage)
+        {
+            let viewport = self.viewport_size.map(|size| size.0 * self.scale_factor);
+            crate::frame_debug::record_draw(
+                self.handle.window_id(),
+                damage,
+                diff_time,
+                f64::from(viewport.width) * f64::from(viewport.height),
+                draw_start.elapsed(),
+            );
         }
 
         ArenaClearNeeded::new(&cx.element_arena)
@@ -2775,6 +2861,7 @@ impl Window {
     #[profiling::function]
     fn present(&mut self) {
         self.platform_window.draw(&self.rendered_frame.scene);
+        self.presented = true;
         #[cfg(feature = "input-latency-histogram")]
         self.input_latency_tracker.record_frame_presented();
         self.needs_present.set(false);
