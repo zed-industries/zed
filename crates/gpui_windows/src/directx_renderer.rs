@@ -414,7 +414,7 @@ impl DirectXRenderer {
         background_appearance: WindowBackgroundAppearance,
     ) -> Result<()> {
         if self.base_composition_surface.is_none() {
-            return self.draw(scene.scene(), background_appearance);
+            return self.draw(scene, background_appearance);
         }
         if self.skip_draws {
             // skip drawing this frame, we just recovered from a device lost event
@@ -1247,6 +1247,7 @@ impl DirectComposition {
             replacement.clip.SetBottom2(height)?;
             replacement
                 .visual
+                .cast::<IDCompositionVisual3>()?
                 .SetOpacity2(if visible { 1.0 } else { 0.0 })?;
         }
         replacement.bounds.set(bounds);
@@ -1375,7 +1376,10 @@ impl PlatformSurfaceAttachment for DirectCompositionPortal {
         let state = self.state.borrow();
         if state.visible.get() != visible {
             unsafe {
-                state.visual.SetOpacity2(if visible { 1.0 } else { 0.0 })?;
+                state
+                    .visual
+                    .cast::<IDCompositionVisual3>()?
+                    .SetOpacity2(if visible { 1.0 } else { 0.0 })?;
                 state.comp_device.Commit()?;
             }
             state.visible.set(visible);
