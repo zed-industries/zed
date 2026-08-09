@@ -6649,6 +6649,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "serde",
+ "settings_content",
  "theme",
  "util",
 ]
