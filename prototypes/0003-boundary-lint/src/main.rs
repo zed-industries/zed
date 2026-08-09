@@ -33,6 +33,11 @@ const BANNED_STATEMENT_KINDS: &[(&str, &str, &str)] = &[
         "do-whileループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
     ),
     (
+        "switch_statement",
+        "switch",
+        "switch文はC/C++に書けません。この判断はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
+    ),
+    (
         "conditional_expression",
         "ternary",
         "三項演算子はC/C++に書けません。条件分岐はRustのno_stdクレートに実装し、結果だけをextern \"C\"関数の戻り値として受け取ってください。",
@@ -209,6 +214,14 @@ mod tests {
         let violations = check_source("void loop() { if (true) { } }").unwrap();
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_id, "if");
+    }
+
+    #[test]
+    fn detects_switch_statement() {
+        let violations =
+            check_source("void loop() { switch (1) { case 0: break; } }").unwrap();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].rule_id, "switch");
     }
 
     #[test]

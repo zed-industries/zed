@@ -25,6 +25,15 @@ void loop() {
         raw--;
     }
 
+    switch (raw) {
+        case 0:
+            digitalWrite(LED_PIN, LOW);
+            break;
+        default:
+            digitalWrite(LED_PIN, HIGH);
+            break;
+    }
+
     int state = digitalRead(LED_PIN) ? 1 : 0;
     digitalWrite(LED_PIN, state);
 }
