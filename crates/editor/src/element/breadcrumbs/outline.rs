@@ -80,8 +80,46 @@ pub(super) fn flatten_text_for_single_line_display(text: &str) -> String {
     text.replace(LINE_BREAK, REPLACEMENT)
 }
 
+/// Overlays fuzzy-match emphasis on the outline's own syntax highlights, so a filtered row
+/// keeps its colours instead of falling back to one flat colour.
+pub(crate) fn highlights_with_match_emphasis(
+    text: &str,
+    syntax_highlights: &[(Range<usize>, gpui::HighlightStyle)],
+    match_positions: &[usize],
+    emphasis: gpui::HighlightStyle,
+) -> Vec<(Range<usize>, gpui::HighlightStyle)> {
+    if match_positions.is_empty() {
+        return syntax_highlights.to_vec();
+    }
+
+    let mut merged: Vec<(Range<usize>, gpui::HighlightStyle)> = Vec::new();
+    for (start, character) in text.char_indices() {
+        let end = start + character.len_utf8();
+        let mut style = syntax_highlights
+            .iter()
+            .find(|(range, _)| range.start <= start && start < range.end)
+            .map(|(_, style)| *style)
+            .unwrap_or_default();
+        if match_positions.contains(&start) {
+            style.font_weight = emphasis.font_weight.or(style.font_weight);
+            style.underline = emphasis.underline.or(style.underline);
+            if style.color.is_none() {
+                style.color = emphasis.color;
+            }
+        }
+        match merged.last_mut() {
+            Some((range, last_style)) if *last_style == style && range.end == start => {
+                range.end = end;
+            }
+            _ => merged.push((start..end, style)),
+        }
+    }
+    merged
+}
+
 pub(super) fn render_outline_item_menu_row(
     item: &OutlineItem<Anchor>,
+    match_positions: &[usize],
     is_current: bool,
     show_current_column: bool,
     window: &mut Window,
@@ -89,6 +127,17 @@ pub(super) fn render_outline_item_menu_row(
 ) -> gpui::AnyElement {
     let mut text_style = window.text_style();
     text_style.color = Color::Default.color(cx);
+    let text = flatten_text_for_single_line_display(&item.text);
+    let highlights = highlights_with_match_emphasis(
+        &text,
+        &item.highlight_ranges,
+        match_positions,
+        gpui::HighlightStyle {
+            font_weight: Some(gpui::FontWeight::BOLD),
+            color: Some(Color::Accent.color(cx)),
+            ..Default::default()
+        },
+    );
 
     h_flex()
         .gap_1p5()
@@ -108,10 +157,7 @@ pub(super) fn render_outline_item_menu_row(
                 .overflow_x_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis_middle()
-                .child(
-                    StyledText::new(flatten_text_for_single_line_display(&item.text))
-                        .with_default_highlights(&text_style, item.highlight_ranges.clone()),
-                ),
+                .child(StyledText::new(text).with_default_highlights(&text_style, highlights)),
         )
         .into_any_element()
 }

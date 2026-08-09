@@ -11,7 +11,8 @@ use layout::{
 pub(crate) use menu::{BreadcrumbListing, BreadcrumbNavigationMenu};
 #[cfg(test)]
 pub(crate) use outline::{
-    child_outline_indices, sibling_outline_indices, top_level_outline_indices,
+    child_outline_indices, highlights_with_match_emphasis, sibling_outline_indices,
+    top_level_outline_indices,
 };
 use path::{breadcrumb_file_icon, breadcrumb_path_segments};
 
@@ -370,6 +371,90 @@ mod tests {
         assert!(!breadcrumb_path_is_navigable(true, Some(true)));
         assert!(breadcrumb_path_is_navigable(true, Some(false)));
         assert!(breadcrumb_path_is_navigable(true, None));
+    }
+
+    #[test]
+    fn test_highlights_with_match_emphasis_keeps_syntax_colours() {
+        use gpui::{FontWeight, HighlightStyle, Hsla};
+
+        let syntax_colour = Hsla {
+            h: 0.5,
+            s: 0.5,
+            l: 0.5,
+            a: 1.,
+        };
+        let accent = Hsla {
+            h: 0.1,
+            s: 1.,
+            l: 0.5,
+            a: 1.,
+        };
+        let emphasis = HighlightStyle {
+            font_weight: Some(FontWeight::BOLD),
+            color: Some(accent),
+            ..Default::default()
+        };
+        let coloured = HighlightStyle {
+            color: Some(syntax_colour),
+            ..Default::default()
+        };
+        let bold_coloured = HighlightStyle {
+            color: Some(syntax_colour),
+            font_weight: Some(FontWeight::BOLD),
+            ..Default::default()
+        };
+        let bold_accent = HighlightStyle {
+            color: Some(accent),
+            font_weight: Some(FontWeight::BOLD),
+            ..Default::default()
+        };
+
+        // "impl Widget" with the name syntax-coloured, matching "Wi".
+        let text = "impl Widget";
+        let syntax = vec![(5..11, coloured)];
+
+        assert_eq!(
+            highlights_with_match_emphasis(text, &syntax, &[], emphasis),
+            syntax,
+            "no matches leaves the syntax highlights untouched"
+        );
+
+        assert_eq!(
+            highlights_with_match_emphasis(text, &syntax, &[5, 6], emphasis),
+            vec![
+                (0..5, HighlightStyle::default()),
+                (5..7, bold_coloured),
+                (7..11, coloured),
+            ],
+            "a match inside a coloured run keeps the colour and adds weight"
+        );
+
+        assert_eq!(
+            highlights_with_match_emphasis(text, &syntax, &[0], emphasis),
+            vec![
+                (0..1, bold_accent),
+                (1..5, HighlightStyle::default()),
+                (5..11, coloured),
+            ],
+            "a match outside any coloured run takes the emphasis colour"
+        );
+
+        // 'ä' is two bytes: the merged ranges must stay on char boundaries.
+        let multibyte = "fn äb";
+        let merged = highlights_with_match_emphasis(multibyte, &[], &[3], emphasis);
+        assert_eq!(
+            merged,
+            vec![
+                (0..3, HighlightStyle::default()),
+                (3..5, bold_accent),
+                (5..6, HighlightStyle::default()),
+            ]
+        );
+        for (range, _) in &merged {
+            assert!(
+                multibyte.is_char_boundary(range.start) && multibyte.is_char_boundary(range.end)
+            );
+        }
     }
 
     #[test]

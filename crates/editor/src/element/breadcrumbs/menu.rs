@@ -1783,38 +1783,14 @@ impl Render for BreadcrumbNavigationMenu {
                             let full_name = SharedString::from(
                                 flatten_text_for_single_line_display(&item.text),
                             );
-                            let row = if match_positions.is_empty() {
-                                render_outline_item_menu_row(
-                                    &item,
-                                    is_current,
-                                    show_current_column,
-                                    window,
-                                    cx,
-                                )
-                            } else {
-                                h_flex()
-                                    .gap_1p5()
-                                    .min_w_0()
-                                    .when(is_current, |this| {
-                                        this.child(
-                                            Icon::new(IconName::Check)
-                                                .color(Color::Accent)
-                                                .size(IconSize::Small),
-                                        )
-                                    })
-                                    .when(!is_current && show_current_column, |this| {
-                                        this.child(div().size(IconSize::Small.rems()))
-                                    })
-                                    .child(
-                                        ui::HighlightedLabel::new(
-                                            full_name.clone(),
-                                            match_positions,
-                                        )
-                                        .color(Color::Default)
-                                        .truncate_middle(),
-                                    )
-                                    .into_any_element()
-                            };
+                            let row = render_outline_item_menu_row(
+                                &item,
+                                &match_positions,
+                                is_current,
+                                show_current_column,
+                                window,
+                                cx,
+                            );
                             ListItem::new(position)
                                 .inset(true)
                                 .toggle_state(is_selected)
