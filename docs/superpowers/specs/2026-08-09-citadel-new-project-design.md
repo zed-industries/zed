@@ -25,6 +25,7 @@ One new crate, `crates/citadel_new_project`, self-contained like `git_ui` (no sh
 - `crates/zed/Cargo.toml`: add `citadel_new_project = { workspace = true }` as a dependency (alongside `git_ui` at line 117).
 - `crates/zed/src/main.rs:771`: add `citadel_new_project::init(cx);` next to the existing `git_ui::init(cx);` call.
 - `crates/citadel_new_project/src/citadel_new_project.rs`: `pub fn init(cx: &mut App)`, following `git_ui::init`'s pattern (`crates/git_ui/src/git_ui.rs:83`) of using `cx.observe_new::<Workspace>` to call `workspace.register_action(...)` for the new `NewProject` action.
+- `crates/zed/src/zed/app_menus.rs`: add `MenuItem::action("New Project...", citadel_new_project::NewProject)` to the `File` menu's `items` vec, directly after the existing `MenuItem::action("New Window", workspace::NewWindow)` entry (currently line 112, ahead of the separator at line 113). This is a single shared menu definition (`app_menus()`, called from `crates/zed/src/main.rs:849` and `crates/zed/src/zed.rs:2283`) rendered as the native menu bar on macOS and the in-window menu on Linux/Windows — no per-platform duplication needed. The command palette also picks up the action automatically from its `actions!` doc comment, the same mechanism `NewFile`/`NewWindow` use, so no separate palette wiring is required.
 
 ## File tree and content
 
@@ -166,6 +167,7 @@ Mirrors `clone_and_open` (`crates/git_ui/src/clone.rs:8-159`), simplified — th
 ## Definition of done
 
 - `crates/citadel_new_project` exists, registered in the root workspace and `crates/zed`, with `init()` called at startup.
+- "New Project..." appears in the File menu (after "New Window") and is discoverable via the command palette.
 - Running the action, selecting an empty directory, produces exactly the file tree above, a git repository with one commit, and opens the directory as a new workspace window.
 - Selecting a non-empty directory shows an error toast and does not touch the directory.
 - Unit tests for scaffold content generation and `#[gpui::test]`s for the write/git-init/open flow all pass.
