@@ -329,10 +329,8 @@ impl ScrollManager {
     ) -> WasScrolled {
         let scroll_top = scroll_position.y.max(0.);
         let real_max_row = map.max_point().row().as_f64();
-        // For user-initiated scrolls, use the expected (virtual) max row as the
-        // clamp bound so manual scrolling isn't pinned to partially-loaded
-        // content. Programmatic autoscroll always uses the real max row to
-        // preserve scrollTo semantics (e.g. centering on the blamed line).
+        // Manual scrolls clamp against the expected max row so they aren't
+        // pinned to partially-loaded content; autoscroll uses the real one.
         let max_row = match self.expected_max_row {
             Some(expected) if !autoscroll => expected.max(real_max_row),
             _ => real_max_row,

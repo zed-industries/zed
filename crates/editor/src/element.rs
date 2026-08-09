@@ -8104,10 +8104,8 @@ impl Element for EditorElement {
 
                     let height_in_lines = f64::from(bounds.size.height / line_height);
                     let max_row = snapshot.max_point().row().as_f64();
-                    // Use the expected (virtual) max row for scroll clamping and
-                    // scrollbar sizing when set, so manual scrolling and the scrollbar
-                    // thumb reflect the final document size rather than the partially
-                    // loaded content during incremental builds.
+                    // Clamp scroll and size the scrollbar against the expected
+                    // max row while excerpts are still streaming in.
                     let effective_max_row = self
                         .editor
                         .read(cx)
@@ -8136,7 +8134,8 @@ impl Element for EditorElement {
                         }
                         ScrollBeyondLastLine::VerticalScrollMargin => {
                             let settings = EditorSettings::get_global(cx);
-                            (effective_max_row - height_in_lines + 1.
+                            (effective_max_row - height_in_lines
+                                + 1.
                                 + settings.vertical_scroll_margin)
                                 .max(0.)
                         }

@@ -301,13 +301,10 @@ impl CommitView {
         let repository_clone = repository.clone();
         let mut scroll_to = scroll_to;
 
-        // Process the target file first so the blamed line is visible
-        // immediately, avoiding a jump from the top of the diff. Keep the
-        // remaining files sorted by path: files sorted above the target are
-        // inserted next (they shift the target's display row), followed by
-        // files sorted below it. The scroll anchor set when the target is
-        // selected tracks the target's buffer position, so later insertions
-        // keep the target row stable in the viewport.
+        // Put the target file first so the blamed line is visible immediately.
+        // Files sorted above it are inserted next and shift its display row,
+        // but the scroll anchor tracks its buffer position, so the target
+        // stays stable in the viewport.
         let mut commit_diff = commit_diff;
         commit_diff.files.sort_by(|a, b| a.path.cmp(&b.path));
         if let Some((target_path, _)) = &scroll_to {
@@ -325,11 +322,8 @@ impl CommitView {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
-            // While excerpts stream in, the display map is only partially
-            // populated. Set an expected max row so manual scrolling and the
-            // scrollbar thumb reflect the final document size rather than being
-            // clamped to the partially-loaded content. Programmatic autoscroll
-            // (center) is unaffected — it always uses the real max row.
+            // Let manual scrolling and the scrollbar reflect the final document size
+            // while excerpts stream in; autoscroll still uses the real max row.
             let expected_max_row: f64 = commit_diff
                 .files
                 .iter()
@@ -353,20 +347,18 @@ impl CommitView {
                 .sum();
             this.update(cx, |this, cx| {
                 this.editor.update(cx, |editor, cx| {
-                    editor
-                        .rhs_editor()
-                        .update(cx, |editor, _cx| editor.set_expected_max_row(Some(expected_max_row)));
+                    editor.rhs_editor().update(cx, |editor, _cx| {
+                        editor.set_expected_max_row(Some(expected_max_row))
+                    });
                 });
             })?;
 
-            let files_total = commit_diff.files.len();
             for file in commit_diff.files {
                 let file_path = file.path.clone();
                 let is_created = file.old_text.is_none();
                 let is_deleted = file.new_text.is_none();
                 let raw_new_text = file.new_text.unwrap_or_default();
                 let raw_old_text = file.old_text;
-                let file_new_lines = raw_new_text.lines().count();
 
                 let is_binary = file.is_binary
                     || is_binary_content(raw_new_text.as_bytes())
@@ -497,18 +489,12 @@ impl CommitView {
 
                 if let Some((target_path, target_row)) = &scroll_to {
                     if *target_path == file_path {
-                        log::info!(
-                            "commit_view scroll_to: path={:?} target_row={} new_text_lines={} files_total={} expected_max_row={}",
-                            file_path,
-                            target_row,
-                            file_new_lines,
-                            files_total,
-                            expected_max_row
-                        );
                         let anchor = this.update(cx, |this, cx| {
-                            this.multibuffer
-                                .read(cx)
-                                .buffer_point_to_anchor(&buffer, language::Point::new(*target_row, 0), cx)
+                            this.multibuffer.read(cx).buffer_point_to_anchor(
+                                &buffer,
+                                language::Point::new(*target_row, 0),
+                                cx,
+                            )
                         })?;
                         if let Some(anchor) = anchor {
                             this.update_in(cx, |this, window, cx| {
@@ -520,81 +506,56 @@ impl CommitView {
                                             cx,
                                             |s| s.select_ranges([anchor..anchor]),
                                         );
-                                        // Pin the scroll anchor directly to the target line with a
-                                        // negative offset so the line is centered. A regular center
-                                        // autoscroll computes its landing point as
-                                        // (target_top - margin), which when the target row is close
-                                        // to the file start falls above the file's first line and
-                                        // gets clipped to the previous file's content, causing the
-                                        // anchor to drift as later files are inserted above.
-                                        //
-                                        // The visible line count is only known once the editor has
-                                        // been laid out at least once, so on the first frame it may
-                                        // still be None. In that case pin the anchor (keeping the
-                                        // mapping correct) and recenter once the first layout
-                                        // provides a line count. Nothing has been rendered yet at
-                                        // that point, so this does not flash.
+                                        // Pin the scroll anchor to the target line with a negative offset
+                                        // to center it; the visible line count is only known after the
+                                        // first layout, so recenter once it becomes available.
                                         let margin = editor
                                             .visible_line_count()
                                             .map(|lines| ((lines - 1.0) / 2.0).floor().max(0.0));
-                                        if let Some(margin) = margin {
-                                            editor.set_scroll_anchor(
-                                                ScrollAnchor {
-                                                    anchor,
-                                                    offset: gpui::point(0.0, -margin),
-                                                },
-                                                window,
-                                                cx,
-                                            );
-                                        } else {
-                                            editor.set_scroll_anchor(
-                                                ScrollAnchor {
-                                                    anchor,
-                                                    offset: gpui::point(0.0, 0.0),
-                                                },
-                                                window,
-                                                cx,
-                                            );
-                                            // Recenter once the editor's first layout makes the
+                                        editor.set_scroll_anchor(
+                                            ScrollAnchor {
+                                                anchor,
+                                                offset: gpui::point(0.0, -margin.unwrap_or(0.0)),
+                                            },
+                                            window,
+                                            cx,
+                                        );
+                                        if margin.is_none() {
+                                            // Recenter once the first layout makes the
                                             // visible line count known.
                                             let editor: WeakEntity<Editor> =
                                                 cx.entity().downgrade();
-                                            let anchor = anchor;
                                             cx.spawn_in(window, async move |_, cx| {
                                                 for _ in 0..120 {
-                                                    let done = match editor.update_in(
-                                                        cx,
-                                                        |editor, window, cx| {
-                                                            let margin = editor
-                                                                .visible_line_count()
-                                                                .map(|lines| {
-                                                                    ((lines - 1.0) / 2.0)
-                                                                        .floor()
-                                                                        .max(0.0)
-                                                                });
-                                                            if let Some(margin) = margin {
-                                                                editor.set_scroll_anchor(
-                                                                    ScrollAnchor {
-                                                                        anchor,
-                                                                        offset: gpui::point(
-                                                                            0.0,
-                                                                            -margin,
-                                                                        ),
-                                                                    },
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                                true
-                                                            } else {
-                                                                false
-                                                            }
-                                                        },
-                                                    ) {
-                                                        Ok(done) => done,
-                                                        Err(_) => break,
+                                                    let recenter = |editor: &mut Editor,
+                                                                    window: &mut Window,
+                                                                    cx: &mut Context<Editor>| {
+                                                        if let Some(margin) = editor
+                                                            .visible_line_count()
+                                                            .map(|lines| {
+                                                                ((lines - 1.0) / 2.0).floor()
+                                                            })
+                                                        {
+                                                            editor.set_scroll_anchor(
+                                                                ScrollAnchor {
+                                                                    anchor,
+                                                                    offset: gpui::point(
+                                                                        0.0,
+                                                                        -margin.max(0.0),
+                                                                    ),
+                                                                },
+                                                                window,
+                                                                cx,
+                                                            );
+                                                            true
+                                                        } else {
+                                                            false
+                                                        }
                                                     };
-                                                    if done {
-                                                        break;
+                                                    match editor.update_in(cx, recenter) {
+                                                        Ok(true) => break,
+                                                        Err(_) => break,
+                                                        _ => {}
                                                     }
                                                     cx.background_executor()
                                                         .timer(Duration::from_millis(16))

@@ -152,12 +152,6 @@ impl Editor {
         }
 
         let editor_was_scrolled = if original_y != scroll_position.y {
-            log::trace!(
-                "autoscroll clamp: original_y={} clamped_y={} max_scroll_top={}",
-                original_y,
-                scroll_position.y,
-                max_scroll_top
-            );
             self.set_scroll_position(scroll_position, window, cx)
         } else {
             WasScrolled(false)
@@ -264,20 +258,7 @@ impl Editor {
             }
             AutoscrollStrategy::Center => {
                 scroll_position.y = (target_top - margin).max(0.0);
-                let requested_y = scroll_position.y;
-                let result =
-                    self.set_scroll_position_internal(scroll_position, local, true, window, cx);
-                log::debug!(
-                    "autoscroll Center: target_top={} target_bottom={} margin={} visible_lines={} requested_y={} max_scroll_top={} was_scrolled={}",
-                    target_top,
-                    target_bottom,
-                    margin,
-                    visible_lines,
-                    requested_y,
-                    max_scroll_top,
-                    result.0
-                );
-                result
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::Focused => {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
