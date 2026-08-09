@@ -156,6 +156,40 @@ impl Addon for CommitDiffAddon {
 
 const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
+/// Opens a commit view for the given details in the workspace's active pane.
+fn open_commit_view_in_workspace(
+    commit_details: CommitDetails,
+    commit_diff: CommitDiff,
+    repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
+    cx: &mut AsyncWindowContext,
+) -> Option<()> {
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            let project = workspace.project();
+            let workspace_entity = cx.entity();
+            let workspace_handle = cx.weak_entity();
+            let commit_view = cx.new(|cx| {
+                CommitView::new(
+                    commit_details,
+                    commit_diff,
+                    repository,
+                    project.clone(),
+                    workspace_entity,
+                    workspace_handle,
+                    None,
+                    window,
+                    cx,
+                )
+            });
+            let pane = workspace.active_pane();
+            pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(commit_view), true, true, None, window, cx);
+            });
+        })
+        .log_err()
+}
+
 impl CommitView {
     pub fn open(
         commit_sha: String,
@@ -264,33 +298,14 @@ impl CommitView {
                 let (commit_diff, commit_details) = futures::join!(commit_diff, commit_details);
                 let commit_diff = commit_diff.log_err()?.log_err()?;
                 let commit_details = commit_details.log_err()?.log_err()?;
-                let repo = repo.upgrade()?;
-
-                workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        let project = workspace.project();
-                        let workspace_entity = cx.entity();
-                        let workspace_handle = cx.weak_entity();
-                        let commit_view = cx.new(|cx| {
-                            CommitView::new(
-                                commit_details,
-                                commit_diff,
-                                repo,
-                                project.clone(),
-                                workspace_entity,
-                                workspace_handle,
-                                None,
-                                window,
-                                cx,
-                            )
-                        });
-
-                        let pane = workspace.active_pane();
-                        pane.update(cx, |pane, cx| {
-                            pane.add_item(Box::new(commit_view), true, true, None, window, cx);
-                        });
-                    })
-                    .log_err()
+                let repository = repo.upgrade()?;
+                open_commit_view_in_workspace(
+                    commit_details,
+                    commit_diff,
+                    repository,
+                    workspace,
+                    cx,
+                )
             })
             .detach();
     }
@@ -322,31 +337,13 @@ impl CommitView {
                 let (diff, commit_details) = futures::join!(diff, commit_details);
                 let commit_diff = diff.log_err()?.log_err()?;
                 let commit_details = commit_details.log_err()?.log_err()?;
-
-                workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        let project = workspace.project();
-                        let workspace_entity = cx.entity();
-                        let workspace_handle = cx.weak_entity();
-                        let commit_view = cx.new(|cx| {
-                            CommitView::new(
-                                commit_details,
-                                commit_diff,
-                                repository,
-                                project.clone(),
-                                workspace_entity,
-                                workspace_handle,
-                                None,
-                                window,
-                                cx,
-                            )
-                        });
-                        let pane = workspace.active_pane();
-                        pane.update(cx, |pane, cx| {
-                            pane.add_item(Box::new(commit_view), true, true, None, window, cx);
-                        });
-                    })
-                    .log_err()
+                open_commit_view_in_workspace(
+                    commit_details,
+                    commit_diff,
+                    repository,
+                    workspace,
+                    cx,
+                )
             })
             .detach();
     }

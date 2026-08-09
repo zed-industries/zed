@@ -103,7 +103,13 @@ impl std::fmt::Display for GraphMutationError {
                 "This action requires a clean working tree; commit or stash changes first",
             ),
             Self::ActiveOperation { operation } => {
-                write!(f, "A Git {operation:?} operation is already in progress")
+                let operation = match operation {
+                    GitOperationKind::Merge => "merge",
+                    GitOperationKind::Rebase => "rebase",
+                    GitOperationKind::CherryPick => "cherry-pick",
+                    GitOperationKind::Revert => "revert",
+                };
+                write!(f, "A Git {operation} operation is already in progress")
             }
         }
     }
@@ -477,10 +483,5 @@ mod tests {
             backup_exists,
             "a failed mutation must not remove its backup ref"
         );
-    }
-
-    #[test]
-    fn snapshot_preflight_reads_head_and_dirty_state() {
-        let _ = std::mem::size_of::<RepositorySnapshot>();
     }
 }
