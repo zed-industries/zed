@@ -172,10 +172,11 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release delete "$VERSION" --yes --cleanup-tag
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$VERSION" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
           fi
           gh release create "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "Zed $VERSION" \
             --notes "Auto-built from hee10k/zed. Install and run 'zed update' to receive future builds.
             commit: $COMMIT_SHA" \
