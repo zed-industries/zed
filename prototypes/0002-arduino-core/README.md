@@ -7,7 +7,8 @@
 - `vendor/ArduinoCore-avr/` — [arduino/ArduinoCore-avr](https://github.com/arduino/ArduinoCore-avr) をgit submoduleとしてタグ `1.8.8` に固定。`cores/arduino/`(コア本体)と `variants/standard/`(Uno/Nano/Pro Mini系のピン配置)を使用。
 - `cpp/sketch.cpp` — ユーザースケッチ相当。`setup()`/`loop()` は `pinMode`/`digitalWrite`/`delay` の直線呼び出しのみで、if/for/whileや計算用の中間変数を持たない。
 - `rust/` — ロジック層。`#![no_std]` staticlib。`citadel_tick()` がLED状態(0/1)をトグルする。0001と違い、点滅のタイミングはRust側のカウンタではなく `sketch.cpp` の `delay(500)` が担う。
-- `build.sh` — `cores/arduino/` 配下の全ソースをコンパイル(`arduino-builder`と同じ方式)→ スケッチをコンパイル → `cargo +nightly` でRustをビルド → リンク(`-Wl,--gc-sections` で未使用コアシンボルを刈る)→ `.hex` 生成、を一括実行する。
+- `build.sh` — `cores/arduino/` 配下の全ソースをコンパイル(`arduino-builder`と同じ方式)→ スケッチをコンパイル → `cargo` でRustをビルド(nightlyの固定は `rust-toolchain.toml` による)→ リンク(`-Wl,--gc-sections` で未使用コアシンボルを刈る)→ `.hex` 生成、を一括実行する。
+- 境界ルール(Rust/Cの分担)が適用されるのはCitadelが生成するコードとユーザーが書くコード(ここでは `cpp/sketch.cpp`)であり、ベンダリングした `ArduinoCore-avr` 自体の内部実装(`digitalWrite`/`delay`など)は対象外(libcの内部にルールが及ばないのと同様)。
 
 ## 実機での検証結果
 

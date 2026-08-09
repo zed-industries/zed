@@ -9,9 +9,11 @@ BUILD_DIR=build
 CORE_DIR=vendor/ArduinoCore-avr/cores/arduino
 VARIANT_DIR=vendor/ArduinoCore-avr/variants/standard
 
+# ARDUINO=10808 keep in sync with the submodule tag (1.8.8)
 CORE_DEFINES="-DF_CPU=$F_CPU -DARDUINO=10808 -DARDUINO_AVR_UNO -DARDUINO_ARCH_AVR"
 CORE_INCLUDES="-I$CORE_DIR -I$VARIANT_DIR"
 
+rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/core"
 
 echo "=== compiling ArduinoCore-avr (cores/arduino) ==="
@@ -32,6 +34,9 @@ for src in "$CORE_DIR"/*.S; do
         $CORE_DEFINES $CORE_INCLUDES -c "$src" -o "$obj"
 done
 
+echo "=== archiving core objects ==="
+avr-ar rcs "$BUILD_DIR/core.a" "$BUILD_DIR"/core/*.o
+
 echo "=== compiling sketch ==="
 avr-g++ -mmcu=$MCU -Os -std=gnu++11 -fpermissive -fno-exceptions -fno-threadsafe-statics \
     -ffunction-sections -fdata-sections \
@@ -46,7 +51,7 @@ echo "=== building Rust logic crate ==="
 echo "=== linking ==="
 avr-g++ -mmcu=$MCU -Os -Wl,--gc-sections \
     -o "$BUILD_DIR/firmware.elf" \
-    "$BUILD_DIR"/core/*.o "$BUILD_DIR/sketch.o" \
+    "$BUILD_DIR/sketch.o" "$BUILD_DIR/core.a" \
     -Lrust/target/avr-none/release -lcitadel_logic
 
 avr-objcopy -O ihex -R .eeprom "$BUILD_DIR/firmware.elf" "$BUILD_DIR/firmware.hex"
