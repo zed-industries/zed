@@ -1001,3 +1001,17 @@ pub mod worktree_panel {
         ]
     );
 }
+
+pub mod github_issues_panel {
+    use gpui::actions;
+
+    actions!(
+        github_issues_panel,
+        [
+            /// Toggles focus on the GitHub issues panel.
+            ToggleFocus,
+            /// Refreshes the issue list from GitHub.
+            Refresh,
+        ]
+    );
+}

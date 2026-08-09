@@ -6501,6 +6501,77 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
+    fn github_issues_panel_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("GitHub Issues Panel"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "GitHub Issues Panel Button",
+                description: "Show the GitHub issues panel button in the status bar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("github_issues_panel.button"),
+                    pick: |settings_content| {
+                        settings_content
+                            .github_issues_panel
+                            .as_ref()?
+                            .button
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .github_issues_panel
+                            .get_or_insert_default()
+                            .button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "GitHub Issues Panel Dock",
+                description: "Where to dock the GitHub issues panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("github_issues_panel.dock"),
+                    pick: |settings_content| {
+                        settings_content.github_issues_panel.as_ref()?.dock.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .github_issues_panel
+                            .get_or_insert_default()
+                            .dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "GitHub Issues Panel Default Width",
+                description: "Default width of the GitHub issues panel in pixels.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("github_issues_panel.default_width"),
+                    pick: |settings_content| {
+                        settings_content
+                            .github_issues_panel
+                            .as_ref()?
+                            .default_width
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .github_issues_panel
+                            .get_or_insert_default()
+                            .default_width = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     SettingsPage {
         title: "Panels",
         items: concat_sections![
@@ -6508,6 +6579,7 @@ fn panels_page() -> SettingsPage {
             terminal_panel_section(),
             outline_panel_section(),
             git_panel_section(),
+            github_issues_panel_section(),
             debugger_panel_section(),
             collaboration_panel_section(),
             agent_panel_section(),

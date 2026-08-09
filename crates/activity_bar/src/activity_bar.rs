@@ -114,6 +114,14 @@ impl ActivityBar {
                 action: Box::new(zed_actions::worktree_panel::ToggleFocus),
             },
             ActivityBarEntry {
+                id: "github-issues-panel",
+                panel_name: Some("GithubIssuesPanel"),
+                icon: IconName::Github,
+                icon_size: 20.,
+                tooltip: "GitHub Issues".into(),
+                action: Box::new(zed_actions::github_issues_panel::ToggleFocus),
+            },
+            ActivityBarEntry {
                 id: "project-search",
                 panel_name: None,
                 icon: IconName::MagnifyingGlass,

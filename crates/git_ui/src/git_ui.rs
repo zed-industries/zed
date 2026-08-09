@@ -45,8 +45,12 @@ pub mod git_graph;
 pub mod git_panel;
 pub(crate) mod git_panel_settings;
 pub mod git_picker;
-mod git_status_list_item;
 mod git_runtime_diagnostics;
+mod git_status_list_item;
+mod github_issue_view;
+mod github_issues;
+pub mod github_issues_panel;
+mod github_issues_panel_settings;
 pub mod multi_diff_view;
 pub mod picker_prompt;
 pub mod project_diff;
@@ -116,6 +120,7 @@ pub fn init(cx: &mut App) {
         CommitModal::register(workspace);
         git_panel::register(workspace);
         worktree_panel::register(workspace);
+        github_issues_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
 

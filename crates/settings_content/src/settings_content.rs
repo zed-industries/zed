@@ -166,6 +166,8 @@ pub struct SettingsContent {
 
     pub worktree_panel: Option<WorktreePanelSettingsContent>,
 
+    pub github_issues_panel: Option<GithubIssuesPanelSettingsContent>,
+
     pub tabs: Option<ItemSettingsContent>,
     pub tab_bar: Option<TabBarSettingsContent>,
     pub status_bar: Option<StatusBarSettingsContent>,
@@ -684,6 +686,26 @@ pub struct WorktreePanelSettingsContent {
     /// as the git panel, so their status bar buttons sit together.
     ///
     /// Default: unset
+    pub dock: Option<DockPosition>,
+    /// Default width of the panel in pixels.
+    ///
+    /// Default: 300
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_width: Option<f32>,
+}
+
+/// Configuration of the GitHub issues panel, which lists the open issues of
+/// the active repository's GitHub remote.
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct GithubIssuesPanelSettingsContent {
+    /// Whether to show the panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Where to dock the panel. Can be 'left' or 'right'.
+    ///
+    /// Default: left
     pub dock: Option<DockPosition>,
     /// Default width of the panel in pixels.
     ///

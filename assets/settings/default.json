@@ -997,6 +997,14 @@
     // Default width of the worktree panel.
     "default_width": 360,
   },
+  "github_issues_panel": {
+    // Whether to show the GitHub issues panel button in the status bar.
+    "button": true,
+    // Where to dock the GitHub issues panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Default width of the GitHub issues panel.
+    "default_width": 300,
+  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
