@@ -423,6 +423,7 @@ impl BreadcrumbStrip {
         index: usize,
         position: usize,
         last_position: usize,
+        max_label_width: Option<Pixels>,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::AnyElement {
@@ -446,8 +447,17 @@ impl BreadcrumbStrip {
                 .with_default_highlights(&text_style, segment.label.highlights.clone())
                 .into_any()
         };
+        let label = div()
+            .min_w_0()
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .when_some(max_label_width, |this, max_width| this.max_w(max_width))
+            .child(label)
+            .into_any_element();
         let label = if let Some(icon) = segment.icon.clone() {
             h_flex()
+                .min_w_0()
                 .gap_1()
                 .child(
                     Icon::from_path(icon)
@@ -699,8 +709,24 @@ impl gpui::Element for BreadcrumbStrip {
             }
         }
 
-        let last_position = sequence.len().saturating_sub(1);
         let gap = window.rem_size() * 0.25;
+        // A tail with no room left paints as a separator pointing at nothing; let the
+        // ellipsis stand in for it instead.
+        if sequence.len() > 1 {
+            let tail_start = sequence
+                .iter()
+                .rev()
+                .skip(1)
+                .fold(bounds.origin.x, |x, item| match item {
+                    FinalItem::Segment(index) => x + metrics.widths[*index] + gap,
+                    FinalItem::Ellipsis => x + metrics.ellipsis_width + gap,
+                });
+            if bounds.origin.x + bounds.size.width - tail_start < metrics.ellipsis_width {
+                sequence.pop();
+            }
+        }
+
+        let last_position = sequence.len().saturating_sub(1);
         let mut x = bounds.origin.x;
         let mut children = Vec::with_capacity(sequence.len());
         let mut menu_anchor_bounds = None;
@@ -709,14 +735,30 @@ impl gpui::Element for BreadcrumbStrip {
                 FinalItem::Segment(index) => Some(*index),
                 FinalItem::Ellipsis => None,
             };
+            // The layout plan never drops the last segment, so it is the one that can still
+            // overrun the strip. Cap its label to the width that is actually left instead of
+            // letting the toolbar clip it mid-word.
+            let remaining_width = (bounds.origin.x + bounds.size.width - x).max(Pixels::ZERO);
+            let is_last = position == last_position;
+            let label_budget = (remaining_width - metrics.ellipsis_width).max(Pixels::ZERO);
             let mut element = match item {
-                FinalItem::Segment(index) => {
-                    self.render_segment(index, position, last_position, window, cx)
-                }
+                FinalItem::Segment(index) => self.render_segment(
+                    index,
+                    position,
+                    last_position,
+                    is_last.then_some(label_budget),
+                    window,
+                    cx,
+                ),
                 FinalItem::Ellipsis => self.render_ellipsis(position, last_position, window, cx),
             };
+            let available_width = if is_last {
+                AvailableSpace::Definite(remaining_width)
+            } else {
+                AvailableSpace::MaxContent
+            };
             let available_space = size(
-                AvailableSpace::MaxContent,
+                available_width,
                 AvailableSpace::Definite(bounds.size.height),
             );
             let element_size = element.layout_as_root(available_space, window, cx);
