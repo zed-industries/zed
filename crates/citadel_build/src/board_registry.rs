@@ -62,6 +62,21 @@ pub fn board_kind_display_name(kind: BoardKind) -> &'static str {
     }
 }
 
+/// Reverse of `board_kind_display_name`: resolve a `BoardKind` from the
+/// display name stored via `board_picker`'s kvp write. Returns `None` for
+/// any name that isn't one of the exact strings `board_kind_display_name`
+/// produces.
+pub fn board_kind_from_display_name(name: &str) -> Option<BoardKind> {
+    [
+        BoardKind::Uno,
+        BoardKind::Nano,
+        BoardKind::ProMini,
+        BoardKind::Other,
+    ]
+    .into_iter()
+    .find(|kind| board_kind_display_name(*kind) == name)
+}
+
 pub fn avrdude_defaults(kind: BoardKind) -> (&'static str, u32) {
     let programmer = "arduino";
     // ponytail: baud rates are heuristic defaults (Nano/ProMini=57600, Uno/Other=115200 --
@@ -132,5 +147,23 @@ mod tests {
     fn test_avrdude_defaults_nano_promini_baud() {
         assert_eq!(avrdude_defaults(BoardKind::Nano).1, 57600);
         assert_eq!(avrdude_defaults(BoardKind::ProMini).1, 57600);
+    }
+
+    #[test]
+    fn test_board_kind_display_name_round_trip() {
+        for kind in [
+            BoardKind::Uno,
+            BoardKind::Nano,
+            BoardKind::ProMini,
+            BoardKind::Other,
+        ] {
+            let name = board_kind_display_name(kind);
+            assert_eq!(board_kind_from_display_name(name), Some(kind));
+        }
+    }
+
+    #[test]
+    fn test_board_kind_from_display_name_unrecognized() {
+        assert_eq!(board_kind_from_display_name("Raspberry Pi Pico"), None);
     }
 }
