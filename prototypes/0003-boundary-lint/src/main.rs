@@ -18,11 +18,6 @@ const BANNED_STATEMENT_KINDS: &[(&str, &str, &str)] = &[
         "if文はC/C++に書けません。この判断はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
     ),
     (
-        "for_statement",
-        "for",
-        "forループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
-    ),
-    (
         "while_statement",
         "while",
         "whileループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
@@ -51,6 +46,8 @@ const BANNED_STATEMENT_KINDS: &[(&str, &str, &str)] = &[
 
 const COMPUTED_INTERMEDIATE_MESSAGE: &str = "計算式を含む変数初期化はC/C++に書けません。計算はRustのno_stdクレートで行い、結果だけをextern \"C\"関数の戻り値として受け取ってください。";
 
+const FOR_LOOP_MESSAGE: &str = "forループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。";
+
 fn walk(node: Node, source: &[u8], violations: &mut Vec<Violation>) {
     for &(kind, rule_id, message) in BANNED_STATEMENT_KINDS {
         if node.kind() == kind {
@@ -62,6 +59,16 @@ fn walk(node: Node, source: &[u8], violations: &mut Vec<Violation>) {
                 message,
             });
         }
+    }
+
+    if node.kind() == "for_statement" && !is_trivial_dispatch_loop(node) {
+        let point = node.start_position();
+        violations.push(Violation {
+            line: point.row + 1,
+            column: point.column + 1,
+            rule_id: "for",
+            message: FOR_LOOP_MESSAGE,
+        });
     }
 
     if node.kind() == "init_declarator" && !enclosing_declaration_is_const(node) {
@@ -141,6 +148,49 @@ fn check_object_macro_body(macro_def: Node, source: &[u8], violations: &mut Vec<
 // syntactic heuristic (tree-sitter has no type/const-expression evaluation),
 // so it will also excuse a genuinely runtime-computed `const` declaration;
 // documented as a known limitation.
+// RFC 0001's own resolved architecture requires exactly one loop construct
+// in the whole system: the runtime scaffolding that owns `main()` and
+// dispatches forever into `citadel_setup()`/`citadel_loop()`
+// (prototypes/0001-hello-blink/cpp/runtime.cpp). That file isn't user
+// sketch logic — it's the same role the vendored Arduino core's own
+// main.cpp plays in 0002 (never scanned, because it's vendored). This tool
+// has no file-level notion of "runtime vs. sketch", so it exempts the
+// pattern structurally instead: an infinite `for(;;)` (no initializer,
+// condition, or update — a real bounded loop is unaffected) whose body
+// contains nothing but bare function-call statements. Anything else in the
+// body (an if, a declaration, a computed expression) still trips the rule
+// through the normal recursive walk.
+fn is_trivial_dispatch_loop(for_statement: Node) -> bool {
+    if for_statement.child_by_field_name("initializer").is_some() {
+        return false;
+    }
+    if for_statement.child_by_field_name("condition").is_some() {
+        return false;
+    }
+    if for_statement.child_by_field_name("update").is_some() {
+        return false;
+    }
+    let Some(body) = for_statement.child_by_field_name("body") else {
+        return false;
+    };
+    if body.kind() != "compound_statement" {
+        return false;
+    }
+
+    let mut cursor = body.walk();
+    for statement in body.named_children(&mut cursor) {
+        if statement.kind() != "expression_statement" {
+            return false;
+        }
+        let mut inner_cursor = statement.walk();
+        let named: Vec<Node> = statement.named_children(&mut inner_cursor).collect();
+        if named.len() != 1 || named[0].kind() != "call_expression" {
+            return false;
+        }
+    }
+    true
+}
+
 fn enclosing_declaration_is_const(init_declarator: Node) -> bool {
     let Some(declaration) = init_declarator.parent() else {
         return false;
@@ -347,6 +397,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn allows_trivial_dispatch_loop() {
+        let violations = check_source(
+            "int main(void) { citadel_setup(); for (;;) { citadel_loop(); } }",
+        )
+        .unwrap();
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn allows_trivial_dispatch_loop_with_multiple_calls() {
+        let violations =
+            check_source("int main(void) { for (;;) { a(); b(); } }").unwrap();
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn detects_for_when_dispatch_loop_body_has_more_than_calls() {
+        let violations =
+            check_source("void loop() { for (;;) { if (true) { } } }").unwrap();
+        assert_eq!(violations.len(), 2);
+        assert!(violations.iter().any(|v| v.rule_id == "for"));
+        assert!(violations.iter().any(|v| v.rule_id == "if"));
     }
 
     #[test]
