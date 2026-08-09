@@ -247,14 +247,7 @@ impl Vim {
                         // our motions assume the current character is after the cursor,
                         // but in (forward) visual mode the current character is just
                         // before the end of the selection.
-
-                        // If the file ends with a newline (which is common) we don't do this.
-                        // so that if you go to the end of such a file you can use "up" to go
-                        // to the previous line and have it work somewhat as expected.
-                        if !selection.reversed
-                            && !selection.is_empty()
-                            && !(selection.end.column() == 0 && selection.end == map.max_point())
-                        {
+                        if !selection.reversed && !selection.is_empty() {
                             current_head = movement::left(map, selection.end)
                         }
 
@@ -278,9 +271,7 @@ impl Vim {
                                 movement::right(map, selection.end)
                             };
 
-                            if !(next_point.column() == 0 && next_point == map.max_point()) {
-                                selection.end = next_point;
-                            }
+                            selection.end = next_point;
                         }
 
                         // vim always ensures the anchor character stays selected.
@@ -1746,6 +1737,17 @@ mod test {
         //     }
         //     "
         // });
+    }
+
+    #[gpui::test]
+    async fn test_visual_move_trailing_newline(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("This is a newlinˇe\n", Mode::Normal);
+        cx.simulate_keystrokes("v");
+        cx.assert_state("This is a newlin«eˇ»\n", Mode::Visual);
+        cx.simulate_keystrokes("l");
+        cx.assert_state("This is a newlin«e\nˇ»", Mode::Visual);
     }
 
     #[gpui::test]

@@ -799,7 +799,7 @@ impl PickerDelegate for ProfilePickerDelegate {
                                         &focus_handle,
                                         cx,
                                     )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                    .map(|kb| kb.size(rems_from_px(12_f32))),
                                 )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(

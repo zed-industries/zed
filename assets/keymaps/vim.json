@@ -435,6 +435,21 @@
       "ctrl-[": "editor::Cancel",
     },
   },
+  // Vim/Helix consume Escape before menu::Cancel can dismiss notifications. macOS (Ctrl-C) and Linux
+  // (Ctrl-Escape) have alternatives, but Windows does not, so try menu::Cancel first on Windows and
+  // let Escape fall through when no notification is shown.
+  {
+    "context": "Editor && mode == full && VimControl && vim_mode == normal && !menu && os == windows",
+    "bindings": {
+      "escape": "menu::Cancel",
+    },
+  },
+  {
+    "context": "Editor && mode == full && VimControl && vim_mode == helix_normal && !menu && !BufferSearchBar && os == windows",
+    "bindings": {
+      "escape": "menu::Cancel",
+    },
+  },
   {
     "context": "vim_mode == helix_select && !menu && !BufferSearchBar",
     "bindings": {
@@ -487,6 +502,7 @@
       "x": "vim::HelixSelectLine",
       "*": "buffer_search::UseSelectionForFind",
       "shift-x": "editor::SelectLine",
+      "_": "vim::HelixTrimSelections",
       "ctrl-c": "editor::ToggleComments",
       "alt-o": "editor::SelectLargerSyntaxNode",
       "alt-i": "editor::SelectSmallerSyntaxNode",
@@ -1088,7 +1104,7 @@
     },
   },
   {
-    "context": "GitPanel && ChangesList && !GitBranchSelector",
+    "context": "GitPanel && ChangesList && !GitBranchSelector && !GitRepositorySelector",
     "use_key_equivalents": true,
     "bindings": {
       "k": "menu::SelectPrevious",
@@ -1130,6 +1146,13 @@
     "bindings": {
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
+    },
+  },
+  {
+    "context": "CommitEditor > Editor && VimControl && !menu",
+    "bindings": {
+      "tab": "git_panel::FocusChanges",
+      "shift-tab": "git_panel::FocusChanges",
     },
   },
   {
