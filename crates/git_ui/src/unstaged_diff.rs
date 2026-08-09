@@ -826,7 +826,7 @@ impl Render for UnstagedDiffToolbar {
             .child(Divider::vertical())
             .child(
                 Button::new("stage-all", "Stage All")
-                    .width(rems_from_px(80.))
+                    .width(rems_from_px(80_f32))
                     .disabled(!button_states.stage_all)
                     .tooltip(Tooltip::for_action_title_in(
                         "Stage All Changes",
@@ -838,7 +838,7 @@ impl Render for UnstagedDiffToolbar {
             .child(Divider::vertical())
             .child(
                 Button::new("restore-all", "Restore All")
-                    .width(rems_from_px(80.))
+                    .width(rems_from_px(80_f32))
                     .disabled(!button_states.restore_all)
                     .tooltip(Tooltip::text("Restore All Changes"))
                     .on_click(cx.listener(|this, _, window, cx| this.restore_all(window, cx))),
