@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{App, PathPromptOptions, WeakEntity, Window};
+use gpui::{App, Context, PathPromptOptions, TaskExt, WeakEntity, Window};
 use notifications::status_toast::StatusToast;
 use ui::{Color, Icon, IconName, IconSize};
 use util::ResultExt;
@@ -11,6 +11,26 @@ use util::command::new_command;
 use workspace::{self, Workspace};
 
 use crate::scaffold;
+
+/// Shows a dismissible error toast in `workspace`. Shared by every fallible
+/// step of the New Project flow (scaffold write, git init, worktree open)
+/// so they report failures the same way instead of duplicating the
+/// `StatusToast` construction at each call site.
+fn show_error_toast_in_workspace(
+    workspace: &mut Workspace,
+    error: &anyhow::Error,
+    cx: &mut Context<Workspace>,
+) {
+    let toast = StatusToast::new(error.to_string(), cx, |this, _| {
+        this.icon(
+            Icon::new(IconName::XCircle)
+                .size(IconSize::Small)
+                .color(Color::Error),
+        )
+        .dismiss_button(true)
+    });
+    workspace.toggle_status_toast(toast, cx);
+}
 
 /// Writes the scaffold into `destination` if it is empty; returns an error
 /// (writing nothing) otherwise. `destination` must already exist as a
@@ -29,6 +49,11 @@ async fn write_scaffold(fs: Arc<dyn Fs>, destination: &Path) -> anyhow::Result<(
     for (relative_path, contents) in scaffold::scaffold_files(project_name) {
         let absolute_path = destination.join(&relative_path);
         if let Some(parent) = absolute_path.parent() {
+            // `create_dir` is `create_dir_all` under the hood (both the real
+            // and fake `Fs` impls), so this is a no-op when `parent` already
+            // exists (e.g. `parent == destination` for a root-level file
+            // like `.gitignore`) and creates every missing intermediate
+            // directory regardless of `scaffold_files`' iteration order.
             fs.create_dir(parent).await?;
         }
         fs.write(&absolute_path, contents.as_bytes()).await?;
@@ -37,6 +62,12 @@ async fn write_scaffold(fs: Arc<dyn Fs>, destination: &Path) -> anyhow::Result<(
     Ok(())
 }
 
+/// Not covered by this module's unit tests: `fs` here is `FakeFs` in tests,
+/// but the `git add`/`git commit` calls below always shell out to the real
+/// `git` binary via `new_command`, so a `FakeFs`-backed test would need a
+/// real filesystem for git to operate on. This path is exercised on a real
+/// filesystem by the manual GUI verification in the implementation plan's
+/// Step 11 instead.
 async fn git_init_and_commit(fs: Arc<dyn Fs>, destination: &Path) -> anyhow::Result<()> {
     fs.git_init(destination, "main".to_string()).await?;
 
@@ -67,7 +98,16 @@ pub fn new_project(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &m
 
     window
         .spawn(cx, async move |cx| {
-            let mut paths = destination_prompt.await.ok()?.ok()??;
+            // Two fallible layers wrapped in the oneshot receiver:
+            // `.ok()` collapses each into an `Option` (`log_err()` so a
+            // dropped sender / platform dialog error is at least visible in
+            // the log instead of vanishing) and the three `?`s unwrap, in
+            // order: the receiver's own `Result` (sender dropped), the
+            // platform's `Result` (e.g. dialog failed to open), and finally
+            // the `Option` the platform uses to signal user cancellation.
+            // `paths` is non-empty here since `multiple: false` and a
+            // cancelled/empty selection is already filtered out above.
+            let mut paths = destination_prompt.await.log_err()?.log_err()??;
             let destination = paths.pop()?;
 
             let fs = workspace
@@ -78,15 +118,7 @@ pub fn new_project(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &m
             if let Err(error) = scaffold_result {
                 workspace
                     .update(cx, |workspace, cx| {
-                        let toast = StatusToast::new(error.to_string(), cx, |this, _| {
-                            this.icon(
-                                Icon::new(IconName::XCircle)
-                                    .size(IconSize::Small)
-                                    .color(Color::Error),
-                            )
-                            .dismiss_button(true)
-                        });
-                        workspace.toggle_status_toast(toast, cx);
+                        show_error_toast_in_workspace(workspace, &error, cx);
                     })
                     .ok()?;
                 return None;
@@ -95,51 +127,59 @@ pub fn new_project(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &m
             if let Err(error) = git_init_and_commit(fs.clone(), &destination).await {
                 workspace
                     .update(cx, |workspace, cx| {
-                        let toast = StatusToast::new(error.to_string(), cx, |this, _| {
-                            this.icon(
-                                Icon::new(IconName::XCircle)
-                                    .size(IconSize::Small)
-                                    .color(Color::Error),
-                            )
-                            .dismiss_button(true)
-                        });
-                        workspace.toggle_status_toast(toast, cx);
+                        show_error_toast_in_workspace(workspace, &error, cx);
                     })
                     .ok()?;
                 return None;
             }
 
-            let workspace_result = workspace
-                .update(cx, move |workspace, cx| {
-                    let app_state = workspace.app_state().clone();
-                    workspace::open_new(Default::default(), app_state, cx, {
-                        let destination = destination.clone();
-                        move |workspace, window, cx| {
-                            cx.activate(true);
-                            let create_task = workspace.project().update(cx, |project, cx| {
-                                project.create_worktree(destination.as_path(), true, cx)
-                            });
-                            cx.spawn_in(window, async move |_window, _cx| {
-                                create_task.await.log_err();
-                            })
-                            .detach();
-                        }
-                    })
-                    .detach();
-                });
+            // TODO: `workspace_result` only reflects whether this `update`
+            // reached a live `Workspace` entity; it does not see failures
+            // from inside the `open_new` callback below (worktree creation
+            // errors are handled separately, via their own toast, once the
+            // callback actually runs asynchronously later). A dedicated
+            // test would need to drive the `open_new` callback to
+            // completion to catch a regression here; for now this is
+            // covered by the manual GUI verification in Step 11.
+            let workspace_result = workspace.update(cx, move |workspace, cx| {
+                let app_state = workspace.app_state().clone();
+                workspace::open_new(
+                    Default::default(),
+                    app_state,
+                    cx,
+                    move |workspace, window, cx| {
+                        cx.activate(true);
+                        let create_task = workspace.project().update(cx, |project, cx| {
+                            // `visible: true` makes the new worktree a
+                            // regular, user-visible project root (shown
+                            // in the project panel), matching every
+                            // other "open a project" entry point in the
+                            // codebase — see
+                            // `WorktreeStore::visible_worktrees`.
+                            project.create_worktree(destination.as_path(), true, cx)
+                        });
+                        cx.spawn_in(window, async move |workspace, cx| {
+                            create_task
+                                .await
+                                .inspect_err(|error| {
+                                    workspace
+                                        .update(cx, |workspace, cx| {
+                                            show_error_toast_in_workspace(workspace, error, cx);
+                                        })
+                                        .log_err();
+                                })
+                                .map(|_| ())
+                        })
+                        .detach_and_log_err(cx);
+                    },
+                )
+                .detach();
+            });
 
             if let Err(error) = workspace_result {
                 workspace
                     .update(cx, |workspace, cx| {
-                        let toast = StatusToast::new(error.to_string(), cx, |this, _| {
-                            this.icon(
-                                Icon::new(IconName::XCircle)
-                                    .size(IconSize::Small)
-                                    .color(Color::Error),
-                            )
-                            .dismiss_button(true)
-                        });
-                        workspace.toggle_status_toast(toast, cx);
+                        show_error_toast_in_workspace(workspace, &error, cx);
                     })
                     .ok()?;
                 return None;
@@ -160,7 +200,8 @@ mod tests {
     #[gpui::test]
     async fn writes_expected_files_into_an_empty_directory(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/root", json!({ "empty-project": {} })).await;
+        fs.insert_tree("/root", json!({ "empty-project": {} }))
+            .await;
 
         write_scaffold(fs.clone(), std::path::Path::new("/root/empty-project"))
             .await
@@ -193,11 +234,8 @@ mod tests {
     #[gpui::test]
     async fn rejects_a_non_empty_directory(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/root",
-            json!({ "not-empty": { "existing.txt": "hello" } }),
-        )
-        .await;
+        fs.insert_tree("/root", json!({ "not-empty": { "existing.txt": "hello" } }))
+            .await;
 
         let result = write_scaffold(fs.clone(), std::path::Path::new("/root/not-empty")).await;
 

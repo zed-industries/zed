@@ -1,5 +1,11 @@
 use std::path::PathBuf;
 
+// This scaffold uses plain `const &str` templates rather than the
+// `agent_skills` RustEmbed + Handlebars pipeline (see crates/agent/src/templates.rs):
+// there's no user-supplied data to interpolate beyond the sanitized crate
+// name (handled with a plain `format!` in `rust_cargo_toml`), and the file
+// set is small and fixed. Reach for RustEmbed + Handlebars if this grows
+// per-project template variation.
 #[allow(dead_code)]
 const RUST_TOOLCHAIN_TOML: &str = r#"[toolchain]
 channel = "nightly-2026-08-06"
@@ -220,4 +226,3 @@ mod tests {
         assert_eq!(sanitize_crate_name(""), "project");
     }
 }
-
