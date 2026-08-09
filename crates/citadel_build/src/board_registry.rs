@@ -64,7 +64,9 @@ pub fn board_kind_display_name(kind: BoardKind) -> &'static str {
 
 pub fn avrdude_defaults(kind: BoardKind) -> (&'static str, u32) {
     let programmer = "arduino";
-    // ponytail: baud rates are heuristic defaults; override if device-specific tuning needed
+    // ponytail: baud rates are heuristic defaults (Nano/ProMini=57600, Uno/Other=115200 --
+    // bootloaders commonly differ this way); upgrade path if a picked family's default is
+    // wrong for a specific board is a per-VID:PID baud override, not a bigger abstraction here.
     let baud = match kind {
         BoardKind::Uno => 115200,
         BoardKind::Nano => 57600,
