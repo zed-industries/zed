@@ -112,6 +112,180 @@ pub fn warning_kvp_key(vid_pid: VidPid) -> String {
     )
 }
 
+// --- Impure half: GPUI polling entity and global. ---
+// Everything below this point does real I/O (serial port enumeration,
+// avrdude subprocess, sqlite via KeyValueStore) and depends on GPUI. The
+// pure functions above stay independently testable; this section wires
+// them together.
+
+use crate::board_registry::lookup_chip;
+use db::kvp::KeyValueStore;
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global};
+use std::time::Duration;
+use util::ResultExt;
+use util::command::new_command;
+
+/// A board detected on a serial port: which port, its VID:PID, the
+/// user-assigned identity (if previously picked/stored via `board_picker`),
+/// and — once the chip signature read completes — whether the chip is a
+/// verified/known part and which `mmcu` value to pass to avrdude/avr-gcc.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetectedBoard {
+    pub port_name: String,
+    pub vid_pid: VidPid,
+    pub identity: BoardIdentity,
+    pub chip_verified: Option<bool>,
+    pub mmcu: Option<&'static str>,
+}
+
+/// Polls `serialport::available_ports()` every 2 seconds off the main
+/// thread and identifies newly connected boards by reading their chip
+/// signature via avrdude. Exposed as `GlobalBoardMonitor` so both the
+/// status bar indicator and the build/flash action can read `detected`.
+pub struct BoardMonitor {
+    pub detected: Option<DetectedBoard>,
+    known_ports: HashSet<String>,
+}
+
+pub struct GlobalBoardMonitor(pub Entity<BoardMonitor>);
+
+impl Global for GlobalBoardMonitor {}
+
+/// Emitted once per device (gated by the kvp-recorded warning flag) when a
+/// connected board's chip signature doesn't match a verified part.
+/// `BoardMonitor` has no `Workspace` handle to show a toast directly, so it
+/// emits this event instead; the toast display lives in `citadel_build.rs`.
+pub struct UnverifiedChipDetected;
+
+impl EventEmitter<UnverifiedChipDetected> for BoardMonitor {}
+
+pub fn init(cx: &mut App) {
+    let board_monitor = cx.new(BoardMonitor::new);
+    cx.set_global(GlobalBoardMonitor(board_monitor));
+}
+
+impl BoardMonitor {
+    fn new(cx: &mut Context<Self>) -> Self {
+        cx.spawn(async move |this, cx| -> anyhow::Result<()> {
+            loop {
+                let ports = cx
+                    .background_spawn(async { serialport::available_ports().unwrap_or_default() })
+                    .await;
+                this.update(cx, |this, cx| this.apply_poll(ports, cx))?;
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+            }
+        })
+        .detach();
+
+        Self {
+            detected: None,
+            known_ports: HashSet::new(),
+        }
+    }
+
+    fn apply_poll(&mut self, ports: Vec<SerialPortInfo>, cx: &mut Context<Self>) {
+        let current_port_names: HashSet<String> =
+            ports.iter().map(|port| port.port_name.clone()).collect();
+
+        for port in newly_connected_ports(&self.known_ports, &ports) {
+            if let Some(vid_pid) = vid_pid_of(port) {
+                self.begin_identify(port.port_name.clone(), vid_pid, cx);
+            }
+        }
+
+        if let Some(detected) = &self.detected {
+            if !current_port_names.contains(&detected.port_name) {
+                self.detected = None;
+            }
+        }
+
+        self.known_ports = current_port_names;
+        cx.notify();
+    }
+
+    fn begin_identify(&mut self, port_name: String, vid_pid: VidPid, cx: &mut Context<Self>) {
+        let stored_name = KeyValueStore::global(cx)
+            .read_kvp(&board_kvp_key(vid_pid))
+            .log_err()
+            .flatten();
+        let identity = resolve_board_identity(stored_name);
+
+        cx.spawn(async move |this, cx| {
+            let signature_port_name = port_name.clone();
+            let signature = cx
+                .background_spawn(async move { read_chip_signature(&signature_port_name).await })
+                .await
+                .log_err();
+
+            this.update(cx, move |this, cx| {
+                let chip = signature.and_then(lookup_chip);
+                let chip_verified = chip.map(|chip| chip.verified);
+                let mmcu = chip.map(|chip| chip.mmcu);
+
+                this.detected = Some(DetectedBoard {
+                    port_name,
+                    vid_pid,
+                    identity,
+                    chip_verified,
+                    mmcu,
+                });
+
+                if let Some(verified) = chip_verified {
+                    this.maybe_warn_unverified_chip(vid_pid, verified, cx);
+                }
+
+                cx.notify();
+            })
+        })
+        .detach();
+    }
+
+    fn maybe_warn_unverified_chip(
+        &mut self,
+        vid_pid: VidPid,
+        verified: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let key = warning_kvp_key(vid_pid);
+        let already_warned = KeyValueStore::global(cx)
+            .read_kvp(&key)
+            .log_err()
+            .flatten()
+            .is_some();
+
+        if decide_unverified_chip_warning(verified, already_warned) == WarningDecision::ShowAndRecord
+        {
+            let kvp = KeyValueStore::global(cx);
+            db::write_and_log(cx, move || async move {
+                kvp.write_kvp(key, "1".to_string()).await
+            });
+            cx.emit(UnverifiedChipDetected);
+        }
+    }
+}
+
+/// Shells `avrdude -c arduino -p m328p -P <port> -b 115200 -F -U
+/// signature:r:-:i` and parses the 3-byte chip signature from its
+/// intel-hex output.
+async fn read_chip_signature(port_name: &str) -> anyhow::Result<[u8; 3]> {
+    let mut command = new_command("avrdude");
+    command.args([
+        "-c",
+        "arduino",
+        "-p",
+        "m328p",
+        "-P",
+        port_name,
+        "-b",
+        "115200",
+        "-F",
+        "-U",
+        "signature:r:-:i",
+    ]);
+    let output = command.output().await?;
+    parse_signature_from_avrdude_ihex(&output.stdout)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
