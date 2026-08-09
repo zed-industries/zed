@@ -487,88 +487,76 @@ impl CommitView {
                     }
                 }
 
-                if let Some((target_path, target_row)) = &scroll_to {
-                    if *target_path == file_path {
-                        let anchor = this.update(cx, |this, cx| {
-                            this.multibuffer.read(cx).buffer_point_to_anchor(
-                                &buffer,
-                                language::Point::new(*target_row, 0),
-                                cx,
-                            )
-                        })?;
-                        if let Some(anchor) = anchor {
-                            this.update_in(cx, |this, window, cx| {
-                                this.editor.update(cx, |editor, cx| {
-                                    editor.rhs_editor().update(cx, |editor, cx| {
-                                        editor.change_selections(
-                                            SelectionEffects::no_scroll().nav_history(false),
-                                            window,
-                                            cx,
-                                            |s| s.select_ranges([anchor..anchor]),
-                                        );
-                                        // Pin the scroll anchor to the target line with a negative offset
-                                        // to center it; the visible line count is only known after the
-                                        // first layout, so recenter once it becomes available.
-                                        let margin = editor
-                                            .visible_line_count()
-                                            .map(|lines| ((lines - 1.0) / 2.0).floor().max(0.0));
-                                        editor.set_scroll_anchor(
-                                            ScrollAnchor {
-                                                anchor,
-                                                offset: gpui::point(0.0, -margin.unwrap_or(0.0)),
-                                            },
-                                            window,
-                                            cx,
-                                        );
-                                        if margin.is_none() {
-                                            // Recenter once the first layout makes the
-                                            // visible line count known.
-                                            let editor: WeakEntity<Editor> =
-                                                cx.entity().downgrade();
-                                            cx.spawn_in(window, async move |_, cx| {
-                                                for _ in 0..120 {
-                                                    let recenter = |editor: &mut Editor,
-                                                                    window: &mut Window,
-                                                                    cx: &mut Context<Editor>| {
-                                                        if let Some(margin) = editor
-                                                            .visible_line_count()
-                                                            .map(|lines| {
-                                                                ((lines - 1.0) / 2.0).floor()
-                                                            })
-                                                        {
-                                                            editor.set_scroll_anchor(
-                                                                ScrollAnchor {
-                                                                    anchor,
-                                                                    offset: gpui::point(
-                                                                        0.0,
-                                                                        -margin.max(0.0),
-                                                                    ),
-                                                                },
-                                                                window,
-                                                                cx,
-                                                            );
-                                                            true
-                                                        } else {
-                                                            false
-                                                        }
-                                                    };
-                                                    match editor.update_in(cx, recenter) {
-                                                        Ok(true) => break,
-                                                        Err(_) => break,
-                                                        _ => {}
-                                                    }
-                                                    cx.background_executor()
-                                                        .timer(Duration::from_millis(16))
-                                                        .await;
+                if let Some((target_path, target_row)) = &scroll_to
+                    && *target_path == file_path
+                {
+                    let anchor = this.update(cx, |this, cx| {
+                        this.multibuffer.read(cx).buffer_point_to_anchor(
+                            &buffer,
+                            language::Point::new(*target_row, 0),
+                            cx,
+                        )
+                    })?;
+                    if let Some(anchor) = anchor {
+                        // Pin the scroll anchor to the target line so it centers;
+                        // the line count is unknown before the first layout.
+                        let recenter =
+                            move |editor: &mut Editor,
+                                  window: &mut Window,
+                                  cx: &mut Context<Editor>| {
+                                if let Some(offset) =
+                                    editor.visible_line_count().map(center_scroll_offset)
+                                {
+                                    editor.set_scroll_anchor(
+                                        ScrollAnchor {
+                                            anchor,
+                                            offset: gpui::point(0.0, offset),
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                    true
+                                } else {
+                                    false
+                                }
+                            };
+                        this.update_in(cx, |this, window, cx| {
+                            this.editor.update(cx, |editor, cx| {
+                                editor.rhs_editor().update(cx, |editor, cx| {
+                                    editor.change_selections(
+                                        SelectionEffects::no_scroll().nav_history(false),
+                                        window,
+                                        cx,
+                                        |s| s.select_ranges([anchor..anchor]),
+                                    );
+                                    let offset =
+                                        editor.visible_line_count().map(center_scroll_offset);
+                                    editor.set_scroll_anchor(
+                                        ScrollAnchor {
+                                            anchor,
+                                            offset: gpui::point(0.0, offset.unwrap_or(0.0)),
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                    if offset.is_none() {
+                                        let editor: WeakEntity<Editor> = cx.entity().downgrade();
+                                        cx.spawn_in(window, async move |_, cx| {
+                                            for _ in 0..120 {
+                                                if editor.update_in(cx, recenter).unwrap_or(true) {
+                                                    break;
                                                 }
-                                            })
-                                            .detach();
-                                        }
-                                    });
+                                                cx.background_executor()
+                                                    .timer(Duration::from_millis(16))
+                                                    .await;
+                                            }
+                                        })
+                                        .detach();
+                                    }
                                 });
-                            })?;
-                            scroll_to = None;
-                        }
+                            });
+                        })?;
+                        scroll_to = None;
                     }
                 }
             }
@@ -1526,4 +1514,9 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
         .get(stash_index)
         .map(|entry| entry.oid.to_string() == sha)
         .unwrap_or(false)
+}
+
+/// The scroll offset that centers the given number of visible lines.
+fn center_scroll_offset(visible_lines: f64) -> f64 {
+    -((visible_lines - 1.0) / 2.0).floor().max(0.0)
 }
