@@ -48,6 +48,8 @@ pub(crate) struct DirectXRenderer {
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
     direct_composition: Option<DirectComposition>,
+    composition_surfaces: Vec<PlatformCompositionSurface>,
+    native_surfaces: Vec<std::rc::Weak<RefCell<DirectCompositionPortalState>>>,
     font_info: &'static FontInfo,
 
     width: u32,
@@ -137,11 +139,18 @@ struct DirectComposition {
 }
 
 struct DirectCompositionPortal {
+    state: Rc<RefCell<DirectCompositionPortalState>>,
+}
+
+struct DirectCompositionPortalState {
     comp_device: IDCompositionDevice,
-    container: IDCompositionVisual,
     visual: IDCompositionVisual,
     clip: IDCompositionRectangleClip,
+    bounds: Cell<Bounds<DevicePixels>>,
+    parent_origin: Cell<Point<DevicePixels>>,
     visible: Cell<bool>,
+    compositor_recreated_callback:
+        RefCell<Option<Rc<dyn Fn(Box<dyn std::any::Any>) -> Result<()>>>>,
 }
 
 impl DirectXRendererDevices {
@@ -215,6 +224,8 @@ impl DirectXRenderer {
             globals,
             pipelines,
             direct_composition,
+            composition_surfaces: Vec::new(),
+            native_surfaces: Vec::new(),
             font_info: Self::get_font_info(),
             width: 1,
             height: 1,
@@ -345,6 +356,39 @@ impl DirectXRenderer {
                 .set_gpui_swap_chain(surface, &resources.swap_chain)?;
             composition_resources.insert(surface, resources);
         }
+        let mut live_native_surfaces = Vec::with_capacity(self.native_surfaces.len());
+        for surface in &self.native_surfaces {
+            let Some(live_surface) = surface.upgrade() else {
+                continue;
+            };
+            if let Some(composition) = direct_composition.as_ref() {
+                composition
+                    .rebind_portal(&mut live_surface.borrow_mut())
+                    .context("Recreating DirectComposition native surface")?;
+            }
+            live_native_surfaces.push(Rc::downgrade(&live_surface));
+        }
+        self.native_surfaces = live_native_surfaces;
+        if let (Some(composition), Some(base_surface)) =
+            (direct_composition.as_ref(), self.base_composition_surface)
+            && !self.composition_surfaces.is_empty()
+        {
+            let platform_context = composition.comp_device.cast::<windows::core::IUnknown>()?;
+            for surface in &self.composition_surfaces {
+                match &surface.content {
+                    PlatformCompositionSurfaceContent::Native(platform_surface)
+                    | PlatformCompositionSurfaceContent::ExternalGpu(platform_surface) => {
+                        platform_surface
+                            .compositor_recreated(&platform_context)
+                            .context("Rebinding platform composition surface")?;
+                    }
+                    PlatformCompositionSurfaceContent::Gpui => {}
+                }
+            }
+            composition
+                .set_surface_order(&self.composition_surfaces, base_surface)
+                .context("Restoring DirectComposition surface order")?;
+        }
 
         self.atlas
             .handle_device_lost(&devices.device, &devices.device_context);
@@ -406,7 +450,7 @@ impl DirectXRenderer {
         for layer in scene.layers() {
             let mut surface_scene = Scene::default();
             for range in &layer.ranges {
-                surface_scene.replay(range.clone(), scene.scene());
+                surface_scene.replay_balanced(range.clone(), scene.scene())?;
             }
             surface_scene.finish();
             let (view, clear_color) = if self.base_composition_surface == Some(layer.surface) {
@@ -462,14 +506,16 @@ impl DirectXRenderer {
         Ok(())
     }
 
-    pub(crate) fn create_native_surface(&mut self) -> Result<Rc<dyn PlatformNativeSurface>> {
+    pub(crate) fn create_native_surface(&mut self) -> Result<Rc<dyn PlatformSurfaceAttachment>> {
         self.enable_window_composition()?;
-        Ok(Rc::new(
+        let state = Rc::new(RefCell::new(
             self.direct_composition
                 .as_ref()
                 .context("DirectComposition is disabled")?
-                .create_portal()?,
-        ))
+                .create_portal_state()?,
+        ));
+        self.native_surfaces.push(Rc::downgrade(&state));
+        Ok(Rc::new(DirectCompositionPortal { state }))
     }
 
     pub(crate) fn set_composition_order(
@@ -480,10 +526,11 @@ impl DirectXRenderer {
             .iter()
             .find_map(|surface| match surface.content {
                 PlatformCompositionSurfaceContent::Gpui => Some(surface.id),
-                PlatformCompositionSurfaceContent::Platform(_) => None,
+                PlatformCompositionSurfaceContent::Native(_)
+                | PlatformCompositionSurfaceContent::ExternalGpu(_) => None,
             })
             .context("composition has no GPUI base surface")?;
-        self.base_composition_surface = Some(base);
+        let previous_base = self.base_composition_surface;
         let devices = self.devices.as_ref().context("devices missing")?;
         let composition = self
             .direct_composition
@@ -507,10 +554,24 @@ impl DirectXRenderer {
                 _ => None,
             })
             .collect::<FxHashSet<_>>();
+        if let Err(error) = composition.set_surface_order(surfaces, base) {
+            if let Some(previous_base) = previous_base
+                && !self.composition_surfaces.is_empty()
+                && let Err(rollback_error) =
+                    composition.set_surface_order(&self.composition_surfaces, previous_base)
+            {
+                return Err(error).context(format!(
+                    "restoring the previous DirectComposition tree also failed: {rollback_error:#}"
+                ));
+            }
+            return Err(error);
+        }
         self.composition_resources
             .retain(|id, _| active_gpui_surfaces.contains(id));
         composition.retain_gpui_surfaces(&active_gpui_surfaces);
-        composition.set_surface_order(surfaces, base)
+        self.base_composition_surface = Some(base);
+        self.composition_surfaces = surfaces.to_vec();
+        Ok(())
     }
 
     fn draw_scene(&mut self, scene: &Scene) -> Result<()> {
@@ -1150,21 +1211,50 @@ impl DirectComposition {
         Ok(())
     }
 
-    fn create_portal(&self) -> Result<DirectCompositionPortal> {
+    fn create_portal_state(&self) -> Result<DirectCompositionPortalState> {
         let visual = unsafe { self.comp_device.CreateVisual() }?;
         let clip = unsafe { self.comp_device.CreateRectangleClip() }?;
         unsafe {
             visual.SetClip(&clip)?;
-            self.root_visual.AddVisual(&visual, true, None)?;
-            self.comp_device.Commit()?;
         }
-        Ok(DirectCompositionPortal {
+        Ok(DirectCompositionPortalState {
             comp_device: self.comp_device.clone(),
-            container: self.root_visual.clone(),
             visual,
             clip,
+            bounds: Cell::new(Bounds::default()),
+            parent_origin: Cell::new(Point::default()),
             visible: Cell::new(true),
+            compositor_recreated_callback: RefCell::new(None),
         })
+    }
+
+    fn rebind_portal(&self, state: &mut DirectCompositionPortalState) -> Result<()> {
+        let bounds = state.bounds.get();
+        let parent_origin = state.parent_origin.get();
+        let visible = state.visible.get();
+        let compositor_recreated_callback = state.compositor_recreated_callback.borrow().clone();
+        let replacement = self.create_portal_state()?;
+        let x = (bounds.origin.x - parent_origin.x).0 as f32;
+        let y = (bounds.origin.y - parent_origin.y).0 as f32;
+        let width = bounds.size.width.0.max(0) as f32;
+        let height = bounds.size.height.0.max(0) as f32;
+        unsafe {
+            replacement.visual.SetOffsetX2(x)?;
+            replacement.visual.SetOffsetY2(y)?;
+            replacement.clip.SetLeft2(0.0)?;
+            replacement.clip.SetTop2(0.0)?;
+            replacement.clip.SetRight2(width)?;
+            replacement.clip.SetBottom2(height)?;
+            replacement
+                .visual
+                .SetOpacity2(if visible { 1.0 } else { 0.0 })?;
+        }
+        replacement.bounds.set(bounds);
+        replacement.parent_origin.set(parent_origin);
+        replacement.visible.set(visible);
+        *replacement.compositor_recreated_callback.borrow_mut() = compositor_recreated_callback;
+        *state = replacement;
+        Ok(())
     }
 
     fn set_surface_order(
@@ -1184,7 +1274,8 @@ impl DirectComposition {
                     .cloned()
                     .map(|visual| (surface.id, visual))
                     .context("GPUI composition visual is missing"),
-                PlatformCompositionSurfaceContent::Platform(platform_surface) => {
+                PlatformCompositionSurfaceContent::Native(platform_surface)
+                | PlatformCompositionSurfaceContent::ExternalGpu(platform_surface) => {
                     let handle = platform_surface.platform_handle()?;
                     let unknown = handle.downcast::<windows::core::IUnknown>().map_err(|_| {
                         anyhow::anyhow!("native surface is not a DirectComposition visual")
@@ -1197,6 +1288,27 @@ impl DirectComposition {
             })
             .collect::<Result<Vec<_>>>()?;
         let visuals_by_id = visuals.iter().cloned().collect::<FxHashMap<_, _>>();
+        for surface in surfaces {
+            match &surface.content {
+                PlatformCompositionSurfaceContent::Gpui => {
+                    let visual = visuals_by_id
+                        .get(&surface.id)
+                        .context("GPUI composition visual is missing")?;
+                    unsafe {
+                        visual.SetOffsetX2(
+                            (surface.window_origin.x - surface.parent_origin.x).0 as f32,
+                        )?;
+                        visual.SetOffsetY2(
+                            (surface.window_origin.y - surface.parent_origin.y).0 as f32,
+                        )?;
+                    }
+                }
+                PlatformCompositionSurfaceContent::Native(platform_surface)
+                | PlatformCompositionSurfaceContent::ExternalGpu(platform_surface) => {
+                    platform_surface.set_parent_origin(surface.parent_origin)?;
+                }
+            }
+        }
         unsafe {
             self.root_visual.RemoveAllVisuals()?;
             for (_, visual) in &visuals {
@@ -1225,46 +1337,84 @@ impl DirectComposition {
     }
 }
 
-impl PlatformNativeSurface for DirectCompositionPortal {
+impl PlatformSurfaceAttachment for DirectCompositionPortal {
     fn set_bounds(&self, bounds: Bounds<DevicePixels>) -> Result<()> {
-        let x = bounds.origin.x.0 as f32;
-        let y = bounds.origin.y.0 as f32;
+        let state = self.state.borrow();
+        let parent_origin = state.parent_origin.get();
+        let x = (bounds.origin.x - parent_origin.x).0 as f32;
+        let y = (bounds.origin.y - parent_origin.y).0 as f32;
         let width = bounds.size.width.0.max(0) as f32;
         let height = bounds.size.height.0.max(0) as f32;
         unsafe {
-            self.visual.SetOffsetX2(x)?;
-            self.visual.SetOffsetY2(y)?;
-            self.clip.SetLeft2(0.0)?;
-            self.clip.SetTop2(0.0)?;
-            self.clip.SetRight2(width)?;
-            self.clip.SetBottom2(height)?;
-            self.comp_device.Commit()?;
+            state.visual.SetOffsetX2(x)?;
+            state.visual.SetOffsetY2(y)?;
+            state.clip.SetLeft2(0.0)?;
+            state.clip.SetTop2(0.0)?;
+            state.clip.SetRight2(width)?;
+            state.clip.SetBottom2(height)?;
+            state.comp_device.Commit()?;
+        }
+        state.bounds.set(bounds);
+        Ok(())
+    }
+
+    fn bounds(&self) -> Bounds<DevicePixels> {
+        self.state.borrow().bounds.get()
+    }
+
+    fn set_parent_origin(&self, origin: Point<DevicePixels>) -> Result<()> {
+        let bounds = {
+            let state = self.state.borrow();
+            state.parent_origin.set(origin);
+            state.bounds.get()
+        };
+        self.set_bounds(bounds)
+    }
+
+    fn set_visible(&self, visible: bool) -> Result<()> {
+        let state = self.state.borrow();
+        if state.visible.get() != visible {
+            unsafe {
+                state.visual.SetOpacity2(if visible { 1.0 } else { 0.0 })?;
+                state.comp_device.Commit()?;
+            }
+            state.visible.set(visible);
         }
         Ok(())
     }
 
-    fn set_visible(&self, visible: bool) -> Result<()> {
-        if self.visible.get() != visible {
-            unsafe {
-                self.visual.SetOpacity2(if visible { 1.0 } else { 0.0 })?;
-                self.comp_device.Commit()?;
-            }
-            self.visible.set(visible);
+    fn compositor_recreated(&self, _platform_context: &dyn std::any::Any) -> Result<()> {
+        let callback = self
+            .state
+            .borrow()
+            .compositor_recreated_callback
+            .borrow()
+            .clone();
+        if let Some(callback) = callback {
+            callback(self.platform_handle()?)?;
         }
+        Ok(())
+    }
+
+    fn set_compositor_recreated_callback(
+        &self,
+        callback: Rc<dyn Fn(Box<dyn std::any::Any>) -> Result<()>>,
+    ) -> Result<()> {
+        *self
+            .state
+            .borrow()
+            .compositor_recreated_callback
+            .borrow_mut() = Some(callback);
         Ok(())
     }
 
     fn platform_handle(&self) -> Result<Box<dyn std::any::Any>> {
-        Ok(Box::new(self.visual.cast::<windows::core::IUnknown>()?))
-    }
-}
-
-impl Drop for DirectCompositionPortal {
-    fn drop(&mut self) {
-        unsafe {
-            self.container.RemoveVisual(&self.visual).ok();
-            self.comp_device.Commit().ok();
-        }
+        Ok(Box::new(
+            self.state
+                .borrow()
+                .visual
+                .cast::<windows::core::IUnknown>()?,
+        ))
     }
 }
 

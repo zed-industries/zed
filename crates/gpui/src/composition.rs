@@ -326,11 +326,13 @@ mod tests {
 
         let layers = composed_scene_layers(&tree, &starts, 10).unwrap();
 
-        assert_eq!(layers.len(), 2);
-        assert_eq!(layers[0].surface, base);
-        assert_eq!(layers[0].ranges, [0..4, 7..10]);
-        assert_eq!(layers[1].surface, overlay);
-        assert_eq!(layers[1].ranges, [4..7]);
+        let [base_layer, overlay_layer] = layers.as_slice() else {
+            panic!("expected base and overlay scene layers");
+        };
+        assert_eq!(base_layer.surface, base);
+        assert_eq!(base_layer.ranges, [0..4, 7..10]);
+        assert_eq!(overlay_layer.surface, overlay);
+        assert_eq!(overlay_layer.ranges, [4..7]);
         assert_eq!(tree.kind(native).unwrap(), CompositionSurfaceKind::Native);
     }
 

@@ -164,6 +164,65 @@ impl Scene {
         }
     }
 
+    /// Replays a range as a self-contained scene, restoring any layers that
+    /// were active at the start of the range and closing those still active at
+    /// its end.
+    pub fn replay_balanced(
+        &mut self,
+        range: Range<usize>,
+        previous_scene: &Scene,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            range.start <= range.end,
+            "scene replay range starts after its end"
+        );
+        let prefix = previous_scene
+            .paint_operations
+            .get(..range.start)
+            .ok_or_else(|| anyhow::anyhow!("scene replay range starts past the scene"))?;
+        let operations = previous_scene
+            .paint_operations
+            .get(range)
+            .ok_or_else(|| anyhow::anyhow!("scene replay range ends past the scene"))?;
+        let mut active_layers = Vec::new();
+        for operation in prefix {
+            match operation {
+                PaintOperation::StartLayer(bounds) => active_layers.push(*bounds),
+                PaintOperation::EndLayer => {
+                    anyhow::ensure!(
+                        active_layers.pop().is_some(),
+                        "source scene closes a layer that is not open"
+                    );
+                }
+                PaintOperation::Primitive(_) => {}
+            }
+        }
+
+        for bounds in &active_layers {
+            self.push_layer(*bounds);
+        }
+        for operation in operations {
+            match operation {
+                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
+                PaintOperation::StartLayer(bounds) => {
+                    active_layers.push(*bounds);
+                    self.push_layer(*bounds);
+                }
+                PaintOperation::EndLayer => {
+                    anyhow::ensure!(
+                        active_layers.pop().is_some(),
+                        "scene replay range closes a layer that is not open"
+                    );
+                    self.pop_layer();
+                }
+            }
+        }
+        for _ in active_layers {
+            self.pop_layer();
+        }
+        Ok(())
+    }
+
     pub fn finish(&mut self) {
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
@@ -266,6 +325,63 @@ mod tests {
         replayed.replay(0..source.len(), &source);
 
         assert!(replayed.is_empty());
+    }
+
+    #[test]
+    fn balanced_replay_restores_layers_crossing_the_range_boundary() {
+        let mut source = Scene::default();
+        let outer_bounds = Bounds {
+            origin: Point::default(),
+            size: Size {
+                width: ScaledPixels::from(100.),
+                height: ScaledPixels::from(100.),
+            },
+        };
+        let inner_bounds = Bounds {
+            origin: Point::default(),
+            size: Size {
+                width: ScaledPixels::from(50.),
+                height: ScaledPixels::from(50.),
+            },
+        };
+        source.push_layer(outer_bounds);
+        source.push_layer(inner_bounds);
+        source.insert_primitive(Quad {
+            bounds: inner_bounds,
+            content_mask: ContentMask {
+                bounds: inner_bounds,
+            },
+            ..Default::default()
+        });
+        source.pop_layer();
+        source.pop_layer();
+
+        let mut replayed = Scene::default();
+        assert!(replayed.replay_balanced(2..3, &source).is_ok());
+
+        assert_eq!(replayed.layer_stack.len(), 0);
+        assert_eq!(replayed.paint_operations.len(), 5);
+        assert!(matches!(
+            replayed.paint_operations.as_slice(),
+            [
+                PaintOperation::StartLayer(_),
+                PaintOperation::StartLayer(_),
+                PaintOperation::Primitive(_),
+                PaintOperation::EndLayer,
+                PaintOperation::EndLayer
+            ]
+        ));
+    }
+
+    #[test]
+    fn balanced_replay_rejects_invalid_ranges() {
+        let source = Scene::default();
+        let mut replayed = Scene::default();
+        let start = 1;
+        let end = 0;
+
+        assert!(replayed.replay_balanced(start..end, &source).is_err());
+        assert!(replayed.replay_balanced(0..1, &source).is_err());
     }
 }
 

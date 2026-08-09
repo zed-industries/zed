@@ -13,10 +13,10 @@ mod macos {
         foundation::{NSPoint, NSRect, NSSize, NSString},
     };
     use gpui::{
-        App, Bounds, Context, Div, Element, ElementId, GlobalElementId, IntoElement, LayoutId,
-        MouseButton, Pixels, Stateful, Style, Window, WindowBounds, WindowComposition,
-        WindowCompositionSurface, WindowOptions, deferred, div, prelude::*, px, relative, rgb,
-        size,
+        App, Bounds, Context, Div, Element, ElementId, Entity, GlobalElementId, IntoElement,
+        LayoutId, MouseButton, Pixels, SharedString, Stateful, Style, Window, WindowBounds,
+        WindowComposition, WindowCompositionSurface, WindowOptions, deferred, div, prelude::*, px,
+        relative, rgb, size,
     };
     use gpui_platform::application;
     use objc::{class, msg_send, sel, sel_impl};
@@ -26,6 +26,27 @@ mod macos {
     unsafe extern "C" {}
 
     const PAGE: &str = include_str!("native_webview.html");
+
+    enum NativeWebViewRoot {
+        Ready(Entity<NativeWebViewExample>),
+        Error(SharedString),
+    }
+
+    impl Render for NativeWebViewRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            match self {
+                NativeWebViewRoot::Ready(example) => div().size_full().child(example.clone()),
+                NativeWebViewRoot::Error(error) => div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(rgb(0x18191b))
+                    .text_color(rgb(0xff6b6b))
+                    .child(error.clone()),
+            }
+        }
+    }
 
     struct NativeWebView {
         gpui_view: id,
@@ -637,25 +658,39 @@ mod macos {
     pub fn run() {
         application().run(|cx: &mut App| {
             let bounds = Bounds::centered(None, size(px(900.), px(640.)), cx);
-            cx.open_window(
+            let result = cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| {
-                    let composition = window.enable_window_composition().unwrap();
-                    let webview = Rc::new(NativeWebView::new(window, &composition).unwrap());
-
-                    cx.new(|_| NativeWebViewExample {
-                        webview,
-                        about_active: false,
-                        dialog_open: false,
-                        menu_open: false,
-                        popover_open: false,
-                    })
+                |window: &mut Window, cx: &mut App| {
+                    let webview = window.enable_window_composition().and_then(|composition| {
+                        NativeWebView::new(window, &composition).map(Rc::new)
+                    });
+                    match webview {
+                        Ok(webview) => {
+                            let example = cx.new(|_| NativeWebViewExample {
+                                webview,
+                                about_active: false,
+                                dialog_open: false,
+                                menu_open: false,
+                                popover_open: false,
+                            });
+                            cx.new(|_| NativeWebViewRoot::Ready(example))
+                        }
+                        Err(error) => cx.new(|_| {
+                            NativeWebViewRoot::Error(
+                                format!("Failed to initialize native WebView: {error:#}").into(),
+                            )
+                        }),
+                    }
                 },
-            )
-            .unwrap();
+            );
+            if let Err(error) = result {
+                eprintln!("failed to open native WebView example: {error:#}");
+                cx.quit();
+                return;
+            }
             cx.activate(true);
         });
     }

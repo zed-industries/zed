@@ -1008,7 +1008,7 @@ impl PlatformWindow for WindowsWindow {
         self.state.renderer.borrow_mut().enable_window_composition()
     }
 
-    fn create_native_surface(&self) -> anyhow::Result<Rc<dyn PlatformNativeSurface>> {
+    fn create_native_surface(&self) -> anyhow::Result<Rc<dyn PlatformSurfaceAttachment>> {
         self.state.renderer.borrow_mut().create_native_surface()
     }
 

@@ -1074,9 +1074,11 @@ enum InputModality {
 
 struct WindowCompositionState {
     tree: crate::CompositionTree,
-    platform_surfaces: FxHashMap<crate::CompositionSurfaceId, Rc<dyn crate::PlatformNativeSurface>>,
+    platform_surfaces:
+        FxHashMap<crate::CompositionSurfaceId, Rc<dyn crate::PlatformSurfaceAttachment>>,
     base_surface: crate::CompositionSurfaceId,
     overlay_surface: crate::CompositionSurfaceId,
+    geometry_dirty: Rc<Cell<bool>>,
 }
 
 impl WindowCompositionState {
@@ -1089,13 +1091,57 @@ impl WindowCompositionState {
             platform_surfaces: FxHashMap::default(),
             base_surface,
             overlay_surface,
+            geometry_dirty: Rc::new(Cell::new(false)),
         })
+    }
+}
+
+struct ManagedPlatformSurface {
+    platform_surface: Rc<dyn crate::PlatformSurfaceAttachment>,
+    bounds: Cell<Bounds<DevicePixels>>,
+    geometry_dirty: Rc<Cell<bool>>,
+}
+
+impl crate::PlatformSurfaceAttachment for ManagedPlatformSurface {
+    fn set_bounds(&self, bounds: Bounds<DevicePixels>) -> anyhow::Result<()> {
+        self.platform_surface.set_bounds(bounds)?;
+        self.bounds.set(bounds);
+        self.geometry_dirty.set(true);
+        Ok(())
+    }
+
+    fn bounds(&self) -> Bounds<DevicePixels> {
+        self.bounds.get()
+    }
+
+    fn set_parent_origin(&self, origin: Point<DevicePixels>) -> anyhow::Result<()> {
+        self.platform_surface.set_parent_origin(origin)
+    }
+
+    fn compositor_recreated(&self, platform_context: &dyn Any) -> anyhow::Result<()> {
+        self.platform_surface.compositor_recreated(platform_context)
+    }
+
+    fn set_compositor_recreated_callback(
+        &self,
+        callback: Rc<dyn Fn(Box<dyn Any>) -> anyhow::Result<()>>,
+    ) -> anyhow::Result<()> {
+        self.platform_surface
+            .set_compositor_recreated_callback(callback)
+    }
+
+    fn set_visible(&self, visible: bool) -> anyhow::Result<()> {
+        self.platform_surface.set_visible(visible)
+    }
+
+    fn platform_handle(&self) -> anyhow::Result<Box<dyn Any>> {
+        self.platform_surface.platform_handle()
     }
 }
 
 struct WindowCompositionSurfaceInner {
     id: crate::CompositionSurfaceId,
-    platform_surface: Option<Rc<dyn crate::PlatformNativeSurface>>,
+    platform_surface: Option<Rc<dyn crate::PlatformSurfaceAttachment>>,
 }
 
 /// A stable handle to a surface in a window composition tree.
@@ -1109,7 +1155,7 @@ impl WindowCompositionSurface {
     }
 
     /// Returns the platform surface used to attach native content.
-    pub fn platform_surface(&self) -> anyhow::Result<&dyn crate::PlatformNativeSurface> {
+    pub fn platform_surface(&self) -> anyhow::Result<&dyn crate::PlatformSurfaceAttachment> {
         self.0
             .platform_surface
             .as_deref()
@@ -1139,9 +1185,20 @@ impl WindowComposition<'_> {
         self.create_platform_surface(crate::CompositionSurfaceKind::Native, None)
     }
 
-    /// Creates an external GPU surface as a root of the composition tree.
-    pub fn create_external_gpu_surface(&self) -> anyhow::Result<WindowCompositionSurface> {
-        self.create_platform_surface(crate::CompositionSurfaceKind::ExternalGpu, None)
+    /// Registers an externally produced GPU surface as a root of the
+    /// composition tree.
+    ///
+    /// The producer owns the platform attachment and its synchronization. GPUI
+    /// owns its placement in the window composition tree.
+    pub fn create_external_gpu_surface(
+        &self,
+        platform_surface: Rc<dyn crate::PlatformSurfaceAttachment>,
+    ) -> anyhow::Result<WindowCompositionSurface> {
+        self.register_platform_surface(
+            crate::CompositionSurfaceKind::ExternalGpu,
+            None,
+            platform_surface,
+        )
     }
 
     /// Creates another GPUI-rendered surface in the composition tree.
@@ -1283,6 +1340,23 @@ impl WindowComposition<'_> {
         parent: Option<crate::CompositionSurfaceId>,
     ) -> anyhow::Result<WindowCompositionSurface> {
         let platform_surface = self.platform_window.create_native_surface()?;
+        self.register_platform_surface(kind, parent, platform_surface)
+    }
+
+    fn register_platform_surface(
+        &self,
+        kind: crate::CompositionSurfaceKind,
+        parent: Option<crate::CompositionSurfaceId>,
+        platform_surface: Rc<dyn crate::PlatformSurfaceAttachment>,
+    ) -> anyhow::Result<WindowCompositionSurface> {
+        let initial_bounds = platform_surface.bounds();
+        let geometry_dirty = self.state.borrow().geometry_dirty.clone();
+        let platform_surface: Rc<dyn crate::PlatformSurfaceAttachment> =
+            Rc::new(ManagedPlatformSurface {
+                platform_surface,
+                bounds: Cell::new(initial_bounds),
+                geometry_dirty,
+            });
         let mut state = self.state.borrow_mut();
         let id = state.tree.insert(kind, parent)?;
         if parent.is_none() {
@@ -1306,7 +1380,7 @@ impl WindowComposition<'_> {
     fn surface_handle(
         &self,
         id: crate::CompositionSurfaceId,
-        platform_surface: Option<Rc<dyn crate::PlatformNativeSurface>>,
+        platform_surface: Option<Rc<dyn crate::PlatformSurfaceAttachment>>,
     ) -> WindowCompositionSurface {
         WindowCompositionSurface(Rc::new(WindowCompositionSurfaceInner {
             id,
@@ -1316,24 +1390,63 @@ impl WindowComposition<'_> {
 
     fn synchronize_platform_order(&self) -> anyhow::Result<()> {
         let state = self.state.borrow();
-        let surfaces = state
-            .tree
-            .flattened()
-            .into_iter()
-            .map(|id| {
-                Ok(crate::PlatformCompositionSurface {
-                    id,
-                    parent: state.tree.parent(id)?,
-                    content: state.platform_surfaces.get(&id).map_or(
-                        crate::PlatformCompositionSurfaceContent::Gpui,
-                        |surface| {
-                            crate::PlatformCompositionSurfaceContent::Platform(surface.clone())
-                        },
-                    ),
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        self.platform_window.set_composition_order(&surfaces)
+        let mut origins = FxHashMap::default();
+        let mut surfaces = Vec::new();
+        for id in state.tree.flattened() {
+            let parent = state.tree.parent(id)?;
+            let parent_origin = parent
+                .and_then(|parent| origins.get(&parent).copied())
+                .unwrap_or_default();
+            let content = match state.tree.kind(id)? {
+                crate::CompositionSurfaceKind::Gpui => {
+                    crate::PlatformCompositionSurfaceContent::Gpui
+                }
+                crate::CompositionSurfaceKind::Native => {
+                    crate::PlatformCompositionSurfaceContent::Native(
+                        state
+                            .platform_surfaces
+                            .get(&id)
+                            .context("native composition surface is missing")?
+                            .clone(),
+                    )
+                }
+                crate::CompositionSurfaceKind::ExternalGpu => {
+                    crate::PlatformCompositionSurfaceContent::ExternalGpu(
+                        state
+                            .platform_surfaces
+                            .get(&id)
+                            .context("external GPU composition surface is missing")?
+                            .clone(),
+                    )
+                }
+            };
+            let window_origin = match &content {
+                crate::PlatformCompositionSurfaceContent::Gpui => Point::default(),
+                crate::PlatformCompositionSurfaceContent::Native(platform_surface)
+                | crate::PlatformCompositionSurfaceContent::ExternalGpu(platform_surface) => {
+                    platform_surface.bounds().origin
+                }
+            };
+            let window_bounds = match &content {
+                crate::PlatformCompositionSurfaceContent::Gpui => None,
+                crate::PlatformCompositionSurfaceContent::Native(platform_surface)
+                | crate::PlatformCompositionSurfaceContent::ExternalGpu(platform_surface) => {
+                    Some(platform_surface.bounds())
+                }
+            };
+            origins.insert(id, window_origin);
+            surfaces.push(crate::PlatformCompositionSurface {
+                id,
+                parent,
+                window_origin,
+                parent_origin,
+                window_bounds,
+                content,
+            });
+        }
+        self.platform_window.set_composition_order(&surfaces)?;
+        state.geometry_dirty.set(false);
+        Ok(())
     }
 }
 
@@ -3281,6 +3394,15 @@ impl Window {
 
     #[profiling::function]
     fn present(&mut self) {
+        if self.composition.borrow().geometry_dirty.get() {
+            let composition = WindowComposition {
+                platform_window: self.platform_window.as_ref(),
+                state: self.composition.clone(),
+            };
+            if let Err(error) = composition.synchronize_platform_order() {
+                log::error!("updating window composition geometry: {error:#}");
+            }
+        }
         let composition = self.composition.borrow();
         let layers = crate::composition::composed_scene_layers(
             &composition.tree,
@@ -7085,6 +7207,7 @@ pub fn outline(
 
 #[cfg(test)]
 mod tests {
+    use std::any::Any;
     use std::{
         cell::{Cell, RefCell},
         path::PathBuf,
@@ -7092,12 +7215,76 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty,
+        AnyWindowHandle, AppContext as _, Bounds, Context, DevicePixels, DragMoveEvent, Empty,
         ExternalDragPayload, FileDragPaths, FocusHandle, InputEvent as _, InteractiveElement as _,
-        IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point,
-        Render, StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
-        WindowOptions, canvas, div, point, px, size,
+        IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels,
+        PlatformSurfaceAttachment, Point, Render, StatefulInteractiveElement as _, Styled,
+        TestAppContext, Window, WindowAppearance, WindowOptions, canvas, div, point, px, size,
     };
+
+    use super::ManagedPlatformSurface;
+
+    struct TestPlatformSurface {
+        bounds: Cell<Bounds<DevicePixels>>,
+        parent_origin: Cell<Point<DevicePixels>>,
+    }
+
+    impl PlatformSurfaceAttachment for TestPlatformSurface {
+        fn set_bounds(&self, bounds: Bounds<DevicePixels>) -> anyhow::Result<()> {
+            self.bounds.set(bounds);
+            Ok(())
+        }
+
+        fn bounds(&self) -> Bounds<DevicePixels> {
+            self.bounds.get()
+        }
+
+        fn set_parent_origin(&self, origin: Point<DevicePixels>) -> anyhow::Result<()> {
+            self.parent_origin.set(origin);
+            Ok(())
+        }
+
+        fn set_visible(&self, _visible: bool) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn platform_handle(&self) -> anyhow::Result<Box<dyn Any>> {
+            Ok(Box::new(()))
+        }
+    }
+
+    #[test]
+    fn managed_composition_surface_tracks_window_geometry_changes() {
+        let platform_surface = Rc::new(TestPlatformSurface {
+            bounds: Cell::new(Bounds::default()),
+            parent_origin: Cell::new(Point::default()),
+        });
+        let geometry_dirty = Rc::new(Cell::new(false));
+        let surface = ManagedPlatformSurface {
+            platform_surface: platform_surface.clone(),
+            bounds: Cell::new(Bounds::default()),
+            geometry_dirty: geometry_dirty.clone(),
+        };
+        let bounds = Bounds {
+            origin: Point {
+                x: DevicePixels(25),
+                y: DevicePixels(40),
+            },
+            size: size(DevicePixels(300), DevicePixels(200)),
+        };
+        let parent_origin = Point {
+            x: DevicePixels(10),
+            y: DevicePixels(15),
+        };
+
+        assert!(surface.set_bounds(bounds).is_ok());
+        assert!(surface.set_parent_origin(parent_origin).is_ok());
+
+        assert_eq!(surface.bounds(), bounds);
+        assert_eq!(platform_surface.bounds.get(), bounds);
+        assert_eq!(platform_surface.parent_origin.get(), parent_origin);
+        assert!(geometry_dirty.get());
+    }
 
     struct EmptyView;
 

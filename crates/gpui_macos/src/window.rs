@@ -29,7 +29,7 @@ use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
     ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformNativeSurface,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformSurfaceAttachment,
     PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size,
     SystemWindowTab, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowKind, WindowParams, point, px, size,
@@ -326,40 +326,43 @@ unsafe fn build_classes() {
             decl.register()
         };
         OVERLAY_VIEW_CLASS = {
-            let mut decl = ClassDecl::new("GPUIOverlayView", class!(NSView)).unwrap();
-            decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
-            decl.add_ivar::<*mut c_void>(OVERLAY_INPUT_IVAR);
-            decl.add_method(
-                sel!(dealloc),
-                dealloc_overlay_view as extern "C" fn(&Object, Sel),
-            );
-            decl.add_method(
-                sel!(hitTest:),
-                overlay_hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id,
-            );
-            for selector in [
-                sel!(mouseDown:),
-                sel!(mouseUp:),
-                sel!(rightMouseDown:),
-                sel!(rightMouseUp:),
-                sel!(otherMouseDown:),
-                sel!(otherMouseUp:),
-                sel!(mouseMoved:),
-                sel!(mouseExited:),
-                sel!(mouseDragged:),
-                sel!(rightMouseDragged:),
-                sel!(otherMouseDragged:),
-                sel!(scrollWheel:),
-                sel!(magnifyWithEvent:),
-                sel!(swipeWithEvent:),
-                sel!(pressureChangeWithEvent:),
-            ] {
+            if let Some(mut decl) = ClassDecl::new("GPUIOverlayView", class!(NSView)) {
+                decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
+                decl.add_ivar::<*mut c_void>(OVERLAY_INPUT_IVAR);
                 decl.add_method(
-                    selector,
-                    handle_overlay_event as extern "C" fn(&Object, Sel, id),
+                    sel!(dealloc),
+                    dealloc_overlay_view as extern "C" fn(&Object, Sel),
                 );
+                decl.add_method(
+                    sel!(hitTest:),
+                    overlay_hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id,
+                );
+                for selector in [
+                    sel!(mouseDown:),
+                    sel!(mouseUp:),
+                    sel!(rightMouseDown:),
+                    sel!(rightMouseUp:),
+                    sel!(otherMouseDown:),
+                    sel!(otherMouseUp:),
+                    sel!(mouseMoved:),
+                    sel!(mouseExited:),
+                    sel!(mouseDragged:),
+                    sel!(rightMouseDragged:),
+                    sel!(otherMouseDragged:),
+                    sel!(scrollWheel:),
+                    sel!(magnifyWithEvent:),
+                    sel!(swipeWithEvent:),
+                    sel!(pressureChangeWithEvent:),
+                ] {
+                    decl.add_method(
+                        selector,
+                        handle_overlay_event as extern "C" fn(&Object, Sel, id),
+                    );
+                }
+                decl.register()
+            } else {
+                Class::get("GPUIOverlayView").map_or(ptr::null(), |class| class)
             }
-            decl.register()
         };
         BLURRED_VIEW_CLASS = {
             let mut decl = ClassDecl::new("BlurredView", class!(NSVisualEffectView)).unwrap();
@@ -888,10 +891,12 @@ pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 struct MacNativeSurface {
     window_state: Weak<Mutex<MacWindowState>>,
     view: NonNull<Object>,
+    bounds: Cell<Bounds<gpui::DevicePixels>>,
 }
 
-impl PlatformNativeSurface for MacNativeSurface {
+impl PlatformSurfaceAttachment for MacNativeSurface {
     fn set_bounds(&self, bounds: Bounds<gpui::DevicePixels>) -> anyhow::Result<()> {
+        let device_bounds = bounds;
         let window_state = self
             .window_state
             .upgrade()
@@ -905,19 +910,33 @@ impl PlatformNativeSurface for MacNativeSurface {
             } else {
                 parent
             };
-            let parent_bounds = NSView::bounds(parent);
-            let frame = NSRect::new(
+            let window_bounds = NSView::bounds(window_state.native_view.as_ptr());
+            let window_frame = NSRect::new(
                 NSPoint::new(
                     f64::from(bounds.origin.x),
-                    parent_bounds.size.height
+                    window_bounds.size.height
                         - f64::from(bounds.origin.y)
                         - f64::from(bounds.size.height),
                 ),
                 NSSize::new(f64::from(bounds.size.width), f64::from(bounds.size.height)),
             );
+            let frame: NSRect = msg_send![
+                window_state.native_view.as_ptr(),
+                convertRect: window_frame
+                toView: parent
+            ];
             let _: () = msg_send![self.view.as_ptr(), setFrame: frame];
         }
+        self.bounds.set(device_bounds);
         Ok(())
+    }
+
+    fn bounds(&self) -> Bounds<gpui::DevicePixels> {
+        self.bounds.get()
+    }
+
+    fn set_parent_origin(&self, _origin: Point<gpui::DevicePixels>) -> anyhow::Result<()> {
+        self.set_bounds(self.bounds.get())
     }
 
     fn set_visible(&self, visible: bool) -> anyhow::Result<()> {
@@ -1951,7 +1970,10 @@ impl PlatformWindow for MacWindow {
         for layer in scene.layers() {
             let mut surface_scene = gpui::Scene::default();
             for range in &layer.ranges {
-                surface_scene.replay(range.clone(), scene.scene());
+                if let Err(error) = surface_scene.replay_balanced(range.clone(), scene.scene()) {
+                    log::error!("replaying AppKit composition scene: {error:#}");
+                    return;
+                }
             }
             surface_scene.finish();
             if this.base_composition_surface == Some(layer.surface) {
@@ -1974,7 +1996,7 @@ impl PlatformWindow for MacWindow {
         Ok(())
     }
 
-    fn create_native_surface(&self) -> anyhow::Result<Rc<dyn PlatformNativeSurface>> {
+    fn create_native_surface(&self) -> anyhow::Result<Rc<dyn PlatformSurfaceAttachment>> {
         self.enable_window_composition()?;
         let this = self.0.lock();
         let parent = this.native_view;
@@ -1994,6 +2016,7 @@ impl PlatformWindow for MacWindow {
             Ok(Rc::new(MacNativeSurface {
                 window_state: Arc::downgrade(&self.0),
                 view: NonNull::new(view).context("native surface container is null")?,
+                bounds: Cell::new(Bounds::default()),
             }))
         }
     }
@@ -2005,7 +2028,8 @@ impl PlatformWindow for MacWindow {
         let mut this = self.0.lock();
         let base_surface = surfaces.iter().find_map(|surface| match surface.content {
             gpui::PlatformCompositionSurfaceContent::Gpui => Some(surface.id),
-            gpui::PlatformCompositionSurfaceContent::Platform(_) => None,
+            gpui::PlatformCompositionSurfaceContent::Native(_)
+            | gpui::PlatformCompositionSurfaceContent::ExternalGpu(_) => None,
         });
         let base_surface = base_surface.context("composition has no GPUI base surface")?;
         this.base_composition_surface = Some(base_surface);
@@ -2055,7 +2079,8 @@ impl PlatformWindow for MacWindow {
                     .gpui_composition_surfaces
                     .get(&surface.id)
                     .map(|gpui_surface| Ok((surface.id, gpui_surface.view.as_ptr() as id))),
-                gpui::PlatformCompositionSurfaceContent::Platform(platform_surface) => {
+                gpui::PlatformCompositionSurfaceContent::Native(platform_surface)
+                | gpui::PlatformCompositionSurfaceContent::ExternalGpu(platform_surface) => {
                     Some(platform_surface.platform_handle().and_then(|handle| {
                         handle
                             .downcast::<usize>()
@@ -2071,6 +2096,7 @@ impl PlatformWindow for MacWindow {
         let views_by_id = views.iter().copied().collect::<FxHashMap<_, _>>();
 
         unsafe {
+            let native_view = this.native_view.as_ptr() as id;
             for (_, view) in &views {
                 NSView::removeFromSuperview(*view);
             }
@@ -2081,14 +2107,27 @@ impl PlatformWindow for MacWindow {
                 let parent = surface
                     .parent
                     .and_then(|parent| views_by_id.get(&parent).copied())
-                    .unwrap_or(this.native_view.as_ptr());
+                    .unwrap_or(native_view);
                 parent.addSubview_(view);
-                if matches!(
-                    surface.content,
-                    gpui::PlatformCompositionSurfaceContent::Gpui
-                ) {
-                    let _: () = msg_send![view, setFrame: NSView::bounds(parent)];
-                }
+                let window_frame = if let Some(bounds) = surface.window_bounds {
+                    let scale_factor = this.scale_factor();
+                    let bounds = bounds.map(|value| px(value.0 as f32 / scale_factor));
+                    let window_bounds = NSView::bounds(native_view);
+                    NSRect::new(
+                        NSPoint::new(
+                            f64::from(bounds.origin.x),
+                            window_bounds.size.height
+                                - f64::from(bounds.origin.y)
+                                - f64::from(bounds.size.height),
+                        ),
+                        NSSize::new(f64::from(bounds.size.width), f64::from(bounds.size.height)),
+                    )
+                } else {
+                    NSView::bounds(native_view)
+                };
+                let frame: NSRect =
+                    msg_send![native_view, convertRect: window_frame toView: parent];
+                let _: () = msg_send![view, setFrame: frame];
             }
         }
         Ok(())

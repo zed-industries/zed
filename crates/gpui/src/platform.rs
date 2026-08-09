@@ -72,11 +72,29 @@ use std::{
     sync::Arc,
 };
 
-/// A platform-native surface inserted between GPUI's base and overlay scene
-/// planes.
-pub trait PlatformNativeSurface {
-    /// Updates the native surface geometry in device pixels.
+/// A platform attachment participating in a window composition tree.
+pub trait PlatformSurfaceAttachment {
+    /// Updates the native surface geometry in window-content device pixels.
     fn set_bounds(&self, bounds: Bounds<DevicePixels>) -> Result<()>;
+    /// Returns the native surface geometry in window-content device pixels.
+    fn bounds(&self) -> Bounds<DevicePixels>;
+    /// Updates the window-content origin of the surface's composition parent.
+    /// Platform adapters use this to preserve window-coordinate geometry when
+    /// a surface is nested.
+    fn set_parent_origin(&self, origin: Point<DevicePixels>) -> Result<()>;
+    /// Rebinds externally owned content after the platform compositor has been
+    /// recreated. Native surfaces managed by GPUI may use the default no-op.
+    fn compositor_recreated(&self, _platform_context: &dyn Any) -> Result<()> {
+        Ok(())
+    }
+    /// Registers a callback that reattaches native content when the platform
+    /// attachment object changes after compositor recovery.
+    fn set_compositor_recreated_callback(
+        &self,
+        _callback: Rc<dyn Fn(Box<dyn Any>) -> Result<()>>,
+    ) -> Result<()> {
+        anyhow::bail!("compositor recreation callbacks are not supported")
+    }
     /// Updates whether the native surface participates in composition.
     fn set_visible(&self, visible: bool) -> Result<()>;
     /// Returns the platform attachment object, such as an
@@ -122,6 +140,14 @@ pub struct PlatformCompositionSurface {
     pub id: crate::CompositionSurfaceId,
     /// Parent surface, or `None` for a root surface.
     pub parent: Option<crate::CompositionSurfaceId>,
+    /// This surface's origin in window-content device pixels. GPUI surfaces
+    /// use the window origin because their backing scenes remain window-based.
+    pub window_origin: Point<DevicePixels>,
+    /// The parent surface's origin in window-content device pixels.
+    pub parent_origin: Point<DevicePixels>,
+    /// Native or external surface bounds in window-content device pixels.
+    /// GPUI surfaces use the full window and therefore have no explicit bounds.
+    pub window_bounds: Option<Bounds<DevicePixels>>,
     /// Renderer or attachment supplying this surface's content.
     pub content: PlatformCompositionSurfaceContent,
 }
@@ -131,8 +157,10 @@ pub struct PlatformCompositionSurface {
 pub enum PlatformCompositionSurfaceContent {
     /// A surface rendered by GPUI.
     Gpui,
-    /// A native or external GPU surface supplied by a platform adapter.
-    Platform(Rc<dyn PlatformNativeSurface>),
+    /// A surface backed by a platform-native view or visual.
+    Native(Rc<dyn PlatformSurfaceAttachment>),
+    /// A surface backed by an external GPU producer.
+    ExternalGpu(Rc<dyn PlatformSurfaceAttachment>),
 }
 use strum::EnumIter;
 use uuid::Uuid;
@@ -923,7 +951,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         anyhow::bail!("window composition is not supported on this platform")
     }
     /// Creates a platform surface slot for native or external GPU content.
-    fn create_native_surface(&self) -> Result<Rc<dyn PlatformNativeSurface>> {
+    fn create_native_surface(&self) -> Result<Rc<dyn PlatformSurfaceAttachment>> {
         anyhow::bail!("native surface portals are not supported on this platform")
     }
     /// Applies the parent relationships and bottom-to-top sibling order of the
