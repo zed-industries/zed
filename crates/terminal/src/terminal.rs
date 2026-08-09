@@ -2700,6 +2700,14 @@ impl Terminal {
                 self.write_to_pty(bytes);
             }
         } else {
+            if e.button == MouseButton::Left
+                && let Some(mouse_down_position) = self.mouse_down_position
+                && (e.position - mouse_down_position).magnitude() > SELECTION_DRAG_THRESHOLD
+            {
+                self.events
+                    .push_back(InternalEvent::UpdateSelection(position));
+            }
+
             if e.button == MouseButton::Left && setting.copy_on_select {
                 self.copy(Some(true));
             }
@@ -3919,6 +3927,33 @@ mod tests {
                 "a deliberate drag should start a selection"
             );
             assert!(terminal.selection_phase == SelectionPhase::Selecting);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_terminal_mouse_up_finishes_drag_without_mouse_move(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"hello world\r\n");
+
+        cx.update_global(|store: &mut settings::SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().copy_on_select = Some(true);
+            });
+        });
+
+        terminal.update(cx, |terminal, cx| {
+            left_mouse_down_at(terminal, point(px(50.0), px(10.0)), cx);
+            terminal.events.clear();
+
+            left_mouse_up_at(terminal, point(px(90.0), px(10.0)), cx);
+
+            assert!(matches!(
+                terminal.events.front(),
+                Some(InternalEvent::UpdateSelection(_))
+            ));
+            assert!(matches!(
+                terminal.events.get(1),
+                Some(InternalEvent::Copy(Some(true)))
+            ));
         });
     }
 
