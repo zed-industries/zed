@@ -5,6 +5,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use util::command::new_command;
+
 /// Command specification for spawning a subprocess.
 /// Pure data structure — no I/O, no execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -298,6 +300,250 @@ pub fn parse_cargo_package_name(cargo_toml_content: &str) -> anyhow::Result<Stri
 
     let parsed: CargoToml = toml::from_str(cargo_toml_content)?;
     Ok(parsed.package.name)
+}
+
+/// One stage of the build/flash pipeline. Identifies which `CommandSpec`
+/// failed when reporting a `BuildError`, so a toast can name the failing
+/// step instead of just dumping raw stderr.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildStep {
+    Preflight,
+    CoreCompile,
+    CoreArchive,
+    SketchCompile,
+    RustBuild,
+    ParseCrateName,
+    Link,
+    Objcopy,
+    Flash,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildError {
+    pub step: BuildStep,
+    pub message: String,
+}
+
+impl std::fmt::Display for BuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} failed: {}", self.step, self.message)
+    }
+}
+
+impl std::error::Error for BuildError {}
+
+/// Spawns `spec` as a subprocess and maps a non-zero exit (or a spawn
+/// failure) to a `BuildError` tagged with `step`, capturing stderr so the
+/// caller can surface a meaningful message instead of just "build failed".
+async fn run(step: BuildStep, spec: &CommandSpec) -> Result<(), BuildError> {
+    let mut command = new_command(spec.program);
+    command.args(&spec.args);
+    command.envs(&spec.env);
+    if let Some(current_dir) = &spec.current_dir {
+        command.current_dir(current_dir);
+    }
+
+    let output = command.output().await.map_err(|error| BuildError {
+        step,
+        message: error.to_string(),
+    })?;
+
+    if !output.status.success() {
+        return Err(BuildError {
+            step,
+            message: String::from_utf8_lossy(&output.stderr).into_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Checks that every binary the pipeline shells out to is on `PATH`, so a
+/// missing toolchain fails fast with the names of what's missing instead of
+/// surfacing as an opaque "command not found" from whichever step happens to
+/// run first.
+pub async fn check_toolchain_available() -> Result<(), Vec<&'static str>> {
+    const REQUIRED: &[&str] = &["avr-gcc", "avr-g++", "avr-ar", "avr-objcopy", "avrdude", "cargo"];
+
+    let missing: Vec<&'static str> = REQUIRED
+        .iter()
+        .copied()
+        .filter(|binary| which::which(binary).is_err())
+        .collect();
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(missing)
+    }
+}
+
+/// Compiles every `.c`/`.cpp`/`.S` file under `<core_source_dir>/cores/arduino`
+/// into `<cache_dir>/<mmcu>/core.a` and returns the archive path. If that
+/// archive already exists, compilation is skipped entirely and the existing
+/// path is returned — ArduinoCore-avr is paid for once per `mmcu`, not once
+/// per build.
+pub async fn ensure_core_archive(
+    core_source_dir: &Path,
+    cache_dir: &Path,
+    mmcu: &str,
+) -> Result<PathBuf, BuildError> {
+    let archive_path = cache_dir.join(mmcu).join("core.a");
+    if archive_path.exists() {
+        return Ok(archive_path);
+    }
+
+    let core_dir = core_source_dir.join("cores").join("arduino");
+    let variant_dir = core_source_dir.join("variants").join("standard");
+    let object_dir = cache_dir.join(mmcu).join("core");
+
+    std::fs::create_dir_all(&object_dir).map_err(|error| BuildError {
+        step: BuildStep::CoreCompile,
+        message: format!(
+            "failed to create core object directory {}: {error}",
+            object_dir.display()
+        ),
+    })?;
+
+    let entries = std::fs::read_dir(&core_dir).map_err(|error| BuildError {
+        step: BuildStep::CoreCompile,
+        message: format!(
+            "failed to read core source directory {}: {error}",
+            core_dir.display()
+        ),
+    })?;
+
+    let mut object_paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| BuildError {
+            step: BuildStep::CoreCompile,
+            message: error.to_string(),
+        })?;
+        let source_path = entry.path();
+        let is_compilable_source = matches!(
+            source_path.extension().and_then(|ext| ext.to_str()),
+            Some("c") | Some("cpp") | Some("S")
+        );
+        if !is_compilable_source {
+            continue;
+        }
+
+        let file_name = source_path.file_name().ok_or_else(|| BuildError {
+            step: BuildStep::CoreCompile,
+            message: format!("core source file has no file name: {}", source_path.display()),
+        })?;
+        let object_path = object_dir.join(format!("{}.o", file_name.to_string_lossy()));
+
+        let spec = core_object_compile_args(&source_path, &object_path, mmcu, &core_dir, &variant_dir)
+            .map_err(|error| BuildError {
+                step: BuildStep::CoreCompile,
+                message: error.to_string(),
+            })?;
+        run(BuildStep::CoreCompile, &spec).await?;
+
+        object_paths.push(object_path);
+    }
+
+    if object_paths.is_empty() {
+        return Err(BuildError {
+            step: BuildStep::CoreCompile,
+            message: format!(
+                "no compilable core source files found under {}",
+                core_dir.display()
+            ),
+        });
+    }
+
+    let archive_spec = core_archive_args(&archive_path, &object_paths);
+    run(BuildStep::CoreArchive, &archive_spec).await?;
+
+    Ok(archive_path)
+}
+
+/// Everything the pipeline needs to build and flash one project onto one
+/// connected board.
+pub struct BuildTarget {
+    pub project_root: PathBuf,
+    pub core_source_dir: PathBuf,
+    pub core_cache_dir: PathBuf,
+    pub mmcu: String,
+    pub port_name: String,
+    pub avrdude_programmer: String,
+    pub avrdude_baud: u32,
+}
+
+/// Runs the full pipeline: preflight toolchain check, core cache (compiles
+/// ArduinoCore-avr once per `mmcu` and reuses it after), sketch compile,
+/// Rust firmware build, crate-name parsing, link, objcopy, and avrdude
+/// flash. Returns the produced `.hex` path on success.
+pub async fn build_and_flash(target: BuildTarget) -> Result<PathBuf, BuildError> {
+    check_toolchain_available()
+        .await
+        .map_err(|missing_binaries| BuildError {
+            step: BuildStep::Preflight,
+            message: format!(
+                "missing required toolchain binaries on PATH: {}",
+                missing_binaries.join(", ")
+            ),
+        })?;
+
+    let core_archive = ensure_core_archive(&target.core_source_dir, &target.core_cache_dir, &target.mmcu).await?;
+
+    let core_dir = target.core_source_dir.join("cores").join("arduino");
+    let variant_dir = target.core_source_dir.join("variants").join("standard");
+
+    let build_dir = target.project_root.join("build");
+    std::fs::create_dir_all(&build_dir).map_err(|error| BuildError {
+        step: BuildStep::SketchCompile,
+        message: format!("failed to create build directory {}: {error}", build_dir.display()),
+    })?;
+
+    let sketch_path = target.project_root.join("cpp").join("io.cpp");
+    let sketch_object = build_dir.join("sketch.o");
+    let sketch_spec = sketch_compile_args(&sketch_path, &sketch_object, &target.mmcu, &core_dir, &variant_dir);
+    run(BuildStep::SketchCompile, &sketch_spec).await?;
+
+    let rust_dir = target.project_root.join("rust");
+    let rust_spec = rust_build_command(&rust_dir, &target.mmcu);
+    run(BuildStep::RustBuild, &rust_spec).await?;
+
+    let cargo_toml_path = rust_dir.join("Cargo.toml");
+    let cargo_toml_content = std::fs::read_to_string(&cargo_toml_path).map_err(|error| BuildError {
+        step: BuildStep::ParseCrateName,
+        message: format!("failed to read {}: {error}", cargo_toml_path.display()),
+    })?;
+    let crate_name =
+        parse_cargo_package_name(&cargo_toml_content).map_err(|error| BuildError {
+            step: BuildStep::ParseCrateName,
+            message: error.to_string(),
+        })?;
+
+    let rust_lib_dir = rust_dir.join("target").join("avr-none").join("release");
+    let firmware_elf = build_dir.join("firmware.elf");
+    let link_spec = link_args(
+        &firmware_elf,
+        &sketch_object,
+        &core_archive,
+        &rust_lib_dir,
+        &crate_name,
+        &target.mmcu,
+    );
+    run(BuildStep::Link, &link_spec).await?;
+
+    let firmware_hex = build_dir.join("firmware.hex");
+    let objcopy_spec = objcopy_args(&firmware_elf, &firmware_hex);
+    run(BuildStep::Objcopy, &objcopy_spec).await?;
+
+    let flash_spec = avrdude_flash_args(
+        &target.avrdude_programmer,
+        &target.mmcu,
+        &target.port_name,
+        target.avrdude_baud,
+        &firmware_hex,
+    );
+    run(BuildStep::Flash, &flash_spec).await?;
+
+    Ok(firmware_hex)
 }
 
 #[cfg(test)]

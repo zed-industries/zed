@@ -24,6 +24,7 @@ serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
 ui.workspace = true
 util.workspace = true
+which.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
