@@ -1529,16 +1529,6 @@ mod tests {
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let entry_id = project.update(cx, |project, cx| {
-            project
-                .worktree_for_id(worktree_id, cx)
-                .unwrap()
-                .read(cx)
-                .entry_for_path(rel_path("d"))
-                .unwrap()
-                .id
-        });
-
         let workspace_window =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let workspace = workspace_window.root(cx).unwrap();
@@ -1565,7 +1555,6 @@ mod tests {
             })
             .unwrap();
         cx.run_until_parked();
-        let _ = entry_id;
         choose_directory_entry_via_keystroke(&menu, "d", cx);
 
         let (_, landed) = menu
@@ -2097,15 +2086,6 @@ mod tests {
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let entry_a_id = project.update(cx, |project, cx| {
-            project
-                .worktree_for_id(worktree_id, cx)
-                .unwrap()
-                .read(cx)
-                .entry_for_path(rel_path("a"))
-                .unwrap()
-                .id
-        });
 
         let workspace_window =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -2133,7 +2113,6 @@ mod tests {
                 )
             })
             .unwrap();
-        let _ = entry_a_id;
         choose_directory_entry_via_keystroke(&menu, "a", cx);
         menu.read_with(cx, |menu, _| {
             let path = match menu.listing() {
@@ -2178,15 +2157,6 @@ mod tests {
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let entry_a_id = project.update(cx, |project, cx| {
-            project
-                .worktree_for_id(worktree_id, cx)
-                .unwrap()
-                .read(cx)
-                .entry_for_path(rel_path("a"))
-                .unwrap()
-                .id
-        });
 
         let workspace_window =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -2214,7 +2184,6 @@ mod tests {
                 )
             })
             .unwrap();
-        let _ = entry_a_id;
         choose_directory_entry_via_keystroke(&menu, "a", cx);
         menu.read_with(cx, |menu, _| {
             let path = match menu.listing() {
@@ -2370,8 +2339,6 @@ mod tests {
             .find(|entry| entry.name.as_ref() == "ignored_dir")
             .expect("gitignored dir is listed when hide_gitignore is false");
         assert!(ignored.is_ignored);
-        let ignored_id = ignored.entry_id;
-        let ignored_path = ignored.path.clone();
 
         let before = cx.update(|cx| {
             breadcrumb_directory_entries(&project, &worktree, rel_path("ignored_dir"), cx)
@@ -2406,7 +2373,6 @@ mod tests {
                 )
             })
             .unwrap();
-        let _ = (ignored_path, ignored_id);
         choose_directory_entry_via_keystroke(&menu, "ignored_dir", cx);
 
         menu.read_with(cx, |menu, _| {

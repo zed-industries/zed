@@ -621,9 +621,12 @@ async fn test_open_breadcrumb_symbols_shows_rows_after_delayed_lsp(cx: &mut Test
             .breadcrumb_navigation_menu()
             .expect("symbols menu opens while LSP is in flight");
         let menu = menu.read(cx);
-        assert!(
-            matches!(menu.listing(), BreadcrumbListing::Symbols { .. }),
-            "listing is symbols"
+        assert_eq!(
+            menu.listing(),
+            &BreadcrumbListing::Symbols {
+                buffer_id,
+                parent: None,
+            },
         );
         assert!(
             menu.entry_names().is_empty(),

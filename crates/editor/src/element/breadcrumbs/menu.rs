@@ -784,37 +784,37 @@ impl BreadcrumbNavigationMenu {
         });
     }
 
-    fn apply_symbol_parent(&mut self, parent: Option<OutlineItem<Anchor>>, cx: &mut Context<Self>) {
+    fn apply_symbol_parent(
+        &mut self,
+        mut parent: Option<OutlineItem<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
         let depths: Vec<usize> = self
             .all_symbol_items
             .iter()
             .map(|item| item.depth)
             .collect();
-        let listed_indices = if let Some(parent_item) = parent.as_ref() {
-            let Some(parent_index) = self
-                .all_symbol_items
+        let parent_index = parent.as_ref().map(|parent_item| {
+            self.all_symbol_items
                 .iter()
                 .position(|item| item.range == parent_item.range)
-            else {
-                self.listed_symbol_indices = vec![];
-                self.ranked_matches.clear();
-                self.rebuild_filter_candidates();
-                let buffer_id = match &self.listing {
-                    BreadcrumbListing::Symbols { buffer_id, .. } => *buffer_id,
-                    _ => return,
-                };
-                self.listing = BreadcrumbListing::Symbols { buffer_id, parent };
-                self.rebuild_symbol_trail(cx);
-                return;
-            };
-            let children = child_outline_indices(&depths, parent_index);
-            if children.is_empty() {
-                sibling_outline_indices(&depths, parent_index)
-            } else {
-                children
+        });
+        let listed_indices = match parent_index {
+            Some(Some(parent_index)) => {
+                let children = child_outline_indices(&depths, parent_index);
+                if children.is_empty() {
+                    sibling_outline_indices(&depths, parent_index)
+                } else {
+                    children
+                }
             }
-        } else {
-            top_level_outline_indices(&depths)
+            // An edit removed the symbol this listing was opened on; an empty listing
+            // here would have no keyboard way back out.
+            Some(None) => {
+                parent = None;
+                top_level_outline_indices(&depths)
+            }
+            None => top_level_outline_indices(&depths),
         };
 
         let buffer_id = match &self.listing {
@@ -1079,7 +1079,12 @@ impl BreadcrumbNavigationMenu {
         cx.notify();
     }
 
-    pub fn select_next(&mut self, _: &menu::SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn select_next(
+        &mut self,
+        _: &menu::SelectNext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let visible = self.visible_row_count(cx);
         if visible == 0 {
             return;
@@ -1129,7 +1134,12 @@ impl BreadcrumbNavigationMenu {
         self.move_selection(Some(visible - 1), cx);
     }
 
-    pub fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn confirm(
+        &mut self,
+        _: &menu::Confirm,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match self.listing.clone() {
             BreadcrumbListing::Directory { .. } => {
                 let Some(entry) = self.selected_directory_entry(cx) else {
@@ -1146,12 +1156,7 @@ impl BreadcrumbNavigationMenu {
         }
     }
 
-    pub(crate) fn select_child(
-        &mut self,
-        _: &menu::SelectChild,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_child(&mut self, _: &menu::SelectChild, window: &mut Window, cx: &mut Context<Self>) {
         match self.listing.clone() {
             BreadcrumbListing::Directory { .. } => {
                 let Some(entry) = self.selected_directory_entry(cx) else {
@@ -1220,7 +1225,7 @@ impl BreadcrumbNavigationMenu {
         }
     }
 
-    pub(crate) fn select_parent(
+    fn select_parent(
         &mut self,
         _: &menu::SelectParent,
         window: &mut Window,
