@@ -109,7 +109,7 @@ pub fn new_project(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &m
                 return None;
             }
 
-            workspace
+            let workspace_result = workspace
                 .update(cx, move |workspace, cx| {
                     let app_state = workspace.app_state().clone();
                     workspace::open_new(Default::default(), app_state, cx, {
@@ -126,8 +126,24 @@ pub fn new_project(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &m
                         }
                     })
                     .detach();
-                })
-                .ok();
+                });
+
+            if let Err(error) = workspace_result {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let toast = StatusToast::new(error.to_string(), cx, |this, _| {
+                            this.icon(
+                                Icon::new(IconName::XCircle)
+                                    .size(IconSize::Small)
+                                    .color(Color::Error),
+                            )
+                            .dismiss_button(true)
+                        });
+                        workspace.toggle_status_toast(toast, cx);
+                    })
+                    .ok()?;
+                return None;
+            }
 
             Some(())
         })
