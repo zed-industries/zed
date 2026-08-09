@@ -1,3 +1,7 @@
+use std::env;
+use std::fs;
+use std::path::Path;
+use std::process::ExitCode;
 use tree_sitter::{Node, Parser};
 
 pub struct Violation {
@@ -16,17 +20,17 @@ const BANNED_STATEMENT_KINDS: &[(&str, &str, &str)] = &[
     (
         "for_statement",
         "for",
-        "forループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装してください。",
+        "forループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
     ),
     (
         "while_statement",
         "while",
-        "whileループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装してください。",
+        "whileループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
     ),
     (
         "do_statement",
         "do-while",
-        "do-whileループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装してください。",
+        "do-whileループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
     ),
     (
         "conditional_expression",
@@ -99,16 +103,18 @@ pub fn check_source(source: &str) -> Result<Vec<Violation>, String> {
         .parse(source.as_bytes(), None)
         .ok_or_else(|| "failed to parse source".to_string())?;
 
+    if tree.root_node().has_error() {
+        return Err(
+            "ファイルを正しくパースできませんでした(構文エラーがあります)。壊れた構文木からは違反検知を行えないため、境界チェックを実行できません。構文を修正してから再実行してください。"
+                .to_string(),
+        );
+    }
+
     let mut violations = Vec::new();
     walk(tree.root_node(), &mut violations);
     violations.sort_by_key(|v| (v.line, v.column));
     Ok(violations)
 }
-
-use std::env;
-use std::fs;
-use std::path::Path;
-use std::process::ExitCode;
 
 fn check_file(path: &Path) -> Result<Vec<Violation>, String> {
     let source = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -229,5 +235,13 @@ mod tests {
     fn allows_object_like_macro() {
         let violations = check_source("#define LED_PIN 13\nvoid loop() {}").unwrap();
         assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn rejects_unparseable_source() {
+        let result = check_source(
+            "void loop() {\n    struct { int a;\n    if (analogRead(0) > 512) { digitalWrite(13, HIGH); }\n}",
+        );
+        assert!(result.is_err());
     }
 }

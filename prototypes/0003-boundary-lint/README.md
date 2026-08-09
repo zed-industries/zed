@@ -21,6 +21,9 @@ RFC 0001 §4「C/C++ユーザースケッチのロジック拒否」の実行可
 - `.ino`ファイル対応(`.cpp`のみ解析)
 - 変数宣言の初期化式以外での計算式(関数呼び出し引数内のインライン計算など)
 - IDE統合(エディタ上の赤線表示、`crates/languages`への組み込み)。調査の結果、CitadelのdiagnosticsパイプラインはLSP実行前提で、非LSPソースからの診断投入パターンは現状存在しない。これは別の大きな取り組みであり、本プロトタイプでは着手しない。
+- `switch`文は未検知。`switch`/`case`によるロジック分岐はC/C++で書けてしまう(検知対象は現状の6ルールのまま — 7つ目のルールとして追加はしない)。
+- オブジェクト形式マクロ(`#define NAME value`)の本体は未解析。関数形式マクロ(`#define NAME(...)`)は`preproc_function_def`として検知するが、オブジェクト形式マクロの本体はtree-sitterが不透明なトークン列として扱うため、`#define BLINK_IF_HOT if (...) { ... }`のようにロジックを隠すことができてしまう。
+- コンパイル時定数式で誤検知が起きる。`const uint8_t MASK = (1 << PB5);` のような、実行時の判断を伴わないビルド時定数の初期化式も、現状は「計算用中間変数」ルールに引っかかり誤って拒否される。`CLAUDE.md`はboard constantsの宣言をC/C++側に認めているため、これは意図しない誤検知。
 
 ## 使い方
 
@@ -97,3 +100,18 @@ examples/bad_sketch.cpp:28:17: error: ternary
 3 files checked, 1 file(s) have violations (6 violations)
 exit: 1
 ```
+
+## 既知の誤検知: ランタイム/スケッチの区別がない
+
+本ツールは「ユーザースケッチのロジック」と「Arduinoの`main()`ランタイム定型文(scaffolding)」を区別する概念を持たない。そのため、`prototypes/0001-hello-blink/cpp/runtime.cpp`の`for (;;) { citadel_loop(); }`(`main()`がRustの`citadel_loop()`を無限ループで呼び出すだけの定型文)も`for`違反として検知され、チェックは**失敗する**:
+
+```
+$ cargo run -- ../0001-hello-blink/cpp/runtime.cpp
+../0001-hello-blink/cpp/runtime.cpp:8:5: error: for
+  forループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern "C"関数の戻り値として結果を受け取ってください。
+
+1 files checked, 1 file(s) have violations (1 violations)
+exit: 1
+```
+
+これはツールのバグではなく、RFC 0001 §4が未決定事項として残した「ランタイム定型文とユーザースケッチコードの区別」という論点そのものを裏付けるデータ点である。
