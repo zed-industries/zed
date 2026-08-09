@@ -32,7 +32,7 @@ fn path(path: impl AsRef<str>) -> String {
     {
         let mut path = path.replace("/", "\\");
         if path.starts_with("\\") {
-            path = format!("C:{}", &path);
+            path = format!("C:{path}");
         }
         path
     }
