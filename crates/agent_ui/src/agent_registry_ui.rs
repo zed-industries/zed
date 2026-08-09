@@ -62,7 +62,7 @@ impl RenderOnce for AgentRegistryCard {
                 .p_3()
                 .mt_4()
                 .w_full()
-                .min_h(rems_from_px(86.))
+                .min_h(rems_from_px(86_f32))
                 .gap_2()
                 .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))
                 .border_1()
@@ -241,7 +241,7 @@ impl AgentRegistryPage {
         h_flex()
             .key_context(key_context)
             .h_8()
-            .min_w(rems_from_px(384.))
+            .min_w(rems_from_px(384_f32))
             .flex_1()
             .pl_1p5()
             .pr_2()
@@ -514,21 +514,27 @@ impl AgentRegistryPage {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .on_click(move |_, _, cx| {
-                        let agent_id = agent_id.clone();
-                        update_settings_file(fs.clone(), cx, move |settings, _| {
-                            let agent_servers = settings.agent_servers.get_or_insert_default();
-                            agent_servers.entry(agent_id).or_insert_with(|| {
-                                settings::CustomAgentServerSettings::Registry {
-                                    default_mode: None,
-                                    default_model: None,
-                                    env: Default::default(),
-                                    favorite_models: Vec::new(),
-                                    default_config_options: HashMap::default(),
-                                    favorite_config_option_values: HashMap::default(),
-                                }
-                            });
+                    .on_click(move |_, window, cx| {
+                        update_settings_file(fs.clone(), cx, {
+                            let agent_id = agent_id.clone();
+                            move |settings, _| {
+                                let agent_servers = settings.agent_servers.get_or_insert_default();
+                                agent_servers.entry(agent_id).or_insert_with(|| {
+                                    settings::CustomAgentServerSettings::Registry {
+                                        default_mode: None,
+                                        env: Default::default(),
+                                        default_config_options: HashMap::default(),
+                                        favorite_config_option_values: HashMap::default(),
+                                    }
+                                });
+                            }
                         });
+                        window.dispatch_action(
+                            Box::new(zed_actions::agent::SelectAgent {
+                                agent: agent_id.clone(),
+                            }),
+                            cx,
+                        );
                     })
             }
             RegistryInstallStatus::InstalledRegistry => {
@@ -629,7 +635,7 @@ impl Render for AgentRegistryPage {
                                         ],
                                     )
                                     .style(ToggleButtonGroupStyle::Outlined)
-                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(30.)))
+                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(30_f32)))
                                     .label_size(LabelSize::Default)
                                     .auto_width()
                                     .selected_index(match self.filter {
@@ -650,7 +656,7 @@ impl Render for AgentRegistryPage {
                     let scroll_handle = &self.list;
                     this.child(
                         uniform_list("registry-entries", count, cx.processor(Self::render_agents))
-                            .flex_grow()
+                            .flex_grow_1()
                             .pb_4()
                             .track_scroll(scroll_handle),
                     )

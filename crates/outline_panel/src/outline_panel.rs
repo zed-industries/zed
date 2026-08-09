@@ -2567,7 +2567,8 @@ impl OutlinePanel {
                 depth,
                 annotation_range: None,
                 range: search_data.context_range.clone(),
-                text: search_data.context_text.clone(),
+                selection_range: search_data.context_range.clone(),
+                text: search_data.context_text.clone().into(),
                 source_range_for_text: search_data.context_range.clone(),
                 highlight_ranges: search_data
                     .highlights_data
@@ -2747,7 +2748,7 @@ impl OutlinePanel {
                     let active_multi_buffer = active_editor.read(cx).buffer().clone();
                     let new_entries = outline_panel.new_entries_for_fs_update.clone();
                     let repo_snapshots = outline_panel.project.update(cx, |project, cx| {
-                        project.git_store().read(cx).repo_snapshots(cx)
+                        project.git_store().read(cx).display_repo_snapshots(cx)
                     });
                     let git_store = outline_panel.project.read(cx).git_store().clone();
                     new_collapsed_entries = outline_panel.collapsed_entries.clone();
@@ -2771,10 +2772,7 @@ impl OutlinePanel {
                             let is_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
                             let status = git_store
                                 .read(cx)
-                                .repository_and_path_for_buffer_id(buffer_id, cx)
-                                .and_then(|(repo, path)| {
-                                    Some(repo.read(cx).status_for_path(&path)?.status)
-                                });
+                                .display_status_for_buffer_id(buffer_id, cx);
                             buffer_excerpts
                                 .entry(buffer_id)
                                 .or_insert_with(|| {
@@ -3446,10 +3444,8 @@ impl OutlinePanel {
                     };
                     let fetched_outlines = outline_task.await;
                     let outlines_with_children = fetched_outlines
-                        .windows(2)
-                        .filter_map(|window| {
-                            let current = &window[0];
-                            let next = &window[1];
+                        .array_windows::<2>()
+                        .filter_map(|[current, next]| {
                             if next.depth > current.depth {
                                 Some((current.range.clone(), current.depth))
                             } else {
@@ -4751,7 +4747,7 @@ impl OutlinePanel {
                                 }
                             })
                             .with_render_fn(cx.entity(), move |outline_panel, params, _, _| {
-                                const LEFT_OFFSET: Pixels = px(14.);
+                                const LEFT_OFFSET: Pixels = ui::LIST_ITEM_INDENT_GUIDE_LEFT_OFFSET;
 
                                 let indent_size = params.indent_size;
                                 let item_height = params.item_height;
@@ -4786,9 +4782,9 @@ impl OutlinePanel {
             };
 
             v_flex()
-                .flex_shrink()
+                .flex_shrink_1()
                 .size_full()
-                .child(list_contents.size_full().flex_shrink())
+                .child(list_contents.size_full().flex_shrink_1())
                 .custom_scrollbars(
                     Scrollbars::for_settings::<OutlinePanelSettingsScrollbarProxy>()
                         .tracked_scroll_handle(&self.scroll_handle.clone())
@@ -4953,6 +4949,10 @@ fn file_name(path: &Path) -> String {
 }
 
 impl Panel for OutlinePanel {
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        self.filter_editor.focus_handle(cx)
+    }
+
     fn persistent_name() -> &'static str {
         "Outline Panel"
     }
@@ -5053,8 +5053,8 @@ impl Panel for OutlinePanel {
 }
 
 impl Focusable for OutlinePanel {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.filter_editor.focus_handle(cx)
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -8121,7 +8121,7 @@ outline: struct Foo  <==== selected
         // Helper function to move the cursor to the first column of a given row
         // and return the selected outline entry's text.
         let move_cursor_and_get_selection =
-            |row: u32, cx: &mut VisualTestContext| -> Option<String> {
+            |row: u32, cx: &mut VisualTestContext| -> Option<SharedString> {
                 cx.update(|window, cx| {
                     editor.update(cx, |editor, cx| {
                         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {

@@ -97,7 +97,6 @@ extension.workspace = true
 file_finder.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
-git_graph = { workspace = true, features = ["test-support"] }
 git_hosting_providers.workspace = true
 git_ui = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
@@ -129,6 +128,7 @@ sqlx = { version = "0.8", features = ["sqlite"] }
 task.workspace = true
 theme_settings = { workspace = true, features = ["test-support"] }
 theme.workspace = true
+title_bar = { workspace = true, features = ["test-support"] }
 
 unindent.workspace = true
 util.workspace = true

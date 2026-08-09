@@ -1,5 +1,6 @@
 use crate::display::WebDisplay;
-use crate::events::{ClickState, WebEventListeners, is_mac_platform};
+use crate::events::{ClickState, EventListenerHandle, WebEventListeners, is_mac_platform};
+use crate::platform::WebWindowLifecycle;
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
@@ -10,7 +11,7 @@ use gpui::{
     ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
 };
-use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 use wasm_bindgen::prelude::*;
 
 #[derive(Default)]
@@ -57,13 +58,15 @@ pub(crate) struct WebWindowInner {
     pub(crate) is_composing: Cell<bool>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
+    raf_id: Cell<Option<i32>>,
+    raf_function: RefCell<Option<js_sys::Function>>,
 }
 
 pub struct WebWindow {
     inner: Rc<WebWindowInner>,
     display: Rc<dyn PlatformDisplay>,
-    #[allow(dead_code)]
-    handle: AnyWindowHandle,
+    lifecycle: Rc<Cell<WebWindowLifecycle>>,
+    active_window: Rc<RefCell<Option<AnyWindowHandle>>>,
     _raf_closure: Closure<dyn FnMut()>,
     _resize_observer: Option<web_sys::ResizeObserver>,
     _resize_observer_closure: Closure<dyn FnMut(js_sys::Array)>,
@@ -71,50 +74,69 @@ pub struct WebWindow {
 }
 
 impl WebWindow {
-    pub fn new(
-        handle: AnyWindowHandle,
-        _params: WindowParams,
-        context: &WgpuContext,
-        browser_window: web_sys::Window,
-    ) -> anyhow::Result<Self> {
+    pub(crate) fn prepare_canvas(
+        browser_window: &web_sys::Window,
+    ) -> anyhow::Result<web_sys::HtmlCanvasElement> {
         let document = browser_window
             .document()
             .ok_or_else(|| anyhow::anyhow!("No `document` found on window"))?;
-
         let canvas: web_sys::HtmlCanvasElement = document
             .create_element("canvas")
-            .map_err(|e| anyhow::anyhow!("Failed to create canvas element: {e:?}"))?
+            .map_err(|error| anyhow::anyhow!("Failed to create canvas element: {error:?}"))?
             .dyn_into()
-            .map_err(|e| anyhow::anyhow!("Created element is not a canvas: {e:?}"))?;
-
-        let dpr = browser_window.device_pixel_ratio() as f32;
-        let max_texture_dimension = context.device.limits().max_texture_dimension_2d;
-        let has_device_pixel_support = check_device_pixel_support();
-
+            .map_err(|error| anyhow::anyhow!("Created element is not a canvas: {error:?}"))?;
         canvas.set_tab_index(-1);
 
         let style = canvas.style();
-        style
-            .set_property("width", "100%")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas width style: {e:?}"))?;
-        style
-            .set_property("height", "100%")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas height style: {e:?}"))?;
-        style
-            .set_property("display", "block")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas display style: {e:?}"))?;
-        style
-            .set_property("outline", "none")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas outline style: {e:?}"))?;
-        style
-            .set_property("touch-action", "none")
-            .map_err(|e| anyhow::anyhow!("Failed to set touch-action style: {e:?}"))?;
+        for (property, value) in [
+            ("width", "100%"),
+            ("height", "100%"),
+            ("display", "block"),
+            ("outline", "none"),
+            ("touch-action", "none"),
+        ] {
+            style.set_property(property, value).map_err(|error| {
+                anyhow::anyhow!("Failed to set canvas {property} style: {error:?}")
+            })?;
+        }
 
         let body = document
             .body()
             .ok_or_else(|| anyhow::anyhow!("No `body` found on document"))?;
         body.append_child(&canvas)
-            .map_err(|e| anyhow::anyhow!("Failed to append canvas to body: {e:?}"))?;
+            .map_err(|error| anyhow::anyhow!("Failed to append canvas to body: {error:?}"))?;
+        Ok(canvas)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        _handle: AnyWindowHandle,
+        _params: WindowParams,
+        context: &WgpuContext,
+        canvas: web_sys::HtmlCanvasElement,
+        surface: wgpu::Surface<'static>,
+        browser_window: web_sys::Window,
+        lifecycle: Rc<Cell<WebWindowLifecycle>>,
+        active_window: Rc<RefCell<Option<AnyWindowHandle>>>,
+    ) -> anyhow::Result<Self> {
+        let document = browser_window
+            .document()
+            .ok_or_else(|| anyhow::anyhow!("No `document` found on window"))?;
+        let body = document
+            .body()
+            .ok_or_else(|| anyhow::anyhow!("No `body` found on document"))?;
+        let dpr = browser_window.device_pixel_ratio() as f32;
+        let max_texture_dimension = context.device.limits().max_texture_dimension_2d;
+        let has_device_pixel_support = check_device_pixel_support();
+        let renderer_config = WgpuSurfaceConfig {
+            size: Size {
+                width: DevicePixels(0),
+                height: DevicePixels(0),
+            },
+            transparent: false,
+            preferred_present_mode: None,
+        };
+        let renderer = WgpuRenderer::new_from_surface(context, surface, renderer_config)?;
 
         let input_element: web_sys::HtmlInputElement = document
             .create_element("input")
@@ -131,19 +153,6 @@ impl WebWindow {
         body.append_child(&input_element)
             .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
         input_element.focus().ok();
-
-        let device_size = Size {
-            width: DevicePixels(0),
-            height: DevicePixels(0),
-        };
-
-        let renderer_config = WgpuSurfaceConfig {
-            size: device_size,
-            transparent: false,
-            preferred_present_mode: None,
-        };
-
-        let renderer = WgpuRenderer::new_from_canvas(context, &canvas, renderer_config)?;
 
         let display: Rc<dyn PlatformDisplay> = Rc::new(WebDisplay::new(browser_window.clone()));
 
@@ -184,10 +193,12 @@ impl WebWindow {
             is_composing: Cell::new(false),
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
+            raf_id: Cell::new(None),
+            raf_function: RefCell::new(None),
         });
 
         let raf_closure = inner.create_raf_closure();
-        inner.schedule_raf(&raf_closure);
+        inner.wake_frame_loop();
 
         let resize_observer_closure = Self::create_resize_observer_closure(Rc::clone(&inner));
         let resize_observer =
@@ -203,7 +214,8 @@ impl WebWindow {
         Ok(Self {
             inner,
             display,
-            handle,
+            lifecycle,
+            active_window,
             _raf_closure: raf_closure,
             _resize_observer: resize_observer,
             _resize_observer_closure: resize_observer_closure,
@@ -257,21 +269,36 @@ impl WebWindow {
 
             // Skip rendering to a zero-size canvas (e.g. display:none).
             if physical_width == 0 || physical_height == 0 {
-                let mut s = inner.state.borrow_mut();
-                s.bounds.size = Size::default();
-                s.scale_factor = dpr_f32;
-                // Still fire the callback so GPUI knows the window is gone.
-                drop(s);
-                let mut cbs = inner.callbacks.borrow_mut();
-                if let Some(ref mut callback) = cbs.resize {
-                    callback(Size::default(), dpr_f32);
+                {
+                    let mut s = inner.state.borrow_mut();
+                    s.bounds.size = Size::default();
+                    s.scale_factor = dpr_f32;
                 }
+                // Still fire the callback so GPUI knows the window is gone.
+                inner.with_callback(
+                    |callbacks| &mut callbacks.resize,
+                    |callback| callback(Size::default(), dpr_f32),
+                );
                 return;
             }
 
             let max_texture_dimension = inner.state.borrow().max_texture_dimension;
             let clamped_width = physical_width.min(max_texture_dimension);
             let clamped_height = physical_height.min(max_texture_dimension);
+
+            // Recompute the logical size from the clamped physical size so
+            // that scale_factor still maps GPUI's logical bounds exactly onto
+            // the surface; otherwise clamping would silently distort the
+            // effective scale.
+            let (logical_width, logical_height) =
+                if (clamped_width, clamped_height) != (physical_width, physical_height) {
+                    (
+                        (clamped_width as f64 / dpr) as f32,
+                        (clamped_height as f64 / dpr) as f32,
+                    )
+                } else {
+                    (logical_width, logical_height)
+                };
 
             inner
                 .pending_physical_size
@@ -291,48 +318,68 @@ impl WebWindow {
                 height: px(logical_height),
             };
 
-            let mut cbs = inner.callbacks.borrow_mut();
-            if let Some(ref mut callback) = cbs.resize {
-                callback(new_size, dpr_f32);
-            }
+            inner.with_callback(
+                |callbacks| &mut callbacks.resize,
+                |callback| callback(new_size, dpr_f32),
+            );
         })
     }
 }
 
 impl WebWindowInner {
-    fn create_raf_closure(self: &Rc<Self>) -> Closure<dyn FnMut()> {
-        let raf_handle: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
-        let raf_handle_inner = Rc::clone(&raf_handle);
+    /// Invokes a registered callback with take/call/restore semantics.
+    ///
+    /// The callback is removed from the slot for the duration of the call, so
+    /// the `RefCell` is not borrowed while user code runs: a callback that
+    /// re-enters the platform window (dispatching input, registering
+    /// handlers) would otherwise panic with a `BorrowMutError`. A re-entrant
+    /// invocation of the same callback finds the slot empty and is a no-op.
+    pub(crate) fn with_callback<C, R>(
+        &self,
+        select: impl Fn(&mut WebWindowCallbacks) -> &mut Option<C>,
+        invoke: impl FnOnce(&mut C) -> R,
+    ) -> Option<R> {
+        let mut callback = select(&mut self.callbacks.borrow_mut()).take()?;
+        let result = invoke(&mut callback);
+        *select(&mut self.callbacks.borrow_mut()) = Some(callback);
+        Some(result)
+    }
 
+    fn create_raf_closure(self: &Rc<Self>) -> Closure<dyn FnMut()> {
         let this = Rc::clone(self);
         let closure = Closure::new(move || {
-            {
-                let mut callbacks = this.callbacks.borrow_mut();
-                if let Some(ref mut callback) = callbacks.request_frame {
+            // The request that fired is no longer pending; clear it before
+            // running the frame so wakeups issued while the frame executes
+            // (e.g. views invalidated during draw) schedule the next request
+            // instead of being swallowed.
+            this.raf_id.set(None);
+            this.with_callback(
+                |callbacks| &mut callbacks.request_frame,
+                |callback| {
                     callback(RequestFrameOptions {
-                        require_presentation: true,
+                        require_presentation: false,
                         force_render: false,
-                    });
-                }
-            }
-
-            // Re-schedule for the next frame
-            if let Some(ref func) = *raf_handle_inner.borrow() {
-                this.browser_window.request_animation_frame(func).ok();
-            }
+                    })
+                },
+            );
         });
 
         let js_func: js_sys::Function =
             closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
-        *raf_handle.borrow_mut() = Some(js_func);
+        *self.raf_function.borrow_mut() = Some(js_func);
 
         closure
     }
 
-    fn schedule_raf(&self, closure: &Closure<dyn FnMut()>) {
-        self.browser_window
-            .request_animation_frame(closure.as_ref().unchecked_ref())
-            .ok();
+    pub(crate) fn wake_frame_loop(&self) {
+        if self.raf_id.get().is_some() {
+            return;
+        }
+        let raf_function = self.raf_function.borrow();
+        if let Some(func) = raf_function.as_ref() {
+            self.raf_id
+                .set(self.browser_window.request_animation_frame(func).ok());
+        }
     }
 
     fn observe_canvas(&self, observer: &web_sys::ResizeObserver) {
@@ -372,40 +419,57 @@ impl WebWindowInner {
         });
     }
 
-    pub(crate) fn register_visibility_change(
-        self: &Rc<Self>,
-    ) -> Option<Closure<dyn FnMut(JsValue)>> {
+    pub(crate) fn register_visibility_change(self: &Rc<Self>) -> Option<EventListenerHandle> {
         let document = self.browser_window.document()?;
         let this = Rc::clone(self);
 
-        let closure = Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
-            let is_visible = this
-                .browser_window
-                .document()
-                .map(|doc| {
-                    let state_str: String = js_sys::Reflect::get(&doc, &"visibilityState".into())
-                        .ok()
-                        .and_then(|v| v.as_string())
-                        .unwrap_or_default();
-                    state_str == "visible"
-                })
-                .unwrap_or(true);
+        Some(EventListenerHandle::add(
+            document.as_ref(),
+            "visibilitychange",
+            move |_event: JsValue| {
+                let is_visible = this
+                    .browser_window
+                    .document()
+                    .map(|doc| {
+                        let state_str: String =
+                            js_sys::Reflect::get(&doc, &"visibilityState".into())
+                                .ok()
+                                .and_then(|v| v.as_string())
+                                .unwrap_or_default();
+                        state_str == "visible"
+                    })
+                    .unwrap_or(true);
 
-            {
-                let mut state = this.state.borrow_mut();
-                state.is_active = is_visible;
-            }
-            let mut callbacks = this.callbacks.borrow_mut();
-            if let Some(ref mut callback) = callbacks.active_status_change {
-                callback(is_visible);
-            }
-        });
+                {
+                    let mut state = this.state.borrow_mut();
+                    state.is_active = is_visible;
+                }
+                this.with_callback(
+                    |callbacks| &mut callbacks.active_status_change,
+                    |callback| callback(is_visible),
+                );
+            },
+        ))
+    }
 
-        document
-            .add_event_listener_with_callback("visibilitychange", closure.as_ref().unchecked_ref())
-            .ok();
+    /// Tracks `fullscreenchange` instead of toggling a local flag: the user
+    /// can exit fullscreen with Esc, and `requestFullscreen` can be rejected,
+    /// so the document is the only reliable source of truth.
+    pub(crate) fn register_fullscreen_change(self: &Rc<Self>) -> Option<EventListenerHandle> {
+        let document = self.browser_window.document()?;
+        let this = Rc::clone(self);
 
-        Some(closure)
+        Some(EventListenerHandle::add(
+            document.as_ref(),
+            "fullscreenchange",
+            move |_event: JsValue| {
+                let is_fullscreen = this
+                    .browser_window
+                    .document()
+                    .is_some_and(|document| document.fullscreen_element().is_some());
+                this.state.borrow_mut().is_fullscreen = is_fullscreen;
+            },
+        ))
     }
 
     pub(crate) fn with_input_handler<R>(
@@ -418,26 +482,56 @@ impl WebWindowInner {
         Some(result)
     }
 
-    pub(crate) fn register_appearance_change(
-        self: &Rc<Self>,
-    ) -> Option<Closure<dyn FnMut(JsValue)>> {
+    pub(crate) fn register_appearance_change(self: &Rc<Self>) -> Option<EventListenerHandle> {
         let mql = self
             .browser_window
             .match_media("(prefers-color-scheme: dark)")
             .ok()??;
 
         let this = Rc::clone(self);
-        let closure = Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
-            let mut callbacks = this.callbacks.borrow_mut();
-            if let Some(ref mut callback) = callbacks.appearance_changed {
-                callback();
-            }
-        });
+        Some(EventListenerHandle::add(
+            mql.as_ref(),
+            "change",
+            move |_event: JsValue| {
+                this.with_callback(
+                    |callbacks| &mut callbacks.appearance_changed,
+                    |callback| callback(),
+                );
+            },
+        ))
+    }
+}
 
-        mql.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref())
-            .ok();
+impl Drop for WebWindow {
+    fn drop(&mut self) {
+        // Cancel the pending requestAnimationFrame callback before
+        // `_raf_closure` is freed, and disconnect the resize observer before
+        // `_resize_observer_closure` is freed; a late invocation of either
+        // would throw "closure invoked after being dropped".
+        if let Some(raf_id) = self.inner.raf_id.take() {
+            self.inner
+                .browser_window
+                .cancel_animation_frame(raf_id)
+                .ok();
+        }
+        // A frame waker that outlives this window must not re-schedule the
+        // freed closure; without a stored function, `wake_frame_loop` no-ops.
+        self.inner.raf_function.borrow_mut().take();
+        if let Some(ref observer) = self._resize_observer {
+            observer.disconnect();
+        }
 
-        Some(closure)
+        // The DPR media-query closure captures an `Rc<WebWindowInner>` and is
+        // stored inside the inner itself, forming a reference cycle; take it
+        // out so the inner can actually be freed.
+        self.inner.mql_handle.borrow_mut().take();
+
+        let canvas: &web_sys::Element = self.inner.canvas.as_ref();
+        canvas.remove();
+        let input_element: &web_sys::Element = self.inner.input_element.as_ref();
+        input_element.remove();
+        self.active_window.borrow_mut().take();
+        self.lifecycle.set(WebWindowLifecycle::Closed);
     }
 }
 
@@ -607,21 +701,35 @@ impl PlatformWindow for WebWindow {
     }
 
     fn toggle_fullscreen(&self) {
-        let mut state = self.inner.state.borrow_mut();
-        state.is_fullscreen = !state.is_fullscreen;
+        let Some(document) = self.inner.browser_window.document() else {
+            return;
+        };
 
-        if state.is_fullscreen {
+        // `is_fullscreen` is updated by the `fullscreenchange` listener once
+        // the transition actually happens (or not, if the request fails).
+        if document.fullscreen_element().is_some() {
+            document.exit_fullscreen();
+        } else {
             let canvas: &web_sys::Element = self.inner.canvas.as_ref();
             canvas.request_fullscreen().ok();
-        } else {
-            if let Some(document) = self.inner.browser_window.document() {
-                document.exit_fullscreen();
-            }
         }
     }
 
     fn is_fullscreen(&self) -> bool {
         self.inner.state.borrow().is_fullscreen
+    }
+
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        // Hold the inner window weakly: the waker is stored in the window's
+        // invalidator, and `callbacks.request_frame` captures a clone of that
+        // invalidator, so a strong reference here would form a cycle and leak
+        // the window on close.
+        let inner = Rc::downgrade(&self.inner);
+        Some(Rc::new(move || {
+            if let Some(inner) = inner.upgrade() {
+                inner.wake_frame_loop();
+            }
+        }))
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {

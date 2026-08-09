@@ -70,7 +70,37 @@ impl LocalExecutor {
         let (runnable, task) = spawn_local_with_source_location(
             future,
             move |runnable| dispatch(runnable),
-            RunnableMeta { location },
+            RunnableMeta {
+                location,
+                spawned: crate::SpawnTime(Instant::now()),
+            },
+        );
+        runnable.schedule();
+        Task(TaskState::Spawned(task))
+    }
+
+    /// Like [`Self::spawn`], but routes the task's runnables through the
+    /// given dispatch destination instead of this executor's own. The
+    /// destination must deliver runnables to this executor's thread: the
+    /// future is polled and dropped on the spawning thread.
+    #[track_caller]
+    pub fn spawn_with_dispatch<F>(
+        &self,
+        future: F,
+        dispatch: impl Fn(Runnable<RunnableMeta>) + Send + Sync + 'static,
+    ) -> Task<F::Output>
+    where
+        F: Future + 'static,
+        F::Output: 'static,
+    {
+        let location = Location::caller();
+        let (runnable, task) = spawn_local_with_source_location(
+            future,
+            dispatch,
+            RunnableMeta {
+                location,
+                spawned: crate::SpawnTime(Instant::now()),
+            },
         );
         runnable.schedule();
         Task(TaskState::Spawned(task))
@@ -200,7 +230,10 @@ impl BackgroundExecutor {
         let scheduler = Arc::downgrade(&self.scheduler);
         let location = Location::caller();
         let (runnable, task) = async_task::Builder::new()
-            .metadata(RunnableMeta { location })
+            .metadata(RunnableMeta {
+                location,
+                spawned: crate::SpawnTime(Instant::now()),
+            })
             .spawn(
                 move |_| future,
                 move |runnable| {
@@ -230,7 +263,10 @@ impl BackgroundExecutor {
         }));
 
         let (runnable, task) = async_task::Builder::new()
-            .metadata(RunnableMeta { location })
+            .metadata(RunnableMeta {
+                location,
+                spawned: crate::SpawnTime(Instant::now()),
+            })
             .spawn(
                 move |_| future,
                 move |runnable| {
