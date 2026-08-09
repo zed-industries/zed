@@ -25,6 +25,7 @@ members = [
     "crates/buffer_diff",
     "crates/call",
     "crates/channel",
+    "crates/citadel_new_project",
     "crates/cli",
     "crates/client",
     "crates/clock",
@@ -292,6 +293,7 @@ breadcrumbs = { path = "crates/breadcrumbs" }
 buffer_diff = { path = "crates/buffer_diff" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
+citadel_new_project = { path = "crates/citadel_new_project" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }
 clock = { path = "crates/clock" }
