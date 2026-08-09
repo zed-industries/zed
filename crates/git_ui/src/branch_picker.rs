@@ -1226,7 +1226,7 @@ fn remote_provider_icons(
             let (provider, _) = parse_git_remote_url(provider_registry.clone(), remote_url)?;
             Some((
                 remote_name.clone(),
-                crate::get_provider_icon(&provider.name()),
+                ui::git_hosting_provider_icon(provider.name().as_str()),
             ))
         })
         .collect()
@@ -2009,7 +2009,7 @@ impl PickerDelegate for BranchListDelegate {
                                     &focus_handle,
                                     cx,
                                 )
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.delegate.confirm(true, window, cx);
@@ -2031,7 +2031,7 @@ impl PickerDelegate for BranchListDelegate {
                                             &focus_handle,
                                             cx,
                                         )
-                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                        .map(|kb| kb.size(rems_from_px(12_f32))),
                                     )
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(
@@ -2046,7 +2046,7 @@ impl PickerDelegate for BranchListDelegate {
                         Button::new("switch_branch", "Switch")
                             .key_binding(
                                 KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                    .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.delegate.confirm(false, window, cx);
@@ -2065,7 +2065,7 @@ impl PickerDelegate for BranchListDelegate {
                                             &focus_handle,
                                             cx,
                                         )
-                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                        .map(|kb| kb.size(rems_from_px(12_f32))),
                                     )
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.delegate.confirm(false, window, cx);
@@ -2088,7 +2088,7 @@ impl PickerDelegate for BranchListDelegate {
                                     &focus_handle,
                                     cx,
                                 )
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.delegate.confirm(true, window, cx);
@@ -2106,7 +2106,7 @@ impl PickerDelegate for BranchListDelegate {
                             Button::new("create-new-branch", "Create")
                                 .key_binding(
                                     KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                        .map(|kb| kb.size(rems_from_px(12_f32))),
                                 )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.delegate.confirm(false, window, cx);
@@ -2122,7 +2122,7 @@ impl PickerDelegate for BranchListDelegate {
                         Button::new("confirm-create-remote", "Confirm")
                             .key_binding(
                                 KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                    .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.delegate.confirm(false, window, cx);
