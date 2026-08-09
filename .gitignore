@@ -67,3 +67,6 @@ graphify-out/
 # Citadel RFC prototype build artifacts (regenerate via build.sh)
 /prototypes/*/build/
 /prototypes/*/rust/target/
+
+# Git worktree workspaces
+.worktrees/
