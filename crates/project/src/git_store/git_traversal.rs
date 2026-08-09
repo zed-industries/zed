@@ -474,13 +474,16 @@ mod tests {
             RelPath::empty(),
             listing_options(false, false),
         );
-        for entry in &without_status {
-            assert_eq!(
-                entry.git_summary,
-                GitSummary::UNCHANGED,
-                "git_status_enabled=false zeros all summaries ({})",
-                entry.path.as_unix_str()
-            );
-        }
+        assert_eq!(
+            without_status
+                .iter()
+                .map(|entry| (entry.path.as_unix_str().to_string(), entry.git_summary))
+                .collect::<Vec<_>>(),
+            with_status
+                .iter()
+                .map(|entry| (entry.path.as_unix_str().to_string(), GitSummary::UNCHANGED))
+                .collect::<Vec<_>>(),
+            "git_status_enabled=false lists the same entries with every summary zeroed"
+        );
     }
 }

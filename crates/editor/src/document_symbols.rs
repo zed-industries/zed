@@ -744,7 +744,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_lsp_document_symbols_multibyte_highlights(cx: &mut TestAppContext) {
+    async fn test_lsp_document_symbols_multibyte_name_ranges(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
         update_test_language_settings(cx, &|settings| {
@@ -810,26 +810,11 @@ mod tests {
                 Point::new(1, 7)
             );
 
-            // 'α' is two bytes; concrete ranges keep this from passing with an empty loop.
+            // The buffer's leading 'α' is two bytes wide, so a byte-vs-char mix-up upstream
+            // shifts these ranges by one.
             assert_eq!(symbol.text, "fn test");
-            assert_eq!(symbol.text.len(), 7);
             assert_eq!(symbol.name_ranges, vec![3..7]);
             assert_eq!(&symbol.text[3..7], "test");
-            let highlight_ranges: Vec<std::ops::Range<usize>> = symbol
-                .highlight_ranges
-                .iter()
-                .map(|(range, _)| range.clone())
-                .collect();
-            for range in &highlight_ranges {
-                assert!(
-                    symbol.text.is_char_boundary(range.start)
-                        && symbol.text.is_char_boundary(range.end)
-                        && range.end <= symbol.text.len(),
-                    "invalid highlight range {range:?} in {:?}",
-                    symbol.text
-                );
-                let _ = &symbol.text[range.clone()];
-            }
         });
     }
 

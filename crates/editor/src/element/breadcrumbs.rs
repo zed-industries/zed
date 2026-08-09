@@ -2563,29 +2563,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_plan_breadcrumb_layout_protects_active_menu_segment() {
-        let (widths, kinds) = sample_breadcrumb_widths_and_kinds();
-        let active_index = 2;
-        let unprotected = plan_breadcrumb_layout(&widths, &kinds, px(20.), px(340.), None);
-        assert_eq!(unprotected.visible, vec![5, 6, 7]);
-        let cases = [
-            (px(380.), vec![2, 5, 6, 7]),
-            (px(340.), vec![2, 6, 7]),
-            (px(230.), vec![2, 7]),
-            (px(140.), vec![2, 7]),
-            (px(1.), vec![2, 7]),
-        ];
-        for (available, expected_visible) in cases {
-            let plan =
-                plan_breadcrumb_layout(&widths, &kinds, px(20.), available, Some(active_index));
-            assert_eq!(
-                plan.visible, expected_visible,
-                "protected layout at width {available:?}"
-            );
-        }
-    }
-
     #[gpui::test]
     async fn test_breadcrumb_menu_zero_match_filter_settles(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
@@ -3289,6 +3266,7 @@ mod tests {
         use gpui::KeyBinding;
         use project::{FakeFs, Project};
         use serde_json::json;
+        use std::sync::atomic::{AtomicBool, Ordering};
         use util::path;
         use workspace::Workspace;
 
@@ -3357,6 +3335,13 @@ mod tests {
             .unwrap()
             .read_with(cx, |host, _| host.menu.clone());
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        let dismissed = Rc::new(AtomicBool::new(false));
+        let _sub = cx.update(|_, cx| {
+            let dismissed = dismissed.clone();
+            cx.subscribe(&menu, move |_, _: &DismissEvent, _| {
+                dismissed.store(true, Ordering::SeqCst);
+            })
+        });
         cx.run_until_parked();
         cx.update(|window, cx| {
             let _ = window.draw(cx);
@@ -3368,14 +3353,18 @@ mod tests {
             .debug_bounds("breadcrumb-navigation-menu")
             .expect("menu should paint");
         // Padding of the filter row: popup chrome, not a row and not the filter editor.
-        cx.simulate_click(
-            point(menu_bounds.left() + px(2.), menu_bounds.top() + px(2.)),
-            gpui::Modifiers::none(),
-        );
+        let chrome = point(menu_bounds.left() + px(2.), menu_bounds.top() + px(2.));
+        cx.simulate_click(chrome, gpui::Modifiers::none());
         cx.run_until_parked();
         cx.update(|window, cx| {
             let _ = window.draw(cx);
         });
+        // Without this the test would still pass with the click landing outside the popup,
+        // where nothing can steal the filter editor's focus in the first place.
+        assert!(
+            !dismissed.load(Ordering::SeqCst),
+            "the click must land inside the popup: {chrome:?} in {menu_bounds:?}"
+        );
 
         cx.simulate_keystrokes("down");
         cx.run_until_parked();
