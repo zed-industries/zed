@@ -514,6 +514,32 @@ impl<D: PickerDelegate> Picker<D> {
         )
     }
 
+    pub fn list_with_preview_and_query_editor(
+        delegate: D,
+        preview: Arc<dyn PreviewBackend>,
+        query_editor: Arc<dyn ErasedEditor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let head = Head::with_editor(
+            query_editor,
+            delegate.placeholder_text(window, cx),
+            Self::on_input_editor_event,
+            window,
+            cx,
+        );
+
+        let preview = Preview::new(preview);
+        Self::new(
+            delegate,
+            ContainerKind::List,
+            head,
+            Some(preview),
+            window,
+            cx,
+        )
+    }
+
     /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
     pub fn nonsearchable_uniform_list(

@@ -9,11 +9,14 @@ use http_client::{
     http::{HeaderName, HeaderValue},
 };
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    CompactionResult, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
 };
-use open_ai::{ReasoningEffort, responses::stream_response};
+use open_ai::{
+    ReasoningEffort,
+    responses::{compact_response, stream_response},
+};
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -22,7 +25,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use url::form_urlencoded;
 use util::ResultExt as _;
 
-use open_ai::completion::{OpenAiResponseEventMapper, into_open_ai_response};
+use open_ai::completion::{
+    OpenAiResponseEventMapper, into_open_ai_response, token_usage_from_response_usage,
+};
 
 pub const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai-subscribed");
 pub const PROVIDER_NAME: LanguageModelProviderName =
@@ -374,6 +379,52 @@ struct OpenAiSubscribedLanguageModel {
     request_limiter: RateLimiter,
 }
 
+impl OpenAiSubscribedLanguageModel {
+    fn codex_responses_request(
+        &self,
+        mut request: LanguageModelRequest,
+    ) -> Result<open_ai::responses::Request> {
+        if !self.model.supports_priority() {
+            request.speed = None;
+        }
+        let mut responses_request = into_open_ai_response(
+            request,
+            self.model.id(),
+            self.model.supports_parallel_tool_calls(),
+            self.model.supports_prompt_cache_key(),
+            None,
+            self.model.default_reasoning_effort(),
+            self.model
+                .supported_reasoning_efforts()
+                .contains(&ReasoningEffort::None),
+            &PROVIDER_ID,
+        )?;
+        responses_request.store = Some(false);
+        responses_request.instructions.get_or_insert_default();
+        Ok(responses_request)
+    }
+}
+
+fn codex_extra_headers(credentials: &CodexCredentials) -> CustomHeaders {
+    let mut header_pairs: Vec<(HeaderName, HeaderValue)> = vec![
+        (
+            HeaderName::from_static("originator"),
+            HeaderValue::from_static("zed"),
+        ),
+        (
+            HeaderName::from_static("openai-beta"),
+            HeaderValue::from_static("responses=experimental"),
+        ),
+    ];
+    if let Some(id) = &credentials.account_id
+        && !id.is_empty()
+        && let Ok(value) = HeaderValue::from_str(id)
+    {
+        header_pairs.push((HeaderName::from_static("chatgpt-account-id"), value));
+    }
+    CustomHeaders::new(header_pairs)
+}
+
 impl LanguageModel for OpenAiSubscribedLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -413,6 +464,49 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
     fn supports_fast_mode(&self) -> bool {
         self.model.supports_priority()
+    }
+
+    fn supports_explicit_compaction(&self) -> bool {
+        true
+    }
+
+    fn compact(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        let compact_request = match self.codex_responses_request(request) {
+            Ok(responses_request) => responses_request.into_compact_request(),
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+
+        let state = self.state.downgrade();
+        let http_client = self.http_client.clone();
+        let request_limiter = self.request_limiter.clone();
+
+        cx.spawn(async move |cx| {
+            let creds = get_fresh_credentials(&state, &http_client, cx).await?;
+            let extra_headers = codex_extra_headers(&creds);
+            request_limiter
+                .run(async move {
+                    let response = compact_response(
+                        http_client.as_ref(),
+                        PROVIDER_NAME.0.as_str(),
+                        CODEX_BASE_URL,
+                        &creds.access_token,
+                        compact_request,
+                        &extra_headers,
+                    )
+                    .await?;
+                    let usage = token_usage_from_response_usage(&response.usage);
+                    let context = response
+                        .into_compacted_context(PROVIDER_ID)
+                        .map_err(LanguageModelCompletionError::Other)?;
+                    Ok(CompactionResult { context, usage })
+                })
+                .await
+        })
+        .boxed()
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
@@ -455,7 +549,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
     fn stream_completion(
         &self,
-        mut request: LanguageModelRequest,
+        request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -467,35 +561,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        if !self.model.supports_priority() {
-            request.speed = None;
-        }
-
-        // The Codex backend rejects `max_output_tokens` (`Unsupported parameter`),
-        // unlike the public OpenAI Responses API. Pass `None` so the field is
-        // omitted from the serialized request body entirely.
-        let mut responses_request = match into_open_ai_response(
-            request,
-            self.model.id(),
-            self.model.supports_parallel_tool_calls(),
-            self.model.supports_prompt_cache_key(),
-            /*max_output_tokens*/ None,
-            self.model.default_reasoning_effort(),
-            self.model
-                .supported_reasoning_efforts()
-                .contains(&ReasoningEffort::None),
-            &PROVIDER_ID,
-        ) {
-            Ok(request) => request,
+        let responses_request = match self.codex_responses_request(request) {
+            Ok(responses_request) => responses_request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
-        responses_request.store = Some(false);
-
-        // `into_open_ai_response` already hoists system messages into
-        // `instructions`, which is the only form the Codex backend accepts.
-        // Codex has only ever been sent requests with the field present
-        // (possibly empty), so keep sending it even without system messages.
-        responses_request.instructions.get_or_insert_default();
 
         let state = self.state.downgrade();
         let http_client = self.http_client.clone();
@@ -503,25 +572,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
-
-            let mut header_pairs: Vec<(HeaderName, HeaderValue)> = vec![
-                (
-                    HeaderName::from_static("originator"),
-                    HeaderValue::from_static("zed"),
-                ),
-                (
-                    HeaderName::from_static("openai-beta"),
-                    HeaderValue::from_static("responses=experimental"),
-                ),
-            ];
-            if let Some(ref id) = creds.account_id {
-                if !id.is_empty() {
-                    if let Ok(value) = HeaderValue::from_str(id) {
-                        header_pairs.push((HeaderName::from_static("chatgpt-account-id"), value));
-                    }
-                }
-            }
-            let extra_headers = CustomHeaders::new(header_pairs);
+            let extra_headers = codex_extra_headers(&creds);
 
             let access_token = creds.access_token.clone();
             request_limiter
@@ -1254,6 +1305,93 @@ mod tests {
             assert!(state.is_authenticated());
             assert!(state.load_task().is_none());
         });
+    }
+
+    #[gpui::test]
+    async fn test_compact_posts_to_codex_compact_endpoint(cx: &mut TestAppContext) {
+        let compact_request_count = Arc::new(AtomicUsize::new(0));
+        let http_client = FakeHttpClient::create({
+            let compact_request_count = compact_request_count.clone();
+            move |request| {
+                let compact_request_count = compact_request_count.clone();
+                async move {
+                    assert_eq!(
+                        request.uri().to_string(),
+                        "https://chatgpt.com/backend-api/codex/responses/compact"
+                    );
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get("authorization")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("Bearer fresh_access")
+                    );
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get("chatgpt-account-id")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("account-123")
+                    );
+                    compact_request_count.fetch_add(1, Ordering::SeqCst);
+                    // Only `output` is present, matching the least metadata a
+                    // Responses-protocol backend is known to attach.
+                    Ok(http_client::Response::builder().status(200).body(
+                        http_client::AsyncBody::from(
+                            serde_json::json!({
+                                "output": [{
+                                    "type": "compaction",
+                                    "id": "cmp_1",
+                                    "encrypted_content": "opaque-state",
+                                }],
+                            })
+                            .to_string(),
+                        ),
+                    )?)
+                }
+            }
+        });
+
+        let http: Arc<dyn HttpClient> = http_client;
+        let mut credentials = make_fresh_credentials();
+        credentials.account_id = Some("account-123".to_string());
+        let state = make_state(http, Some(credentials), cx);
+        let model = cx.read(|cx| create_language_model(ChatGptModel::Gpt55, &state, cx));
+        assert!(model.supports_explicit_compaction());
+
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: language_model::Role::User,
+                content: vec![language_model::MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+        let async_cx = cx.to_async();
+        let result = model
+            .compact(request, &async_cx)
+            .await
+            .expect("compaction should succeed");
+
+        assert_eq!(compact_request_count.load(Ordering::SeqCst), 1);
+        assert_eq!(result.usage, language_model::TokenUsage::default());
+        let language_model::CompactedContext::ProviderState(compaction_state) = result.context
+        else {
+            panic!("expected provider compaction state");
+        };
+        assert_eq!(compaction_state.provider_id(), &PROVIDER_ID);
+        let items = open_ai::responses::provider_compaction_items(&compaction_state, &PROVIDER_ID)
+            .expect("the compacted state should parse")
+            .expect("the compacted state should be owned by the subscription provider");
+        assert_eq!(
+            items,
+            vec![serde_json::json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "opaque-state",
+            })]
+        );
     }
 
     struct FakeCredentialsProvider {
