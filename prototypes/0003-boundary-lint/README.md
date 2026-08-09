@@ -16,13 +16,18 @@ RFC 0001 §4「C/C++ユーザースケッチのロジック拒否」の実行可
 
 各違反メッセージは、拒否理由と「ロジックはRustの`no_std`クレートに実装し、`extern "C"`経由で呼び出す」という移行先を毎回明示する。
 
+### オブジェクト形式マクロの本体もチェックする
+
+関数形式マクロ(`#define NAME(...)`)は`preproc_function_def`として無条件禁止だが、オブジェクト形式マクロ(`#define NAME value`)は`#define LED_PIN 13`のような正当な定数宣言に使われるため許可している。ただしtree-sitterはマクロ本体を展開せず不透明な`preproc_arg`トークンとして扱うため、素朴な実装では`#define BLINK_IF_HOT if (...) { ... }`のようにロジックを隠すことができてしまっていた。
+
+これに対処するため、`preproc_def`(オブジェクト形式マクロ)を見つけるたびに、その本体テキストを`void __macro_check() { <本体> }`という形で単体パースし直し、同じ`walk()`ロジックを再帰的に適用する。`#define LED_PIN 13`のような定数値の本体は文として閉じていない(末尾に`;`がない)ため、この再パースは構文エラーになり何も検知されない — これがちょうど「ロジックを隠していない」ことの判定にもなっている。一方`#define BLINK_IF_HOT if (...) { ... };`のように文として成立する本体は正しく再パースでき、中に隠れた`if`などがそのまま検知される(検知位置は本体内の実際の行ではなく`#define`自体の行になる)。
+
 ## スコープ外(RFC 0001 §4の未決定事項のまま)
 
 - `setup()`内の`for`を例外にするかどうか
 - `.ino`ファイル対応(`.cpp`のみ解析)
 - 変数宣言の初期化式以外での計算式(関数呼び出し引数内のインライン計算など)
 - IDE統合(エディタ上の赤線表示、`crates/languages`への組み込み)。調査の結果、CitadelのdiagnosticsパイプラインはLSP実行前提で、非LSPソースからの診断投入パターンは現状存在しない。これは別の大きな取り組みであり、本プロトタイプでは着手しない。
-- オブジェクト形式マクロ(`#define NAME value`)の本体は未解析。関数形式マクロ(`#define NAME(...)`)は`preproc_function_def`として検知するが、オブジェクト形式マクロの本体はtree-sitterが不透明なトークン列として扱うため、`#define BLINK_IF_HOT if (...) { ... }`のようにロジックを隠すことができてしまう。
 
 `const uint8_t MASK = (1 << PB5);` のようなビルド時定数の初期化式は、`declaration`が`const`修飾されている場合に「計算用中間変数」ルールの対象から外すことで誤検知を修正済み(`CLAUDE.md`がboard constantsの宣言をC/C++側に認めているため)。ただしこれは構文だけを見たヒューリスティックで、tree-sitterには型やコンパイル時定数評価の情報がない — `const int cheat = raw * 2;` のように`const`さえ付ければ本物の実行時計算もすり抜けられてしまう、という新しいトレードオフを持ち込んでいる点は既知の限界として明記しておく。
 
@@ -48,32 +53,35 @@ $ cargo run -- ../0002-arduino-core/cpp/sketch.cpp
 exit: 0
 ```
 
-意図的に7ルール全てに違反する `examples/bad_sketch.cpp` は、7件全ての違反が検知されることを確認:
+意図的に7つの構文ルール+オブジェクト形式マクロの隠しロジックに違反する `examples/bad_sketch.cpp` は、8件全ての違反が検知されることを確認(`#define BLINK_IF_HOT ...`が隠す`if`が`4:1`、実際に書かれた`if`が`17:5`の2件のif違反があることに注意):
 
 ```
 $ cargo run -- examples/bad_sketch.cpp
 examples/bad_sketch.cpp:3:1: error: function-macro
   関数形式マクロ(#define NAME(...))はC/C++に書けません。ロジックを隠す恐れがあるため禁止しています。ロジックはRustのno_stdクレートに実装してください。
 
-examples/bad_sketch.cpp:14:15: error: computed-intermediate
-  計算式を含む変数初期化はC/C++に書けません。計算はRustのno_stdクレートで行い、結果だけをextern "C"関数の戻り値として受け取ってください。
-
-examples/bad_sketch.cpp:16:5: error: if
+examples/bad_sketch.cpp:4:1: error: if
   if文はC/C++に書けません。この判断はRustのno_stdクレートに実装し、extern "C"関数の戻り値として結果を受け取ってください。
 
-examples/bad_sketch.cpp:20:5: error: for
+examples/bad_sketch.cpp:15:15: error: computed-intermediate
+  計算式を含む変数初期化はC/C++に書けません。計算はRustのno_stdクレートで行い、結果だけをextern "C"関数の戻り値として受け取ってください。
+
+examples/bad_sketch.cpp:17:5: error: if
+  if文はC/C++に書けません。この判断はRustのno_stdクレートに実装し、extern "C"関数の戻り値として結果を受け取ってください。
+
+examples/bad_sketch.cpp:21:5: error: for
   forループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern "C"関数の戻り値として結果を受け取ってください。
 
-examples/bad_sketch.cpp:24:5: error: while
+examples/bad_sketch.cpp:25:5: error: while
   whileループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern "C"関数の戻り値として結果を受け取ってください。
 
-examples/bad_sketch.cpp:28:5: error: switch
+examples/bad_sketch.cpp:29:5: error: switch
   switch文はC/C++に書けません。この判断はRustのno_stdクレートに実装し、extern "C"関数の戻り値として結果を受け取ってください。
 
-examples/bad_sketch.cpp:37:17: error: ternary
+examples/bad_sketch.cpp:38:17: error: ternary
   三項演算子はC/C++に書けません。条件分岐はRustのno_stdクレートに実装し、結果だけをextern "C"関数の戻り値として受け取ってください。
 
-1 files checked, 1 file(s) have violations (7 violations)
+1 files checked, 1 file(s) have violations (8 violations)
 exit: 1
 ```
 
@@ -86,25 +94,28 @@ $ cargo run -- ../0001-hello-blink/cpp/io.cpp ../0002-arduino-core/cpp/sketch.cp
 examples/bad_sketch.cpp:3:1: error: function-macro
   関数形式マクロ(#define NAME(...))はC/C++に書けません。ロジックを隠す恐れがあるため禁止しています。ロジックはRustのno_stdクレートに実装してください。
 
-examples/bad_sketch.cpp:14:15: error: computed-intermediate
-  計算式を含む変数初期化はC/C++に書けません。計算はRustのno_stdクレートで行い、結果だけをextern "C"関数の戻り値として受け取ってください。
-
-examples/bad_sketch.cpp:16:5: error: if
+examples/bad_sketch.cpp:4:1: error: if
   if文はC/C++に書けません。この判断はRustのno_stdクレートに実装し、extern "C"関数の戻り値として結果を受け取ってください。
 
-examples/bad_sketch.cpp:20:5: error: for
+examples/bad_sketch.cpp:15:15: error: computed-intermediate
+  計算式を含む変数初期化はC/C++に書けません。計算はRustのno_stdクレートで行い、結果だけをextern "C"関数の戻り値として受け取ってください。
+
+examples/bad_sketch.cpp:17:5: error: if
+  if文はC/C++に書けません。この判断はRustのno_stdクレートに実装し、extern "C"関数の戻り値として結果を受け取ってください。
+
+examples/bad_sketch.cpp:21:5: error: for
   forループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern "C"関数の戻り値として結果を受け取ってください。
 
-examples/bad_sketch.cpp:24:5: error: while
+examples/bad_sketch.cpp:25:5: error: while
   whileループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern "C"関数の戻り値として結果を受け取ってください。
 
-examples/bad_sketch.cpp:28:5: error: switch
+examples/bad_sketch.cpp:29:5: error: switch
   switch文はC/C++に書けません。この判断はRustのno_stdクレートに実装し、extern "C"関数の戻り値として結果を受け取ってください。
 
-examples/bad_sketch.cpp:37:17: error: ternary
+examples/bad_sketch.cpp:38:17: error: ternary
   三項演算子はC/C++に書けません。条件分岐はRustのno_stdクレートに実装し、結果だけをextern "C"関数の戻り値として受け取ってください。
 
-3 files checked, 1 file(s) have violations (7 violations)
+3 files checked, 1 file(s) have violations (8 violations)
 exit: 1
 ```
 

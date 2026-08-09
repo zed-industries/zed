@@ -51,7 +51,7 @@ const BANNED_STATEMENT_KINDS: &[(&str, &str, &str)] = &[
 
 const COMPUTED_INTERMEDIATE_MESSAGE: &str = "計算式を含む変数初期化はC/C++に書けません。計算はRustのno_stdクレートで行い、結果だけをextern \"C\"関数の戻り値として受け取ってください。";
 
-fn walk(node: Node, violations: &mut Vec<Violation>) {
+fn walk(node: Node, source: &[u8], violations: &mut Vec<Violation>) {
     for &(kind, rule_id, message) in BANNED_STATEMENT_KINDS {
         if node.kind() == kind {
             let point = node.start_position();
@@ -78,9 +78,60 @@ fn walk(node: Node, violations: &mut Vec<Violation>) {
         }
     }
 
+    if node.kind() == "preproc_def" {
+        check_object_macro_body(node, source, violations);
+    }
+
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk(child, violations);
+        walk(child, source, violations);
+    }
+}
+
+// Object-like macros (`#define NAME value`) are otherwise allowed (unlike
+// function-like macros, which are banned outright), but tree-sitter treats
+// their body as an opaque `preproc_arg` token — so `#define BLINK_IF_HOT
+// if (...) { ... }` would hide an if-statement from the walk above entirely.
+// Re-parse the macro body on its own, wrapped in a synthetic function, and
+// reuse the same walk() to catch banned constructs inside it too. A plain
+// constant body (`#define LED_PIN 13`) has no trailing `;` and fails to
+// parse as a statement when wrapped, which is exactly the signal we want to
+// tell it apart from a real hidden statement — nothing is flagged for it.
+fn check_object_macro_body(macro_def: Node, source: &[u8], violations: &mut Vec<Violation>) {
+    let Some(value) = macro_def.child_by_field_name("value") else {
+        return;
+    };
+    let Ok(body_text) = value.utf8_text(source) else {
+        return;
+    };
+
+    let wrapped = format!("void __macro_check() {{ {body_text} }}");
+    let mut parser = Parser::new();
+    let language: tree_sitter::Language = tree_sitter_cpp::LANGUAGE.into();
+    if parser.set_language(&language).is_err() {
+        return;
+    }
+    let Some(tree) = parser.parse(wrapped.as_bytes(), None) else {
+        return;
+    };
+    if tree.root_node().has_error() {
+        return;
+    }
+
+    let mut inner_violations = Vec::new();
+    walk(tree.root_node(), wrapped.as_bytes(), &mut inner_violations);
+    if inner_violations.is_empty() {
+        return;
+    }
+
+    let point = macro_def.start_position();
+    for inner in inner_violations {
+        violations.push(Violation {
+            line: point.row + 1,
+            column: point.column + 1,
+            rule_id: inner.rule_id,
+            message: inner.message,
+        });
     }
 }
 
@@ -144,7 +195,7 @@ pub fn check_source(source: &str) -> Result<Vec<Violation>, String> {
     }
 
     let mut violations = Vec::new();
-    walk(tree.root_node(), &mut violations);
+    walk(tree.root_node(), source.as_bytes(), &mut violations);
     violations.sort_by_key(|v| (v.line, v.column));
     Ok(violations)
 }
@@ -275,6 +326,26 @@ mod tests {
     #[test]
     fn allows_object_like_macro() {
         let violations = check_source("#define LED_PIN 13\nvoid loop() {}").unwrap();
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn detects_logic_hidden_in_object_macro() {
+        let violations = check_source(
+            "#define BLINK_IF_HOT if (analogRead(0) > 512) digitalWrite(13, HIGH);\nvoid loop() {}",
+        )
+        .unwrap();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].rule_id, "if");
+        assert_eq!(violations[0].line, 1);
+    }
+
+    #[test]
+    fn allows_object_macro_with_plain_call_body() {
+        let violations = check_source(
+            "#define TURN_ON digitalWrite(13, HIGH);\nvoid loop() {}",
+        )
+        .unwrap();
         assert_eq!(violations.len(), 0);
     }
 
