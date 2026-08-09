@@ -56,7 +56,7 @@ const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 const TOAST_DURATION: Duration = Duration::from_secs(5);
 
 fn panel_row_height() -> Rems {
-    rems_from_px(26.)
+    rems_from_px(26_f32)
 }
 
 actions!(

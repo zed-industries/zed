@@ -60,20 +60,6 @@ pub mod unstaged_diff;
 pub use blame_ui::GitBlameStatus;
 pub use conflict_view::MergeConflictIndicator;
 
-pub fn get_provider_icon(name: &str) -> IconName {
-    match name {
-        "Bitbucket" => IconName::Bitbucket,
-        "Chromium" => IconName::Gerrit,
-        "Codeberg" => IconName::Codeberg,
-        "Forgejo Self-Hosted" => IconName::Forgejo,
-        "GitHub" => IconName::Github,
-        "GitLab" => IconName::Gitlab,
-        "Gitea" => IconName::Gitea,
-        "SourceHut" => IconName::Sourcehut,
-        _ => IconName::Link,
-    }
-}
-
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
@@ -1165,7 +1151,7 @@ pub(crate) fn render_split_button_chevron_trigger(
     id: impl Into<ElementId>,
     menu_open: bool,
 ) -> ButtonLike {
-    let chevron_button_size = rems_from_px(20.);
+    let chevron_button_size = rems_from_px(20_f32);
     let chevron_icon = if menu_open {
         IconName::ChevronUp
     } else {

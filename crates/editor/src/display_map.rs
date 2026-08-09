@@ -162,7 +162,7 @@ pub enum HighlightKey {
     // Note we want semantic tokens > colorized brackets
     // to allow language server highlights to work over brackets.
     ColorizeBracket(usize),
-    SemanticToken,
+    SemanticToken(u32),
     // below is sorted lexicographically, as there is no relevant ordering for these aside from coming after the above
     BufferSearchHighlights,
     ConsoleAnsiHighlight(usize),
@@ -360,6 +360,7 @@ pub struct SemanticTokenHighlight {
     pub token_type: TokenType,
     pub token_modifiers: u32,
     pub server_id: lsp::LanguageServerId,
+    pub precedence: u32,
 }
 
 impl DisplayMap {

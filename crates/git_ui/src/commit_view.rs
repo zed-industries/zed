@@ -567,7 +567,7 @@ impl CommitView {
             time_format::TimestampFormat::MediumAbsolute,
         );
 
-        let avatar_size = rems_from_px(40.);
+        let avatar_size = rems_from_px(40_f32);
         let avatar_size_px = avatar_size.to_pixels(window.rem_size());
         let gutter_width = self.editor.update(cx, |editor, cx| {
             let editor = editor.rhs_editor().clone();
@@ -581,7 +581,7 @@ impl CommitView {
                     .full_width()
             })
         });
-        let avatar_min_side_padding = rems_from_px(6.).to_pixels(window.rem_size());
+        let avatar_min_side_padding = rems_from_px(6_f32).to_pixels(window.rem_size());
         let avatar_container_min = avatar_size_px + avatar_min_side_padding;
         let avatar_container_width = gutter_width.max(avatar_container_min);
 
@@ -1344,7 +1344,7 @@ impl Render for CommitViewToolbar {
                         }),
                 )
                 .children(remote_info.map(|(provider_name, url)| {
-                    let icon = crate::get_provider_icon(provider_name.as_str());
+                    let icon = ui::git_hosting_provider_icon(provider_name.as_str());
 
                     IconButton::new("view_on_provider", icon)
                         .icon_size(IconSize::Small)
