@@ -1874,7 +1874,12 @@ impl Buffer {
                 language.clone(),
                 sync_parse_timeout,
             ) {
-                self.did_finish_parsing(syntax_snapshot, Some(Duration::from_millis(300)), cx);
+                self.did_finish_parsing(
+                    syntax_snapshot,
+                    Some(Duration::from_millis(300)),
+                    false,
+                    cx,
+                );
                 self.reparse = None;
                 return;
             }
@@ -1906,7 +1911,7 @@ impl Buffer {
                 let parse_again = this.version.changed_since(&parsed_version)
                     || language_registry_changed()
                     || grammar_changed();
-                this.did_finish_parsing(new_syntax_map, None, cx);
+                this.did_finish_parsing(new_syntax_map, None, parse_again, cx);
                 this.reparse = None;
                 if parse_again {
                     this.reparse(cx, false);
@@ -1920,13 +1925,21 @@ impl Buffer {
         &mut self,
         syntax_snapshot: SyntaxSnapshot,
         block_budget: Option<Duration>,
+        parse_again: bool,
         cx: &mut Context<Self>,
     ) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.was_changed();
-        self.request_autoindent(cx, block_budget);
-        self.parse_status.0.send(ParseStatus::Idle).unwrap();
+
+        let parsing_complete = !parse_again || self.language.is_none();
+        if self.language.is_none() {
+            self.syntax_map.lock().clear(&self.text);
+        }
+        if parsing_complete {
+            self.request_autoindent(cx, block_budget);
+            self.parse_status.0.send(ParseStatus::Idle).unwrap();
+        }
         Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, &self.text.snapshot());
         cx.emit(BufferEvent::Reparsed);
         cx.notify();
@@ -3473,7 +3486,7 @@ impl Buffer {
         self.text.fast_forward(edited.text);
         if edited.snapshot.language == self.language {
             self.reparse = None;
-            self.did_finish_parsing(edited.snapshot.syntax, None, cx);
+            self.did_finish_parsing(edited.snapshot.syntax, None, false, cx);
             if did_edit {
                 cx.emit(BufferEvent::Edited {
                     source: BufferEditSource::User,
