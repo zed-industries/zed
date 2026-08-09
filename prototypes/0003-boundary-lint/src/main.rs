@@ -105,7 +105,66 @@ pub fn check_source(source: &str) -> Result<Vec<Violation>, String> {
     Ok(violations)
 }
 
-fn main() {}
+use std::env;
+use std::fs;
+use std::path::Path;
+use std::process::ExitCode;
+
+fn check_file(path: &Path) -> Result<Vec<Violation>, String> {
+    let source = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    check_source(&source)
+}
+
+fn main() -> ExitCode {
+    let paths: Vec<String> = env::args().skip(1).collect();
+    if paths.is_empty() {
+        eprintln!("usage: boundary-lint <file.cpp> [file2.cpp ...]");
+        return ExitCode::FAILURE;
+    }
+
+    let mut files_checked = 0usize;
+    let mut files_with_violations = 0usize;
+    let mut total_violations = 0usize;
+
+    for path_str in &paths {
+        let path = Path::new(path_str);
+        files_checked += 1;
+
+        match check_file(path) {
+            Ok(violations) if violations.is_empty() => {
+                println!("{}: OK", path.display());
+            }
+            Ok(violations) => {
+                files_with_violations += 1;
+                total_violations += violations.len();
+                for violation in &violations {
+                    println!(
+                        "{}:{}:{}: error: {}\n  {}\n",
+                        path.display(),
+                        violation.line,
+                        violation.column,
+                        violation.rule_id,
+                        violation.message
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    if total_violations == 0 {
+        println!("{files_checked} files checked, 0 violations");
+        ExitCode::SUCCESS
+    } else {
+        println!(
+            "{files_checked} files checked, {files_with_violations} file(s) have violations ({total_violations} violations)"
+        );
+        ExitCode::FAILURE
+    }
+}
 
 #[cfg(test)]
 mod tests {
