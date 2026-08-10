@@ -4276,6 +4276,124 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_review_feedback_preserves_paused_queue_order(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("first", window, cx);
+        });
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "queued first".to_string(),
+                ))],
+                vec![],
+                window,
+                cx,
+            );
+        });
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |thread, _window, cx| thread.cancel_generation(cx));
+        cx.run_until_parked();
+
+        let result = active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
+            thread.send_review_feedback(
+                vec![editor::ReviewFeedback {
+                    worktree_name: Some("zed".to_string()),
+                    file_path: "crates/editor/src/git.rs".to_string(),
+                    start_line: 1,
+                    end_line: 1,
+                    excerpt: "example".to_string(),
+                    comment: "Address this".to_string(),
+                    status: editor::ReviewCommentStatus::Draft,
+                }],
+                window,
+                cx,
+            )
+        });
+        assert!(result.is_ok(), "review feedback should be accepted");
+        cx.run_until_parked();
+
+        active_thread(&conversation_view, cx).read_with(cx, |thread, _cx| {
+            assert_eq!(thread.message_queue.len(), 1);
+            let remaining_text = thread
+                .message_queue
+                .first()
+                .and_then(|entry| entry.content.first())
+                .and_then(|content| match content {
+                    acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+                    _ => None,
+                });
+            assert!(
+                remaining_text.is_some_and(|text| text.contains("Address this")),
+                "review feedback should remain behind the previously queued message"
+            );
+        });
+
+        let session_id = conversation_view.read_with(cx, |view, cx| {
+            view.active_thread()
+                .expect("active thread")
+                .read(cx)
+                .thread
+                .read(cx)
+                .session_id()
+                .clone()
+        });
+        connection.end_turn(session_id, acp::StopReason::EndTurn);
+        cx.run_until_parked();
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.message_queue.len());
+        assert_eq!(queue_len, 0, "review feedback should auto-send next");
+    }
+
+    #[gpui::test]
+    async fn test_review_feedback_queues_while_message_content_is_loading(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let result = active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
+            thread.is_loading_contents = true;
+            thread.send_review_feedback(
+                vec![editor::ReviewFeedback {
+                    worktree_name: Some("zed".to_string()),
+                    file_path: "crates/editor/src/git.rs".to_string(),
+                    start_line: 1,
+                    end_line: 1,
+                    excerpt: "example".to_string(),
+                    comment: "Address this".to_string(),
+                    status: editor::ReviewCommentStatus::Draft,
+                }],
+                window,
+                cx,
+            )
+        });
+        assert!(result.is_ok(), "review feedback should be accepted");
+
+        active_thread(&conversation_view, cx).read_with(cx, |thread, cx| {
+            assert_eq!(thread.thread.read(cx).status(), ThreadStatus::Idle);
+            assert_eq!(
+                thread.message_queue.len(),
+                1,
+                "review feedback should wait for the in-flight content to start its turn"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_notification_for_error(cx: &mut TestAppContext) {
         init_test(cx);
 
