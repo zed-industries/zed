@@ -198,6 +198,7 @@ impl SerialConnection {
     }
 
     pub fn connect(&mut self, port_name: String, baud_rate: u32, cx: &mut Context<Self>) {
+        self.close_port(cx);
         self.paused = None;
         self.port_name = Some(port_name.clone());
         self.baud_rate = baud_rate;
@@ -283,14 +284,20 @@ impl SerialConnection {
     /// Tears down the open handle (if any) without touching `port_name` or
     /// `paused` -- shared by `disconnect` (which clears both after) and
     /// `pause_for_flash` (which needs `paused` to survive).
+    ///
+    /// Clears the mutex inline (blocking this thread briefly) rather than in
+    /// a detached background task, so the OS port handle is guaranteed
+    /// closed by the time this returns. `pause_for_flash` depends on this:
+    /// avrdude must never race the reader thread for the same port. The
+    /// reader thread only ever holds this mutex for the duration of one
+    /// `port.read()` call, bounded by the port's 100ms read timeout, and
+    /// never awaits anything while holding it, so this lock acquires
+    /// quickly (worst case ~100ms) with no deadlock risk.
     fn close_port(&mut self, cx: &mut Context<Self>) {
         if let Some(open) = self.open.take() {
-            cx.background_spawn(async move {
-                if let Ok(mut guard) = open.handle.lock() {
-                    *guard = None;
-                }
-            })
-            .detach();
+            if let Ok(mut guard) = open.handle.lock() {
+                *guard = None;
+            }
         }
         self.is_open = false;
         cx.notify();
@@ -323,6 +330,9 @@ async fn run_serial_reader(
     {
         Ok(port) => port,
         Err(error) => {
+            // ponytail: best-effort -- if the foreground entity (and its
+            // message_rx loop) is already gone, there's no one left to
+            // tell and nothing to recover.
             message_tx
                 .unbounded_send(SerialConnectionMessage::Error(error.to_string()))
                 .ok();
@@ -366,6 +376,9 @@ async fn run_serial_reader(
             }
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => continue,
             Err(error) => {
+                // ponytail: best-effort -- if the foreground entity (and its
+                // message_rx loop) is already gone, there's no one left to
+                // tell and nothing to recover.
                 message_tx
                     .unbounded_send(SerialConnectionMessage::Error(error.to_string()))
                     .ok();
