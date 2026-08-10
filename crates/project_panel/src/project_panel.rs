@@ -5,7 +5,6 @@ mod utils;
 use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
-use command_palette_hooks::CommandPaletteFilter;
 use editor::{
     Editor, EditorEvent, MultiBufferOffset,
     items::{
@@ -13,21 +12,21 @@ use editor::{
         entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
     },
 };
-use feature_flags::{FeatureFlagAppExt, ProjectPanelUndoRedoFeatureFlag};
 use file_icons::FileIcons;
+use fs::TrashId;
 use git;
 use git::status::GitSummary;
-use git_ui;
-use git_ui::file_diff_view::FileDiffView;
+use git_ui_core::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
     ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseExitEvent, ParentElement, PathPromptOptions, Pixels, Point,
-    PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
-    linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
+    ExternalDragPayload, ExternalPaths, FileDragPaths, FocusHandle, Focusable, FontWeight, Hsla,
+    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, ParentElement,
+    PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
+    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
+    uniform_list,
 };
 use language::DiagnosticSeverity;
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
@@ -74,8 +73,9 @@ use util::{
 };
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenMode, OpenOptions, OpenVisible, PreviewTabsSettings,
-    SelectedEntry, SplitDirection, Workspace,
+    SelectedEntry, SplitDirection, Workspace, WorkspaceSettings,
     dock::{DockPosition, Panel, PanelEvent},
+    focus_follows_mouse::FocusFollowsMouse as _,
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
@@ -542,10 +542,10 @@ pub fn init(cx: &mut App) {
             }
         });
 
-        // Forwards `git::FileHistory` to `git_ui::git_graph` when the project
-        // panel is the focused source of selection. Lives here (and not in
-        // `git_ui`) so that `git_ui` does not need to depend on
-        // `project_panel`, which would create a dependency cycle.
+        // Forwards `git::FileHistory` to the file history opener installed by
+        // `git_ui` when the project panel is the focused source of selection.
+        // Lives here (and not in `git_ui`) so that `git_ui` does not need to
+        // depend on `project_panel`, which would create a dependency cycle.
         workspace.register_action_renderer(|div, workspace, window, cx| {
             let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
                 return div;
@@ -567,19 +567,7 @@ pub fn init(cx: &mut App) {
                         else {
                             return;
                         };
-                        let Some((repo_id, log_source)) =
-                            git_ui::git_graph::resolve_file_history_target_from_project_path(
-                                workspace,
-                                &project_path,
-                                cx,
-                            )
-                        else {
-                            return;
-                        };
-                        let git_store = workspace.project().read(cx).git_store().clone();
-                        git_ui::git_graph::open_or_reuse_graph(
-                            workspace, repo_id, git_store, log_source, None, window, cx,
-                        );
+                        git_ui_core::open_file_history(workspace, &project_path, window, cx);
                     })
                     .log_err();
                 cx.stop_propagation();
@@ -650,6 +638,17 @@ enum DeleteEntryOutcome {
     Failed,
 }
 
+/// Small wrapper around a pending task returned by either
+/// [`Project::trash_entry`] or [`Project::delete_entry`].
+///
+/// Since the two operations return different types, this enum lets
+/// [`ProjectPanel::remove`] collect and resolve both uniformly, while carrying
+/// the intention (trash vs delete).
+enum RemoveEntryTask {
+    Trash(Task<Result<TrashId>>),
+    Delete(Task<Result<()>>),
+}
+
 impl ProjectPanel {
     fn new(
         workspace: &mut Workspace,
@@ -669,6 +668,7 @@ impl ProjectPanel {
                 |this, _, event, window, cx| match event {
                     GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
                     | GitStoreEvent::RepositoryAdded
+                    | GitStoreEvent::DiffBaseChanged(_)
                     | GitStoreEvent::RepositoryRemoved(_) => {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
@@ -753,18 +753,6 @@ impl ProjectPanel {
             )
             .detach();
 
-            let trash_action = [TypeId::of::<Trash>()];
-            let is_remote = project.read(cx).is_remote();
-
-            // Make sure the trash option is never displayed anywhere on remote
-            // hosts since they may not support trashing. May want to dynamically
-            // detect this in the future.
-            if is_remote {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.hide_action_types(&trash_action);
-                });
-            }
-
             let filename_editor = cx.new(|cx| Editor::single_line(window, cx));
 
             cx.subscribe_in(
@@ -778,7 +766,7 @@ impl ProjectPanel {
                     EditorEvent::SelectionsChanged { .. } => {
                         project_panel.autoscroll(cx);
                     }
-                    EditorEvent::Blurred => {
+                    EditorEvent::Blurred if window.is_window_active() => {
                         if project_panel
                             .state
                             .edit_state
@@ -875,7 +863,12 @@ impl ProjectPanel {
                     unfolded_dir_ids: Default::default(),
                 },
                 update_visible_entries_task: Default::default(),
-                undo_manager: UndoManager::new(workspace.weak_handle(), weak_project_panel, &cx),
+                undo_manager: UndoManager::new(
+                    workspace.weak_handle(),
+                    weak_project_panel,
+                    project.read(cx).is_via_collab(),
+                    &cx,
+                ),
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -1087,7 +1080,11 @@ impl ProjectPanel {
             let is_remote = project.is_remote();
             let is_collab = project.is_via_collab();
             let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
-            let is_markdown = !is_dir && MarkdownPreviewView::is_markdown_path(&*entry.path);
+            let is_markdown = !is_dir
+                && MarkdownPreviewView::is_markdown_path(
+                    entry.path.as_std_path(),
+                    project.languages(),
+                );
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -1113,7 +1110,7 @@ impl ProjectPanel {
             };
 
             let has_pasteable_content = self.has_pasteable_content(cx);
-            let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
+            let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
                         menu.when(is_markdown, |menu| {
@@ -1158,17 +1155,12 @@ impl ProjectPanel {
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
                             .action_disabled_when(!has_pasteable_content, "Paste", Box::new(Paste))
-                            .when(cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>(), |menu| {
-                                menu.action_disabled_when(
-                                    !self.undo_manager.can_undo(),
-                                    "Undo",
-                                    Box::new(Undo),
-                                )
-                                .action_disabled_when(
-                                    !self.undo_manager.can_redo(),
-                                    "Redo",
-                                    Box::new(Redo),
-                                )
+                            .when(!is_collab, |menu| {
+                                let can_undo = self.undo_manager.can_undo();
+                                let can_redo = self.undo_manager.can_redo();
+
+                                menu.action_disabled_when(!can_undo, "Undo", Box::new(Undo))
+                                    .action_disabled_when(!can_redo, "Redo", Box::new(Redo))
                             })
                             .when(is_remote, |menu| {
                                 menu.separator()
@@ -1200,7 +1192,7 @@ impl ProjectPanel {
                             .when(!should_hide_rename, |menu| {
                                 menu.separator().action("Rename", Box::new(Rename))
                             })
-                            .when(!is_root && !is_remote, |menu| {
+                            .when(!is_root && !is_collab, |menu| {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                             })
                             .when(!is_root, |menu| {
@@ -1780,7 +1772,12 @@ impl ProjectPanel {
         let Some((worktree, entry)) = self.selected_entry(cx) else {
             return;
         };
-        if !entry.is_file() || !MarkdownPreviewView::is_markdown_path(&*entry.path) {
+        if !entry.is_file()
+            || !MarkdownPreviewView::is_markdown_path(
+                entry.path.as_std_path(),
+                self.project.read(cx).languages(),
+            )
+        {
             return;
         }
         let project_path = ProjectPath {
@@ -1840,7 +1837,7 @@ impl ProjectPanel {
             }
             let trimmed_filename = trimmed_filename.trim_start_matches('/');
 
-            let Ok(filename) = RelPath::unix(trimmed_filename) else {
+            let Ok(filename) = RelPath::from_unix_str(trimmed_filename) else {
                 edit_state.validation_state = ValidationState::Warning(
                     "File or directory name contains leading or trailing whitespace.".to_string(),
                 );
@@ -1864,7 +1861,7 @@ impl ProjectPanel {
                     let new_path = if let Some(parent) = entry.path.clone().parent() {
                         parent.join(&filename)
                     } else {
-                        filename.into()
+                        filename.to_owned()
                     };
                     if let Some(existing) = worktree.read(cx).entry_for_path(&new_path)
                         && existing.id != entry.id
@@ -1949,7 +1946,7 @@ impl ProjectPanel {
             });
         } else {
             let new_path = if let Some(parent) = entry.path.parent() {
-                parent.join(&filename)
+                parent.join(&filename).into()
             } else {
                 filename.clone()
             };
@@ -1977,18 +1974,6 @@ impl ProjectPanel {
             let new_entry = edit_task.await;
             project_panel.update(cx, |project_panel, cx| {
                 project_panel.state.edit_state = None;
-
-                // Record the operation if the edit was applied
-                if new_entry.is_ok() {
-                    let operation = if let Some(old_entry) = edited_entry {
-                        Change::Renamed((worktree_id, old_entry.path).into(), new_project_path)
-                    } else {
-                        Change::Created(new_project_path)
-                    };
-
-                    project_panel.undo_manager.record([operation]).log_err();
-                }
-
                 cx.notify();
             })?;
 
@@ -2004,6 +1989,23 @@ impl ProjectPanel {
                 }
                 Ok(CreatedEntry::Included(new_entry)) => {
                     project_panel.update_in(cx, |project_panel, window, cx| {
+                        // Only recording changes in included files as otherwise
+                        // undoing some operations would fail, as
+                        // `Worktree::entry_for_path` would return `None` for
+                        // excluded paths.
+                        // In the future we can look into adding support for recording
+                        // changes in excluded paths, but that would mean updating
+                        // methods that rely on `EntryId` to now rely on the actual
+                        // paths.
+                        let operation = match edited_entry {
+                            Some(old_entry) => {
+                                let project_path = (worktree_id, old_entry.path).into();
+                                Change::Renamed(project_path, new_project_path)
+                            }
+                            None => Change::Created(new_project_path),
+                        };
+                        project_panel.undo_manager.record([operation]).log_err();
+
                         if let Some(selection) = &mut project_panel.selection
                             && selection.entry_id == edited_entry_id
                         {
@@ -2073,9 +2075,8 @@ impl ProjectPanel {
     }
 
     async fn resolve_delete_entry(
-        task: Option<Task<Result<Option<fs::TrashedEntry>>>>,
+        task: Option<RemoveEntryTask>,
         worktree_id: WorktreeId,
-        trash: bool,
     ) -> DeleteEntryOutcome {
         let Some(task) = task else {
             // If there's no task to be awaited on, it means that the entry, or
@@ -2083,18 +2084,21 @@ impl ProjectPanel {
             return DeleteEntryOutcome::Deleted;
         };
 
-        match task.await {
-            Ok(Some(trashed_entry)) if trash => {
-                DeleteEntryOutcome::Trashed(Change::Trashed(worktree_id, trashed_entry))
-            }
-            Err(err) => {
-                log::error!(
-                    "Failed to {} an entry: {err:#}",
-                    if trash { "trash" } else { "delete" }
-                );
-                DeleteEntryOutcome::Failed
-            }
-            Ok(_) => DeleteEntryOutcome::Deleted,
+        match task {
+            RemoveEntryTask::Trash(task) => match task.await {
+                Ok(trash_id) => DeleteEntryOutcome::Trashed(Change::Trashed(worktree_id, trash_id)),
+                Err(err) => {
+                    log::error!("Failed to trash an entry: {err:#}",);
+                    DeleteEntryOutcome::Failed
+                }
+            },
+            RemoveEntryTask::Delete(task) => match task.await {
+                Ok(()) => DeleteEntryOutcome::Deleted,
+                Err(err) => {
+                    log::error!("Failed to delete an entry: {err:#}",);
+                    DeleteEntryOutcome::Failed
+                }
+            },
         }
     }
 
@@ -2545,6 +2549,11 @@ impl ProjectPanel {
         });
     }
 
+    // TODO(yara|dino): trashing and deleting are conceptually distinct, even
+    // more so with the fact that trashing can now be undone, whereas deleting
+    // cannot.
+    // Worth splitting them, and exploring dropping the trash confirmation now
+    // that trash is undoable.
     fn remove(
         &mut self,
         trash: bool,
@@ -2664,14 +2673,24 @@ impl ProjectPanel {
                         file_paths
                             .into_iter()
                             .map(|(entry_id, worktree_id, _)| {
-                                (worktree_id, project.delete_entry(entry_id, trash, cx))
+                                let task = if trash {
+                                    project
+                                        .trash_entry(entry_id, cx)
+                                        .map(RemoveEntryTask::Trash)
+                                } else {
+                                    project
+                                        .delete_entry(entry_id, cx)
+                                        .map(RemoveEntryTask::Delete)
+                                };
+
+                                (worktree_id, task)
                             })
                             .collect::<Vec<_>>()
                     })
                 })?;
 
                 for (worktree_id, task) in tasks {
-                    match Self::resolve_delete_entry(task, worktree_id, trash).await {
+                    match Self::resolve_delete_entry(task, worktree_id).await {
                         DeleteEntryOutcome::Deleted => {}
                         DeleteEntryOutcome::Trashed(change) => changes.push(change),
                         DeleteEntryOutcome::Failed => failed_count += 1,
@@ -2779,7 +2798,7 @@ impl ProjectPanel {
         let parent_entry = worktree.entry_for_path(parent_path)?;
 
         // Remove all siblings that are being deleted except the last marked entry
-        let repo_snapshots = git_store.repo_snapshots(cx);
+        let repo_snapshots = git_store.display_repo_snapshots(cx);
         let worktree_snapshot = worktree.snapshot();
         let hide_gitignore = ProjectPanelSettings::get_global(cx).hide_gitignore;
         let mut siblings: Vec<_> =
@@ -3302,7 +3321,7 @@ impl ProjectPanel {
         let source_entry = source_worktree.read(cx).entry_for_id(source.entry_id)?;
 
         let clipboard_entry_file_name = source_entry.path.file_name()?.to_string();
-        new_path.push(RelPath::unix(&clipboard_entry_file_name).unwrap());
+        new_path.push(RelPath::from_unix_str(&clipboard_entry_file_name).unwrap());
 
         let (extension, file_name_without_extension) = if source_entry.is_file() {
             (
@@ -3338,7 +3357,7 @@ impl ProjectPanel {
                     new_file_name.push_str(extension);
                 }
 
-                new_path.push(RelPath::unix(&new_file_name).unwrap());
+                new_path.push(RelPath::from_unix_str(&new_file_name).unwrap());
 
                 disambiguation_range = Some(0..(file_name_len + disambiguation_len));
                 ix += 1;
@@ -3779,8 +3798,15 @@ impl ProjectPanel {
         if let Some((file_path1, file_path2)) = selected_files {
             self.workspace
                 .update(cx, |workspace, cx| {
-                    FileDiffView::open(file_path1, file_path2, workspace.weak_handle(), window, cx)
-                        .detach_and_log_err(cx);
+                    FileDiffView::open(
+                        file_path1,
+                        file_path2,
+                        None,
+                        workspace.weak_handle(),
+                        window,
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
                 })
                 .ok();
         }
@@ -3838,16 +3864,10 @@ impl ProjectPanel {
                     Some(parent) => Arc::from(parent),
                     None => {
                         // File at root, open search with empty filter
-                        self.workspace
-                            .update(cx, |workspace, cx| {
-                                search::ProjectSearchView::new_search_in_directory(
-                                    workspace,
-                                    RelPath::empty(),
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .ok();
+                        window.dispatch_action(
+                            Box::new(zed_actions::search::NewSearchInDirectory::default()),
+                            cx,
+                        );
                         return;
                     }
                 }
@@ -3857,16 +3877,16 @@ impl ProjectPanel {
             let dir_path = if include_root {
                 worktree.read(cx).root_name().join(&dir_path)
             } else {
-                dir_path
+                dir_path.to_rel_path_buf()
             };
 
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    search::ProjectSearchView::new_search_in_directory(
-                        workspace, &dir_path, window, cx,
-                    );
-                })
-                .ok();
+            let directory = dir_path
+                .display(self.project.read(cx).path_style(cx))
+                .into_owned();
+            window.dispatch_action(
+                Box::new(zed_actions::search::NewSearchInDirectory { directory }),
+                cx,
+            );
         }
     }
 
@@ -3922,7 +3942,7 @@ impl ProjectPanel {
             let Some(source_name) = source_path.path.file_name() else {
                 return (None, None);
             };
-            let Ok(source_name) = RelPath::unix(source_name) else {
+            let Ok(source_name) = RelPath::from_unix_str(source_name) else {
                 return (None, None);
             };
 
@@ -4182,7 +4202,10 @@ impl ProjectPanel {
             entry: Entry {
                 id: NEW_ENTRY_ID,
                 kind: new_entry_kind,
-                path: parent_entry.path.join(RelPath::unix("\0").unwrap()),
+                path: parent_entry
+                    .path
+                    .join(RelPath::from_unix_str("\0").unwrap())
+                    .into(),
                 inode: 0,
                 mtime: parent_entry.mtime,
                 size: parent_entry.size,
@@ -4214,7 +4237,7 @@ impl ProjectPanel {
         let sort_mode = settings.sort_mode;
         let sort_order = settings.sort_order;
         let project = self.project.read(cx);
-        let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
+        let repo_snapshots = project.git_store().read(cx).display_repo_snapshots(cx);
 
         let old_ancestors = self.state.ancestors.clone();
         let temporary_unfolded_pending_state = self.state.temporarily_unfolded_pending_state.take();
@@ -4389,19 +4412,21 @@ impl ProjectPanel {
                                         entry.path.strip_prefix(root_folded_entry).ok().and_then(
                                             |suffix| {
                                                 Some(
-                                                    RelPath::unix(root_folded_entry.file_name()?)
-                                                        .unwrap()
-                                                        .join(suffix),
+                                                    RelPath::from_unix_str(
+                                                        root_folded_entry.file_name()?,
+                                                    )
+                                                    .unwrap()
+                                                    .join(suffix),
                                                 )
                                             },
                                         )
                                     })
                                     .or_else(|| {
                                         entry.path.file_name().map(|file_name| {
-                                            RelPath::unix(file_name).unwrap().into()
+                                            RelPath::from_unix_str(file_name).unwrap().to_owned()
                                         })
                                     })
-                                    .unwrap_or_else(|| entry.path.clone());
+                                    .unwrap_or_else(|| entry.path.to_rel_path_buf());
                                 let depth = path.components().count();
                                 (depth, path.as_unix_str().chars().count())
                             };
@@ -4587,7 +4612,7 @@ impl ProjectPanel {
             if let Some(name) = path.file_name()
                 && let Some(name) = name.to_str()
             {
-                let target_path = target_directory.join(RelPath::unix(name).unwrap());
+                let target_path = target_directory.join(RelPath::from_unix_str(name).unwrap());
                 if worktree.read(cx).entry_for_path(&target_path).is_some() {
                     paths_to_replace.push((name.to_string(), path.clone()));
                 }
@@ -4714,6 +4739,43 @@ impl ProjectPanel {
             || cfg!(not(target_os = "macos")) && modifiers.control
     }
 
+    fn file_drag_paths_for_selections(
+        project: &Entity<Project>,
+        selections: impl IntoIterator<Item = SelectedEntry>,
+        cx: &App,
+    ) -> Option<FileDragPaths> {
+        let project = project.read(cx);
+        let paths = selections
+            .into_iter()
+            .filter_map(|selection| {
+                let worktree = project.worktree_for_id(selection.worktree_id, cx)?.read(cx);
+                if !worktree.is_local() {
+                    return None;
+                }
+                let entry = worktree.entry_for_id(selection.entry_id)?;
+                Some((worktree.absolutize(&entry.path), entry.is_dir()))
+            })
+            .collect::<SmallVec<[_; 2]>>();
+
+        (!paths.is_empty()).then(|| FileDragPaths::new(paths))
+    }
+
+    fn external_paths_for_dragged_selection(
+        &self,
+        selections: &DraggedSelection,
+        cx: &App,
+    ) -> Option<FileDragPaths> {
+        let resolved_selections = selections
+            .items()
+            .map(|selection| SelectedEntry {
+                worktree_id: selection.worktree_id,
+                entry_id: self.resolve_entry(selection.entry_id),
+            })
+            .collect::<BTreeSet<SelectedEntry>>();
+        let entries = self.disjoint_entries(resolved_selections, cx);
+        Self::file_drag_paths_for_selections(&self.project, entries, cx)
+    }
+
     fn drag_onto(
         &mut self,
         selections: &DraggedSelection,
@@ -4785,18 +4847,20 @@ impl ProjectPanel {
                     }
                     // update selection
                     if let Some(entry_id) = last_succeed {
-                        project_panel.update_in(cx, |project_panel, window, cx| {
-                            project_panel.selection = Some(SelectedEntry {
-                                worktree_id,
-                                entry_id,
-                            });
-                            // if only one entry was dragged and it was disambiguated, open the rename editor
-                            if item_count == 1 && disambiguation_range.is_some() {
-                                project_panel.rename_impl(disambiguation_range, window, cx);
-                            }
+                        project_panel
+                            .update_in(cx, |project_panel, window, cx| {
+                                project_panel.selection = Some(SelectedEntry {
+                                    worktree_id,
+                                    entry_id,
+                                });
+                                // if only one entry was dragged and it was disambiguated, open the rename editor
+                                if item_count == 1 && disambiguation_range.is_some() {
+                                    project_panel.rename_impl(disambiguation_range, window, cx);
+                                }
 
-                            project_panel.undo_manager.record(changes)
-                        })??;
+                                project_panel.undo_manager.record(changes)
+                            })?
+                            .log_err();
                     }
 
                     std::result::Result::Ok::<(), anyhow::Error>(())
@@ -4945,7 +5009,7 @@ impl ProjectPanel {
                                         move_results.iter().find(|(id, _)| id == resolved_id)?;
                                     let worktree = project.worktree_for_entry(new_entry.id, cx)?;
                                     let leaf_path = new_entry.path.join(suffix);
-                                    Some((worktree, leaf_path))
+                                    Some((worktree, leaf_path.into()))
                                 })
                                 .collect()
                         })
@@ -5211,7 +5275,7 @@ impl ProjectPanel {
             .read(cx)
             .git_store()
             .read(cx)
-            .repo_snapshots(cx);
+            .display_repo_snapshots(cx);
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         worktree.read_with(cx, |tree, _| {
             utils::ReversibleIterable::new(
@@ -5241,7 +5305,7 @@ impl ProjectPanel {
             .read(cx)
             .git_store()
             .read(cx)
-            .repo_snapshots(cx);
+            .display_repo_snapshots(cx);
 
         let mut last_found: Option<SelectedEntry> = None;
 
@@ -5894,6 +5958,15 @@ impl ProjectPanel {
                                 selection: selection.active_selection,
                                 selections: selection.marked_selections.clone(),
                             })
+                        }
+                    })
+                    .external_drag_payload({
+                        let project_panel = cx.entity();
+                        move |selection: &DraggedSelection, _window, cx| {
+                            project_panel
+                                .read(cx)
+                                .external_paths_for_dragged_selection(selection, cx)
+                                .map(ExternalDragPayload::Files)
                         }
                     })
                     .on_drop(cx.listener(
@@ -6845,6 +6918,15 @@ impl Render for ProjectPanel {
             }
         };
 
+        // Trashing, undo, and redo rely on the `TrashProjectEntry` and
+        // `RestoreProjectEntry` messages, which older collab hosts can't
+        // decode, with the operation silently never completing. As such, we
+        // keep all three disabled for collab guests. Trashing is already
+        // disabled in collab today, so existing users will not lose any
+        // functionality and the plan is to eventually remove this check, once a
+        // considerable portion of collab hosts had the chance to upgrade to a
+        // version that understands these messages.
+        let is_collab = project.is_via_collab();
         let is_local = project.is_local();
 
         if has_worktree {
@@ -6977,10 +7059,6 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
-                .when(cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>(), |el| {
-                    el.on_action(cx.listener(Self::undo))
-                        .on_action(cx.listener(Self::redo))
-                })
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
@@ -6993,8 +7071,10 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::restore_file))
                         .on_action(cx.listener(Self::add_to_gitignore))
                         .on_action(cx.listener(Self::add_to_git_info_exclude))
-                        .when(!project.is_remote(), |el| {
-                            el.on_action(cx.listener(Self::trash))
+                        .when(!is_collab, |el| el.on_action(cx.listener(Self::trash)))
+                        .when(!is_collab, |el| {
+                            el.on_action(cx.listener(Self::undo))
+                                .on_action(cx.listener(Self::redo))
                         })
                 })
                 .when(
@@ -7244,6 +7324,13 @@ impl Render for ProjectPanel {
                             div()
                                 .id("project-panel-blank-area")
                                 .block_mouse_except_scroll()
+                                // `block_mouse_except_scroll` prevents the dock's own
+                                // focus-follows-mouse hover handler from seeing this area,
+                                // so handle it here directly.
+                                .focus_follows_mouse(
+                                    WorkspaceSettings::get_global(cx).focus_follows_mouse,
+                                    cx,
+                                )
                                 .flex_grow_1()
                                 .on_scroll_wheel({
                                     let scroll_handle = self.scroll_handle.clone();

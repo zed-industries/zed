@@ -22,7 +22,9 @@ Extensions can provide:
 
 Before starting to develop an extension for Zed, be sure to [install Rust via rustup](https://www.rust-lang.org/tools/install).
 
-> Rust must be installed via rustup. If you have Rust installed via homebrew or otherwise, installing dev extensions will not work.
+> Zed uses the `wasm32-wasip2` Rust target to compile extensions. If Rust is installed via rustup, Zed will install the target automatically. If Rust is installed another way (e.g., via Homebrew or Nix), you must make the `wasm32-wasip2` target available yourself — for example, by adding it to the `targets` of a Nix rust-overlay or fenix toolchain.
+
+Extensions that provide grammars additionally require the [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) to compile Tree-sitter parsers. Zed downloads it automatically, but you can point Zed at an existing installation by setting the `WASI_SDK_PATH` environment variable to its root directory (the one containing `bin/clang`).
 
 When developing an extension, you can use it in Zed without needing to publish it by installing it as a _dev extension_.
 

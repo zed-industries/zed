@@ -166,6 +166,31 @@ impl FetchTool {
     }
 }
 
+/// Resolve the host of `url` and confirm it doesn't point into loopback /
+/// private / link-local space, applying the same forbidden-IP policy the
+/// terminal sandbox's proxy uses. Returns an error (including "resolves only to
+/// forbidden addresses") that aborts the fetch.
+///
+/// DNS resolution blocks, so callers should run this off the foreground thread.
+/// See the caller for why this is a gate rather than a full resolve-to-connect
+/// pin.
+fn verify_host_not_forbidden(url: &str) -> Result<()> {
+    let normalized = normalize_url(url);
+    let parsed =
+        url::Url::parse(&normalized).with_context(|| format!("could not parse URL {url:?}"))?;
+    let host = parsed
+        .host_str()
+        .with_context(|| format!("URL {url:?} has no host to reach"))?;
+    // Default to the scheme's port when the URL omits one; resolution needs a
+    // port but the value doesn't affect which IPs a host resolves to.
+    let port = parsed
+        .port_or_known_default()
+        .unwrap_or(if parsed.scheme() == "http" { 80 } else { 443 });
+
+    http_proxy::PinnedHost::resolve(host, port).map(|_pinned| ())?;
+    Ok(())
+}
+
 /// Extracts the host from a fetch URL as a [`http_proxy::HostPattern`] so it can
 /// be matched against the shared network grants. Mirrors the scheme handling in
 /// [`normalize_url`] (defaulting to `https://` when none is given).
@@ -256,7 +281,14 @@ impl AgentTool for FetchTool {
             // fetch to a host the user never approved. We disable the HTTP
             // client's own redirect following and re-run the grant for each hop
             // before requesting it.
-            let unsandboxed = cx.update(|cx| event_stream.unsandboxed_access_granted(cx));
+            //
+            // When the sandboxing feature flag is off the terminal isn't
+            // sandboxed either, so gating fetch by host would provide no
+            // isolation; skip it entirely (the pre-sandboxing behavior).
+            let unsandboxed = cx.update(|cx| {
+                !crate::sandboxing::sandboxing_enabled(cx)
+                    || event_stream.unsandboxed_access_granted(cx)
+            });
 
             let mut current_url = input.url.clone();
             let mut redirects = 0;
@@ -272,6 +304,32 @@ impl AgentTool for FetchTool {
                     });
                     futures::select! {
                         result = authorize_host.fuse() => result.map_err(|e| e.to_string())?,
+                        _ = event_stream.cancelled_by_user().fuse() => {
+                            return Err("Fetch cancelled by user".to_string());
+                        }
+                    };
+
+                    // Authorizing the *hostname* is not enough: a granted host
+                    // (or a redirect to one) whose DNS points into loopback /
+                    // private / link-local space would otherwise let the model
+                    // reach the local machine or LAN (SSRF / DNS rebinding).
+                    // Resolve and vet the host now, applying the same
+                    // forbidden-IP policy the terminal sandbox's proxy enforces.
+                    //
+                    // NOTE: this is a gate, not a full pin. `HttpClientWithUrl`
+                    // resolves the hostname again when it connects, so a DNS
+                    // answer that flips between this check and that connect could
+                    // still slip through. Closing that residual window would
+                    // require the HTTP client to connect to a pre-vetted IP
+                    // (`PinnedHost::socket_addrs`) rather than re-resolving;
+                    // until then this blocks the realistic case of a stably
+                    // resolving host that points at forbidden space.
+                    let verify_task = cx.background_spawn({
+                        let url = current_url.clone();
+                        async move { verify_host_not_forbidden(&url) }
+                    });
+                    futures::select! {
+                        result = verify_task.fuse() => result.map_err(|e| e.to_string())?,
                         _ = event_stream.cancelled_by_user().fuse() => {
                             return Err("Fetch cancelled by user".to_string());
                         }
@@ -310,5 +368,47 @@ impl AgentTool for FetchTool {
             }
             Ok(text)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // These use IP-literal URLs, which "resolve" to themselves, so the SSRF gate
+    // is exercised without depending on real DNS. IP literals can't be *granted*
+    // network access (that's a separate, earlier check), but they can be the
+    // target a granted hostname redirects to or resolves into — which is exactly
+    // the case this gate defends.
+
+    #[test]
+    fn verify_host_rejects_loopback_literal() {
+        let error = verify_host_not_forbidden("http://127.0.0.1/internal")
+            .expect_err("loopback must be refused");
+        assert!(
+            error.to_string().contains("loopback"),
+            "error should explain the forbidden range, got: {error}"
+        );
+    }
+
+    #[test]
+    fn verify_host_rejects_private_and_metadata_literals() {
+        for url in [
+            "http://10.0.0.5/",
+            "https://192.168.1.1/",
+            "http://169.254.169.254/latest/meta-data/", // cloud metadata
+            "http://[::1]/",
+        ] {
+            assert!(
+                verify_host_not_forbidden(url).is_err(),
+                "expected {url} to be refused as a forbidden destination"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_host_allows_public_literal() {
+        verify_host_not_forbidden("https://93.184.215.14/")
+            .expect("a public address must be allowed through the gate");
     }
 }

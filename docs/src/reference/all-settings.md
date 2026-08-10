@@ -130,7 +130,7 @@ Non-negative `float` values
 }
 ```
 
-Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+> Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
 
 ## Auto Indent
 
@@ -304,11 +304,19 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 - Description: Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 - Setting: `base_keymap`
-- Default: `VSCode`
+- Default: `Zed`
 
 **Options**
 
-1. VS Code
+1. Zed
+
+```json [settings]
+{
+  "base_keymap": "Zed"
+}
+```
+
+2. VS Code
 
 ```json [settings]
 {
@@ -316,7 +324,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 }
 ```
 
-2. Atom
+3. Atom
 
 ```json [settings]
 {
@@ -324,19 +332,11 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 }
 ```
 
-3. JetBrains
+4. JetBrains
 
 ```json [settings]
 {
   "base_keymap": "JetBrains"
-}
-```
-
-4. None
-
-```json [settings]
-{
-  "base_keymap": "None"
 }
 ```
 
@@ -353,6 +353,30 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 ```json [settings]
 {
   "base_keymap": "TextMate"
+}
+```
+
+7. Emacs
+
+```json [settings]
+{
+  "base_keymap": "Emacs"
+}
+```
+
+8. Cursor
+
+```json [settings]
+{
+  "base_keymap": "Cursor"
+}
+```
+
+9. None
+
+```json [settings]
+{
+  "base_keymap": "None"
 }
 ```
 
@@ -476,7 +500,7 @@ left and right padding of the central pane from the workspace when the centered 
 
 When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
 
-Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
+> Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
 ## Code Lens
 
@@ -814,7 +838,8 @@ List of `string` values
     "runnables": true,
     "breakpoints": true,
     "folds": true,
-    "min_line_number_digits": 4
+    "min_line_number_digits": 4,
+    "git_gutter_width": null
   }
 }
 ```
@@ -826,6 +851,7 @@ List of `string` values
 - `breakpoints`: Whether to show breakpoints in the gutter
 - `folds`: Whether to show fold buttons in the gutter
 - `min_line_number_digits`: Minimum number of characters to reserve space for in the gutter
+- `git_gutter_width`: The width, in pixels, of the git diff hunk indicators in the gutter. When `null`, the width scales with the buffer font size
 
 ## Hide Mouse
 
@@ -855,6 +881,30 @@ List of `string` values
 ```json [settings]
 {
   "hide_mouse": "on_typing_and_action"
+}
+```
+
+## Reduce Motion
+
+- Description: Whether to reduce non-essential motion in the UI, such as loading spinners and pulsating labels, by rendering them in a static state.
+- Setting: `reduce_motion`
+- Default: `off`
+
+**Options**
+
+1. Always reduce motion:
+
+```json [settings]
+{
+  "reduce_motion": "on"
+}
+```
+
+2. Never reduce motion:
+
+```json [settings]
+{
+  "reduce_motion": "off"
 }
 ```
 
@@ -1827,6 +1877,7 @@ While other options may be changed at a runtime and should be placed under `sett
   "global_lsp_settings": {
     "button": true,
     "request_timeout": 120,
+    "max_buffer_line_length": 20000,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.
@@ -1840,6 +1891,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 - `button`: Whether to show the LSP status button in the status bar
 - `request_timeout`: The maximum amount of time to wait for responses from language servers, in seconds. A value of `0` will result in no timeout being applied (causing all LSP responses to wait indefinitely until completed). Default: `120`
+- `max_buffer_line_length`: The maximum line length a buffer may contain before Zed disables all language server features for that entire buffer. If any line exceeds this value, Zed does not open the buffer with language servers or send them buffer-specific requests. Default: `20000`
 - `notifications`: Notification-related settings.
   - `dismiss_timeout_ms`: Timeout in milliseconds for automatically dismissing language server notifications. Set to 0 to disable auto-dismiss.
 
@@ -1977,6 +2029,8 @@ Similar to `modifications`, but behaves like `on` when range formatting cannot b
   }
 }
 ```
+
+Tools that rewrite files on disk instead of printing the formatted contents to stdout (such as `cargo fmt`) are not compatible with `"external"`: since Zed reads the formatted buffer from stdout, a formatter that emits nothing there will not update the buffer. For Rust, use `"formatter": "language_server"` or invoke `rustfmt` directly (which supports stdin/stdout via `--emit stdout`) instead of `cargo fmt`.
 
 3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like Prettier support receiving the file path via a command line argument which can then be used to impact formatting decisions.
 
@@ -2488,6 +2542,42 @@ Example:
 {
   "git": {
     "hunk_style": "unstaged_hollow"
+  }
+}
+```
+
+### Diff Base
+
+- Description: Whether git features show changes relative to HEAD (uncommitted changes) or to the default branch (all changes on the current branch). Also available in the editor controls menu as "Diff Against Default Branch".
+- Setting: `diff_base`
+- Default:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "head"
+  }
+}
+```
+
+**Options**
+
+1. Show working changes relative to HEAD:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "head"
+  }
+}
+```
+
+2. Show all branch changes relative to the merge base with the repository's default branch:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "default_branch"
   }
 }
 ```
@@ -4180,6 +4270,7 @@ List of `integer` column numbers
     "keep_selection_on_copy": true,
     "open_links_in_mouse_mode": true,
     "dock": "bottom",
+    "starts_open": false,
     "default_width": 640,
     "default_height": 320,
     "detect_venv": {
@@ -4218,6 +4309,24 @@ List of `integer` column numbers
 **Options**
 
 `"bottom"`, `"left"` or `"right"`
+
+### Terminal: Starts Open
+
+- Description: Whether the terminal panel should open on startup.
+- Setting: `starts_open`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+```json [settings]
+{
+  "terminal": {
+    "starts_open": true
+  }
+}
+```
 
 ### Terminal: Alternate Scroll
 
@@ -4444,6 +4553,24 @@ The name of any font family installed on the user's system
 {
   "terminal": {
     "font_family": "Berkeley Mono"
+  }
+}
+```
+
+### Terminal: Font Fallbacks
+
+- Description: The font fallbacks to use for text in the terminal. Uses the buffer's font fallback if unset.
+- Setting: "font_fallbacks"
+- Default: `null`
+
+**Options**
+
+For example, to use Nerd Font as a fallback, add the following to your settings:
+
+```json [settings]
+{
+  "terminal": {
+    "font_fallbacks": ["Nerd Font"]
   }
 }
 ```
@@ -4919,6 +5046,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   "title_bar": {
     "show_branch_status_icon": false,
     "show_branch_name": true,
+    "show_worktree_name": true,
     "show_project_items": true,
     "show_onboarding_banner": true,
     "show_user_picture": true,
@@ -4934,6 +5062,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 - `show_branch_status_icon`: Whether to show git status indicators on the branch icon in the titlebar
 - `show_branch_name`: Whether to show the branch name button in the titlebar
+- `show_worktree_name`: Whether to show the worktree name button in the titlebar
 - `show_project_items`: Whether to show the project host and name in the titlebar
 - `show_onboarding_banner`: Whether to show onboarding banners in the titlebar
 - `show_user_picture`: Whether to show user picture in the titlebar
@@ -4941,6 +5070,32 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
 - `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
+
+## Window Decorations
+
+- Description: Controls whether Zed or the window manager or compositor draws window decorations.
+- Setting: `window_decorations`
+- Default: `"client"`
+
+**Options**
+
+1. To have Zed draw its own window decorations, use `"client"`:
+
+```json [settings]
+{
+  "window_decorations": "client"
+}
+```
+
+2. To have the window manager or compositor draw the window decorations, use `"server"`:
+
+```json [settings]
+{
+  "window_decorations": "server"
+}
+```
+
+> Note: This setting only affects Linux. GNOME Wayland does not support server-side decorations. Changes only apply to newly created windows. Restart Zed to apply the setting to all windows.
 
 ## Vim
 
@@ -4991,7 +5146,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   "project_panel": {
     "button": true,
     "default_width": 240,
-    "dock": "left",
+    "dock": "right",
     "entry_spacing": "comfortable",
     "file_icons": true,
     "folder_icons": true,
@@ -5027,7 +5182,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 - Description: Control the position of the dock
 - Setting: `dock`
-- Default: `left`
+- Default: `right`
 
 **Options**
 
