@@ -810,14 +810,24 @@ impl SyntaxSnapshot {
                         grammar.injection_config.as_ref().zip(registry.as_ref()),
                         changed_ranges.is_empty(),
                     ) {
-                        // Handle invalidation and reactivation of injections on comment update
+                        // Handle invalidation and reactivation of injections on comment update.
+                        // The expanded ranges are clamped to this layer's own range, because a
+                        // layer only owns the injections nested inside of it. Without clamping,
+                        // reparsing one layer would invalidate the injections of sibling layers
+                        // on the adjacent rows, which nothing would then reparse.
                         let mut expanded_ranges: Vec<_> = changed_ranges
                             .iter()
-                            .map(|range| {
+                            .filter_map(|range| {
                                 let start_row = range.start.to_point(text).row.saturating_sub(1);
                                 let end_row = range.end.to_point(text).row.saturating_add(2);
-                                text.point_to_offset(Point::new(start_row, 0))
-                                    ..text.point_to_offset(Point::new(end_row, 0)).min(text.len())
+                                let start = text
+                                    .point_to_offset(Point::new(start_row, 0))
+                                    .max(step_start_byte);
+                                let end = text
+                                    .point_to_offset(Point::new(end_row, 0))
+                                    .min(text.len())
+                                    .min(step_end_byte);
+                                (start < end).then_some(start..end)
                             })
                             .collect();
                         expanded_ranges.sort_unstable_by_key(|r| r.start);
