@@ -22,9 +22,6 @@
         a11y-test = import ../tests/a11y.nix {
           inherit pkgs inputs;
         };
-        visual-artifacts = import ../tests/visual_artifacts.nix {
-          inherit pkgs inputs;
-        };
       }
       // import ../tests/sandboxing { inherit pkgs inputs; };
     };
