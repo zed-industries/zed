@@ -1286,8 +1286,13 @@ impl WaylandWindowStatePtr {
         {
             let state = self.state.borrow();
             if let Some(viewport) = &state.viewport {
-                viewport
-                    .set_destination(f32::from(size.width) as i32, f32::from(size.height) as i32);
+                let width = f32::from(size.width) as i32;
+                let height = f32::from(size.height) as i32;
+                if width > 0 && height > 0 {
+                    viewport.set_destination(width, height);
+                } else {
+                    viewport.set_destination(-1, -1);
+                }
             }
         }
     }
@@ -1972,29 +1977,33 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
     let opaque = !state.is_transparent();
 
     state.renderer.update_transparency(!opaque);
-    let opaque_area = state.window_bounds.map(|v| f32::from(v) as i32);
-    opaque_area.inset(f32::from(state.inset()) as i32);
-
-    let region = state
-        .globals
-        .compositor
-        .create_region(&state.globals.qh, ());
-    region.add(
-        opaque_area.origin.x,
-        opaque_area.origin.y,
-        opaque_area.size.width,
-        opaque_area.size.height,
-    );
-
     // Note that rounded corners make this rectangle API hard to work with.
     // As this is common when using CSD, let's just disable this API.
     if state.background_appearance == WindowBackgroundAppearance::Opaque
         && state.decorations == WindowDecorations::Server
     {
-        // Promise the compositor that this region of the window surface
-        // contains no transparent pixels. This allows the compositor to skip
-        // updating whatever is behind the surface for better performance.
-        state.surface.set_opaque_region(Some(&region));
+        let opaque_area = state.window_bounds.map(|v| f32::from(v) as i32);
+        opaque_area.inset(f32::from(state.inset()) as i32);
+
+        if opaque_area.size.width > 0 && opaque_area.size.height > 0 {
+            let region = state
+                .globals
+                .compositor
+                .create_region(&state.globals.qh, ());
+            region.add(
+                opaque_area.origin.x,
+                opaque_area.origin.y,
+                opaque_area.size.width,
+                opaque_area.size.height,
+            );
+            // Promise the compositor that this region of the window surface
+            // contains no transparent pixels. This allows the compositor to skip
+            // updating whatever is behind the surface for better performance.
+            state.surface.set_opaque_region(Some(&region));
+            region.destroy();
+        } else {
+            state.surface.set_opaque_region(None);
+        }
     } else {
         state.surface.set_opaque_region(None);
     }
@@ -2014,8 +2023,6 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
             }
         }
     }
-
-    region.destroy();
 }
 
 pub(crate) trait WindowDecorationsExt {
