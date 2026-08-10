@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #define DOUBLE(x) ((x) * 2)
+#define BLINK_IF_HOT digitalWrite(13, HIGH); if (analogRead(0) > 512) { digitalWrite(13, LOW); }
 
 const int SENSOR_PIN = A0;
 const int LED_PIN = 13;
@@ -25,6 +26,17 @@ void loop() {
         raw--;
     }
 
+    switch (raw) {
+        case 0:
+            digitalWrite(LED_PIN, LOW);
+            break;
+        default:
+            digitalWrite(LED_PIN, HIGH);
+            break;
+    }
+
     int state = digitalRead(LED_PIN) ? 1 : 0;
     digitalWrite(LED_PIN, state);
+
+    BLINK_IF_HOT;
 }

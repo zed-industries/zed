@@ -25,6 +25,8 @@ members = [
     "crates/buffer_diff",
     "crates/call",
     "crates/channel",
+    "crates/citadel_new_project",
+    "crates/citadel_build",
     "crates/cli",
     "crates/client",
     "crates/clock",
@@ -295,6 +297,8 @@ breadcrumbs = { path = "crates/breadcrumbs" }
 buffer_diff = { path = "crates/buffer_diff" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
+citadel_new_project = { path = "crates/citadel_new_project" }
+citadel_build = { path = "crates/citadel_build" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }
 clock = { path = "crates/clock" }
@@ -801,6 +805,7 @@ serde_json_lenient = { version = "0.2", features = [
 serde_yaml = "0.9.34"
 serde_path_to_error = "0.1.17"
 serde_urlencoded = "0.7"
+serialport = "4.4"
 sha2 = "0.10"
 shellexpand = "3.1"
 shlex = "1.3.0"

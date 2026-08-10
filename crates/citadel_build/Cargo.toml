@@ -1,0 +1,31 @@
+[package]
+name = "citadel_build"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+name = "citadel_build"
+path = "src/citadel_build.rs"
+
+[dependencies]
+anyhow.workspace = true
+db.workspace = true
+gpui.workspace = true
+notifications.workspace = true
+paths.workspace = true
+picker.workspace = true
+serialport.workspace = true
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+ui.workspace = true
+util.workspace = true
+which.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

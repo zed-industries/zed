@@ -18,11 +18,6 @@ const BANNED_STATEMENT_KINDS: &[(&str, &str, &str)] = &[
         "if文はC/C++に書けません。この判断はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
     ),
     (
-        "for_statement",
-        "for",
-        "forループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
-    ),
-    (
         "while_statement",
         "while",
         "whileループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
@@ -31,6 +26,11 @@ const BANNED_STATEMENT_KINDS: &[(&str, &str, &str)] = &[
         "do_statement",
         "do-while",
         "do-whileループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
+    ),
+    (
+        "switch_statement",
+        "switch",
+        "switch文はC/C++に書けません。この判断はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。",
     ),
     (
         "conditional_expression",
@@ -46,7 +46,9 @@ const BANNED_STATEMENT_KINDS: &[(&str, &str, &str)] = &[
 
 const COMPUTED_INTERMEDIATE_MESSAGE: &str = "計算式を含む変数初期化はC/C++に書けません。計算はRustのno_stdクレートで行い、結果だけをextern \"C\"関数の戻り値として受け取ってください。";
 
-fn walk(node: Node, violations: &mut Vec<Violation>) {
+const FOR_LOOP_MESSAGE: &str = "forループはC/C++に書けません。繰り返し制御はRustのno_stdクレートに実装し、extern \"C\"関数の戻り値として結果を受け取ってください。";
+
+fn walk(node: Node, source: &[u8], violations: &mut Vec<Violation>) {
     for &(kind, rule_id, message) in BANNED_STATEMENT_KINDS {
         if node.kind() == kind {
             let point = node.start_position();
@@ -59,7 +61,17 @@ fn walk(node: Node, violations: &mut Vec<Violation>) {
         }
     }
 
-    if node.kind() == "init_declarator" {
+    if node.kind() == "for_statement" && !is_trivial_dispatch_loop(node) {
+        let point = node.start_position();
+        violations.push(Violation {
+            line: point.row + 1,
+            column: point.column + 1,
+            rule_id: "for",
+            message: FOR_LOOP_MESSAGE,
+        });
+    }
+
+    if node.kind() == "init_declarator" && !enclosing_declaration_is_const(node) {
         if let Some(value) = node.child_by_field_name("value") {
             if let Some(binary) = find_binary_expression(value) {
                 let point = binary.start_position();
@@ -73,10 +85,132 @@ fn walk(node: Node, violations: &mut Vec<Violation>) {
         }
     }
 
+    if node.kind() == "preproc_def" {
+        check_object_macro_body(node, source, violations);
+    }
+
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk(child, violations);
+        walk(child, source, violations);
     }
+}
+
+// Object-like macros (`#define NAME value`) are otherwise allowed (unlike
+// function-like macros, which are banned outright), but tree-sitter treats
+// their body as an opaque `preproc_arg` token — so `#define BLINK_IF_HOT
+// if (...) { ... }` would hide an if-statement from the walk above entirely.
+// Re-parse the macro body on its own, wrapped in a synthetic function, and
+// reuse the same walk() to catch banned constructs inside it too. A plain
+// constant body (`#define LED_PIN 13`) has no trailing `;` and fails to
+// parse as a statement when wrapped, which is exactly the signal we want to
+// tell it apart from a real hidden statement — nothing is flagged for it.
+fn check_object_macro_body(macro_def: Node, source: &[u8], violations: &mut Vec<Violation>) {
+    let Some(value) = macro_def.child_by_field_name("value") else {
+        return;
+    };
+    let Ok(body_text) = value.utf8_text(source) else {
+        return;
+    };
+
+    let wrapped = format!("void __macro_check() {{ {body_text} }}");
+    let mut parser = Parser::new();
+    let language: tree_sitter::Language = tree_sitter_cpp::LANGUAGE.into();
+    if parser.set_language(&language).is_err() {
+        return;
+    }
+    let Some(tree) = parser.parse(wrapped.as_bytes(), None) else {
+        return;
+    };
+    if tree.root_node().has_error() {
+        return;
+    }
+
+    let mut inner_violations = Vec::new();
+    walk(tree.root_node(), wrapped.as_bytes(), &mut inner_violations);
+    if inner_violations.is_empty() {
+        return;
+    }
+
+    let point = macro_def.start_position();
+    for inner in inner_violations {
+        violations.push(Violation {
+            line: point.row + 1,
+            column: point.column + 1,
+            rule_id: inner.rule_id,
+            message: inner.message,
+        });
+    }
+}
+
+// A `const`-qualified declaration (e.g. `const uint8_t MASK = (1 << PB5);`) is
+// the board-constant idiom CLAUDE.md explicitly allows, not a runtime
+// calculation — skip the computed-intermediate check for it. This is a
+// syntactic heuristic (tree-sitter has no type/const-expression evaluation),
+// so it will also excuse a genuinely runtime-computed `const` declaration;
+// documented as a known limitation.
+// RFC 0001's own resolved architecture requires exactly one loop construct
+// in the whole system: the runtime scaffolding that owns `main()` and
+// dispatches forever into `citadel_setup()`/`citadel_loop()`
+// (prototypes/0001-hello-blink/cpp/runtime.cpp). That file isn't user
+// sketch logic — it's the same role the vendored Arduino core's own
+// main.cpp plays in 0002 (never scanned, because it's vendored). This tool
+// has no file-level notion of "runtime vs. sketch", so it exempts the
+// pattern structurally instead: an infinite `for(;;)` (no initializer,
+// condition, or update — a real bounded loop is unaffected) whose body
+// contains nothing but bare function-call statements. Anything else in the
+// body (an if, a declaration, a computed expression) still trips the rule
+// through the normal recursive walk.
+fn is_trivial_dispatch_loop(for_statement: Node) -> bool {
+    if for_statement.child_by_field_name("initializer").is_some() {
+        return false;
+    }
+    if for_statement.child_by_field_name("condition").is_some() {
+        return false;
+    }
+    if for_statement.child_by_field_name("update").is_some() {
+        return false;
+    }
+    let Some(body) = for_statement.child_by_field_name("body") else {
+        return false;
+    };
+    if body.kind() != "compound_statement" {
+        return false;
+    }
+
+    let mut cursor = body.walk();
+    for statement in body.named_children(&mut cursor) {
+        if statement.kind() != "expression_statement" {
+            return false;
+        }
+        let mut inner_cursor = statement.walk();
+        let named: Vec<Node> = statement.named_children(&mut inner_cursor).collect();
+        if named.len() != 1 || named[0].kind() != "call_expression" {
+            return false;
+        }
+    }
+    true
+}
+
+fn enclosing_declaration_is_const(init_declarator: Node) -> bool {
+    let Some(declaration) = init_declarator.parent() else {
+        return false;
+    };
+    if declaration.kind() != "declaration" {
+        return false;
+    }
+    let mut cursor = declaration.walk();
+    for child in declaration.children(&mut cursor) {
+        if child.kind() != "type_qualifier" {
+            continue;
+        }
+        let mut qualifier_cursor = child.walk();
+        for qualifier in child.children(&mut qualifier_cursor) {
+            if qualifier.kind() == "const" {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn find_binary_expression(node: Node) -> Option<Node> {
@@ -111,7 +245,7 @@ pub fn check_source(source: &str) -> Result<Vec<Violation>, String> {
     }
 
     let mut violations = Vec::new();
-    walk(tree.root_node(), &mut violations);
+    walk(tree.root_node(), source.as_bytes(), &mut violations);
     violations.sort_by_key(|v| (v.line, v.column));
     Ok(violations)
 }
@@ -184,6 +318,14 @@ mod tests {
     }
 
     #[test]
+    fn detects_switch_statement() {
+        let violations =
+            check_source("void loop() { switch (1) { case 0: break; } }").unwrap();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].rule_id, "switch");
+    }
+
+    #[test]
     fn detects_for_statement() {
         let violations = check_source("void loop() { for (int i = 0; i < 1; i++) { } }").unwrap();
         assert_eq!(violations.len(), 1);
@@ -234,6 +376,58 @@ mod tests {
     #[test]
     fn allows_object_like_macro() {
         let violations = check_source("#define LED_PIN 13\nvoid loop() {}").unwrap();
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn detects_logic_hidden_in_object_macro() {
+        let violations = check_source(
+            "#define BLINK_IF_HOT if (analogRead(0) > 512) digitalWrite(13, HIGH);\nvoid loop() {}",
+        )
+        .unwrap();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].rule_id, "if");
+        assert_eq!(violations[0].line, 1);
+    }
+
+    #[test]
+    fn allows_object_macro_with_plain_call_body() {
+        let violations = check_source(
+            "#define TURN_ON digitalWrite(13, HIGH);\nvoid loop() {}",
+        )
+        .unwrap();
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn allows_trivial_dispatch_loop() {
+        let violations = check_source(
+            "int main(void) { citadel_setup(); for (;;) { citadel_loop(); } }",
+        )
+        .unwrap();
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn allows_trivial_dispatch_loop_with_multiple_calls() {
+        let violations =
+            check_source("int main(void) { for (;;) { a(); b(); } }").unwrap();
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn detects_for_when_dispatch_loop_body_has_more_than_calls() {
+        let violations =
+            check_source("void loop() { for (;;) { if (true) { } } }").unwrap();
+        assert_eq!(violations.len(), 2);
+        assert!(violations.iter().any(|v| v.rule_id == "for"));
+        assert!(violations.iter().any(|v| v.rule_id == "if"));
+    }
+
+    #[test]
+    fn allows_const_bitshift_declaration() {
+        let violations =
+            check_source("void loop() { const uint8_t MASK = (1 << 5); }").unwrap();
         assert_eq!(violations.len(), 0);
     }
 
