@@ -1,7 +1,7 @@
 #[cfg(target_os = "windows")]
 use std::num::NonZeroU32;
 #[cfg(unix)]
-use std::os::fd::AsRawFd;
+use std::os::fd::OwnedFd;
 use std::{borrow::Cow, io, ops::RangeInclusive, path::PathBuf, sync::Arc};
 
 mod hyperlinks;
@@ -64,7 +64,13 @@ pub(super) struct AlacrittySearch {
 #[cfg(unix)]
 impl From<&AlacrittyPty> for ProcessIdGetter {
     fn from(pty: &AlacrittyPty) -> Self {
-        Self::new(pty.file().as_raw_fd(), pty.child().id())
+        let handle = pty
+            .file()
+            .try_clone()
+            .map(|file| Arc::new(OwnedFd::from(file)))
+            .map_err(|error| log::warn!("failed to duplicate the PTY master fd: {error}"))
+            .ok();
+        Self::new(handle, pty.child().id())
     }
 }
 
