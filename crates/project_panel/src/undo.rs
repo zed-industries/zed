@@ -130,7 +130,7 @@
 
 //! List of "tainted files" that the user may not operate on
 
-use crate::ProjectPanel;
+use crate::{ProjectPanel, RemovalKind};
 use anyhow::{Context, Result, anyhow};
 use fs::{TrashId, TrashRestoreError};
 use futures::channel::mpsc;
@@ -143,7 +143,6 @@ use project::{ProjectPath, WorktreeId};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::VecDeque, sync::Arc};
 use ui::{App, TextSize};
-use util::markdown::MarkdownInlineCode;
 use util::{paths::PathStyle, rel_path::RelPath};
 use workspace::{
     Pane, SaveIntent, Workspace,
@@ -885,57 +884,20 @@ impl Inner {
     where
         S: AsRef<str>,
     {
-        let mut prompt = match names {
-            [name] => format!(
-                "Do you want to trash {}?",
-                MarkdownInlineCode(name.as_ref())
-            ),
-            _ => {
-                const CUTOFF_POINT: usize = 10;
-                let mut listed_names = names
-                    .iter()
-                    .take(CUTOFF_POINT)
-                    .map(|name| MarkdownInlineCode(name.as_ref()).to_string())
-                    .collect::<Vec<_>>();
-                let omitted_count = names.len().saturating_sub(CUTOFF_POINT);
-                if omitted_count == 1 {
-                    listed_names.push(".. 1 file not shown".into());
-                } else if omitted_count > 1 {
-                    listed_names.push(format!(".. {omitted_count} files not shown"));
-                }
-
-                format!(
-                    "Do you want to trash {} files?\n{}",
-                    names.len(),
-                    listed_names.join("\n")
-                )
-            }
-        };
-        match dirty_buffers {
-            0 => {}
-            1 if names.len() == 1 => {
-                prompt.push_str("\n\nIt has unsaved changes, which will be lost.");
-            }
-            1 => {
-                prompt.push_str("\n\n1 of these has unsaved changes, which will be lost.");
-            }
-            dirty_buffers => {
-                prompt.push_str(&format!(
-                    "\n\n{dirty_buffers} of these have unsaved changes, which will be lost."
-                ));
-            }
-        }
-
+        let prompt = ProjectPanel::build_removal_prompt(RemovalKind::Trash, names, dirty_buffers);
         let answer = self
             .panel
             .update_in(cx, |_panel, window, cx| {
-                window.prompt(PromptLevel::Info, &prompt, None, &["Trash", "Cancel"], cx)
+                window.prompt(
+                    PromptLevel::Info,
+                    &prompt.message,
+                    prompt.detail,
+                    &[prompt.confirmation_label, "Cancel"],
+                    cx,
+                )
             })?
             .await?;
 
-        match answer {
-            0 => Ok(true),
-            _ => Ok(false),
-        }
+        Ok(answer == 0)
     }
 }
