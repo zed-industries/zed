@@ -5177,6 +5177,53 @@ mod tests {
         );
     }
 
+    /// Repeats the rerun cycle from <https://github.com/zed-industries/zed/issues/62095>
+    /// (spawn the replacement first, then drop the replaced terminal, as
+    /// `replace_terminal` does): every freed PTY fd number is immediately up
+    /// for reuse, so each iteration is a fresh chance for a stale-fd or
+    /// stale-pid race to kill the new task.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_repeated_task_reruns_survive_previous_terminal_cleanup(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (mut previous_terminal, completion_rx) = build_test_terminal(cx, "true", &[]).await;
+        completion_rx
+            .recv()
+            .await
+            .expect("the initial terminal should report its exit status");
+
+        for iteration in 0..10 {
+            let (replacement_terminal, replacement_completion_rx) =
+                build_test_terminal(cx, "sleep 0.3 && echo rerun_survived", &[]).await;
+
+            drop(previous_terminal);
+            cx.update(|_| {});
+            // Let the dropped terminal's SIGKILL escalation land while the
+            // replacement's task is still running.
+            cx.background_executor
+                .timer(PROCESS_KILL_GRACE_PERIOD + Duration::from_millis(50))
+                .await;
+
+            let exit_status = replacement_completion_rx
+                .recv()
+                .await
+                .expect("the replacement task should report its exit status");
+            let succeeded = exit_status.as_ref().is_some_and(|status| status.success());
+            let content = replacement_terminal.update(cx, |terminal, _| terminal.get_content());
+            assert!(
+                succeeded,
+                "iteration {iteration}: the rerun task was killed by the previous terminal's \
+                 cleanup; exit status: {exit_status:?}; content: {content}"
+            );
+            // A shell may reap a signalled foreground job and still exit 0, so
+            // also require the marker only a surviving `sleep` prints.
+            assert_content_eventually(&replacement_terminal, "rerun_survived", cx).await;
+
+            previous_terminal = replacement_terminal;
+        }
+    }
+
     /// Even when a dead terminal's child pid has been recycled as the
     /// process-group id of a live foreground job (simulated here by
     /// constructing stale process info pointing at the replacement's
