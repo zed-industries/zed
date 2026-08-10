@@ -94,6 +94,8 @@ impl From<Connection> for RemoteConnectionOptions {
                     name: conn.name,
                     remote_user: conn.remote_user,
                     container_id: conn.container_id,
+                    local_folder: Some(conn.local_folder),
+                    config_file: Some(conn.config_file),
                     upload_binary_over_docker_exec: false,
                     use_podman: conn.use_podman,
                     remote_env: conn.remote_env,
