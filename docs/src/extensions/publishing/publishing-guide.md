@@ -5,7 +5,7 @@ description: "Submit and update extensions in the Zed Extension Registry."
 
 # Publishing Guide {#publishing-your-extension}
 
-> Before initiating the publishing process, read and ensure that your extension meets all [publishing prerequisites](./prerequisites.md) and [license requirements](./license-requirements.md). Only proceed with the steps below after satisfying these requirements. The publishing may be delayed our outright rejected otherwise.
+> Before initiating the publishing process, read and ensure that your extension meets all [publishing prerequisites](./prerequisites.md) and [license requirements](./license-requirements.md). Only proceed with the steps below after satisfying these requirements. The publishing may be delayed or outright rejected otherwise.
 
 Follow each step carefully to help the publishing process go smoothly.
 
@@ -50,7 +50,7 @@ If your extension is in a subdirectory within the submodule, you can use the `pa
 
 ```toml
 [my-extension]
-submodule = "extensions-my-extension"
+submodule = "extensions/my-extension"
 path = "packages/zed"
 version = "0.0.1"
 ```
