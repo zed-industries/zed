@@ -154,10 +154,10 @@ impl ScissorRect {
     ) -> Option<ScissorRect> {
         let left = (rect.origin.x.0.floor().max(0.0) as u32).min(target_width);
         let top = (rect.origin.y.0.floor().max(0.0) as u32).min(target_height);
-        let right = ((rect.origin.x.0 + rect.size.width.0).ceil().max(0.0) as u32)
-            .min(target_width);
-        let bottom = ((rect.origin.y.0 + rect.size.height.0).ceil().max(0.0) as u32)
-            .min(target_height);
+        let right =
+            ((rect.origin.x.0 + rect.size.width.0).ceil().max(0.0) as u32).min(target_width);
+        let bottom =
+            ((rect.origin.y.0 + rect.size.height.0).ceil().max(0.0) as u32).min(target_height);
         if right <= left || bottom <= top {
             return None;
         }
@@ -542,9 +542,7 @@ impl WgpuRenderer {
 
         // COPY_DST lets partial rendering blit its persistent frame texture
         // into swapchain images; without it we fall back to full renders.
-        let surface_supports_copy = surface_caps
-            .usages
-            .contains(wgpu::TextureUsages::COPY_DST);
+        let surface_supports_copy = surface_caps.usages.contains(wgpu::TextureUsages::COPY_DST);
         let mut surface_usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
         if surface_supports_copy {
             surface_usage |= wgpu::TextureUsages::COPY_DST;
@@ -1196,12 +1194,11 @@ impl WgpuRenderer {
             &shader_module,
         );
 
-        let clear_region_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("clear_region_layout"),
-                bind_group_layouts: &[],
-                immediate_size: 0,
-            });
+        let clear_region_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("clear_region_layout"),
+            bind_group_layouts: &[],
+            immediate_size: 0,
+        });
         let clear_region = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("clear_region"),
             layout: Some(&clear_region_layout),
@@ -1738,11 +1735,9 @@ impl WgpuRenderer {
         };
 
         let resources = self.resources();
-        resources.queue.write_buffer(
-            &resources.globals_buffer,
-            0,
-            bytemuck::bytes_of(&globals),
-        );
+        resources
+            .queue
+            .write_buffer(&resources.globals_buffer, 0, bytemuck::bytes_of(&globals));
         resources.queue.write_buffer(
             &resources.globals_buffer,
             self.path_globals_offset,

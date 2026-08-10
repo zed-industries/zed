@@ -7,8 +7,8 @@ use gpui::{
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene,
     SceneDamage, Size, Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, popup::PopupNotSupportedError, px,
+    WindowControlArea, WindowDecorations, WindowKind, WindowParams, popup::PopupNotSupportedError,
+    px,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 

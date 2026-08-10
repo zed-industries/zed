@@ -40,8 +40,8 @@ use crate::{
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, Pixels, PlatformGestures, PlatformInput, Point, Priority, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Scene, SceneDamage, ShapedGlyph, ShapedRun,
-    SharedString,
-    Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
+    SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point,
+    px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;

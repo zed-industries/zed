@@ -78,7 +78,11 @@ impl DamageRects {
             // Absorb everything the (growing) rectangle intersects. Each
             // union can newly intersect further rectangles, so scan to a
             // fixpoint; the set shrinks every iteration.
-            while let Some(index) = self.0.iter().position(|existing| existing.intersects(&rect)) {
+            while let Some(index) = self
+                .0
+                .iter()
+                .position(|existing| existing.intersects(&rect))
+            {
                 rect = self.0.swap_remove(index).union(&rect);
             }
             if self.0.len() < MAX_DAMAGE_RECTS {
@@ -629,11 +633,7 @@ mod tests {
         Primitive::Path(path.scale(1.0))
     }
 
-    fn underline_with_order(
-        bounds: Bounds<ScaledPixels>,
-        lightness: f32,
-        order: u32,
-    ) -> Underline {
+    fn underline_with_order(bounds: Bounds<ScaledPixels>, lightness: f32, order: u32) -> Underline {
         Underline {
             order,
             pad: 0,
@@ -731,9 +731,7 @@ mod tests {
     fn damage_covers(damage: &SceneDamage, region: Bounds<ScaledPixels>) -> bool {
         match damage {
             SceneDamage::Full => true,
-            SceneDamage::Unchanged => {
-                region.size.width.0 <= 0.0 || region.size.height.0 <= 0.0
-            }
+            SceneDamage::Unchanged => region.size.width.0 <= 0.0 || region.size.height.0 <= 0.0,
             SceneDamage::Rects(rects) => rect_covered_by(region, rects.as_slice()),
         }
     }
@@ -765,14 +763,8 @@ mod tests {
 
     #[test]
     fn strict_order_mode_reports_order_shifts_as_damage() {
-        let before = scene_of_ordered(
-            &[quad_with_order(rect(0., 0., 50., 50.), 0.2, 1)],
-            &[],
-        );
-        let after = scene_of_ordered(
-            &[quad_with_order(rect(0., 0., 50., 50.), 0.2, 5)],
-            &[],
-        );
+        let before = scene_of_ordered(&[quad_with_order(rect(0., 0., 50., 50.), 0.2, 1)], &[]);
+        let after = scene_of_ordered(&[quad_with_order(rect(0., 0., 50., 50.), 0.2, 5)], &[]);
         // Identical content, shifted order: tolerant mode sees no change,
         // strict mode conservatively damages the shifted primitive.
         assert!(matches!(
@@ -885,8 +877,14 @@ mod tests {
         let after = scene_of(&background);
 
         let damage = SceneDamage::between_with_order_tolerance(&before, &after, true);
-        assert!(damage_covers(&damage, spinner_a_bounds), "damage {damage:?}");
-        assert!(damage_covers(&damage, spinner_b_bounds), "damage {damage:?}");
+        assert!(
+            damage_covers(&damage, spinner_a_bounds),
+            "damage {damage:?}"
+        );
+        assert!(
+            damage_covers(&damage, spinner_b_bounds),
+            "damage {damage:?}"
+        );
         // The unchanged strip between the two loci must not be damaged.
         assert!(
             !damage.contains_point(&Point {
@@ -950,9 +948,8 @@ mod tests {
         use proptest::{prelude::*, test_runner::TestCaseError};
 
         fn arbitrary_rect() -> impl Strategy<Value = Bounds<ScaledPixels>> {
-            (-100i32..100, -100i32..100, 0i32..100, 0i32..100).prop_map(|(x, y, w, h)| {
-                rect(x as f32, y as f32, w as f32, h as f32)
-            })
+            (-100i32..100, -100i32..100, 0i32..100, 0i32..100)
+                .prop_map(|(x, y, w, h)| rect(x as f32, y as f32, w as f32, h as f32))
         }
 
         fn arbitrary_damage() -> impl Strategy<Value = SceneDamage> {
