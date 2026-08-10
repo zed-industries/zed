@@ -4974,10 +4974,19 @@ mod tests {
         let background_sleep_pid = parse_pid_marker(&content, "bg_marker_", "_bgend");
         let foreground_sleep_pid = parse_pid_marker(&content, "fg_marker_", "_fgend");
 
-        let shell_pid = terminal.update(cx, |terminal, _| match &terminal.terminal_type {
-            TerminalType::Pty { info, .. } => info.pid_getter().fallback_pid().as_u32() as i32,
-            TerminalType::DisplayOnly => panic!("expected a PTY-backed terminal"),
-        });
+        let (shell_pid, captured_foreground_pid) =
+            terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+                TerminalType::Pty { info, .. } => (
+                    info.pid_getter().fallback_pid().as_u32() as i32,
+                    info.pid().map(|pid| pid.as_u32() as i32),
+                ),
+                TerminalType::DisplayOnly => panic!("expected a PTY-backed terminal"),
+            });
+        assert_eq!(
+            captured_foreground_pid,
+            Some(foreground_sleep_pid),
+            "the PTY should report the active foreground process group"
+        );
 
         for pid in [background_sleep_pid, foreground_sleep_pid] {
             assert_eq!(
@@ -5065,6 +5074,58 @@ mod tests {
             unsafe { libc::kill(new_shell_pid, 0) },
             0,
             "dropping a completed terminal should not kill a newly spawned terminal"
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_stale_process_info_does_not_kill_reused_fallback_process_group(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+
+        let (replacement_terminal, replacement_completion_rx) = build_test_terminal(
+            cx,
+            "/bin/sh -c 'echo replacement_fg_marker_$$_fgend; exec sleep 5'; echo done",
+            &[],
+        )
+        .await;
+        assert_content_eventually(&replacement_terminal, "_fgend", cx).await;
+        let content = replacement_terminal.update(cx, |terminal, _| terminal.get_content());
+        let replacement_foreground_pid =
+            parse_pid_marker(&content, "replacement_fg_marker_", "_fgend");
+        let replacement_shell_pid =
+            replacement_terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+                TerminalType::Pty { info, .. } => info.pid_getter().fallback_pid().as_u32() as i32,
+                TerminalType::DisplayOnly => panic!("expected a PTY-backed terminal"),
+            });
+        assert_ne!(
+            unsafe { libc::getpgid(replacement_foreground_pid) },
+            unsafe { libc::getpgid(replacement_shell_pid) },
+            "replacement foreground process should run separately from its shell"
+        );
+
+        let stale_info =
+            PtyProcessInfo::new(ProcessIdGetter::new(-1, replacement_foreground_pid as u32));
+        let signal_sent = stale_info.capture_process_ids().terminate();
+
+        cx.background_executor
+            .timer(Duration::from_millis(50))
+            .await;
+        let completed_early = replacement_completion_rx.try_recv().ok();
+        let content = replacement_terminal.update(cx, |terminal, _| terminal.get_content());
+
+        drop(replacement_terminal);
+        cx.update(|_| {});
+        cx.background_executor
+            .timer(PROCESS_KILL_GRACE_PERIOD + Duration::from_millis(50))
+            .await;
+
+        assert!(
+            !signal_sent && completed_early.is_none(),
+            "cleanup for stale process info killed a new foreground process group \
+             that reused its fallback process-group id; completion: {completed_early:?}; \
+             content: {content}"
         );
     }
 
