@@ -203,6 +203,7 @@ struct GitPanelViewOptionsMenuState {
 
 fn git_panel_context_menu(
     has_tracked_changes: bool,
+    has_restorable_tracked_changes: bool,
     has_staged_changes: bool,
     has_unstaged_changes: bool,
     has_new_changes: bool,
@@ -218,7 +219,7 @@ fn git_panel_context_menu(
             .action_disabled_when(!has_unstaged_changes, "Stage All", StageAll.boxed_clone())
             .action_disabled_when(!has_staged_changes, "Unstage All", UnstageAll.boxed_clone())
             .action_disabled_when(
-                !has_tracked_changes,
+                !has_restorable_tracked_changes,
                 "Restore All Changes",
                 RestoreTrackedFiles.boxed_clone(),
             )
@@ -2315,10 +2316,7 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         let entries = self
-            .change_entries_by_path()
-            .filter(|status_entry| {
-                !status_entry.status.is_created() && status_entry.status.staging().has_staged()
-            })
+            .restorable_tracked_changes()
             .cloned()
             .collect::<Vec<_>>();
 
@@ -5045,6 +5043,11 @@ impl GitPanel {
         self.tracked_count > 0
     }
 
+    fn restorable_tracked_changes(&self) -> impl Iterator<Item = &GitStatusEntry> {
+        self.change_entries_by_path()
+            .filter(|entry| !entry.status.is_created() && entry.status.staging().has_staged())
+    }
+
     pub fn has_unstaged_conflicts(&self) -> bool {
         self.change_entries_by_path()
             .any(|entry| entry.status.is_conflicted() && entry.staging.has_unstaged())
@@ -5584,6 +5587,7 @@ impl GitPanel {
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_tracked_changes = self.has_tracked_changes();
+        let has_restorable_tracked_changes = self.restorable_tracked_changes().next().is_some();
         let has_staged_changes = self.has_staged_changes();
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
@@ -5601,6 +5605,7 @@ impl GitPanel {
             .menu(move |window, cx| {
                 Some(git_panel_context_menu(
                     has_tracked_changes,
+                    has_restorable_tracked_changes,
                     has_staged_changes,
                     has_unstaged_changes,
                     has_new_changes,
@@ -7334,6 +7339,7 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         let has_tracked_changes = self.has_tracked_changes();
+        let has_restorable_tracked_changes = self.restorable_tracked_changes().next().is_some();
         let has_staged_changes = self.has_staged_changes();
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
@@ -7341,6 +7347,7 @@ impl GitPanel {
 
         let context_menu = git_panel_context_menu(
             has_tracked_changes,
+            has_restorable_tracked_changes,
             has_staged_changes,
             has_unstaged_changes,
             has_new_changes,
