@@ -315,25 +315,37 @@ impl SerialConnection {
     /// `paused` -- shared by `disconnect` (which clears both after) and
     /// `pause_for_flash` (which needs `paused` to survive).
     ///
-    /// Clears the mutex inline (blocking this thread briefly) rather than in
-    /// a detached background task, so an already-open OS port handle is
-    /// guaranteed closed by the time this returns, and a still-opening one
-    /// (state `PortSlot::Connecting`) is guaranteed to be dropped the moment
-    /// its `serialport::open()` call returns rather than published into the
-    /// read loop -- see `run_serial_reader`. `pause_for_flash` depends on
-    /// this: avrdude must never race the reader thread for the same port.
-    /// (One unavoidable exception: if a port is still mid-`open()` when this
-    /// runs, the OS call itself can't be cancelled, so the handle may stay
-    /// briefly held until that blocking call returns and notices `Closed`.)
-    /// The reader thread only ever holds this mutex for the duration of one
-    /// `port.read()` call, bounded by the port's 100ms read timeout, and
-    /// never awaits anything while holding it, so this lock acquires
-    /// quickly (worst case ~100ms) with no deadlock risk.
+    /// Clears the mutex from a `cx.background_spawn` task rather than
+    /// blocking inline: an earlier version blocked the calling thread here
+    /// to acquire the lock synchronously, reasoning that the reader thread
+    /// only ever holds it for one `port.read()` call bounded by the port's
+    /// 100ms read timeout. That bound is a floor, not a ceiling --
+    /// `std::sync::Mutex` has no fairness guarantee, and a device that
+    /// streams data continuously (no gaps between reads) lets the reader
+    /// thread release-and-immediately-reacquire the lock in a tight loop,
+    /// starving a contending acquire on another thread far past 100ms. When
+    /// `close_port` runs on the GPUI foreground thread (every call site
+    /// does: `connect`/`disconnect`/`pause_for_flash`'s subscriber/the
+    /// message-loop's `Error` arm), that starvation blocks the whole UI
+    /// thread -- observed in practice as a multi-second hang against a
+    /// continuously-printing test sketch, which starved the Wayland event
+    /// loop and crashed the app. Moving the lock-and-clear onto a
+    /// background thread keeps the same eventual guarantee (the port is
+    /// closed once the reader notices `Closed`, still bounded by ~100ms of
+    /// *reader* time) without ever blocking the caller. The one thing this
+    /// gives up: `pause_for_flash`'s caller can no longer treat "the port
+    /// is released" as true the instant `close_port` returns -- it relies
+    /// on `citadel_build`'s multi-second build/link pipeline elapsing
+    /// before `avrdude` actually needs the port, same as this design's
+    /// original (pre-review) version.
     fn close_port(&mut self, cx: &mut Context<Self>) {
         if let Some(open) = self.open.take() {
-            if let Ok(mut guard) = open.handle.lock() {
-                *guard = PortSlot::Closed;
-            }
+            cx.background_spawn(async move {
+                if let Ok(mut guard) = open.handle.lock() {
+                    *guard = PortSlot::Closed;
+                }
+            })
+            .detach();
         }
         self.is_open = false;
         cx.notify();
