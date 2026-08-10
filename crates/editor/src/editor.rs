@@ -109,7 +109,9 @@ pub use element::{
 pub use git::blame::{BlameRenderer, GitBlame};
 pub use git::{
     DefaultDiffHunkRenderer, DiffHunkRenderer, HiddenDiffHunkRenderer,
-    HiddenUnstagedDiffHunkRenderer, render_diff_hunk_controls, set_blame_renderer,
+    HiddenUnstagedDiffHunkRenderer, ReviewComment, ReviewCommentStatus, ReviewFeedback,
+    ReviewSession, ReviewSessionSource, ReviewThread, render_diff_hunk_controls,
+    set_blame_renderer,
 };
 pub(crate) use git::{DiffHunkKey, StoredReviewComment};
 use git::{DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover};

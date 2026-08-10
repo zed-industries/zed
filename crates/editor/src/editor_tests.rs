@@ -42784,6 +42784,51 @@ fn test_review_comment_take_all(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_review_feedback_preserves_anchor_metadata_until_cleared(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+
+    let result = editor.update(cx, |editor, window, cx| {
+        editor.set_text("first\nsecond\n", window, cx);
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let start = snapshot.anchor_before(Point::new(0, 0));
+        let end = snapshot.anchor_after(Point::new(1, 6));
+        editor.add_review_comment(
+            test_hunk_key_with_anchor("src/example.rs", start),
+            "Handle this edge case".to_string(),
+            start..end,
+            cx,
+        );
+
+        let feedback = editor.review_feedback(cx);
+        assert_eq!(feedback.len(), 1);
+        assert_eq!(feedback[0].worktree_name, None);
+        assert_eq!(feedback[0].file_path, "src/example.rs");
+        assert_eq!(feedback[0].start_line, 1);
+        assert_eq!(feedback[0].end_line, 2);
+        assert_eq!(feedback[0].excerpt, "first\nsecond");
+        assert_eq!(feedback[0].comment, "Handle this edge case");
+        assert_eq!(feedback[0].status, ReviewCommentStatus::Draft);
+
+        let session = editor.review_session(cx);
+        assert_eq!(session.source, ReviewSessionSource::LocalDiff);
+        assert_eq!(session.threads.len(), 1);
+        assert_eq!(session.threads[0].file_path, "src/example.rs");
+        assert_eq!(session.threads[0].comments[0].author, "You");
+
+        editor.mark_review_feedback_sent(cx);
+        assert!(editor.review_feedback(cx).is_empty());
+        assert_eq!(editor.total_review_comment_count(), 0);
+
+        editor.clear_review_feedback(cx);
+        assert!(editor.review_feedback(cx).is_empty());
+        assert_eq!(editor.total_review_comment_count(), 0);
+    });
+    assert!(result.is_ok(), "editor window should remain available");
+}
+
+#[gpui::test]
 fn test_diff_review_overlay_show_and_dismiss(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
