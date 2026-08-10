@@ -1418,6 +1418,9 @@ pub struct Workspace {
     on_prompt_for_new_path: Option<PromptForNewPath>,
     on_prompt_for_open_path: Option<PromptForOpenPath>,
     terminal_provider: Option<Box<dyn TerminalProvider>>,
+    project_open_state: ProjectOpenState,
+    pending_project_open_worktrees: HashSet<WorktreeId>,
+    started_project_open_worktrees: HashSet<WorktreeId>,
     debugger_provider: Option<Arc<dyn DebuggerProvider>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
     _items_serializer: Task<Result<()>>,
@@ -1485,11 +1488,44 @@ pub enum OpenMode {
     Activate,
 }
 
+#[derive(Clone, Copy)]
+enum ProjectOpenState {
+    New,
+    Restored,
+}
+
+impl ProjectOpenState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Restored => "restored",
+        }
+    }
+}
+
 impl Workspace {
     pub fn new(
         workspace_id: Option<WorkspaceId>,
         project: Entity<Project>,
         app_state: Arc<AppState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_project_open_state(
+            workspace_id,
+            project,
+            app_state,
+            ProjectOpenState::New,
+            window,
+            cx,
+        )
+    }
+
+    fn new_with_project_open_state(
+        workspace_id: Option<WorkspaceId>,
+        project: Entity<Project>,
+        app_state: Arc<AppState>,
+        project_open_state: ProjectOpenState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1558,6 +1594,9 @@ impl Workspace {
                         this.serialize_workspace(window, cx);
                         this.update_history(cx);
                     }
+                }
+                &project::Event::WorktreeTasksLoaded(worktree_id) => {
+                    this.queue_project_open_tasks(worktree_id, window, cx);
                 }
                 project::Event::WorktreeUpdatedEntries(..) => {
                     this.update_window_title(window, cx);
@@ -1826,6 +1865,11 @@ impl Workspace {
         center.set_is_center(true);
         center.mark_positions(cx);
 
+        let pending_project_open_worktrees = project
+            .read(cx)
+            .worktrees_with_root_tasks_loaded()
+            .collect();
+
         Workspace {
             weak_self: weak_handle.clone(),
             zoomed: None,
@@ -1877,6 +1921,9 @@ impl Workspace {
             on_prompt_for_new_path: None,
             on_prompt_for_open_path: None,
             terminal_provider: None,
+            project_open_state,
+            pending_project_open_worktrees,
+            started_project_open_worktrees: HashSet::default(),
             debugger_provider: None,
             serializable_items_tx,
             _items_serializer,
@@ -1902,6 +1949,28 @@ impl Workspace {
         env: Option<HashMap<String, String>>,
         init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
         open_mode: OpenMode,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<OpenResult>> {
+        Self::new_local_with_project_open_state(
+            abs_paths,
+            app_state,
+            requesting_window,
+            env,
+            init,
+            open_mode,
+            ProjectOpenState::New,
+            cx,
+        )
+    }
+
+    fn new_local_with_project_open_state(
+        abs_paths: Vec<PathBuf>,
+        app_state: Arc<AppState>,
+        requesting_window: Option<WindowHandle<MultiWorkspace>>,
+        env: Option<HashMap<String, String>>,
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        open_mode: OpenMode,
+        project_open_state: ProjectOpenState,
         cx: &mut App,
     ) -> Task<anyhow::Result<OpenResult>> {
         let project_handle = Project::local(
@@ -2008,10 +2077,11 @@ impl Workspace {
 
                     let workspace = window.update(cx, |multi_workspace, window, cx| {
                         let workspace = cx.new(|cx| {
-                            let mut workspace = Workspace::new(
+                            let mut workspace = Workspace::new_with_project_open_state(
                                 Some(workspace_id),
                                 project_handle.clone(),
                                 app_state.clone(),
+                                project_open_state,
                                 window,
                                 cx,
                             );
@@ -2072,10 +2142,11 @@ impl Workspace {
                         let project_handle = project_handle.clone();
                         move |window, cx| {
                             let workspace = cx.new(|cx| {
-                                let mut workspace = Workspace::new(
+                                let mut workspace = Workspace::new_with_project_open_state(
                                     Some(workspace_id),
                                     project_handle,
                                     app_state,
+                                    project_open_state,
                                     window,
                                     cx,
                                 );
@@ -9665,13 +9736,14 @@ pub async fn restore_multiworkspace(
         .await
     } else {
         cx.update(|cx| {
-            Workspace::new_local(
+            Workspace::new_local_with_project_open_state(
                 active_workspace.paths.paths().to_vec(),
                 app_state.clone(),
                 None,
                 None,
                 None,
                 OpenMode::Activate,
+                ProjectOpenState::Restored,
                 cx,
             )
         })
@@ -9690,13 +9762,14 @@ pub async fn restore_multiworkspace(
                 let paths = key.path_list().paths().to_vec();
                 match cx
                     .update(|cx| {
-                        Workspace::new_local(
+                        Workspace::new_local_with_project_open_state(
                             paths,
                             app_state.clone(),
                             None,
                             None,
                             None,
                             OpenMode::Activate,
+                            ProjectOpenState::Restored,
                             cx,
                         )
                     })

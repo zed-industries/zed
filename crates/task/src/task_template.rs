@@ -95,6 +95,8 @@ pub enum DebugArgsRequest {
 pub enum TaskHook {
     #[serde(alias = "create_git_worktree")]
     CreateWorktree,
+    ProjectOpen,
+    WorktreeOpen,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.

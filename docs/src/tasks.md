@@ -236,12 +236,23 @@ In addition to being spawned manually, tasks can be configured to run automatica
 
 The following hooks are currently supported:
 
+- `project_open` — runs once for each opened project worktree after its root `.zed/tasks.json` has loaded.
+- `worktree_open` — an alternative name for `project_open`, useful when a task is specifically scoped to a worktree.
 - `create_worktree` — runs after Zed creates a new linked Git worktree, either directly through the CLI or from the [worktree picker](./git.md#git-worktrees). The task is spawned with `ZED_WORKTREE_ROOT` pointing at the newly created worktree and `ZED_MAIN_GIT_WORKTREE` pointing at the original repository's working directory, which makes these hooks well-suited to copying untracked files (such as `.env` files) or running per-worktree setup commands.
+
+Open hooks run in Zed's integrated terminal and are dispatched only once per workspace worktree, even when task discovery or terminal-panel restoration produces multiple updates. Multiple matching tasks are spawned concurrently; `allow_concurrent_runs` and `use_new_terminal` keep their usual terminal behavior. Open-hook tasks receive `ZED_PROJECT_OPEN` with the value `new` or `restored`, so a command can distinguish a user-opened project from one restored from the previous local session.
 
 Hook tasks are resolved from the same global and worktree-local `tasks.json` files as manually spawned tasks, and multiple tasks may register for the same hook; they all run when the hook fires. A hook task still benefits from the usual task configuration fields — `cwd`, `env`, `reveal`, `hide`, and so on — so you can control how much of the terminal UI is shown while it runs.
 
 ```json [tasks]
 [
+  {
+    "label": "start development environment",
+    "command": "npm run dev",
+    "hooks": ["project_open"],
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false
+  },
   {
     "label": "copy .env into new worktree",
     "command": "cp",
