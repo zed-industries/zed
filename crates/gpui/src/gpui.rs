@@ -45,7 +45,6 @@ pub mod profiler;
 ))]
 #[expect(missing_docs)]
 pub mod queue;
-mod frame_debug;
 mod scene;
 mod scene_damage;
 mod shared_uri;

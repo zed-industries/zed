@@ -1041,9 +1041,7 @@ impl App {
 
     /// Schedules all windows in the application to be redrawn. This can be called
     /// multiple times in an update cycle and still result in a single redraw.
-    #[track_caller]
     pub fn refresh_windows(&mut self) {
-        crate::frame_debug::record_invalidation(std::panic::Location::caller());
         self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
@@ -2614,9 +2612,7 @@ impl App {
     }
 
     /// Tell GPUI that an entity has changed and observers of it should be notified.
-    #[track_caller]
     pub fn notify(&mut self, entity_id: EntityId) {
-        crate::frame_debug::record_invalidation(std::panic::Location::caller());
         let window_invalidators = mem::take(
             self.window_invalidators_by_entity
                 .entry(entity_id)

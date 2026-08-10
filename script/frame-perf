@@ -18,7 +18,6 @@
 #     `sudo chmod a+r /sys/class/powercap/intel-rapl:0/energy_uj` or run this
 #     script as root to enable)
 #   - Whole-GPU busy% time series (includes compositor and other apps)
-#   - gpui frame_debug aggregates (draws, skipped presents, mean damage %)
 #
 # Configuration is inherited from the environment, so A/B like:
 #   GPUI_DISABLE_PRESENT_SKIP=1 GPUI_DAMAGE_STRICT_ORDER=1 script/frame-perf record --label before
@@ -154,8 +153,7 @@ record() {
     [[ -n "$rapl_path" ]] || echo "warning: RAPL energy not readable; package power will be missing (try: sudo chmod a+r /sys/class/powercap/intel-rapl:0/energy_uj)" >&2
 
     echo "launching $ZED_BIN (log: $log_file)"
-    GPUI_FRAME_DEBUG=1 ZED_LOG="${ZED_LOG:-gpui::frame_debug=info}" \
-        "$ZED_BIN" "${zed_args[@]}" >"$log_file" 2>&1 &
+    "$ZED_BIN" "${zed_args[@]}" >"$log_file" 2>&1 &
     local zed_pid=$!
 
     # Kill by anchored binary path rather than by pid: robust against zed
@@ -175,21 +173,6 @@ record() {
     # Re-resolve the pid in case zed forked or re-executed during startup.
     zed_pid=$(pgrep -f "^$ZED_BIN" | head -1 || true)
     [[ -n "$zed_pid" ]] || die "zed exited during warmup; check $log_file"
-
-    # Zed logs to stdout only when stdout is a tty; otherwise it logs to its
-    # own log file. Find that file through the process's open descriptors so
-    # this works regardless of release channel or logging destination.
-    local frame_log="$log_file"
-    local fd_log
-    fd_log=$(readlink /proc/"$zed_pid"/fd/* 2>/dev/null | grep -m1 '/logs/.*\.log$' || true)
-    if [[ -n "$fd_log" && -r "$fd_log" ]]; then
-        frame_log="$fd_log"
-        echo "parsing frame stats from zed's log file: $frame_log"
-    fi
-
-    # Only parse frame_debug lines emitted after the measurement starts.
-    local log_offset
-    log_offset=$(( $(wc -c <"$frame_log") + 1 ))
 
     local clients_file="$out_dir/gpu-clients.log"
     : >"$clients_file"
@@ -249,32 +232,6 @@ record() {
         die "no samples were collected (zed exited immediately after GO?); check $log_file"
     fi
 
-    # Aggregate frame_debug summary lines from the measurement window.
-    local frame_stats
-    frame_stats=$(tail -c "+$log_offset" "$frame_log" | awk '
-        /gpui::frame_debug\] window [0-9]+ over/ {
-            d = u = f = rp = sp = 0; md = ""
-            for (i = 1; i <= NF; i++) {
-                if ($i == "draws") d = $(i - 1)
-                if ($i == "unchanged,") u = $(i - 1)
-                if ($i == "full-damage),") f = $(i - 1)
-                if ($i == "re-presents,") rp = $(i - 1)
-                if ($i == "skipped") sp = $(i - 1)
-                if ($i == "damage" && $(i - 1) == "mean") { md = $(i + 1); sub(/%$/, "", md) }
-            }
-            draws += d; unchanged += u; full += f; represents += rp; skipped += sp
-            if (md != "" && d > u) { damage_weight += md * (d - u); changed += d - u }
-        }
-        END {
-            mean_damage = changed > 0 ? damage_weight / changed : 0
-            printf "%d %d %d %d %d %.2f\n", draws, unchanged, full, represents, skipped, mean_damage
-        }
-    ')
-    read -r draws unchanged full_damage represents skipped mean_damage <<<"$frame_stats"
-    if [[ "${draws:-0}" == "0" ]]; then
-        echo "warning: no frame_debug summaries found in $frame_log; frame stats will be zero" >&2
-    fi
-
     local clk_tck gpu_seconds cpu_seconds gpu_util_pct busy_avg="null" joules="null" watts="null"
     clk_tck=$(getconf CLK_TCK)
     gpu_seconds=$(awk -v d="$(gpu_delta_ns "$clients_file")" 'BEGIN { printf "%.4f", d / 1e9 }')
@@ -302,7 +259,8 @@ record() {
   "duration_s": $actual_wall,
   "env": {
     "GPUI_DISABLE_PRESENT_SKIP": "${GPUI_DISABLE_PRESENT_SKIP:-}",
-    "GPUI_DAMAGE_STRICT_ORDER": "${GPUI_DAMAGE_STRICT_ORDER:-}"
+    "GPUI_DAMAGE_STRICT_ORDER": "${GPUI_DAMAGE_STRICT_ORDER:-}",
+    "GPUI_DISABLE_PARTIAL_RENDER": "${GPUI_DISABLE_PARTIAL_RENDER:-}"
   },
   "metrics": {
     "zed_gpu_seconds": $gpu_seconds,
@@ -310,20 +268,11 @@ record() {
     "zed_cpu_seconds": $cpu_seconds,
     "package_joules": $joules,
     "package_watts_avg": $watts,
-    "gpu_busy_avg_pct": $busy_avg,
-    "frames": {
-      "draws": ${draws:-0},
-      "unchanged_draws": ${unchanged:-0},
-      "full_damage_draws": ${full_damage:-0},
-      "re_presents": ${represents:-0},
-      "skipped_presents": ${skipped:-0},
-      "mean_damage_pct": ${mean_damage:-0}
-    }
+    "gpu_busy_avg_pct": $busy_avg
   },
   "files": {
     "samples": "$samples_file",
-    "captured_output": "$log_file",
-    "frame_log": "$frame_log"
+    "captured_output": "$log_file"
   }
 }
 EOF
@@ -352,11 +301,6 @@ rows = [
     ("zed CPU util %", lambda r: 100.0 * r["metrics"]["zed_cpu_seconds"] / r["duration_s"]),
     ("package W avg", lambda r: r["metrics"]["package_watts_avg"]),
     ("GPU busy avg %", lambda r: r["metrics"]["gpu_busy_avg_pct"]),
-    ("draws/s", lambda r: r["metrics"]["frames"]["draws"] / r["duration_s"]),
-    ("unchanged draws/s", lambda r: r["metrics"]["frames"]["unchanged_draws"] / r["duration_s"]),
-    ("re-presents/s", lambda r: r["metrics"]["frames"]["re_presents"] / r["duration_s"]),
-    ("skipped presents/s", lambda r: r["metrics"]["frames"]["skipped_presents"] / r["duration_s"]),
-    ("mean damage %", lambda r: r["metrics"]["frames"]["mean_damage_pct"]),
 ]
 
 labels = [run["label"] for run in runs]

@@ -143,7 +143,6 @@ impl AppContext for AsyncApp {
 
 impl AsyncApp {
     /// Schedules all windows in the application to be redrawn.
-    #[track_caller]
     pub fn refresh(&self) {
         let app = self.app();
         let mut lock = app.borrow_mut();
