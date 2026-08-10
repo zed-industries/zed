@@ -123,6 +123,8 @@ pub enum SandboxStatusRefresh {
 /// the user instead.
 pub const MIN_COMPACTION_CONTEXT_WINDOW: u64 = 80_000;
 
+const REQUEST_BYTES_PER_TOKEN_GUESS: usize = 4;
+
 // Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
 const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
 
@@ -4411,7 +4413,14 @@ impl Thread {
             return None;
         }
 
-        let active_tokens = total_input_tokens(usage).saturating_add(usage.output_tokens);
+        let estimated_request_tokens = self
+            .build_completion_request(CompletionIntent::UserPrompt, cx)
+            .log_err()
+            .and_then(|request| estimated_request_token_count(&request))
+            .unwrap_or_default();
+        let active_tokens = total_input_tokens(usage)
+            .saturating_add(usage.output_tokens)
+            .max(estimated_request_tokens);
         let compaction_threshold =
             auto_compact_threshold_token_count(auto_compact.threshold, max_input_tokens);
         if active_tokens < compaction_threshold {
@@ -4602,6 +4611,35 @@ fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
         .input_tokens
         .saturating_add(usage.cache_creation_input_tokens)
         .saturating_add(usage.cache_read_input_tokens)
+}
+
+fn estimated_request_token_count(request: &LanguageModelRequest) -> Option<u64> {
+    let mut request = request.clone();
+    // Image base64 sizes do not map to text tokens, and raw tool output is only
+    // retained for debugging rather than sent to the model.
+    for message in &mut request.messages {
+        for content in &mut message.content {
+            match content {
+                MessageContent::Image(image) => image.source = "".into(),
+                MessageContent::ToolResult(tool_result) => {
+                    tool_result.output = None;
+                    for content in &mut tool_result.content {
+                        if let LanguageModelToolResultContent::Image(image) = content {
+                            image.source = "".into();
+                        }
+                    }
+                }
+                MessageContent::Text(_)
+                | MessageContent::Thinking { .. }
+                | MessageContent::RedactedThinking(_)
+                | MessageContent::ToolUse(_)
+                | MessageContent::Compaction(_) => {}
+            }
+        }
+    }
+    serde_json::to_vec(&request)
+        .log_err()
+        .map(|request| request.len().div_ceil(REQUEST_BYTES_PER_TOKEN_GUESS) as u64)
 }
 
 fn auto_compact_threshold_token_count(
@@ -7012,6 +7050,49 @@ mod tests {
                 );
 
                 assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_threshold_accounts_for_pending_request(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let old_user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model, cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+                thread.request_token_usage.insert(
+                    old_user_message_id,
+                    language_model::TokenUsage {
+                        input_tokens: 1,
+                        ..Default::default()
+                    },
+                );
+                thread.messages.push(user_text_message(
+                    ClientUserMessageId::new(),
+                    &"large pending prompt ".repeat(1_000),
+                ));
+
+                let request = thread
+                    .build_completion_request(CompletionIntent::UserPrompt, cx)
+                    .expect("candidate request should build");
+                let estimated_tokens = estimated_request_token_count(&request)
+                    .expect("candidate request should serialize");
+                set_auto_compact_settings(
+                    cx,
+                    agent_settings::AutoCompactSettings {
+                        enabled: true,
+                        threshold: AutoCompactThreshold::TokensUsed(estimated_tokens),
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), Some(2));
             });
         });
     }
