@@ -6899,7 +6899,7 @@ pub fn render_breadcrumb_text(
             )
             .into_any_element(),
         None => element
-            .h(rems_from_px(22.)) // Match the height and padding of the `ButtonLike` in the other arm.
+            .h(rems_from_px(22_f32)) // Match the height and padding of the `ButtonLike` in the other arm.
             .pl_1()
             .child(breadcrumbs)
             .into_any_element(),

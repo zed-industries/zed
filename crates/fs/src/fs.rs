@@ -2610,7 +2610,7 @@ impl FakeFs {
         state
             .event_txs
             .iter()
-            .filter_map(|(path, tx)| Some(path.clone()).filter(|_| !tx.is_closed()))
+            .filter_map(|(path, tx)| (!tx.is_closed()).then_some(path.clone()))
             .collect()
     }
 
