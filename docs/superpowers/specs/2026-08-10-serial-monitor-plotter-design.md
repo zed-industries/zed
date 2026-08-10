@@ -1,6 +1,6 @@
 # Design: Serial Monitor and Serial Plotter
 
-Status: draft, pending user review before an implementation plan is written.
+Status: **implemented, hardware-verified (2026-08-10)**. See the "Implementation status" section at the top of [the implementation plan](../plans/2026-08-10-serial-monitor-plotter.md) for verification results, two bugs found and fixed during hardware testing, and the one item (send-box typing) left unverified due to an environment limitation.
 
 ## Motivation
 
