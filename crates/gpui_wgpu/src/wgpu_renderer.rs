@@ -542,7 +542,6 @@ impl WgpuRenderer {
 
         // COPY_DST lets partial rendering blit its persistent frame texture
         // into swapchain images; without it we fall back to full renders.
-        // todo! when is this false?
         let surface_supports_copy = surface_caps
             .usages
             .contains(wgpu::TextureUsages::COPY_DST);
