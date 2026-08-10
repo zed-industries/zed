@@ -1061,6 +1061,7 @@ async fn test_neighboring_activatable_entry_stays_within_project(cx: &mut TestAp
     let header = |path: &str| ListEntry::ProjectHeader {
         key: ProjectGroupKey::new(None, PathList::new(&[std::path::PathBuf::from(path)])),
         label: path.into(),
+        subtitle: None,
         highlight_positions: Vec::new(),
         has_running_threads: false,
         waiting_thread_count: 0,

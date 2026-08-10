@@ -44,6 +44,8 @@ fn setup_multi_workspace<'a>(
     cx.run_until_parked();
 
     (multi_workspace, cx)
+}
+
 #[test]
 fn dev_container_project_group_key_is_stable_across_rebuilds() {
     use std::hash::{Hash, Hasher};

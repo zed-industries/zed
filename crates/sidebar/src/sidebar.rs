@@ -1370,8 +1370,7 @@ impl Sidebar {
 
         let workspaces = multi_workspace
             .read(cx)
-            .workspaces_for_project_group(project_group_key, cx)
-            .unwrap_or_default();
+            .workspaces_for_project_group(project_group_key, cx);
         let active_workspace = multi_workspace.read(cx).workspace().clone();
         let reopen_active = workspaces
             .iter()
@@ -2476,8 +2475,7 @@ impl Sidebar {
         };
         let workspaces = multi_workspace
             .read(cx)
-            .workspaces_for_project_group(key, cx)
-            .unwrap_or_default();
+            .workspaces_for_project_group(key, cx);
 
         let mut status = RemoteGroupConnection::Disconnected;
         for workspace in workspaces {
