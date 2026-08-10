@@ -925,12 +925,16 @@ enum GutterLineNumberWidth {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-enum ScrollbarWidthOnRewrap {
-    #[default]
-    Dynamic,
-    Frozen {
-        settled_scroll_range_width: Option<Pixels>,
-    },
+struct ScrollRangeHold {
+    held: bool,
+    settled: Option<SettledScrollRange>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SettledScrollRange {
+    range: Size<Pixels>,
+    editor_width: Pixels,
+    editor_bounds_size: Size<Pixels>,
 }
 
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
@@ -999,7 +1003,7 @@ pub struct Editor {
     enable_code_lens: bool,
     enable_mouse_wheel_zoom: bool,
     gutter_line_number_width: GutterLineNumberWidth,
-    scrollbar_width_on_rewrap: ScrollbarWidthOnRewrap,
+    scroll_range_hold: Option<ScrollRangeHold>,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -2318,7 +2322,7 @@ impl Editor {
             breadcrumbs_visibility: BreadcrumbsVisibility::from_settings(cx),
             show_gutter: full_mode,
             gutter_line_number_width: GutterLineNumberWidth::Dynamic,
-            scrollbar_width_on_rewrap: ScrollbarWidthOnRewrap::Dynamic,
+            scroll_range_hold: None,
             show_line_numbers: (!full_mode).then_some(false),
             use_relative_line_numbers: None,
             disable_expand_excerpt_buttons: !full_mode,
@@ -3132,12 +3136,12 @@ impl Editor {
     /// there, so a settled search snaps to its real width instead of staying stuck at the widest
     /// line number seen mid-typing.
     pub fn refit_gutter_line_number_width(&mut self, cx: &mut Context<Self>) {
-        if matches!(
-            self.gutter_line_number_width,
-            GutterLineNumberWidth::Sticky { .. }
-        ) {
-            self.gutter_line_number_width = GutterLineNumberWidth::Sticky { min_digits: 0 };
-            self.latch_gutter_line_number_width(cx);
+        let GutterLineNumberWidth::Sticky { min_digits } = self.gutter_line_number_width else {
+            return;
+        };
+        let digits = self.widest_line_number_digits(cx);
+        if digits != min_digits {
+            self.gutter_line_number_width = GutterLineNumberWidth::Sticky { min_digits: digits };
             cx.notify();
         }
     }
@@ -3146,12 +3150,19 @@ impl Editor {
         let GutterLineNumberWidth::Sticky { min_digits } = self.gutter_line_number_width else {
             return;
         };
-        let widest_line_number = self.buffer.read(cx).read(cx).widest_line_number();
-        let digits = (widest_line_number.max(1).ilog10() + 1) as usize;
+        let digits = self.widest_line_number_digits(cx);
         if digits > min_digits {
             self.gutter_line_number_width = GutterLineNumberWidth::Sticky { min_digits: digits };
             cx.notify();
         }
+    }
+
+    fn widest_line_number_digits(&self, cx: &App) -> usize {
+        let snapshot = self.buffer.read(cx).read(cx);
+        if snapshot.is_empty() {
+            return 0;
+        }
+        (snapshot.widest_line_number().max(1).ilog10() + 1) as usize
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -3162,30 +3173,37 @@ impl Editor {
         }
     }
 
-    pub fn freeze_scrollbar_width_on_rewrap(&mut self) {
-        if self.scrollbar_width_on_rewrap == ScrollbarWidthOnRewrap::Dynamic {
-            self.scrollbar_width_on_rewrap = ScrollbarWidthOnRewrap::Frozen {
-                settled_scroll_range_width: None,
-            };
-        }
+    pub fn hold_scrollbar_range(&mut self, hold: bool) {
+        self.scroll_range_hold.get_or_insert_default().held = hold;
     }
 
-    fn frozen_scroll_range_width(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_scrollbar_range_held(&self) -> Option<bool> {
+        Some(self.scroll_range_hold?.held)
+    }
+
+    fn frozen_scroll_range(
         &mut self,
         is_rewrapping: bool,
-        current_width: Pixels,
-    ) -> Option<Pixels> {
-        let ScrollbarWidthOnRewrap::Frozen {
-            settled_scroll_range_width,
-        } = &mut self.scrollbar_width_on_rewrap
-        else {
-            return None;
+        current_range: Size<Pixels>,
+        current_editor_width: Pixels,
+        current_editor_bounds_size: Size<Pixels>,
+    ) -> Option<SettledScrollRange> {
+        let hold = self.scroll_range_hold.as_mut()?;
+        let current = SettledScrollRange {
+            range: current_range,
+            editor_width: current_editor_width,
+            editor_bounds_size: current_editor_bounds_size,
         };
-        if !is_rewrapping {
-            *settled_scroll_range_width = Some(current_width);
+        if !hold.held && !is_rewrapping {
+            hold.settled = Some(current);
             return None;
         }
-        *settled_scroll_range_width
+        let settled = hold.settled.get_or_insert(current);
+        if settled.editor_bounds_size != current_editor_bounds_size {
+            *settled = current;
+        }
+        Some(*settled)
     }
 
     pub fn set_custom_context_menu(

@@ -1358,23 +1358,6 @@ impl EditorElement {
             .then_some(content_offset)
             .unwrap_or_default();
 
-        let is_rewrapping = self.editor.read(cx).display_map.read(cx).is_rewrapping(cx);
-        let frozen_layout_information = self
-            .editor
-            .update(cx, |editor, _| {
-                editor.frozen_scroll_range_width(
-                    is_rewrapping,
-                    scrollbar_layout_information.scroll_range.width,
-                )
-            })
-            .map(|scroll_range_width| ScrollbarLayoutInformation {
-                scroll_range: size(
-                    scroll_range_width,
-                    scrollbar_layout_information.scroll_range.height,
-                ),
-                ..*scrollbar_layout_information
-            });
-
         Some(EditorScrollbars::from_scrollbar_axes(
             ScrollbarAxes {
                 horizontal: scrollbar_settings.axes.horizontal
@@ -1382,9 +1365,7 @@ impl EditorElement {
                 vertical: scrollbar_settings.axes.vertical
                     && self.editor.read(cx).show_scrollbars.vertical,
             },
-            frozen_layout_information
-                .as_ref()
-                .unwrap_or(scrollbar_layout_information),
+            scrollbar_layout_information,
             content_offset,
             scroll_position,
             self.style.scrollbar_width,
@@ -9069,14 +9050,38 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let frozen_scroll_state = if self.editor.read(cx).scroll_range_hold.is_some() {
+                        let is_rewrapping =
+                            self.editor.read(cx).display_map.read(cx).is_rewrapping(cx);
+                        self.editor.update(cx, |editor, _| {
+                            editor.frozen_scroll_range(
+                                is_rewrapping,
+                                scrollbar_layout_information.scroll_range,
+                                editor_width,
+                                scrollbar_layout_information.editor_bounds.size,
+                            )
+                        })
+                    } else {
+                        None
+                    };
+                    let effective_scrollbar_layout_information =
+                        frozen_scroll_state.map_or(scrollbar_layout_information, |settled| {
+                            ScrollbarLayoutInformation {
+                                scroll_range: settled.range,
+                                ..scrollbar_layout_information
+                            }
+                        });
+                    let effective_editor_width =
+                        frozen_scroll_state.map_or(editor_width, |settled| settled.editor_width);
+
                     let scrollbars_layout = self.layout_scrollbars(
                         &snapshot,
-                        &scrollbar_layout_information,
+                        &effective_scrollbar_layout_information,
                         content_offset,
                         scroll_position,
                         non_visible_cursors,
                         right_margin,
-                        editor_width,
+                        effective_editor_width,
                         window,
                         cx,
                     );
@@ -9300,7 +9305,7 @@ impl Element for EditorElement {
                             &snapshot,
                             minimap_width,
                             scroll_position,
-                            &scrollbar_layout_information,
+                            &effective_scrollbar_layout_information,
                             scrollbars_layout.as_ref(),
                             window,
                             cx,

@@ -224,6 +224,13 @@ impl WrapMap {
             self.snapshot.interpolated = false;
         }
 
+        debug_assert!(
+            self.background_task.is_some()
+                || self.wrap_width.is_none()
+                || !self.snapshot.interpolated,
+            "an interpolated snapshot must always have a background task rewrapping it, \
+             otherwise is_rewrapping never settles and frozen scrollbar ranges leak"
+        );
         (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
     }
 
@@ -375,12 +382,13 @@ impl WrapMap {
                 LineFragmentBuilder::new(text_system.clone(), &font, font_size);
             let mut line_wrapper = text_system.line_wrapper(font, font_size);
 
+            let update_passes = pending_edits.len();
             let total_new_rows = pending_edits
                 .iter()
                 .flat_map(|(_, tab_edits)| tab_edits.iter())
                 .map(|edit| (edit.new.end.row().saturating_sub(edit.new.start.row()) + 1) as usize)
                 .sum::<usize>();
-            if total_new_rows < WRAP_YIELD_ROW_INTERVAL {
+            if update_passes + total_new_rows < WRAP_YIELD_ROW_INTERVAL {
                 let mut wrap_edits = Patch::default();
                 for (tab_snapshot, tab_edits) in pending_edits {
                     let edits = gpui::block_on(snapshot.update(
