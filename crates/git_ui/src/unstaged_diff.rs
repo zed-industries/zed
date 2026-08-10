@@ -273,8 +273,8 @@ impl UnstagedDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let branch_diff =
-            cx.new(|cx| DiffBufferList::new(DiffBase::Index, project.clone(), window, cx));
+        let git_store = project.read(cx).git_store().clone();
+        let branch_diff = cx.new(|cx| DiffBufferList::new(DiffBase::Index, git_store, None, cx));
         let workspace_handle = workspace.downgrade();
         let diff = cx.new(|cx| {
             DiffMultibuffer::new(
@@ -826,7 +826,7 @@ impl Render for UnstagedDiffToolbar {
             .child(Divider::vertical())
             .child(
                 Button::new("stage-all", "Stage All")
-                    .width(rems_from_px(80.))
+                    .width(rems_from_px(80_f32))
                     .disabled(!button_states.stage_all)
                     .tooltip(Tooltip::for_action_title_in(
                         "Stage All Changes",
@@ -838,7 +838,7 @@ impl Render for UnstagedDiffToolbar {
             .child(Divider::vertical())
             .child(
                 Button::new("restore-all", "Restore All")
-                    .width(rems_from_px(80.))
+                    .width(rems_from_px(80_f32))
                     .disabled(!button_states.restore_all)
                     .tooltip(Tooltip::text("Restore All Changes"))
                     .on_click(cx.listener(|this, _, window, cx| this.restore_all(window, cx))),
