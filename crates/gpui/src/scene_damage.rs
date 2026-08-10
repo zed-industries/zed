@@ -38,8 +38,10 @@ pub enum SceneDamage {
     Unchanged,
 }
 
-/// A bounded set of damaged rectangles. Rectangles may overlap; together they
-/// cover every changed pixel.
+/// A bounded set of damaged rectangles that together cover every changed
+/// pixel. Rectangles are pairwise disjoint, so a renderer may draw each
+/// region's pixels exactly once (overlap would double-blend translucent
+/// content).
 #[derive(Clone, Debug, Default)]
 pub struct DamageRects(SmallVec<[Bounds<ScaledPixels>; MAX_DAMAGE_RECTS]>);
 
@@ -58,9 +60,10 @@ impl DamageRects {
         self.0.is_empty()
     }
 
-    /// Adds a damaged rectangle, absorbing it into an intersecting existing
-    /// rectangle when possible and coalescing the closest pair when the cap
-    /// is exceeded. Empty and non-finite rectangles are ignored.
+    /// Adds a damaged rectangle, keeping the set pairwise disjoint by
+    /// absorbing every intersecting rectangle into the new one, and
+    /// coalescing with the closest rectangle when the cap is exceeded.
+    /// Empty and non-finite rectangles are ignored.
     fn add(&mut self, rect: Bounds<ScaledPixels>) {
         if !(rect.size.width.0 > 0.0 && rect.size.height.0 > 0.0)
             || !rect.origin.x.0.is_finite()
@@ -70,32 +73,29 @@ impl DamageRects {
         {
             return;
         }
-        for existing in &mut self.0 {
-            if existing.intersects(&rect) {
-                *existing = existing.union(&rect);
+        let mut rect = rect;
+        loop {
+            // Absorb everything the (growing) rectangle intersects. Each
+            // union can newly intersect further rectangles, so scan to a
+            // fixpoint; the set shrinks every iteration.
+            while let Some(index) = self.0.iter().position(|existing| existing.intersects(&rect)) {
+                rect = self.0.swap_remove(index).union(&rect);
+            }
+            if self.0.len() < MAX_DAMAGE_RECTS {
+                self.0.push(rect);
                 return;
             }
-        }
-        self.0.push(rect);
-        if self.0.len() > MAX_DAMAGE_RECTS {
-            self.merge_closest_pair();
-        }
-    }
-
-    /// Merges the pair of rectangles whose union wastes the least area.
-    fn merge_closest_pair(&mut self) {
-        let mut best = (0, 1, f32::INFINITY);
-        for i in 0..self.0.len() {
-            for j in (i + 1)..self.0.len() {
-                let waste = area(&self.0[i].union(&self.0[j])) - area(&self.0[i]) - area(&self.0[j]);
-                if waste < best.2 {
-                    best = (i, j, waste);
+            // At the cap: coalesce with the disjoint rectangle whose union
+            // wastes the least area, then re-check for new intersections.
+            let mut best = (0, f32::INFINITY);
+            for (index, existing) in self.0.iter().enumerate() {
+                let waste = area(&existing.union(&rect)) - area(existing) - area(&rect);
+                if waste < best.1 {
+                    best = (index, waste);
                 }
             }
+            rect = self.0.swap_remove(best.0).union(&rect);
         }
-        let (i, j, _) = best;
-        self.0[i] = self.0[i].union(&self.0[j]);
-        self.0.swap_remove(j);
     }
 }
 
@@ -962,6 +962,32 @@ mod tests {
                             );
                         }
                     }
+                }
+            }
+            Ok(())
+        }
+
+        /// Renderers draw each damage rectangle's pixels separately, so the
+        /// rectangles must never overlap or translucent content would be
+        /// blended twice.
+        #[gpui::property_test]
+        fn accumulator_rects_are_pairwise_disjoint(
+            #[strategy = proptest::collection::vec(arbitrary_rect(), 0..40)] rects: Vec<
+                Bounds<ScaledPixels>,
+            >,
+        ) -> Result<(), TestCaseError> {
+            let mut acc = DamageRects::default();
+            for rect in &rects {
+                acc.add(*rect);
+            }
+            let rects = acc.as_slice();
+            for (index, a) in rects.iter().enumerate() {
+                for b in &rects[index + 1..] {
+                    let overlap = a.intersect(b);
+                    prop_assert!(
+                        overlap.size.width.0 <= 0.0 || overlap.size.height.0 <= 0.0,
+                        "accumulator rects overlap: {a:?} and {b:?}",
+                    );
                 }
             }
             Ok(())

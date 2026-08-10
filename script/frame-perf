@@ -35,6 +35,37 @@ die() {
     exit 1
 }
 
+# Pids whose resolved executable is exactly the binary under test. Matching
+# on /proc/<pid>/exe rather than the command line tolerates relative launch
+# paths and other Zed installs (e.g. a nightly running alongside): only
+# processes running this exact binary are ours.
+dev_zed_pids() {
+    local target pid exe
+    target=$(realpath "$ZED_BIN")
+    for pid in $(pgrep -f zed 2>/dev/null); do
+        exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || continue
+        if [[ "$exe" == "$target" ]]; then
+            echo "$pid"
+        fi
+    done
+}
+
+# Other Zed-looking processes (different binaries, e.g. a nightly install).
+# They don't affect the per-process metrics, but they do contribute to the
+# system-wide ones (whole-GPU busy%, RAPL package power).
+other_zed_instances() {
+    local target pid exe
+    target=$(realpath "$ZED_BIN")
+    for pid in $(pgrep -f zed 2>/dev/null); do
+        exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || continue
+        case "$(basename "$exe")" in
+            zed | zed-editor | .zed-editor-wrapped)
+                [[ "$exe" != "$target" ]] && echo "$pid $exe"
+                ;;
+        esac
+    done
+}
+
 usage() {
     sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
@@ -136,8 +167,16 @@ record() {
     [[ -n "$label" ]] || die "--label is required"
     [[ -x "$ZED_BIN" ]] || die "zed binary not found at $ZED_BIN; build with: cargo build --profile release-fast -p zed (or set ZED_BIN)"
 
-    if pgrep -f "^$ZED_BIN" >/dev/null 2>&1; then
+    if [[ -n "$(dev_zed_pids)" ]]; then
         die "another instance of $ZED_BIN is already running; close it first so GPU/CPU accounting is unambiguous"
+    fi
+
+    local other_instances
+    other_instances=$(other_zed_instances)
+    if [[ -n "$other_instances" ]]; then
+        echo "note: other zed installs are running; per-process zed metrics are unaffected," >&2
+        echo "      but whole-GPU busy% and package power will include them:" >&2
+        while read -r line; do echo "        $line" >&2; done <<<"$other_instances"
     fi
 
     local out_dir="$REPO_ROOT/perf-runs/$label-$(date +%Y%m%d-%H%M%S)"
@@ -156,22 +195,26 @@ record() {
     "$ZED_BIN" "${zed_args[@]}" >"$log_file" 2>&1 &
     local zed_pid=$!
 
-    # Kill by anchored binary path rather than by pid: robust against zed
-    # forking or re-executing itself. The caller guarantees no unrelated
-    # instances of this binary are running.
+    # Kill by resolved executable rather than by remembered pid: robust
+    # against zed forking or re-executing itself, and guaranteed not to touch
+    # other Zed installs.
     kill_zed() {
-        pkill -TERM -f "^$ZED_BIN" 2>/dev/null || return 0
+        local pids
+        pids=$(dev_zed_pids)
+        [[ -n "$pids" ]] || return 0
+        kill -TERM $pids 2>/dev/null || true
         for _ in $(seq 1 10); do
-            pgrep -f "^$ZED_BIN" >/dev/null 2>&1 || return 0
+            pids=$(dev_zed_pids)
+            [[ -n "$pids" ]] || return 0
             sleep 0.5
         done
-        pkill -KILL -f "^$ZED_BIN" 2>/dev/null || true
+        kill -KILL $pids 2>/dev/null || true
     }
     trap kill_zed EXIT INT TERM
 
     sleep "$warmup"
     # Re-resolve the pid in case zed forked or re-executed during startup.
-    zed_pid=$(pgrep -f "^$ZED_BIN" | head -1 || true)
+    zed_pid=$(dev_zed_pids | head -1)
     [[ -n "$zed_pid" ]] || die "zed exited during warmup; check $log_file"
 
     local clients_file="$out_dir/gpu-clients.log"
@@ -262,6 +305,7 @@ record() {
     "GPUI_DAMAGE_STRICT_ORDER": "${GPUI_DAMAGE_STRICT_ORDER:-}",
     "GPUI_DISABLE_PARTIAL_RENDER": "${GPUI_DISABLE_PARTIAL_RENDER:-}"
   },
+  "other_zed_instances": $(other_zed_instances | wc -l),
   "metrics": {
     "zed_gpu_seconds": $gpu_seconds,
     "zed_gpu_util_pct": $gpu_util_pct,

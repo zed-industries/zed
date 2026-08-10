@@ -145,29 +145,19 @@ struct ScissorRect {
 }
 
 impl ScissorRect {
-    /// The bounding rectangle of the damage, aligned outward to whole pixels
-    /// and clamped to the target size. `None` when no on-target pixels are
-    /// damaged.
-    // todo(gpui): Does this mean we only pass one damage rectangle to the gpu instead of several
-    fn from_damage(
-        rects: &[Bounds<ScaledPixels>],
+    /// Clamps a damage rectangle to the target, aligned outward to whole
+    /// pixels. `None` when no on-target pixels are covered.
+    fn from_bounds(
+        rect: &Bounds<ScaledPixels>,
         target_width: u32,
         target_height: u32,
     ) -> Option<ScissorRect> {
-        let mut left = f32::MAX;
-        let mut top = f32::MAX;
-        let mut right = f32::MIN;
-        let mut bottom = f32::MIN;
-        for rect in rects {
-            left = left.min(rect.origin.x.0);
-            top = top.min(rect.origin.y.0);
-            right = right.max(rect.origin.x.0 + rect.size.width.0);
-            bottom = bottom.max(rect.origin.y.0 + rect.size.height.0);
-        }
-        let left = (left.floor().max(0.0) as u32).min(target_width);
-        let top = (top.floor().max(0.0) as u32).min(target_height);
-        let right = (right.ceil().max(0.0) as u32).min(target_width);
-        let bottom = (bottom.ceil().max(0.0) as u32).min(target_height);
+        let left = (rect.origin.x.0.floor().max(0.0) as u32).min(target_width);
+        let top = (rect.origin.y.0.floor().max(0.0) as u32).min(target_height);
+        let right = ((rect.origin.x.0 + rect.size.width.0).ceil().max(0.0) as u32)
+            .min(target_width);
+        let bottom = ((rect.origin.y.0 + rect.size.height.0).ceil().max(0.0) as u32)
+            .min(target_height);
         if right <= left || bottom <= top {
             return None;
         }
@@ -179,9 +169,77 @@ impl ScissorRect {
         })
     }
 
+    fn area(&self) -> u64 {
+        self.width as u64 * self.height as u64
+    }
+
+    fn union(&self, other: &ScissorRect) -> ScissorRect {
+        let x = self.x.min(other.x);
+        let y = self.y.min(other.y);
+        let right = (self.x + self.width).max(other.x + other.width);
+        let bottom = (self.y + self.height).max(other.y + other.height);
+        ScissorRect {
+            x,
+            y,
+            width: right - x,
+            height: bottom - y,
+        }
+    }
+
     fn covers(&self, target_width: u32, target_height: u32) -> bool {
         self.x == 0 && self.y == 0 && self.width >= target_width && self.height >= target_height
     }
+
+    fn intersects_bounds(&self, bounds: &Bounds<ScaledPixels>) -> bool {
+        let left = self.x as f32;
+        let top = self.y as f32;
+        let right = (self.x + self.width) as f32;
+        let bottom = (self.y + self.height) as f32;
+        bounds.origin.x.0 < right
+            && bounds.origin.x.0 + bounds.size.width.0 > left
+            && bounds.origin.y.0 < bottom
+            && bounds.origin.y.0 + bounds.size.height.0 > top
+    }
+}
+
+/// The regions a frame should re-render: everything, nothing, or a set of
+/// pairwise-disjoint scissor rectangles that each get their own set of draws.
+enum RenderRegions {
+    Full,
+    None,
+    Partial(smallvec::SmallVec<[ScissorRect; 4]>),
+}
+
+/// Plans scissor regions for the given damage. The damage rectangles are
+/// pairwise disjoint (guaranteed by `DamageRects`), so drawing each region
+/// separately never double-blends a pixel. When the regions nearly fill
+/// their bounding rectangle the plan collapses to that rectangle: repeated
+/// draws only pay off when they skip substantial area between the regions.
+fn plan_render_regions(
+    rects: &[Bounds<ScaledPixels>],
+    target_width: u32,
+    target_height: u32,
+) -> RenderRegions {
+    let mut regions: smallvec::SmallVec<[ScissorRect; 4]> = rects
+        .iter()
+        .filter_map(|rect| ScissorRect::from_bounds(rect, target_width, target_height))
+        .collect();
+    let Some(bounding) = regions
+        .iter()
+        .copied()
+        .reduce(|bounding, region| bounding.union(&region))
+    else {
+        return RenderRegions::None;
+    };
+    let covered: u64 = regions.iter().map(ScissorRect::area).sum();
+    if covered * 10 >= bounding.area() * 7 {
+        if bounding.covers(target_width, target_height) {
+            return RenderRegions::Full;
+        }
+        regions.clear();
+        regions.push(bounding);
+    }
+    RenderRegions::Partial(regions)
 }
 
 /// The persistent texture partial rendering draws into. Unlike swapchain
@@ -1550,7 +1608,7 @@ impl WgpuRenderer {
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
             self.write_globals();
-            if let Err(error) = self.record_frame(scene, &frame_view, None) {
+            if let Err(error) = self.record_frame(scene, &frame_view, &[]) {
                 log::error!("{error:#}");
                 self.resources().queue.submit(std::iter::empty());
                 return false;
@@ -1569,28 +1627,43 @@ impl WgpuRenderer {
             .frame_texture
             .as_ref()
             .is_some_and(|frame_texture| frame_texture.valid);
-        let render_region = if frame_texture_valid {
+        let render_regions = if frame_texture_valid {
             match &self.pending_damage {
-                SceneDamage::Unchanged => None,
-                SceneDamage::Full => Some(None),
-                // todo(gpui): We pass a single rect here instead of many
+                SceneDamage::Unchanged => RenderRegions::None,
+                SceneDamage::Full => RenderRegions::Full,
                 SceneDamage::Rects(rects) => {
-                    ScissorRect::from_damage(rects.as_slice(), target_width, target_height).map(
-                        |region| {
-                            if region.covers(target_width, target_height) {
-                                None
-                            } else {
-                                Some(region)
-                            }
-                        },
-                    )
+                    plan_render_regions(rects.as_slice(), target_width, target_height)
                 }
             }
         } else {
-            Some(None)
+            RenderRegions::Full
         };
 
-        if let Some(region) = render_region {
+        let regions: Option<&[ScissorRect]> = match &render_regions {
+            RenderRegions::None => None,
+            RenderRegions::Full => Some(&[]),
+            RenderRegions::Partial(regions) => Some(regions),
+        };
+
+        if log::log_enabled!(log::Level::Trace) {
+            let target_area = (target_width as u64 * target_height as u64).max(1);
+            match &render_regions {
+                RenderRegions::None => log::trace!("partial render: no regions (blit only)"),
+                RenderRegions::Full => log::trace!("partial render: full"),
+                RenderRegions::Partial(regions) => {
+                    let covered: u64 = regions.iter().map(ScissorRect::area).sum();
+                    log::trace!(
+                        "partial render: {} region(s) covering {:.1}% ({:?}), {} paths",
+                        regions.len(),
+                        100.0 * covered as f64 / target_area as f64,
+                        regions,
+                        scene.paths.len(),
+                    );
+                }
+            }
+        }
+
+        if let Some(regions) = regions {
             self.write_globals();
             let frame_texture_view = self
                 .frame_texture
@@ -1598,7 +1671,7 @@ impl WgpuRenderer {
                 .expect("ensure_frame_texture was called")
                 .view
                 .clone();
-            if let Err(error) = self.record_frame(scene, &frame_texture_view, region) {
+            if let Err(error) = self.record_frame(scene, &frame_texture_view, regions) {
                 log::error!("{error:#}");
                 self.resources().queue.submit(std::iter::empty());
                 return false;
@@ -1683,15 +1756,16 @@ impl WgpuRenderer {
         );
     }
 
-    /// Encodes and submits the scene into `frame_view`. With `region: None`
-    /// the whole target is cleared and re-rendered; with a region, rendering
-    /// is scissored to that rectangle, which is cleared to transparent while
-    /// all other pixels are preserved.
+    /// Encodes and submits the scene into `frame_view`. With no `regions`
+    /// the whole target is cleared and re-rendered; otherwise each draw is
+    /// repeated once per region under that region's scissor, the regions are
+    /// cleared to transparent, and all other pixels are preserved. Regions
+    /// must be pairwise disjoint or translucent content would double-blend.
     fn record_frame(
         &mut self,
         scene: &Scene,
         frame_view: &wgpu::TextureView,
-        region: Option<ScissorRect>,
+        regions: &[ScissorRect],
     ) -> Result<()> {
         let mut instance_offset = 0;
         let instance_bindings = self
@@ -1718,14 +1792,12 @@ impl WgpuRenderer {
 
         {
             // Partial renders must preserve pixels outside the scissored
-            // region, so they load instead of clearing and then clear just
-            // the region with a scissored blend-disabled draw.
-            let load = if region.is_some() {
-                // we have damage info and it's not the whole screen
-                wgpu::LoadOp::Load
-            } else {
-                // we have no damage info, or it's "full" (i.e. the whole screen is dirty)
+            // regions, so they load instead of clearing and then clear just
+            // the regions with scissored blend-disabled draws.
+            let load = if regions.is_empty() {
                 wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+            } else {
+                wgpu::LoadOp::Load
             };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main_pass"),
@@ -1741,10 +1813,12 @@ impl WgpuRenderer {
                 depth_stencil_attachment: None,
                 ..Default::default()
             });
-            if let Some(region) = region {
-                pass.set_scissor_rect(region.x, region.y, region.width, region.height);
+            if !regions.is_empty() {
                 pass.set_pipeline(&self.resources().pipelines.clear_region);
-                pass.draw(0..3, 0..1);
+                for region in regions {
+                    pass.set_scissor_rect(region.x, region.y, region.width, region.height);
+                    pass.draw(0..3, 0..1);
+                }
             }
 
             for batch in scene.batches() {
@@ -1754,16 +1828,34 @@ impl WgpuRenderer {
                         &self.resources().pipelines.quads,
                         instance_range(range),
                         &mut pass,
+                        regions,
                     ),
                     PrimitiveBatch::Shadows(range) => self.draw_instances(
                         &instance_bindings.shadows,
                         &self.resources().pipelines.shadows,
                         instance_range(range),
                         &mut pass,
+                        regions,
                     ),
                     PrimitiveBatch::Paths(range) => {
                         let paths = &scene.paths[range];
                         if paths.is_empty() {
+                            continue;
+                        }
+
+                        // Rasterizing a path batch costs a full-window
+                        // intermediate clear and MSAA resolve, so skip
+                        // batches whose composited output would be entirely
+                        // scissored away. The batch stays atomic: its paths
+                        // share one intermediate rasterization.
+                        if !regions.is_empty()
+                            && !paths.iter().any(|path| {
+                                let bounds = path.clipped_bounds().dilate(ScaledPixels(1.0));
+                                regions
+                                    .iter()
+                                    .any(|region| region.intersects_bounds(&bounds))
+                            })
+                        {
                             continue;
                         }
 
@@ -1788,15 +1880,13 @@ impl WgpuRenderer {
                             depth_stencil_attachment: None,
                             ..Default::default()
                         });
-                        if let Some(region) = region {
-                            pass.set_scissor_rect(region.x, region.y, region.width, region.height);
-                        }
 
                         if rasterized {
                             self.draw_paths_from_intermediate(
                                 paths,
                                 &mut instance_offset,
                                 &mut pass,
+                                regions,
                             )?;
                         }
                     }
@@ -1805,6 +1895,7 @@ impl WgpuRenderer {
                         &self.resources().pipelines.underlines,
                         instance_range(range),
                         &mut pass,
+                        regions,
                     ),
                     PrimitiveBatch::MonochromeSprites { texture_id, range } => self.draw_sprites(
                         &instance_bindings.monochrome_sprites,
@@ -1812,6 +1903,7 @@ impl WgpuRenderer {
                         &self.resources().pipelines.mono_sprites,
                         instance_range(range),
                         &mut pass,
+                        regions,
                     ),
                     PrimitiveBatch::SubpixelSprites { texture_id, range } => {
                         let resources = self.resources();
@@ -1825,6 +1917,7 @@ impl WgpuRenderer {
                                 .unwrap_or(&resources.pipelines.mono_sprites),
                             instance_range(range),
                             &mut pass,
+                            regions,
                         );
                     }
                     PrimitiveBatch::PolychromeSprites { texture_id, range } => self.draw_sprites(
@@ -1833,6 +1926,7 @@ impl WgpuRenderer {
                         &self.resources().pipelines.poly_sprites,
                         instance_range(range),
                         &mut pass,
+                        regions,
                     ),
                     // Surfaces are macOS-only for video playback and are not
                     // implemented by the WGPU renderer.
@@ -1910,12 +2004,31 @@ impl WgpuRenderer {
             })
     }
 
+    /// Issues `draw`: once with the default (full) scissor when `regions` is
+    /// empty, otherwise once per region under that region's scissor.
+    fn draw_per_region(
+        pass: &mut wgpu::RenderPass<'_>,
+        regions: &[ScissorRect],
+        vertices: Range<u32>,
+        instances: Range<u32>,
+    ) {
+        if regions.is_empty() {
+            pass.draw(vertices, instances);
+        } else {
+            for region in regions {
+                pass.set_scissor_rect(region.x, region.y, region.width, region.height);
+                pass.draw(vertices.clone(), instances.clone());
+            }
+        }
+    }
+
     fn draw_instances(
         &self,
         instances: &InstanceBinding,
         pipeline: &wgpu::RenderPipeline,
         range: Range<u32>,
         pass: &mut wgpu::RenderPass<'_>,
+        regions: &[ScissorRect],
     ) {
         if range.is_empty() {
             return;
@@ -1923,7 +2036,9 @@ impl WgpuRenderer {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
         pass.set_bind_group(1, &instances.bind_group, &[]);
-        pass.draw(
+        Self::draw_per_region(
+            pass,
+            regions,
             0..4,
             instances.first_instance + range.start..instances.first_instance + range.end,
         );
@@ -1936,6 +2051,7 @@ impl WgpuRenderer {
         pipeline: &wgpu::RenderPipeline,
         range: Range<u32>,
         pass: &mut wgpu::RenderPass<'_>,
+        regions: &[ScissorRect],
     ) {
         if range.is_empty() {
             return;
@@ -1947,7 +2063,9 @@ impl WgpuRenderer {
         pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
         pass.set_bind_group(1, &sprite_instances.bind_group, &[]);
         pass.set_bind_group(2, &texture, &[]);
-        pass.draw(
+        Self::draw_per_region(
+            pass,
+            regions,
             0..4,
             sprite_instances.first_instance + range.start
                 ..sprite_instances.first_instance + range.end,
@@ -1968,6 +2086,7 @@ impl WgpuRenderer {
         paths: &[Path<ScaledPixels>],
         instance_offset: &mut u64,
         pass: &mut wgpu::RenderPass<'_>,
+        regions: &[ScissorRect],
     ) -> Result<()> {
         let first_path = &paths[0];
         let sprites: Vec<PathSprite> = if paths.last().map(|p| &p.order) == Some(&first_path.order)
@@ -2000,7 +2119,9 @@ impl WgpuRenderer {
         pass.set_bind_group(0, &resources.globals_bind_group, &[]);
         pass.set_bind_group(1, &instances.bind_group, &[]);
         pass.set_bind_group(2, &texture, &[]);
-        pass.draw(
+        Self::draw_per_region(
+            pass,
+            regions,
             0..4,
             instances.first_instance..instances.first_instance + sprites.len() as u32,
         );
