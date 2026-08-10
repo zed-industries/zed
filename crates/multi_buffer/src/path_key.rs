@@ -421,6 +421,7 @@ impl MultiBuffer {
             });
         }
 
+        let mut primary_ranges_changed = false;
         while let Some(excerpt) = cursor.item()
             && excerpt.path_key == path_key
         {
@@ -428,7 +429,7 @@ impl MultiBuffer {
             let Some(next_excerpt) = to_insert.peek() else {
                 break;
             };
-            if &excerpt.range == *next_excerpt {
+            if excerpt.range.context == next_excerpt.context {
                 let before = new_excerpts.summary().len();
                 new_excerpts.update_last(
                     |prev_excerpt| {
@@ -442,7 +443,12 @@ impl MultiBuffer {
                     },
                     (),
                 );
-                new_excerpts.push(excerpt.clone(), ());
+                let mut reused_excerpt = excerpt.clone();
+                if reused_excerpt.range.primary != next_excerpt.primary {
+                    reused_excerpt.range.primary = next_excerpt.primary.clone();
+                    primary_ranges_changed = true;
+                }
+                new_excerpts.push(reused_excerpt, ());
                 to_insert.next();
                 cursor.next();
                 continue;
@@ -609,20 +615,39 @@ impl MultiBuffer {
                 ranges: new_ranges,
             });
             cx.notify();
+        } else if primary_ranges_changed {
+            cx.emit(Event::BufferRangesUpdated {
+                buffer,
+                path_key: path_key.clone(),
+                ranges: new_ranges,
+            });
+            cx.notify();
         }
 
         added_new_excerpt
     }
 
-    pub fn existing_excerpt_paths(&self) -> Vec<PathKey> {
+    /// Groups position-ordered `ranges` by the [`PathKey`] of their start anchor, preserving order.
+    /// Ranges whose start anchor is not tied to an excerpt path are skipped.
+    pub fn group_ranges_by_path(
+        &self,
+        ranges: impl IntoIterator<Item = Range<Anchor>>,
+    ) -> Vec<(PathKey, Vec<Range<Anchor>>)> {
         let snapshot = self.snapshot.borrow();
-        let mut paths = Vec::new();
-        for excerpt in snapshot.excerpts.iter() {
-            if paths.last() != Some(&excerpt.path_key) {
-                paths.push(excerpt.path_key.clone());
+        let mut grouped: Vec<(PathKey, Vec<Range<Anchor>>)> = Vec::new();
+        for range in ranges {
+            let Anchor::Excerpt(anchor) = &range.start else {
+                continue;
+            };
+            let Some(path_key) = snapshot.path_keys.get_index(anchor.path.0 as usize) else {
+                continue;
+            };
+            match grouped.last_mut() {
+                Some((last_path, last_ranges)) if last_path == path_key => last_ranges.push(range),
+                _ => grouped.push((path_key.clone(), vec![range])),
             }
         }
-        paths
+        grouped
     }
 
     pub fn remove_excerpts_for_buffer(&mut self, buffer: BufferId, cx: &mut Context<Self>) {

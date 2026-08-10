@@ -857,6 +857,88 @@ fn test_excerpt_events(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_set_excerpts_for_path_reuses_excerpts_when_only_primary_changes(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local(sample_text(10, 6, 'a'), cx));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    let path = PathKey::for_buffer(&buffer, cx);
+
+    let edited_event_count = Arc::new(RwLock::new(0));
+    let ranges_updated_event_count = Arc::new(RwLock::new(0));
+    multibuffer.update(cx, |_, cx| {
+        cx.subscribe(&multibuffer, {
+            let edited_event_count = edited_event_count.clone();
+            let ranges_updated_event_count = ranges_updated_event_count.clone();
+            move |_, _, event, _| match event {
+                Event::Edited { .. } => *edited_event_count.write() += 1,
+                Event::BufferRangesUpdated { .. } => *ranges_updated_event_count.write() += 1,
+                _ => {}
+            }
+        })
+        .detach();
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path.clone(),
+            buffer.clone(),
+            vec![Point::new(3, 0)..Point::new(3, 1)],
+            2,
+            cx,
+        );
+    });
+    let text = multibuffer.read(cx).snapshot(cx).text();
+    assert_eq!(*edited_event_count.read(), 1);
+    assert_eq!(*ranges_updated_event_count.read(), 1);
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path.clone(),
+            buffer.clone(),
+            vec![Point::new(3, 0)..Point::new(3, 2)],
+            2,
+            cx,
+        );
+    });
+    assert_eq!(multibuffer.read(cx).snapshot(cx).text(), text);
+    assert_eq!(*edited_event_count.read(), 1);
+    assert_eq!(*ranges_updated_event_count.read(), 2);
+
+    let buffer_snapshot = buffer.read(cx).snapshot();
+    let primary_ranges = multibuffer
+        .read(cx)
+        .snapshot(cx)
+        .excerpts()
+        .map(|range| range.primary.to_point(&buffer_snapshot))
+        .collect::<Vec<_>>();
+    assert_eq!(primary_ranges, vec![Point::new(3, 0)..Point::new(3, 2)]);
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path.clone(),
+            buffer.clone(),
+            vec![Point::new(3, 0)..Point::new(3, 2)],
+            2,
+            cx,
+        );
+    });
+    assert_eq!(*edited_event_count.read(), 1);
+    assert_eq!(*ranges_updated_event_count.read(), 2);
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path,
+            buffer,
+            vec![Point::new(7, 0)..Point::new(7, 1)],
+            2,
+            cx,
+        );
+    });
+    assert_ne!(multibuffer.read(cx).snapshot(cx).text(), text);
+    assert_eq!(*edited_event_count.read(), 2);
+    assert_eq!(*ranges_updated_event_count.read(), 3);
+}
+
+#[gpui::test]
 fn test_expand_excerpts(cx: &mut App) {
     let buffer = cx.new(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));

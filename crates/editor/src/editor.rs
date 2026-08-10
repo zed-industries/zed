@@ -924,6 +924,15 @@ enum GutterLineNumberWidth {
     },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum ScrollbarWidthOnRewrap {
+    #[default]
+    Dynamic,
+    Frozen {
+        settled_scroll_range_width: Option<Pixels>,
+    },
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -990,6 +999,7 @@ pub struct Editor {
     enable_code_lens: bool,
     enable_mouse_wheel_zoom: bool,
     gutter_line_number_width: GutterLineNumberWidth,
+    scrollbar_width_on_rewrap: ScrollbarWidthOnRewrap,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -2308,6 +2318,7 @@ impl Editor {
             breadcrumbs_visibility: BreadcrumbsVisibility::from_settings(cx),
             show_gutter: full_mode,
             gutter_line_number_width: GutterLineNumberWidth::Dynamic,
+            scrollbar_width_on_rewrap: ScrollbarWidthOnRewrap::Dynamic,
             show_line_numbers: (!full_mode).then_some(false),
             use_relative_line_numbers: None,
             disable_expand_excerpt_buttons: !full_mode,
@@ -3117,11 +3128,25 @@ impl Editor {
         }
     }
 
+    /// Shrinks the sticky gutter width down to fit the current content and keeps latching from
+    /// there, so a settled search snaps to its real width instead of staying stuck at the widest
+    /// line number seen mid-typing.
+    pub fn refit_gutter_line_number_width(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.gutter_line_number_width,
+            GutterLineNumberWidth::Sticky { .. }
+        ) {
+            self.gutter_line_number_width = GutterLineNumberWidth::Sticky { min_digits: 0 };
+            self.latch_gutter_line_number_width(cx);
+            cx.notify();
+        }
+    }
+
     fn latch_gutter_line_number_width(&mut self, cx: &mut Context<Self>) {
         let GutterLineNumberWidth::Sticky { min_digits } = self.gutter_line_number_width else {
             return;
         };
-        let widest_line_number = self.buffer.read(cx).snapshot(cx).widest_line_number();
+        let widest_line_number = self.buffer.read(cx).read(cx).widest_line_number();
         let digits = (widest_line_number.max(1).ilog10() + 1) as usize;
         if digits > min_digits {
             self.gutter_line_number_width = GutterLineNumberWidth::Sticky { min_digits: digits };
@@ -3135,6 +3160,32 @@ impl Editor {
             GutterLineNumberWidth::Dynamic => None,
             GutterLineNumberWidth::Sticky { min_digits } => Some(min_digits),
         }
+    }
+
+    pub fn freeze_scrollbar_width_on_rewrap(&mut self) {
+        if self.scrollbar_width_on_rewrap == ScrollbarWidthOnRewrap::Dynamic {
+            self.scrollbar_width_on_rewrap = ScrollbarWidthOnRewrap::Frozen {
+                settled_scroll_range_width: None,
+            };
+        }
+    }
+
+    fn frozen_scroll_range_width(
+        &mut self,
+        is_rewrapping: bool,
+        current_width: Pixels,
+    ) -> Option<Pixels> {
+        let ScrollbarWidthOnRewrap::Frozen {
+            settled_scroll_range_width,
+        } = &mut self.scrollbar_width_on_rewrap
+        else {
+            return None;
+        };
+        if !is_rewrapping {
+            *settled_scroll_range_width = Some(current_width);
+            return None;
+        }
+        *settled_scroll_range_width
     }
 
     pub fn set_custom_context_menu(

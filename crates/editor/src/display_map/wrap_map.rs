@@ -203,9 +203,8 @@ impl WrapMap {
         (handle, snapshot)
     }
 
-    #[cfg(test)]
     pub fn is_rewrapping(&self) -> bool {
-        self.background_task.is_some()
+        self.background_task.is_some() || (self.wrap_width.is_some() && self.snapshot.interpolated)
     }
 
     #[ztracing::instrument(skip_all)]
@@ -368,7 +367,7 @@ impl WrapMap {
         if let Some(wrap_width) = self.wrap_width
             && self.background_task.is_none()
         {
-            let mut pending_edits = self.pending_edits.clone();
+            let pending_edits = self.pending_edits.clone();
             let mut snapshot = self.snapshot.clone();
             let text_system = cx.text_system().clone();
             let (font, font_size) = self.font_with_size.clone();
@@ -376,20 +375,23 @@ impl WrapMap {
                 LineFragmentBuilder::new(text_system.clone(), &font, font_size);
             let mut line_wrapper = text_system.line_wrapper(font, font_size);
 
-            if pending_edits.len() == 1
-                && let Some((_, tab_edits)) = pending_edits.back()
-                && let [edit] = &**tab_edits
-                && ((edit.new.end.row().saturating_sub(edit.new.start.row()) + 1) as usize)
-                    < WRAP_YIELD_ROW_INTERVAL
-                && let Some((tab_snapshot, tab_edits)) = pending_edits.pop_back()
-            {
-                let wrap_edits = gpui::block_on(snapshot.update(
-                    tab_snapshot,
-                    &tab_edits,
-                    wrap_width,
-                    &mut line_wrapper,
-                    &mut fragment_builder,
-                ));
+            let total_new_rows = pending_edits
+                .iter()
+                .flat_map(|(_, tab_edits)| tab_edits.iter())
+                .map(|edit| (edit.new.end.row().saturating_sub(edit.new.start.row()) + 1) as usize)
+                .sum::<usize>();
+            if total_new_rows < WRAP_YIELD_ROW_INTERVAL {
+                let mut wrap_edits = Patch::default();
+                for (tab_snapshot, tab_edits) in pending_edits {
+                    let edits = gpui::block_on(snapshot.update(
+                        tab_snapshot,
+                        &tab_edits,
+                        wrap_width,
+                        &mut line_wrapper,
+                        &mut fragment_builder,
+                    ));
+                    wrap_edits = wrap_edits.compose(&edits);
+                }
                 self.snapshot = snapshot;
                 self.edits_since_sync = self.edits_since_sync.compose(&wrap_edits);
             } else {

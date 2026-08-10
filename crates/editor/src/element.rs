@@ -1358,6 +1358,23 @@ impl EditorElement {
             .then_some(content_offset)
             .unwrap_or_default();
 
+        let is_rewrapping = self.editor.read(cx).display_map.read(cx).is_rewrapping(cx);
+        let frozen_layout_information = self
+            .editor
+            .update(cx, |editor, _| {
+                editor.frozen_scroll_range_width(
+                    is_rewrapping,
+                    scrollbar_layout_information.scroll_range.width,
+                )
+            })
+            .map(|scroll_range_width| ScrollbarLayoutInformation {
+                scroll_range: size(
+                    scroll_range_width,
+                    scrollbar_layout_information.scroll_range.height,
+                ),
+                ..*scrollbar_layout_information
+            });
+
         Some(EditorScrollbars::from_scrollbar_axes(
             ScrollbarAxes {
                 horizontal: scrollbar_settings.axes.horizontal
@@ -1365,7 +1382,9 @@ impl EditorElement {
                 vertical: scrollbar_settings.axes.vertical
                     && self.editor.read(cx).show_scrollbars.vertical,
             },
-            scrollbar_layout_information,
+            frozen_layout_information
+                .as_ref()
+                .unwrap_or(scrollbar_layout_information),
             content_offset,
             scroll_position,
             self.style.scrollbar_width,
@@ -9589,6 +9608,7 @@ struct ContextMenuLayout {
 }
 
 /// Holds information required for layouting the editor scrollbars.
+#[derive(Clone, Copy)]
 struct ScrollbarLayoutInformation {
     /// The bounds of the editor area (excluding the content offset).
     editor_bounds: Bounds<Pixels>,
