@@ -5,9 +5,9 @@ use crate::serial_connection::{
 };
 use editor::Editor;
 use gpui::{
-    App, Bounds, Context, Entity, FocusHandle, Focusable, Hsla, Pixels, Render, Size,
-    Subscription, TitlebarOptions, Window, WindowBounds, WindowKind, WindowOptions, canvas, hsla,
-    point, px,
+    App, Bounds, Context, Entity, FocusHandle, Focusable, Hsla, MouseButton, Pixels, Render,
+    Size, Subscription, TitlebarOptions, Window, WindowBounds, WindowControlArea, WindowDecorations,
+    WindowKind, WindowOptions, canvas, hsla, point, px,
 };
 use std::collections::VecDeque;
 use ui::prelude::*;
@@ -82,6 +82,13 @@ pub struct SerialPlotterWindow {
     port_editor: Entity<Editor>,
     series: Vec<PlotSeries>,
     last_error: Option<String>,
+    /// Set on mouse-down in the title row, consumed (and cleared) on the
+    /// next mouse-move to trigger the actual OS-level window move -- not
+    /// just moving on down, so a plain click doesn't start dragging. Mirrors
+    /// `platform_title_bar`'s own drag handling, this codebase's only other
+    /// place a window needs to be moved without relying on server-side
+    /// decorations (which many Wayland compositors don't provide).
+    should_move: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -127,6 +134,7 @@ impl SerialPlotterWindow {
             port_editor,
             series: Vec::new(),
             last_error: None,
+            should_move: false,
             _subscriptions: subscriptions,
         }
     }
@@ -196,6 +204,46 @@ impl Render for SerialPlotterWindow {
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
+            .bg(cx.theme().colors().editor_background)
+            .text_color(cx.theme().colors().text)
+            .child(
+                // Most Wayland compositors don't render server-side
+                // decorations for a plain xdg-toplevel, so a window with no
+                // client-drawn titlebar of its own ends up with no way to
+                // move it. This row is that titlebar: window_control_area
+                // marks it as the drag region, and the down/move pair below
+                // starts the actual OS-level move once the mouse has
+                // genuinely moved (not on a plain click).
+                h_flex()
+                    .window_control_area(WindowControlArea::Drag)
+                    .w_full()
+                    .h(px(32.))
+                    .px_2()
+                    .items_center()
+                    .bg(cx.theme().colors().title_bar_background)
+                    .on_mouse_down_out(cx.listener(|this, _, _window, _cx| {
+                        this.should_move = false;
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, _cx| {
+                            this.should_move = false;
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, _cx| {
+                            this.should_move = true;
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|this, _, window, _cx| {
+                        if this.should_move {
+                            this.should_move = false;
+                            window.start_window_move();
+                        }
+                    }))
+                    .child(Label::new("Serial Plotter")),
+            )
             .child(
                 h_flex()
                     .gap_2()
@@ -261,6 +309,16 @@ pub fn open_serial_plotter_window(_window: &mut Window, cx: &mut App) {
             is_resizable: true,
             is_minimizable: true,
             kind: WindowKind::Floating,
+            // Requesting server decorations (the default) leaves the window
+            // completely undecorated -- and thus unmovable, since we never
+            // implemented our own drag handling either -- on Wayland
+            // compositors that don't support server-side xdg-decorations
+            // (e.g. stock GNOME/Mutter). Client decorations plus the
+            // title row's own drag handling in `Render` gives a movable
+            // window regardless of what the compositor supports, matching
+            // this app's own default (`"window_decorations": "client"` in
+            // assets/settings/default.json).
+            window_decorations: Some(WindowDecorations::Client),
             ..Default::default()
         },
         |window, cx| {
