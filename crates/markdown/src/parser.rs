@@ -922,25 +922,51 @@ fn extract_code_content_range(text: &str) -> Range<usize> {
 
 pub(crate) fn extract_code_block_content_range(text: &str) -> Range<usize> {
     let mut range = 0..text.len();
-    let fence = if text.starts_with("```") {
-        Some("```")
-    } else if text.starts_with("~~~") {
-        Some("~~~")
-    } else {
-        None
+    let Some(fence_character) = text
+        .as_bytes()
+        .first()
+        .copied()
+        .filter(|character| matches!(character, b'`' | b'~'))
+    else {
+        return range;
     };
+    let opening_fence_len = text
+        .bytes()
+        .take_while(|character| *character == fence_character)
+        .count();
+    if opening_fence_len < 3 {
+        return range;
+    }
 
-    if let Some(fence) = fence {
-        range.start += fence.len();
+    range.start += opening_fence_len;
+    if let Some(newline_ix) = text[range.clone()].find('\n') {
+        range.start += newline_ix + 1;
+    }
 
-        if let Some(newline_ix) = text[range.clone()].find('\n') {
-            range.start += newline_ix + 1;
-        }
-
-        if !range.is_empty() && text.ends_with(fence) {
-            range.end -= fence.len();
+    let text_without_line_ending =
+        text.trim_end_matches(|character| matches!(character, '\r' | '\n'));
+    let closing_line_start = text_without_line_ending
+        .rfind('\n')
+        .map_or(0, |newline_ix| newline_ix + 1);
+    if closing_line_start >= range.start {
+        let closing_line = &text_without_line_ending[closing_line_start..];
+        let closing_fence = closing_line.trim_start_matches(' ');
+        let indentation_len = closing_line.len() - closing_fence.len();
+        let closing_fence_len = closing_fence
+            .bytes()
+            .take_while(|character| *character == fence_character)
+            .count();
+        let trailing_characters = &closing_fence[closing_fence_len..];
+        if indentation_len <= 3
+            && closing_fence_len >= opening_fence_len
+            && trailing_characters
+                .bytes()
+                .all(|character| matches!(character, b' ' | b'\t'))
+        {
+            range.end = closing_line_start;
         }
     }
+
     if range.start > range.end {
         range.end = range.start;
     }
@@ -1551,9 +1577,21 @@ mod tests {
         let input = "```python\nprint('hello')\nprint('world')\n```";
         assert_eq!(extract_code_block_content_range(input), 10..40);
 
+        let input = "~~~~mermaid\ngraph TD;\n~~~~";
+        let content_range = extract_code_block_content_range(input);
+        assert_eq!(&input[content_range], "graph TD;\n");
+
+        let input = "~~~mermaid\ngraph TD;\n    ~~~~";
+        let content_range = extract_code_block_content_range(input);
+        assert_eq!(&input[content_range], "graph TD;\n    ~~~~");
+
+        let input = "~~~mermaid\ngraph TD;\n   ~~~~ \t";
+        let content_range = extract_code_block_content_range(input);
+        assert_eq!(&input[content_range], "graph TD;\n");
+
         // Malformed input
         let input = "`````";
-        assert_eq!(extract_code_block_content_range(input), 3..3);
+        assert_eq!(extract_code_block_content_range(input), 5..5);
     }
 
     #[test]
