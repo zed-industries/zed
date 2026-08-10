@@ -2048,7 +2048,7 @@ impl Pane {
                                 );
                                 window.prompt(
                                     PromptLevel::Warning,
-                                    &format!("Unable to save file: {}", &err),
+                                    &format!("Unable to save file: {err}"),
                                     Some(&detail),
                                     &["Close Without Saving", "Cancel"],
                                     cx,
