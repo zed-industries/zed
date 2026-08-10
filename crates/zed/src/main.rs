@@ -770,6 +770,7 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         citadel_build::init(cx);
+        citadel_serial_monitor::init(cx);
         citadel_new_project::init(cx);
         git_ui::init(cx);
         feedback::init(cx);
