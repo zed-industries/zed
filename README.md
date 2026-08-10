@@ -41,6 +41,35 @@ GitHub releases** instead of `zed.dev`:
 If `sync-fork` hits a merge conflict (e.g. upstream changed `crates/auto_update`),
 resolve it locally and push, then re-run the workflow.
 
+
+### macOS release signing
+
+Fork releases are Developer ID signed and notarized only when the repository has
+the following GitHub Actions configuration:
+
+- Secrets: `MACOS_CERTIFICATE` (base64-encoded `.p12`), `MACOS_CERTIFICATE_PASSWORD`,
+  `APPLE_NOTARIZATION_KEY` (the App Store Connect `.p8` key), `APPLE_NOTARIZATION_KEY_ID`,
+  and `APPLE_NOTARIZATION_ISSUER_ID`.
+- Repository variable: `MACOS_SIGNING_IDENTITY`, set to the full Developer ID
+  certificate name, for example `Developer ID Application: Example, Inc. (TEAMID)`.
+
+The certificate must be issued for the fork owner. The checked-in provisioning
+profile belongs to Zed Industries, so fork builds deliberately do not embed it.
+Configure these values under **Settings → Secrets and variables → Actions**, then
+run `build-binaries` again.
+
+Without all of these values, the macOS build job fails before publishing a
+release. For local builds or an existing ad-hoc-signed copy, remove the
+quarantine attribute once and launch it:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Zed.app
+open /Applications/Zed.app
+```
+
+This bypasses Gatekeeper for that local copy; it does not replace Developer ID
+signing or notarization for distribution.
+
 ### Installation
 
 On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/download) or install Zed via your local package manager ([macOS](https://zed.dev/docs/installation#macos)/[Linux](https://zed.dev/docs/linux#installing-via-a-package-manager)/[Windows](https://zed.dev/docs/windows#package-managers)).

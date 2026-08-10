@@ -79,14 +79,42 @@ jobs:
 
   build-macos:
     needs: prepare
-    if: needs.prepare.outputs.skip != 'true'
+    if: needs.prepare.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.branch == 'main')
     runs-on: macos-14
     timeout-minutes: 360
+    env:
+      MACOS_CERTIFICATE: ${{ (github.event_name != 'workflow_dispatch' || inputs.branch == 'main') && secrets.MACOS_CERTIFICATE || '' }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ (github.event_name != 'workflow_dispatch' || inputs.branch == 'main') && secrets.MACOS_CERTIFICATE_PASSWORD || '' }}
+      APPLE_NOTARIZATION_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.branch == 'main') && secrets.APPLE_NOTARIZATION_KEY || '' }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ (github.event_name != 'workflow_dispatch' || inputs.branch == 'main') && secrets.APPLE_NOTARIZATION_KEY_ID || '' }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ (github.event_name != 'workflow_dispatch' || inputs.branch == 'main') && secrets.APPLE_NOTARIZATION_ISSUER_ID || '' }}
+      MACOS_SIGNING_IDENTITY: ${{ (github.event_name != 'workflow_dispatch' || inputs.branch == 'main') && vars.MACOS_SIGNING_IDENTITY || '' }}
+      # The checked-in profile belongs to Zed Industries' team, not this fork.
+      MACOS_USE_PROVISIONING_PROFILE: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+      - name: Require release signing
+        shell: bash
+        run: |
+          missing=0
+          for variable in \
+            MACOS_CERTIFICATE \
+            MACOS_CERTIFICATE_PASSWORD \
+            APPLE_NOTARIZATION_KEY \
+            APPLE_NOTARIZATION_KEY_ID \
+            APPLE_NOTARIZATION_ISSUER_ID \
+            MACOS_SIGNING_IDENTITY; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Missing required macOS signing configuration: $variable"
+              missing=1
+            fi
+          done
+          if (( missing != 0 )); then
+            exit 1
+          fi
       - name: Set release version
         run: |
           sed -i '' "s/^version = \"[^\"]*\"/version = \"${{ needs.prepare.outputs.version }}\"/" crates/zed/Cargo.toml
@@ -102,6 +130,12 @@ jobs:
         run: cargo fetch
       - name: Bundle macOS app
         run: ./script/bundle-mac
+      - name: Verify macOS signature and notarization
+        run: |
+          app=target/aarch64-apple-darwin/release/dmg/Zed.app
+          dmg=target/aarch64-apple-darwin/release/Zed-aarch64.dmg
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$dmg"
       - name: Upload artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -109,10 +143,11 @@ jobs:
           path: |
             target/aarch64-apple-darwin/release/Zed-aarch64.dmg
             target/zed-remote-server-macos-aarch64.gz
+          if-no-files-found: error
 
   build-windows:
     needs: prepare
-    if: needs.prepare.outputs.skip != 'true'
+    if: needs.prepare.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.branch == 'main')
     runs-on: windows-2022
     timeout-minutes: 360
     env:
@@ -151,7 +186,7 @@ jobs:
 
   release:
     needs: [prepare, build-macos, build-windows]
-    if: needs.prepare.outputs.skip != 'true'
+    if: needs.prepare.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.branch == 'main')
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts

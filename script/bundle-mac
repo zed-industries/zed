@@ -8,10 +8,16 @@ target_dir="release"
 open_result=false
 local_install=false
 can_code_sign=false
+can_notarize=false
+use_provisioning_profile="${MACOS_USE_PROVISIONING_PROFILE:-true}"
+keychain_dir=""
+keychain_path=""
+default_keychain=""
+notarization_key_file=""
+certificate_file=""
 
-# This must match the team in the provisioning profile.
-IDENTITY="Zed Industries, Inc."
-APPLE_NOTARIZATION_TEAM="MQ55VZLNZQ"
+# Override this in forks with the Developer ID Application certificate name.
+IDENTITY="${MACOS_SIGNING_IDENTITY:-Zed Industries, Inc.}"
 
 # Function for displaying help info
 help_info() {
@@ -117,27 +123,60 @@ else
     echo "cargo::warning=Missing ${document_icon_source}; macOS document icons may not appear in Finder."
 fi
 
-if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_NOTARIZATION_KEY:-}" && -n "${APPLE_NOTARIZATION_KEY_ID:-}" && -n "${APPLE_NOTARIZATION_ISSUER_ID:-}" ]]; then
+if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" ]]; then
     can_code_sign=true
-
-    echo "Setting up keychain for code signing..."
-    security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
-    security default-keychain -s zed.keychain
-    security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-    # Calling set-keychain-settings without `-t` disables the auto-lock timeout
-    security set-keychain-settings zed.keychain
-    echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/zed-certificate.p12
-    security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-    rm /tmp/zed-certificate.p12
-    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
+    keychain_dir=$(mktemp -d "${TMPDIR:-/tmp}/zed-signing.XXXXXX")
+    keychain_path="${keychain_dir}/zed.keychain-db"
+    default_keychain=$(security default-keychain 2>/dev/null | tr -d '"' || true)
 
     function cleanup() {
         echo "Cleaning up keychain"
-        security default-keychain -s login.keychain
-        security delete-keychain zed.keychain
+        if [[ -n "$certificate_file" ]]; then
+            rm -f "$certificate_file"
+        fi
+        if [[ -n "$notarization_key_file" ]]; then
+            rm -f "$notarization_key_file"
+        fi
+        if [[ -n "$default_keychain" ]]; then
+            security default-keychain -s "$default_keychain" || true
+        fi
+        if [[ -n "$keychain_path" ]]; then
+            security delete-keychain "$keychain_path" >/dev/null 2>&1 || true
+        fi
+        rm -rf "$keychain_dir"
     }
 
     trap cleanup EXIT
+
+    echo "Setting up keychain for code signing..."
+    security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$keychain_path"
+    security default-keychain -s "$keychain_path"
+    security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$keychain_path"
+    # Calling set-keychain-settings without `-t` disables the auto-lock timeout.
+    security set-keychain-settings "$keychain_path"
+    certificate_file=$(mktemp "${TMPDIR:-/tmp}/zed-certificate.XXXXXX.p12")
+    echo "$MACOS_CERTIFICATE" | base64 --decode > "$certificate_file"
+    security import "$certificate_file" -k "$keychain_path" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+    rm -f "$certificate_file"
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" "$keychain_path"
+
+    if ! security find-identity -v -p codesigning "$keychain_path" | grep -Fq -- "$IDENTITY"; then
+        echo "Signing identity not found in $keychain_path: $IDENTITY"
+        security find-identity -v -p codesigning "$keychain_path"
+        exit 1
+    fi
+
+    if [[ -n "${APPLE_NOTARIZATION_KEY:-}" && -n "${APPLE_NOTARIZATION_KEY_ID:-}" && -n "${APPLE_NOTARIZATION_ISSUER_ID:-}" ]]; then
+        can_notarize=true
+    fi
+else
+    if [[ -n "${APPLE_NOTARIZATION_KEY:-}" || -n "${APPLE_NOTARIZATION_KEY_ID:-}" || -n "${APPLE_NOTARIZATION_ISSUER_ID:-}" ]]; then
+        echo "Notarization credentials were provided without a signing certificate."
+    fi
+fi
+
+if [[ $can_code_sign = true && $can_notarize = false ]]; then
+    echo "Notarization credentials are incomplete; the app will be signed but not notarized."
 fi
 
 GIT_VERSION="v2.43.3"
@@ -195,32 +234,26 @@ function sign_app_binaries() {
     echo "Downloading git binary"
     download_git "${target_triple}" "${app_path}/Contents/MacOS/git"
 
-    # Note: The app identifier for our development builds is the same as the app identifier for nightly.
-    cp crates/zed/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
+    if [[ "$use_provisioning_profile" == "true" ]]; then
+        # The profile is only valid for the team that owns the checked-in app ID.
+        cp "crates/zed/contents/$channel/embedded.provisionprofile" "${app_path}/Contents/"
+    fi
 
     if [[ $can_code_sign = true ]]; then
-        echo "Code signing binaries"
-        # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
+        echo "Code signing binaries with $IDENTITY"
+        # Sign nested binaries before the app bundle.
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/cli" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/git" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}/Contents/MacOS/zed" -v
         /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}" -v
     else
-        echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_KEY, APPLE_NOTARIZATION_KEY_ID, APPLE_NOTARIZATION_ISSUER_ID"
-
-        echo "====== WARNING ======"
-        echo "This bundle is being signed without all entitlements, some features (e.g. universal links) will not work"
-        echo "====== WARNING ======"
-
-        # NOTE: if you need to test universal links you have a few paths forward:
-        # - create a PR and tag it with the `run-bundling` label, and download the .dmg file from there.
-        # - get a signing key for the MQ55VZLNZQ team from Nathan.
-        # - create your own signing key, and update references to MQ55VZLNZQ to your own team ID
-        # then comment out this line.
+        echo "Developer ID credentials are missing; using an ad-hoc signature."
+        echo "Gatekeeper may block this bundle until its quarantine attribute is removed."
         cat crates/zed/resources/zed.entitlements | sed '/com.apple.developer.associated-domains/,+1d' > "${app_path}/Contents/Resources/zed.entitlements"
-
-        codesign --force --deep --entitlements "${app_path}/Contents/Resources/zed.entitlements" --sign ${MACOS_SIGNING_KEY:- -} "${app_path}" -v
+        /usr/bin/codesign --force --deep --entitlements "${app_path}/Contents/Resources/zed.entitlements" --sign - "${app_path}" -v
     fi
+
+    /usr/bin/codesign --verify --deep --strict --verbose=2 "${app_path}"
 
     bundle_name=$(basename "$app_path")
 
@@ -237,7 +270,7 @@ function sign_app_binaries() {
     fi
 
     if [[ "$target_dir" = "debug" ]]; then
-        echo "Debug build detected - skipping DMG creation and signing"
+        echo "Debug build detected - skipping DMG creation."
         if [ "$local_install" = false ]; then
             echo "Created application bundle:"
             echo "$app_path"
@@ -251,7 +284,6 @@ function sign_app_binaries() {
         rm -rf ${dmg_source_directory}
         mkdir -p ${dmg_source_directory}
         mv "${app_path}" "${dmg_source_directory}"
-        notarization_key_file=$(mktemp)
 
         echo "Adding symlink to /Applications to ${dmg_source_directory}"
         ln -s /Applications ${dmg_source_directory}
@@ -268,13 +300,16 @@ function sign_app_binaries() {
         npm install --global dmg-license minimist
         dmg-license script/terms/terms.json "${dmg_file_path}"
 
-        if [[ $can_code_sign = true ]]; then
+        if [[ $can_code_sign = true && $can_notarize = true ]]; then
             echo "Notarizing DMG with Apple"
+            notarization_key_file=$(mktemp)
             /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
             echo "$APPLE_NOTARIZATION_KEY" > "$notarization_key_file"
             "${xcode_bin_dir_path}/notarytool" submit --wait --key "$notarization_key_file" --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER_ID" "${dmg_file_path}"
             rm "$notarization_key_file"
             "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
+        elif [[ $can_code_sign = true ]]; then
+            echo "DMG is signed but not notarized; configure Apple notarization credentials for Gatekeeper-friendly downloads."
         fi
 
         if [ "$open_result" = true ]; then
