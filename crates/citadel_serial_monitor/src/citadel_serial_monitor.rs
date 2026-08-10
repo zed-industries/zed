@@ -5,6 +5,7 @@ mod serial_plotter_window;
 
 use gpui::{App, Context, SharedString, actions};
 use notifications::status_toast::StatusToast;
+use serial_plotter_window::open_serial_plotter_window;
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -12,12 +13,21 @@ actions!(
     citadel_serial_monitor,
     [
         /// Toggles focus on the Serial Monitor dock panel.
-        ToggleFocus
+        ToggleFocus,
+        /// Opens the Serial Plotter floating window.
+        OpenSerialPlotter
     ]
 );
 
 pub fn init(cx: &mut App) {
     serial_connection::init(cx);
+
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(|_workspace, _: &OpenSerialPlotter, window, cx| {
+            open_serial_plotter_window(window, cx);
+        });
+    })
+    .detach();
 }
 
 /// Shows a dismissible error toast in `workspace`. Duplicated (not shared)
