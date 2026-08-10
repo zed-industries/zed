@@ -4394,6 +4394,57 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_review_feedback_sends_structured_card_when_idle(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let result = active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
+            thread.send_review_feedback(
+                vec![editor::ReviewFeedback {
+                    worktree_name: Some("zed".to_string()),
+                    file_path: "crates/editor/src/git.rs".to_string(),
+                    start_line: 12,
+                    end_line: 15,
+                    excerpt: "fn example() {}".to_string(),
+                    comment: "Keep the old name".to_string(),
+                    status: editor::ReviewCommentStatus::Draft,
+                }],
+                window,
+                cx,
+            )
+        });
+        assert!(result.is_ok(), "review feedback should be accepted");
+        cx.run_until_parked();
+
+        active_thread(&conversation_view, cx).read_with(cx, |thread, cx| {
+            assert!(
+                thread.message_queue.is_empty(),
+                "idle threads should send review feedback immediately"
+            );
+            let markdown = thread.thread.read(cx).to_markdown(cx);
+            assert!(
+                markdown.contains("### 1. `crates/editor/src/git.rs` L12–15 (`zed`)"),
+                "expected structured review card in agent thread, got:\n{markdown}"
+            );
+            assert!(
+                markdown.contains("Keep the old name"),
+                "expected human comment in agent thread, got:\n{markdown}"
+            );
+            assert!(
+                markdown.contains("<summary>Machine-readable review feedback</summary>"),
+                "expected folded machine-readable payload, got:\n{markdown}"
+            );
+            assert!(
+                markdown.contains("\"file_path\": \"crates/editor/src/git.rs\""),
+                "expected serialized review feedback JSON, got:\n{markdown}"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_notification_for_error(cx: &mut TestAppContext) {
         init_test(cx);
 

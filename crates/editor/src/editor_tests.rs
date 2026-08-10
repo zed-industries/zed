@@ -42829,6 +42829,93 @@ fn test_review_feedback_preserves_anchor_metadata_until_cleared(cx: &mut TestApp
 }
 
 #[gpui::test]
+fn test_review_feedback_marks_orphaned_comments_outdated(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = cx.new(|cx| Buffer::local("line 1\nline 2\nline 3\n", cx));
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let anchor = snapshot.anchor_after(Point::new(1, 0));
+            let key = DiffHunkKey {
+                file_path: Arc::from(util::rel_path::RelPath::empty()),
+                hunk_start_anchor: anchor,
+            };
+            editor.add_review_comment(
+                key.clone(),
+                "Keep this review note".to_string(),
+                anchor..anchor,
+                cx,
+            );
+            assert_eq!(editor.total_review_comment_count(), 1);
+            assert_eq!(
+                editor.comments_for_hunk(&key, &snapshot)[0].status,
+                ReviewCommentStatus::Draft
+            );
+        })
+        .unwrap();
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.select_all(&SelectAll, window, cx);
+            editor.insert("completely new content", window, cx);
+        })
+        .unwrap();
+
+    editor
+        .update(cx, |editor, _window, cx| {
+            editor.cleanup_orphaned_review_comments(cx);
+            assert_eq!(
+                editor.total_review_comment_count(),
+                0,
+                "outdated comments must not remain sendable"
+            );
+            assert!(
+                editor.review_feedback(cx).is_empty(),
+                "outdated comments must not appear in review feedback"
+            );
+
+            let retained = editor.take_all_review_comments(cx);
+            assert_eq!(retained.len(), 1, "outdated comment should be retained");
+            assert_eq!(retained[0].1.len(), 1);
+            assert_eq!(retained[0].1[0].comment, "Keep this review note");
+            assert_eq!(retained[0].1[0].status, ReviewCommentStatus::Outdated);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_review_feedback_delete_removes_sendable_comment(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let anchor = snapshot.anchor_before(Point::new(0, 0));
+            let key = test_hunk_key_with_anchor("src/delete.rs", anchor);
+            let comment_id = add_test_comment(editor, key, "Delete me", cx);
+            assert_eq!(editor.total_review_comment_count(), 1);
+            assert_eq!(editor.review_feedback(cx).len(), 1);
+
+            editor.delete_review_comment(
+                &crate::actions::DeleteReviewComment { id: comment_id },
+                window,
+                cx,
+            );
+            assert_eq!(editor.total_review_comment_count(), 0);
+            assert!(editor.review_feedback(cx).is_empty());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn test_diff_review_overlay_show_and_dismiss(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
