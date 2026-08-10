@@ -948,6 +948,7 @@ features = [
     "Win32_System_Performance",
     "Win32_System_Pipes",
     "Win32_System_RestartManager",
+    "Win32_System_Registry",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
