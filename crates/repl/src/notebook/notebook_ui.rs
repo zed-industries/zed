@@ -1866,12 +1866,16 @@ impl Item for NotebookEditor {
         let path = self.notebook_item.read(cx).path.clone();
         let fs = project.read(cx).fs().clone();
 
-        self.mark_as_saved(cx);
-
-        cx.spawn(async move |_this, _cx| {
+        cx.spawn(async move |this, cx| {
             let json =
                 serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
-            fs.atomic_write(path, json).await?;
+            fs.atomic_write(path, json.clone()).await?;
+            this.update(cx, |this, cx| -> Result<()> {
+                if serde_json::to_string_pretty(&this.to_notebook(cx))? == json {
+                    this.mark_as_saved(cx);
+                }
+                Ok(())
+            })??;
             Ok(())
         })
     }
@@ -1888,13 +1892,17 @@ impl Item for NotebookEditor {
 
         let abs_path = project.read(cx).absolute_path(&path, cx);
 
-        self.mark_as_saved(cx);
-
-        cx.spawn(async move |_this, _cx| {
+        cx.spawn(async move |this, cx| {
             let abs_path = abs_path.context("Failed to get absolute path")?;
             let json =
                 serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
-            fs.atomic_write(abs_path, json).await?;
+            fs.atomic_write(abs_path, json.clone()).await?;
+            this.update(cx, |this, cx| -> Result<()> {
+                if serde_json::to_string_pretty(&this.to_notebook(cx))? == json {
+                    this.mark_as_saved(cx);
+                }
+                Ok(())
+            })??;
             Ok(())
         })
     }
@@ -2030,7 +2038,7 @@ impl KernelSession for NotebookEditor {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use project::{FakeFs, Project, ProjectItem as _};
+    use project::{FakeFs, Fs as _, Project, ProjectItem as _};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -2061,6 +2069,22 @@ mod tests {
         ]
     }"#;
 
+    fn missing_interpreter_spec() -> KernelSpecification {
+        let path = path!("/nonexistent/python3");
+        KernelSpecification::Jupyter(LocalKernelSpecification {
+            name: "python3".to_string(),
+            path: path.into(),
+            kernelspec: JupyterKernelspec {
+                argv: vec![path.to_string(), "{connection_file}".to_string()],
+                display_name: "Python 3".to_string(),
+                language: "python".to_string(),
+                interrupt_mode: None,
+                metadata: None,
+                env: None,
+            },
+        })
+    }
+
     /// When the configured interpreter doesn't exist (e.g. Python isn't installed),
     /// running a cell must not leave it stuck in the executing state. It should
     /// instead surface the kernel launch error as an error output on the cell.
@@ -2090,28 +2114,9 @@ mod tests {
         // Select a kernel whose interpreter doesn't exist, simulating a machine
         // where Python isn't installed properly. This is the same path the
         // kernel picker uses.
-        let missing_interpreter = path!("/nonexistent/python3");
-        let broken_spec = KernelSpecification::Jupyter(LocalKernelSpecification {
-            name: "python3".to_string(),
-            path: PathBuf::from(missing_interpreter),
-            kernelspec: JupyterKernelspec {
-                argv: vec![
-                    missing_interpreter.to_string(),
-                    "-m".to_string(),
-                    "ipykernel_launcher".to_string(),
-                    "-f".to_string(),
-                    "{connection_file}".to_string(),
-                ],
-                display_name: "Python 3".to_string(),
-                language: "python".to_string(),
-                interrupt_mode: None,
-                metadata: None,
-                env: None,
-            },
-        });
         cx.update(|cx| {
             ReplStore::global(cx).update(cx, |store, cx| {
-                store.set_active_kernelspec(worktree_id, broken_spec, cx);
+                store.set_active_kernelspec(worktree_id, missing_interpreter_spec(), cx);
             })
         });
 
@@ -2192,6 +2197,69 @@ mod tests {
                 other => panic!("expected a single error output, got: {other:?}"),
             }
         });
+    }
+
+    #[gpui::test]
+    async fn test_failed_save_keeps_notebook_dirty(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let notebook_path = path!("/notebooks/test.ipynb");
+        fs.insert_tree(
+            path!("/notebooks"),
+            json!({ "test.ipynb": NOTEBOOK_WITH_ONE_CODE_CELL }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/notebooks").as_ref()], cx).await;
+        cx.update(|cx| ReplStore::init(fs.clone(), cx));
+
+        let project_path = project.read_with(cx, |project, cx| ProjectPath {
+            worktree_id: project.worktrees(cx).next().unwrap().read(cx).id(),
+            path: rel_path("test.ipynb").into(),
+        });
+        cx.update(|cx| {
+            ReplStore::global(cx).update(cx, |store, cx| {
+                store.set_active_kernelspec(
+                    project_path.worktree_id,
+                    missing_interpreter_spec(),
+                    cx,
+                );
+            })
+        });
+        let notebook_item = cx
+            .update(|cx| {
+                NotebookItem::try_open(&project, &project_path, cx)
+                    .expect("notebook should be openable")
+            })
+            .await
+            .expect("notebook should parse");
+
+        let cx = cx.add_empty_window();
+        cx.executor().allow_parking();
+        let editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+        editor.update(cx, |editor, _| editor.cell_order.clear());
+        assert!(editor.read_with(cx, |editor, cx| editor.is_dirty(cx)));
+
+        fs.pause_events();
+        fs.remove_file(notebook_path.as_ref(), Default::default())
+            .await
+            .expect("notebook file should be removable");
+        fs.create_dir(notebook_path.as_ref())
+            .await
+            .expect("directory should replace notebook file");
+
+        let save = editor.update_in(cx, |editor, window, cx| {
+            editor.save(SaveOptions::default(), project, window, cx)
+        });
+        assert!(save.await.is_err());
+        assert!(editor.read_with(cx, |editor, cx| editor.is_dirty(cx)));
     }
 
     /// Opening a notebook as a single file (its own worktree) leaves the
