@@ -93,9 +93,13 @@ pub struct DbThread {
 /// thread blob; round-trips with [`crate::sandboxing::ThreadSandboxGrants`].
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DbSandboxGrants {
-    /// Canonicalized paths granted write access; each covers its whole subtree.
+    /// Paths granted write access, each paired with the canonical
+    /// (symlink-resolved) target established when the grant was approved; each
+    /// covers its whole subtree. Legacy rows stored a bare path string per
+    /// entry, which still deserializes (as a grant with no resolved canonical)
+    /// via [`settings::GrantedWritePath`]'s string-or-object format.
     #[serde(default)]
-    pub write_paths: Vec<PathBuf>,
+    pub write_paths: Vec<settings::GrantedWritePath>,
     /// Host patterns granted network access, in canonical string form (e.g.
     /// `github.com`, `*.npmjs.org`). Parsed back into patterns on load.
     #[serde(default)]
@@ -947,7 +951,16 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
         );
         let grants = DbSandboxGrants {
-            write_paths: vec![PathBuf::from("/tmp/build")],
+            write_paths: vec![
+                // A legacy bare-string grant (no resolved canonical) and a grant
+                // carrying its resolved canonical, to exercise both forms of the
+                // string-or-object round-trip.
+                settings::GrantedWritePath::from_requested(PathBuf::from("/tmp/build")),
+                settings::GrantedWritePath::resolved(
+                    PathBuf::from("/tmp/link"),
+                    PathBuf::from("/tmp/real"),
+                ),
+            ],
             network_hosts: vec!["github.com".to_string(), "*.npmjs.org".to_string()],
             network_any_host: false,
             allow_fs_write_all: false,

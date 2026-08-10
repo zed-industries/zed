@@ -23,7 +23,7 @@ jobs:
       with:
         clean: false
     - name: steps::setup_pnpm
-      uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+      uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
       with:
         version: '9'
     - name: steps::setup_node
@@ -31,6 +31,7 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
         cache: pnpm
         cache-dependency-path: script/danger/pnpm-lock.yaml
     - name: danger::danger_job::install_deps

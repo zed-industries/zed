@@ -42,7 +42,7 @@ cloud_api_types.workspace = true
 command_palette_hooks.workspace = true
 db.workspace = true
 
-git_ui.workspace = true
+git_ui_core.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
 icons.workspace = true
 livekit_client.workspace = true
