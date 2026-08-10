@@ -3345,6 +3345,122 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_breadcrumb_collapsed_ellipsis_browses_the_deepest_hidden_segment(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor_with_project;
+        use gpui::{px, size};
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "some_directory": {
+                    "another_directory": {
+                        "a_rather_long_file_name.rs": "fn main() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(
+                    path!("/root/some_directory/another_directory/a_rather_long_file_name.rs"),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct BarHost {
+            editor: Entity<Editor>,
+        }
+        impl gpui::Render for BarHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                let placeholder = vec![HighlightedText {
+                    text: "placeholder".into(),
+                    highlights: vec![],
+                }];
+                h_flex().size_full().child(render_breadcrumb_text(
+                    placeholder,
+                    None,
+                    None,
+                    &self.editor,
+                    false,
+                    cx,
+                ))
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor =
+                cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            });
+            BarHost { editor }
+        });
+        let editor = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.editor.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+
+        cx.simulate_resize(size(px(320.), px(600.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        assert_eq!(
+            cx.debug_bounds("breadcrumb-segment-0"),
+            None,
+            "the fixture must be narrow enough to collapse the leading segments"
+        );
+
+        let ellipsis = cx
+            .debug_bounds("breadcrumb-collapsed-run")
+            .expect("the collapsed run paints in place of what it hides");
+        cx.simulate_click(ellipsis.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        editor.read_with(cx, |editor, cx| {
+            let listing = editor
+                .breadcrumb_navigation_menu()
+                .expect("clicking the collapsed run opens a listing")
+                .read(cx)
+                .listing()
+                .clone();
+            match listing {
+                BreadcrumbListing::Directory { path, .. } => assert_eq!(
+                    path.as_unix_str(),
+                    "some_directory/another_directory",
+                    "it browses the deepest segment it hides"
+                ),
+                other => panic!("expected a directory listing, got {other:?}"),
+            }
+        });
+    }
+
+    #[gpui::test]
     async fn test_breadcrumb_menu_keyboard_survives_click_on_popup_chrome(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
         use crate::test::build_editor;

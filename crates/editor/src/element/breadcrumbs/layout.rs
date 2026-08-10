@@ -471,9 +471,14 @@ impl BreadcrumbStrip {
         };
 
         let content = match (segment.target.clone(), self.editor.clone()) {
-            (Some(target), Some(editor)) => {
-                self.render_clickable_segment(index, target, label, editor, cx)
-            }
+            (Some(target), Some(editor)) => self.render_clickable_segment(
+                ("breadcrumb-segment", index).into(),
+                format!("breadcrumb-segment-{index}").into(),
+                target,
+                label,
+                editor,
+                cx,
+            ),
             _ => label,
         };
         self.with_separator(position, last_position, content, window, cx)
@@ -481,7 +486,8 @@ impl BreadcrumbStrip {
 
     fn render_clickable_segment(
         &self,
-        index: usize,
+        element_id: ElementId,
+        debug_selector: SharedString,
         target: BreadcrumbSegmentTarget,
         label: gpui::AnyElement,
         editor: WeakEntity<Editor>,
@@ -508,7 +514,7 @@ impl BreadcrumbStrip {
         let menu_open = editor
             .upgrade()
             .is_some_and(|editor| editor.read(cx).breadcrumb_navigation_menu().is_some());
-        let trigger = ButtonLike::new(("breadcrumb-segment", index))
+        let trigger = ButtonLike::new(element_id.clone())
             .style(ButtonStyle::Subtle)
             .size(ButtonSize::None)
             .height(px(SEGMENT_TRIGGER_HEIGHT).into())
@@ -535,8 +541,8 @@ impl BreadcrumbStrip {
             });
 
         let mut wrapper = div()
-            .id(("breadcrumb-segment-hit", index))
-            .debug_selector(move || format!("breadcrumb-segment-{index}"))
+            .id(element_id)
+            .debug_selector(move || debug_selector.to_string())
             .mx(px(-SEGMENT_TRIGGER_PADDING_X));
 
         {
@@ -591,12 +597,30 @@ impl BreadcrumbStrip {
 
     fn render_ellipsis(
         &self,
+        hidden: Range<usize>,
         position: usize,
         last_position: usize,
-        window: &Window,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> gpui::AnyElement {
         let content = self.styled_separator_glyph("⋯", window, cx);
+        // Standing in for a run of hidden segments, the ellipsis browses the deepest of
+        // them, so collapsing the bar never puts an ancestor out of reach.
+        let deepest_hidden = hidden
+            .clone()
+            .rev()
+            .find_map(|index| self.segments.get(index)?.target.clone());
+        let content = match (deepest_hidden, self.editor.clone()) {
+            (Some(target), Some(editor)) => self.render_clickable_segment(
+                ("breadcrumb-collapsed-run", hidden.start).into(),
+                "breadcrumb-collapsed-run".into(),
+                target,
+                content,
+                editor,
+                cx,
+            ),
+            _ => content,
+        };
         self.with_separator(position, last_position, content, window, cx)
     }
 }
@@ -693,7 +717,7 @@ impl gpui::Element for BreadcrumbStrip {
 
         enum FinalItem {
             Segment(usize),
-            Ellipsis,
+            Ellipsis(Range<usize>),
         }
 
         let segment_count = kinds.len();
@@ -701,7 +725,7 @@ impl gpui::Element for BreadcrumbStrip {
         let mut index = 0;
         while index < segment_count {
             if let Some(range) = plan.ellipses.iter().find(|range| range.start == index) {
-                sequence.push(FinalItem::Ellipsis);
+                sequence.push(FinalItem::Ellipsis(range.clone()));
                 index = range.end;
             } else {
                 sequence.push(FinalItem::Segment(index));
@@ -719,7 +743,7 @@ impl gpui::Element for BreadcrumbStrip {
                 .skip(1)
                 .fold(bounds.origin.x, |x, item| match item {
                     FinalItem::Segment(index) => x + metrics.widths[*index] + gap,
-                    FinalItem::Ellipsis => x + metrics.ellipsis_width + gap,
+                    FinalItem::Ellipsis(_) => x + metrics.ellipsis_width + gap,
                 });
             if bounds.origin.x + bounds.size.width - tail_start < metrics.ellipsis_width {
                 sequence.pop();
@@ -733,7 +757,7 @@ impl gpui::Element for BreadcrumbStrip {
         for (position, item) in sequence.into_iter().enumerate() {
             let segment_index = match &item {
                 FinalItem::Segment(index) => Some(*index),
-                FinalItem::Ellipsis => None,
+                FinalItem::Ellipsis(_) => None,
             };
             // The layout plan never drops the last segment, so it is the one that can still
             // overrun the strip. Cap its label to the width that is actually left instead of
@@ -750,7 +774,9 @@ impl gpui::Element for BreadcrumbStrip {
                     window,
                     cx,
                 ),
-                FinalItem::Ellipsis => self.render_ellipsis(position, last_position, window, cx),
+                FinalItem::Ellipsis(hidden) => {
+                    self.render_ellipsis(hidden, position, last_position, window, cx)
+                }
             };
             let available_width = if is_last {
                 AvailableSpace::Definite(remaining_width)
