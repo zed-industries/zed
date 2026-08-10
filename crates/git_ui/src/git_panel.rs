@@ -43,8 +43,8 @@ use git::{
 };
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, GitRemote, RestoreTrackedFiles, StageAll,
-    StashAll, StashApply, StashPop, ToggleFillCommitEditor, TrashUntrackedFiles, UnstageAll,
-    ViewFile, parse_git_remote_url,
+    StashAll, StashApply, StashPop, StashStaged, StashTracked, ToggleFillCommitEditor,
+    TrashUntrackedFiles, UnstageAll, ViewFile, parse_git_remote_url,
 };
 use gpui::{
     AbsoluteLength, Action, Anchor, AnyElement, AsyncApp, AsyncWindowContext, ClickEvent,
@@ -204,6 +204,7 @@ fn git_panel_context_menu(
     has_unstaged_changes: bool,
     has_new_changes: bool,
     has_stash_items: bool,
+    group_by: GitPanelGroupBy,
     focus_handle: FocusHandle,
     window: &mut Window,
     cx: &mut App,
@@ -224,6 +225,22 @@ fn git_panel_context_menu(
                 "Stash All",
                 StashAll.boxed_clone(),
             )
+            // Offer the stash variant that matches how the list is currently grouped,
+            // so the menu mirrors the sections the user can actually see.
+            .when(group_by == GitPanelGroupBy::Status, |context_menu| {
+                context_menu.action_disabled_when(
+                    !has_tracked_changes,
+                    "Stash Tracked",
+                    StashTracked.boxed_clone(),
+                )
+            })
+            .when(group_by == GitPanelGroupBy::Staging, |context_menu| {
+                context_menu.action_disabled_when(
+                    !has_staged_changes,
+                    "Stash Staged",
+                    StashStaged.boxed_clone(),
+                )
+            })
             .action_disabled_when(!has_stash_items, "Stash Pop", StashPop.boxed_clone())
             .action("View Stash", zed_actions::git::ViewStash.boxed_clone())
             .separator()
@@ -2698,6 +2715,57 @@ impl GitPanel {
                     stash_task
                         .map_err(|e| {
                             this.show_error_toast("stash", e, cx);
+                        })
+                        .ok();
+                    cx.notify();
+                })
+            }
+        })
+        .detach();
+    }
+
+    pub fn stash_tracked(
+        &mut self,
+        _: &StashTracked,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+
+        cx.spawn({
+            async move |this, cx| {
+                let stash_task = active_repository
+                    .update(cx, |repo, cx| repo.stash_tracked(cx))
+                    .await;
+                this.update(cx, |this, cx| {
+                    stash_task
+                        .map_err(|e| {
+                            this.show_error_toast("stash tracked", e, cx);
+                        })
+                        .ok();
+                    cx.notify();
+                })
+            }
+        })
+        .detach();
+    }
+
+    pub fn stash_staged(&mut self, _: &StashStaged, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+
+        cx.spawn({
+            async move |this, cx| {
+                let stash_task = active_repository
+                    .update(cx, |repo, cx| repo.stash_staged(cx))
+                    .await;
+                this.update(cx, |this, cx| {
+                    stash_task
+                        .map_err(|e| {
+                            this.show_error_toast("stash staged", e, cx);
                         })
                         .ok();
                     cx.notify();
@@ -5574,13 +5642,14 @@ impl GitPanel {
     fn render_git_changes_actions_menu(
         &self,
         id: impl Into<ElementId>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_tracked_changes = self.has_tracked_changes();
         let has_staged_changes = self.has_staged_changes();
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
         let has_stash_items = self.stash_entries.entries.len() > 0;
+        let group_by = GitPanelSettings::get_global(cx).group_by;
 
         let focus_handle = self.focus_handle.clone();
         let menu_open = self.changes_actions_menu_handle.is_deployed();
@@ -5598,6 +5667,7 @@ impl GitPanel {
                     has_unstaged_changes,
                     has_new_changes,
                     has_stash_items,
+                    group_by,
                     focus_handle.clone(),
                     window,
                     cx,
@@ -7346,6 +7416,7 @@ impl GitPanel {
             has_unstaged_changes,
             has_new_changes,
             has_stash_items,
+            GitPanelSettings::get_global(cx).group_by,
             self.focus_handle.clone(),
             window,
             cx,
@@ -8136,6 +8207,8 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::clean_all))
                     .on_action(cx.listener(Self::generate_commit_message_action))
                     .on_action(cx.listener(Self::stash_all))
+                    .on_action(cx.listener(Self::stash_tracked))
+                    .on_action(cx.listener(Self::stash_staged))
                     .on_action(cx.listener(Self::stash_pop))
             })
             .on_action(cx.listener(Self::collapse_selected_entry))

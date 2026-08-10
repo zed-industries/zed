@@ -937,6 +937,8 @@ pub trait GitRepository: Send + Sync {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    fn stash_staged(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>>;
+
     fn stash_pop(
         &self,
         index: Option<usize>,
@@ -2506,6 +2508,29 @@ impl GitRepository for RealGitRepository {
                 anyhow::ensure!(
                     output.status.success(),
                     "Failed to stash:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn stash_staged(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
+        let git = self.git_binary_in_worktree();
+        self.executor
+            .spawn(async move {
+                let git = git?;
+                // `--staged` cannot be expressed as a pathspec: a partially staged
+                // file would otherwise have its unstaged hunks stashed too.
+                let output = git
+                    .build_command(&["stash", "push", "--quiet", "--staged"])
+                    .envs(env.iter())
+                    .output()
+                    .await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to stash staged changes (requires git 2.35 or newer):\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
                 Ok(())
