@@ -5736,7 +5736,7 @@ async fn test_lsp_hover(
         let new_server = language_servers[i].next().await.unwrap_or_else(|| {
             panic!(
                 "Failed to get language server #{i} with name {}",
-                &language_server_names[i]
+                language_server_names[i]
             )
         });
         let new_server_name = new_server.server.name();

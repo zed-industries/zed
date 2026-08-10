@@ -8236,7 +8236,9 @@ impl Panel for GitPanel {
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<ui::IconName> {
-        Some(ui::IconName::GitBranch).filter(|_| GitPanelSettings::get_global(cx).button)
+        GitPanelSettings::get_global(cx)
+            .button
+            .then_some(ui::IconName::GitBranch)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
