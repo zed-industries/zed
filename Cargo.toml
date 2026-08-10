@@ -27,6 +27,7 @@ members = [
     "crates/channel",
     "crates/citadel_new_project",
     "crates/citadel_build",
+    "crates/citadel_serial_monitor",
     "crates/cli",
     "crates/client",
     "crates/clock",
@@ -299,6 +300,7 @@ call = { path = "crates/call" }
 channel = { path = "crates/channel" }
 citadel_new_project = { path = "crates/citadel_new_project" }
 citadel_build = { path = "crates/citadel_build" }
+citadel_serial_monitor = { path = "crates/citadel_serial_monitor" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }
 clock = { path = "crates/clock" }
