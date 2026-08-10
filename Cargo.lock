@@ -23418,6 +23418,7 @@ dependencies = [
  "chrono",
  "citadel_build",
  "citadel_new_project",
+ "citadel_serial_monitor",
  "clap",
  "cli",
  "client",
