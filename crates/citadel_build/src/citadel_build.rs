@@ -7,7 +7,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use board_detect::{
-    BoardIdentity, GlobalBoardMonitor, SignatureReadFailed, UnverifiedChipDetected,
+    BoardIdentity, FlashFinished, FlashStarted, GlobalBoardMonitor, SignatureReadFailed,
+    UnverifiedChipDetected,
 };
 use board_registry::{avrdude_defaults, board_kind_from_display_name};
 use build_pipeline::{BuildTarget, build_and_flash};
@@ -144,6 +145,8 @@ fn start_build_and_upload(workspace: &mut Workspace, cx: &mut Context<Workspace>
         avrdude_baud: baud,
     };
     let asset_source = cx.asset_source().clone();
+    let port_name = detected.port_name.clone();
+    let monitor = monitor.downgrade();
 
     // ponytail: build/flash runs in a cx.background_spawn task inside this process, not a
     // separate persistent backend process -- keeps the UI live (a hung avrdude can't block a
@@ -167,7 +170,23 @@ fn start_build_and_upload(workspace: &mut Workspace, cx: &mut Context<Workspace>
             return;
         }
 
+        monitor
+            .update(cx, |_, cx| {
+                cx.emit(FlashStarted {
+                    port_name: port_name.clone(),
+                });
+            })
+            .log_err();
+
         let build_result = cx.background_spawn(build_and_flash(target)).await;
+
+        monitor
+            .update(cx, |_, cx| {
+                cx.emit(FlashFinished {
+                    port_name: port_name.clone(),
+                });
+            })
+            .log_err();
 
         workspace
             .update(cx, |workspace, cx| match build_result {

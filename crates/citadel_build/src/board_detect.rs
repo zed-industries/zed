@@ -172,6 +172,25 @@ pub struct SignatureReadFailed {
 
 impl EventEmitter<SignatureReadFailed> for BoardMonitor {}
 
+/// Emitted immediately before `citadel_build` invokes `avrdude` to flash
+/// `port_name`. Unrelated to board identification -- exists so other
+/// crates (e.g. a serial monitor) can react to the port being about to be
+/// exclusively claimed by avrdude, without `citadel_build` needing to know
+/// who's listening or why.
+pub struct FlashStarted {
+    pub port_name: String,
+}
+
+impl EventEmitter<FlashStarted> for BoardMonitor {}
+
+/// Emitted after the flash attempt for `port_name` finishes, whether it
+/// succeeded or failed. Mirrors `FlashStarted`.
+pub struct FlashFinished {
+    pub port_name: String,
+}
+
+impl EventEmitter<FlashFinished> for BoardMonitor {}
+
 pub fn init(cx: &mut App) {
     let board_monitor = cx.new(BoardMonitor::new);
     cx.set_global(GlobalBoardMonitor(board_monitor));
