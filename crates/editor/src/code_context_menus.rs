@@ -337,7 +337,7 @@ impl CompletionsMenu {
         let match_candidates = completions
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.filter_text()))
+            .map(|(id, completion)| StringMatchCandidate::new(id, completion.filter_text()))
             .into_group_map_by(|candidate| completions[candidate.id].match_start)
             .into_iter()
             .collect();
@@ -963,13 +963,21 @@ impl CompletionsMenu {
 
                         let filter_start = completion.label.filter_range.start;
 
-                        let highlights = gpui::combine_highlights(
+                        let match_highlights = (completion.filter_text()
+                            == completion.label.filter_text())
+                        .then(|| {
                             mat.ranges().map(|range| {
                                 (
                                     filter_start + range.start..filter_start + range.end,
                                     FontWeight::BOLD.into(),
                                 )
-                            }),
+                            })
+                        })
+                        .into_iter()
+                        .flatten();
+
+                        let highlights = gpui::combine_highlights(
+                            match_highlights,
                             styled_runs_for_code_label(
                                 &completion.label,
                                 &style.syntax,
@@ -1485,7 +1493,7 @@ impl CompletionsMenu {
                     string_match,
                 ));
                 // This exact matching won't work for multi-word snippets, but it's fine
-                let sort_exact = Reverse(if Some(completion.label.filter_text()) == query {
+                let sort_exact = Reverse(if Some(completion.filter_text()) == query {
                     1
                 } else {
                     0
