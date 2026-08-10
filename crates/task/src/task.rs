@@ -185,6 +185,8 @@ pub enum VariableName {
     /// For normal checkouts, this equals the worktree root. For linked worktrees,
     /// this is the original repo's working directory.
     MainGitWorktree,
+    /// Whether the workspace was newly opened or restored from the previous session.
+    ProjectOpen,
     /// Full SHA for the Git commit associated with the task context.
     GitSha,
     /// Short SHA for the Git commit associated with the task context.
@@ -231,6 +233,7 @@ impl FromStr for VariableName {
             "ROW" => Self::Row,
             "COLUMN" => Self::Column,
             "MAIN_GIT_WORKTREE" => Self::MainGitWorktree,
+            "PROJECT_OPEN" => Self::ProjectOpen,
             "GIT_SHA" => Self::GitSha,
             "GIT_SHA_SHORT" => Self::GitShaShort,
             "GIT_REPOSITORY_NAME" => Self::GitRepositoryName,
@@ -272,6 +275,7 @@ impl std::fmt::Display for VariableName {
             Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
             Self::PickProcessId => write!(f, "{ZED_VARIABLE_NAME_PREFIX}PICK_PID"),
             Self::MainGitWorktree => write!(f, "{ZED_VARIABLE_NAME_PREFIX}MAIN_GIT_WORKTREE"),
+            Self::ProjectOpen => write!(f, "{ZED_VARIABLE_NAME_PREFIX}PROJECT_OPEN"),
             Self::GitSha => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_SHA"),
             Self::GitShaShort => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_SHA_SHORT"),
             Self::GitRepositoryName => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_REPOSITORY_NAME"),

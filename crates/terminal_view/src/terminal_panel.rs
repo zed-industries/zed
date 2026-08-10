@@ -277,9 +277,12 @@ impl TerminalPanel {
         };
 
         if let Some(workspace) = workspace.upgrade() {
-            workspace.update(&mut cx, |workspace, _| {
-                workspace.set_terminal_provider(TerminalProvider(terminal_panel.clone()))
-            });
+            workspace
+                .update_in(&mut cx, |workspace, window, cx| {
+                    workspace.set_terminal_provider(TerminalProvider(terminal_panel.clone()));
+                    workspace.run_pending_project_open_tasks(window, cx);
+                })
+                .log_err();
         }
 
         // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.

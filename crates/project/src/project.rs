@@ -251,6 +251,7 @@ pub struct Project {
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
+    worktrees_with_root_tasks_loaded: HashSet<WorktreeId>,
     last_worktree_paths: WorktreePaths,
 }
 
@@ -363,6 +364,7 @@ pub enum Event {
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded(WorktreeId),
+    WorktreeTasksLoaded(WorktreeId),
     WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
@@ -1384,6 +1386,7 @@ impl Project {
 
                 agent_location: None,
                 downloading_files: Default::default(),
+                worktrees_with_root_tasks_loaded: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
             }
         })
@@ -1626,6 +1629,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
                 downloading_files: Default::default(),
+                worktrees_with_root_tasks_loaded: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
             };
 
@@ -1914,6 +1918,7 @@ impl Project {
                 toolchain_store: None,
                 agent_location: None,
                 downloading_files: Default::default(),
+                worktrees_with_root_tasks_loaded: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
             };
             project.set_role(role, cx);
@@ -2396,6 +2401,10 @@ impl Project {
         cx: &'a App,
     ) -> impl 'a + DoubleEndedIterator<Item = Entity<Worktree>> {
         self.worktree_store.read(cx).worktrees()
+    }
+
+    pub fn worktrees_with_root_tasks_loaded(&self) -> impl Iterator<Item = WorktreeId> + '_ {
+        self.worktrees_with_root_tasks_loaded.iter().copied()
     }
 
     /// Collect all user-visible worktrees, the ones that appear in the project panel.
@@ -3873,6 +3882,10 @@ impl Project {
                 }),
                 Err(_) => {}
             },
+            SettingsObserverEvent::RootTasksUpdated(worktree_id) => {
+                self.worktrees_with_root_tasks_loaded.insert(*worktree_id);
+                cx.emit(Event::WorktreeTasksLoaded(*worktree_id));
+            }
             SettingsObserverEvent::LocalDebugScenariosUpdated(result) => match result {
                 Err(InvalidSettingsError::Debug { message, path }) => {
                     let message =

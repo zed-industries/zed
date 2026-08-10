@@ -808,6 +808,7 @@ pub enum SettingsObserverMode {
 pub enum SettingsObserverEvent {
     LocalSettingsUpdated(Result<PathBuf, InvalidSettingsError>),
     LocalTasksUpdated(Result<PathBuf, InvalidSettingsError>),
+    RootTasksUpdated(WorktreeId),
     LocalDebugScenariosUpdated(Result<PathBuf, InvalidSettingsError>),
 }
 
@@ -1400,6 +1401,13 @@ impl SettingsObserver {
                             cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(directory
                                 .as_std_path()
                                 .join(task_file_name()))));
+                            if local_tasks_file_relative_path().parent().is_some_and(
+                                |root_tasks_directory| {
+                                    directory.as_std_path() == root_tasks_directory.as_std_path()
+                                },
+                            ) {
+                                cx.emit(SettingsObserverEvent::RootTasksUpdated(worktree_id));
+                            }
                         }
                     }
                 }

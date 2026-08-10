@@ -219,6 +219,36 @@ impl Workspace {
         }
     }
 
+    pub fn queue_project_open_tasks(
+        &mut self,
+        worktree_id: WorktreeId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.started_project_open_worktrees.contains(&worktree_id) {
+            self.pending_project_open_worktrees.insert(worktree_id);
+            self.run_pending_project_open_tasks(window, cx);
+        }
+    }
+
+    pub fn run_pending_project_open_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.terminal_provider.is_none() {
+            return;
+        }
+
+        let worktree_ids = std::mem::take(&mut self.pending_project_open_worktrees)
+            .into_iter()
+            .filter(|worktree_id| self.started_project_open_worktrees.insert(*worktree_id))
+            .collect::<Vec<_>>();
+        self.run_hook_tasks(
+            &worktree_ids,
+            HashSet::from_iter([TaskHook::ProjectOpen, TaskHook::WorktreeOpen]),
+            "project_open",
+            window,
+            cx,
+        );
+    }
+
     pub fn spawn_in_terminal(
         self: &mut Workspace,
         spawn_in_terminal: SpawnInTerminal,
@@ -233,10 +263,33 @@ impl Workspace {
     }
 
     pub fn run_create_worktree_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let project = self.project().clone();
-        let hooks = HashSet::from_iter([TaskHook::CreateWorktree]);
+        let worktree_ids = self
+            .project()
+            .read(cx)
+            .worktrees(cx)
+            .map(|worktree| worktree.read(cx).id())
+            .collect::<Vec<_>>();
+        self.run_hook_tasks(
+            &worktree_ids,
+            HashSet::from_iter([TaskHook::CreateWorktree]),
+            "worktree_setup",
+            window,
+            cx,
+        );
+    }
 
-        let worktree_tasks: Vec<(WorktreeId, TaskContext, Vec<TaskTemplate>)> = {
+    fn run_hook_tasks(
+        &mut self,
+        worktree_ids: &[WorktreeId],
+        hooks: HashSet<TaskHook>,
+        hook_name: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project().clone();
+        let project_open_state = self.project_open_state.as_str();
+
+        let worktree_tasks: Vec<(WorktreeId, TaskContext, Vec<(TaskSourceKind, TaskTemplate)>)> = {
             let project = project.read(cx);
             let task_store = project.task_store();
             let Some(inventory) = task_store.read(cx).task_inventory().cloned() else {
@@ -246,17 +299,15 @@ impl Workspace {
             let git_store = project.git_store().read(cx);
 
             let mut worktree_tasks = Vec::new();
-            for worktree in project.worktrees(cx) {
+            for worktree_id in worktree_ids {
+                let Some(worktree) = project.worktree_for_id(*worktree_id, cx) else {
+                    continue;
+                };
                 let worktree = worktree.read(cx);
                 let worktree_id = worktree.id();
                 let worktree_abs_path = worktree.abs_path();
 
-                let templates: Vec<TaskTemplate> = inventory
-                    .read(cx)
-                    .templates_with_hooks(&hooks, worktree_id)
-                    .into_iter()
-                    .map(|(_, template)| template)
-                    .collect();
+                let templates = inventory.read(cx).templates_with_hooks(&hooks, worktree_id);
 
                 if templates.is_empty() {
                     continue;
@@ -267,6 +318,10 @@ impl Workspace {
                     VariableName::WorktreeRoot,
                     worktree_abs_path.to_string_lossy().into_owned(),
                 );
+                if hook_name == "project_open" {
+                    task_variables
+                        .insert(VariableName::ProjectOpen, project_open_state.to_string());
+                }
 
                 if let Some(path) = git_store.original_repo_path_for_worktree(worktree_id, cx) {
                     task_variables.insert(
@@ -293,16 +348,16 @@ impl Workspace {
         let task = cx.spawn_in(window, async move |workspace, cx| {
             let mut tasks = Vec::new();
             for (worktree_id, task_context, templates) in worktree_tasks {
-                let id_base = format!("worktree_setup_{worktree_id}");
+                for (task_source_kind, task_template) in templates {
+                    let id_base = format!("{hook_name}_{worktree_id}");
 
-                tasks.push(cx.spawn({
-                    let workspace = workspace.clone();
-                    async move |cx| {
-                        for task_template in templates {
-                            let Some(resolved) =
-                                task_template.resolve_task(&id_base, &task_context)
+                    tasks.push(cx.spawn({
+                        let workspace = workspace.clone();
+                        let task_context = task_context.clone();
+                        async move |cx| {
+                            let Some(resolved) = task_template.resolve_task(&id_base, &task_context)
                             else {
-                                continue;
+                                return anyhow::Ok(());
                             };
 
                             let status = workspace.update_in(cx, |workspace, window, cx| {
@@ -313,22 +368,22 @@ impl Workspace {
                                 match result {
                                     Ok(exit_status) if !exit_status.success() => {
                                         log::error!(
-                                            "Git worktree setup task failed with status: {:?}",
+                                            "{hook_name} task from {task_source_kind:?} failed with status: {:?}",
                                             exit_status.code()
                                         );
-                                        break;
                                     }
                                     Err(error) => {
-                                        log::error!("Git worktree setup task error: {error:#}");
-                                        break;
+                                        log::error!(
+                                            "{hook_name} task from {task_source_kind:?} failed: {error:#}"
+                                        );
                                     }
                                     _ => {}
                                 }
                             }
+                            anyhow::Ok(())
                         }
-                        anyhow::Ok(())
-                    }
-                }));
+                    }));
+                }
             }
 
             futures::future::join_all(tasks).await;
@@ -348,16 +403,69 @@ mod tests {
     };
     use gpui::{App, TestAppContext};
     use parking_lot::Mutex;
-    use project::{FakeFs, Project, TaskSourceKind};
+    use project::{FakeFs, Project, TaskSourceKind, task_store::TaskSettingsLocation};
     use serde_json::json;
+    use settings::SettingsLocation;
     use std::sync::Arc;
     use task::TaskTemplate;
+    use util::rel_path::rel_path;
 
     struct Fixture {
         workspace: Entity<Workspace>,
         item: Entity<TestItem>,
         task: ResolvedTask,
         dirty_before_spawn: Arc<Mutex<Option<bool>>>,
+    }
+
+    #[gpui::test]
+    async fn test_project_open_hooks_run_once_per_worktree(cx: &mut TestAppContext) {
+        let (fixture, cx) = create_fixture(cx, SaveStrategy::None).await;
+        let spawned_task_labels = Arc::new(Mutex::new(Vec::new()));
+        fixture.workspace.update_in(cx, |workspace, window, cx| {
+            workspace.terminal_provider = Some(Box::new(CountingTerminalProvider {
+                spawned_task_labels: spawned_task_labels.clone(),
+            }));
+
+            let project = workspace.project().clone();
+            let worktree_id = project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("test project should have a worktree")
+                .read(cx)
+                .id();
+            let task_inventory = project
+                .read(cx)
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+                .expect("test project should have a task inventory");
+            task_inventory.update(cx, |inventory, _| {
+                inventory
+                    .update_file_based_tasks(
+                        TaskSettingsLocation::Worktree(SettingsLocation {
+                            worktree_id,
+                            path: rel_path(".zed"),
+                        }),
+                        Some(
+                            r#"[
+                                {"label":"project hook","command":"echo","hooks":["project_open"]},
+                                {"label":"worktree hook","command":"echo","hooks":["worktree_open"]}
+                            ]"#,
+                        ),
+                    )
+                    .expect("test hook tasks should parse");
+            });
+
+            workspace.queue_project_open_tasks(worktree_id, window, cx);
+            workspace.queue_project_open_tasks(worktree_id, window, cx);
+        });
+        cx.executor().run_until_parked();
+
+        let mut spawned_task_labels = spawned_task_labels.lock().clone();
+        spawned_task_labels.sort();
+        assert_eq!(spawned_task_labels, ["project hook", "worktree hook"]);
     }
 
     #[gpui::test]
@@ -568,6 +676,22 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.read(|cx| !fixture.item.read(cx).is_dirty));
         assert!(cx.read(|cx| inactive.read(cx).is_dirty));
+    }
+
+    struct CountingTerminalProvider {
+        spawned_task_labels: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl TerminalProvider for CountingTerminalProvider {
+        fn spawn(
+            &self,
+            task: task::SpawnInTerminal,
+            _window: &mut ui::Window,
+            _cx: &mut App,
+        ) -> Task<Option<Result<ExitStatus>>> {
+            self.spawned_task_labels.lock().push(task.label);
+            Task::ready(Some(Ok(ExitStatus::default())))
+        }
     }
 
     struct TestTerminalProvider {
