@@ -670,7 +670,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn dummy_surface_buffer() -> core_video::pixel_buffer::CVPixelBuffer {
         use core_video::pixel_buffer::{CVPixelBuffer, kCVPixelFormatType_32BGRA};
-        CVPixelBuffer::new(1, 1, kCVPixelFormatType_32BGRA, None).unwrap()
+        CVPixelBuffer::new(1, 1, kCVPixelFormatType_32BGRA as usize, None).unwrap()
     }
 
     /// Whether `region` is entirely covered by the union of `covers`, computed
