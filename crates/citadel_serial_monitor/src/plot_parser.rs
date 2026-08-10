@@ -23,19 +23,23 @@ pub fn parse_plot_line(line: &str) -> Vec<PlotPoint> {
         }
         if let Some((label, value)) = token.split_once(':') {
             if let Ok(value) = value.trim().parse::<f32>() {
-                points.push(PlotPoint {
-                    label: label.trim().to_string(),
-                    value,
-                });
+                if value.is_finite() {
+                    points.push(PlotPoint {
+                        label: label.trim().to_string(),
+                        value,
+                    });
+                }
                 continue;
             }
         }
         if let Ok(value) = token.parse::<f32>() {
-            bare_index += 1;
-            points.push(PlotPoint {
-                label: format!("value{bare_index}"),
-                value,
-            });
+            if value.is_finite() {
+                bare_index += 1;
+                points.push(PlotPoint {
+                    label: format!("value{bare_index}"),
+                    value,
+                });
+            }
         }
     }
     points
@@ -95,6 +99,17 @@ mod tests {
     #[test]
     fn test_parse_labeled_token_with_non_numeric_value_is_skipped() {
         assert_eq!(parse_plot_line("label:notanumber"), Vec::new());
+    }
+
+    #[test]
+    fn test_parse_labeled_nan_is_skipped() {
+        assert_eq!(parse_plot_line("temp:nan"), Vec::new());
+    }
+
+    #[test]
+    fn test_parse_bare_inf_is_skipped_but_finite_values_kept() {
+        let points = parse_plot_line("inf,42");
+        assert_eq!(points, vec![PlotPoint { label: "value1".to_string(), value: 42.0 }]);
     }
 
     #[test]

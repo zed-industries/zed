@@ -6,7 +6,8 @@ use crate::show_error_toast_in_workspace;
 use editor::Editor;
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Pixels, Render,
-    Subscription, WeakEntity, Window, actions, px, uniform_list,
+    ScrollStrategy, Subscription, UniformListScrollHandle, WeakEntity, Window, actions, px,
+    uniform_list,
 };
 use ui::prelude::*;
 use workspace::Workspace;
@@ -68,6 +69,7 @@ pub struct SerialMonitorPanel {
     send_editor: Entity<Editor>,
     line_ending: LineEnding,
     position: DockPosition,
+    scroll_handle: UniformListScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -115,7 +117,15 @@ impl SerialMonitorPanel {
             let mut subscriptions = Vec::new();
             subscriptions.push(cx.subscribe(
                 &connection,
-                |_this: &mut Self, _connection, _event: &SerialLineReceived, cx| {
+                |this: &mut Self, connection, _event: &SerialLineReceived, cx| {
+                    // ponytail: always scroll to the newest line rather than
+                    // tracking whether the user is already at the bottom --
+                    // UniformListScrollHandle doesn't expose scroll position
+                    // cheaply. Revisit if users complain about being yanked
+                    // away while scrolled back through history.
+                    let line_count = connection.read(cx).lines.len();
+                    this.scroll_handle
+                        .scroll_to_item(line_count.saturating_sub(1), ScrollStrategy::Bottom);
                     cx.notify();
                 },
             ));
@@ -142,6 +152,7 @@ impl SerialMonitorPanel {
                 send_editor,
                 line_ending: LineEnding::None,
                 position: DockPosition::Bottom,
+                scroll_handle: UniformListScrollHandle::new(),
                 _subscriptions: subscriptions,
             }
         })
@@ -339,6 +350,7 @@ impl Render for SerialMonitorPanel {
                             .collect()
                     },
                 )
+                .track_scroll(&self.scroll_handle)
                 .size_full(),
             )
             .child(

@@ -1,3 +1,9 @@
+/// A device that never sends `\n` (a `Serial.print()`-only sketch) would
+/// otherwise grow `carry` without bound and never display anything. Once
+/// this many bytes have accumulated with no newline in sight, flush them as
+/// a line instead of waiting indefinitely.
+const MAX_CARRY_BYTES: usize = 4096;
+
 /// Splits `chunk` into complete lines, carrying any trailing partial line
 /// over in `carry` for the next call. Recognizes `\n` as the line
 /// terminator and strips a trailing `\r` (so both `\n`- and
@@ -14,6 +20,10 @@ pub fn split_lines(carry: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
             line_bytes.pop();
         }
         lines.push(String::from_utf8_lossy(&line_bytes).into_owned());
+    }
+    if carry.len() > MAX_CARRY_BYTES {
+        lines.push(String::from_utf8_lossy(carry).into_owned());
+        carry.clear();
     }
     lines
 }
@@ -78,6 +88,15 @@ mod tests {
         let lines = split_lines(&mut carry, b"\n");
         assert_eq!(lines, vec!["".to_string()]);
     }
+
+    #[test]
+    fn test_split_lines_flushes_carry_past_cap_without_newline() {
+        let mut carry = Vec::new();
+        let chunk = vec![b'x'; MAX_CARRY_BYTES + 1];
+        let lines = split_lines(&mut carry, &chunk);
+        assert_eq!(lines, vec![String::from_utf8_lossy(&chunk).into_owned()]);
+        assert!(carry.is_empty());
+    }
 }
 
 use citadel_build::board_detect::{BoardMonitor, FlashFinished, FlashStarted, GlobalBoardMonitor};
@@ -128,11 +147,23 @@ enum SerialConnectionMessage {
     Error(String),
 }
 
+/// Tracks the background reader's relationship to the OS port handle across
+/// the async gap between "we told the reader to open a port" and "the
+/// reader's blocking `open()` call actually returns". Plain
+/// `Option<Box<dyn SerialPort>>` can't distinguish "still opening" from
+/// "closed" -- see `close_port`'s doc comment for why that distinction
+/// matters.
+enum PortSlot {
+    Connecting,
+    Open(Box<dyn SerialPort>),
+    Closed,
+}
+
 /// Bundles the OS handle (shared with the background reader loop via a
 /// mutex so `send()` can write without a second open handle) and the
 /// channel used to report read/write errors back to the entity.
 struct OpenPort {
-    handle: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
+    handle: Arc<Mutex<PortSlot>>,
     message_tx: UnboundedSender<SerialConnectionMessage>,
 }
 
@@ -177,7 +208,7 @@ impl SerialConnection {
         event: &FlashStarted,
         cx: &mut Context<Self>,
     ) {
-        if self.is_open && self.port_name.as_deref() == Some(event.port_name.as_str()) {
+        if self.open.is_some() && self.port_name.as_deref() == Some(event.port_name.as_str()) {
             self.pause_for_flash(cx);
         }
     }
@@ -204,7 +235,7 @@ impl SerialConnection {
         self.baud_rate = baud_rate;
 
         let (message_tx, mut message_rx) = unbounded::<SerialConnectionMessage>();
-        let handle: Arc<Mutex<Option<Box<dyn SerialPort>>>> = Arc::new(Mutex::new(None));
+        let handle: Arc<Mutex<PortSlot>> = Arc::new(Mutex::new(PortSlot::Connecting));
         self.open = Some(OpenPort {
             handle: handle.clone(),
             message_tx: message_tx.clone(),
@@ -226,9 +257,8 @@ impl SerialConnection {
                         this.push_line(line, cx);
                     }
                     SerialConnectionMessage::Error(error) => {
-                        this.is_open = false;
+                        this.close_port(cx);
                         cx.emit(SerialConnectionError(error));
-                        cx.notify();
                     }
                 })?;
             }
@@ -250,9 +280,9 @@ impl SerialConnection {
         cx.background_spawn(async move {
             let write_result = {
                 let Ok(mut guard) = handle.lock() else { return };
-                match guard.as_mut() {
-                    Some(port) => port.write_all(&bytes).map_err(|error| error.to_string()),
-                    None => return,
+                match &mut *guard {
+                    PortSlot::Open(port) => port.write_all(&bytes).map_err(|error| error.to_string()),
+                    PortSlot::Connecting | PortSlot::Closed => return,
                 }
             };
             if let Err(error) = write_result {
@@ -286,17 +316,23 @@ impl SerialConnection {
     /// `pause_for_flash` (which needs `paused` to survive).
     ///
     /// Clears the mutex inline (blocking this thread briefly) rather than in
-    /// a detached background task, so the OS port handle is guaranteed
-    /// closed by the time this returns. `pause_for_flash` depends on this:
-    /// avrdude must never race the reader thread for the same port. The
-    /// reader thread only ever holds this mutex for the duration of one
+    /// a detached background task, so an already-open OS port handle is
+    /// guaranteed closed by the time this returns, and a still-opening one
+    /// (state `PortSlot::Connecting`) is guaranteed to be dropped the moment
+    /// its `serialport::open()` call returns rather than published into the
+    /// read loop -- see `run_serial_reader`. `pause_for_flash` depends on
+    /// this: avrdude must never race the reader thread for the same port.
+    /// (One unavoidable exception: if a port is still mid-`open()` when this
+    /// runs, the OS call itself can't be cancelled, so the handle may stay
+    /// briefly held until that blocking call returns and notices `Closed`.)
+    /// The reader thread only ever holds this mutex for the duration of one
     /// `port.read()` call, bounded by the port's 100ms read timeout, and
     /// never awaits anything while holding it, so this lock acquires
     /// quickly (worst case ~100ms) with no deadlock risk.
     fn close_port(&mut self, cx: &mut Context<Self>) {
         if let Some(open) = self.open.take() {
             if let Ok(mut guard) = open.handle.lock() {
-                *guard = None;
+                *guard = PortSlot::Closed;
             }
         }
         self.is_open = false;
@@ -321,7 +357,7 @@ impl SerialConnection {
 async fn run_serial_reader(
     port_name: String,
     baud_rate: u32,
-    handle: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
+    handle: Arc<Mutex<PortSlot>>,
     message_tx: UnboundedSender<SerialConnectionMessage>,
 ) {
     let port = match serialport::new(&port_name, baud_rate)
@@ -342,7 +378,15 @@ async fn run_serial_reader(
 
     {
         let Ok(mut guard) = handle.lock() else { return };
-        *guard = Some(port);
+        // close_port may have run while `open()` above was still blocking --
+        // it can only have set the slot to `Closed` (nothing else touches
+        // this mutex before we do). Publishing `Open(port)` over that would
+        // leak the handle forever: nothing would ever tell this new port to
+        // close. Drop it and bail instead of entering the read loop.
+        if matches!(&*guard, PortSlot::Closed) {
+            return;
+        }
+        *guard = PortSlot::Open(port);
     }
     if message_tx
         .unbounded_send(SerialConnectionMessage::Opened)
@@ -356,9 +400,10 @@ async fn run_serial_reader(
     loop {
         let read_result = {
             let Ok(mut guard) = handle.lock() else { return };
-            match guard.as_mut() {
-                Some(port) => port.read(&mut read_buf),
-                None => return, // closed by close_port
+            match &mut *guard {
+                PortSlot::Open(port) => port.read(&mut read_buf),
+                PortSlot::Closed => return, // closed by close_port
+                PortSlot::Connecting => return, // unreachable: we already transitioned out above
             }
         };
 
@@ -385,5 +430,39 @@ async fn run_serial_reader(
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_pause_for_flash_when_never_connected_is_a_no_op(cx: &mut TestAppContext) {
+        let connection = cx.new(SerialConnection::new);
+
+        connection.update(cx, |connection, cx| connection.pause_for_flash(cx));
+
+        connection.read_with(cx, |connection, _cx| {
+            assert_eq!(connection.port_name, None);
+            assert_eq!(connection.baud_rate, DEFAULT_BAUD_RATE);
+            assert!(!connection.is_open);
+            assert!(connection.paused.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_resume_after_flash_when_nothing_paused_is_a_no_op(cx: &mut TestAppContext) {
+        let connection = cx.new(SerialConnection::new);
+
+        connection.update(cx, |connection, cx| connection.resume_after_flash(cx));
+
+        connection.read_with(cx, |connection, _cx| {
+            assert_eq!(connection.port_name, None);
+            assert!(!connection.is_open);
+            assert!(connection.open.is_none());
+            assert!(connection.paused.is_none());
+        });
     }
 }

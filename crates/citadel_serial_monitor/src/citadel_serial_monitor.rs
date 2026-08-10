@@ -5,6 +5,7 @@ mod serial_plotter_window;
 
 use gpui::{App, Context, SharedString, actions};
 use notifications::status_toast::StatusToast;
+use serial_monitor_panel::SerialMonitorPanel;
 use serial_plotter_window::open_serial_plotter_window;
 use ui::prelude::*;
 use workspace::Workspace;
@@ -25,6 +26,9 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|_workspace, _: &OpenSerialPlotter, window, cx| {
             open_serial_plotter_window(window, cx);
+        });
+        workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
+            workspace.toggle_panel_focus::<SerialMonitorPanel>(window, cx);
         });
     })
     .detach();

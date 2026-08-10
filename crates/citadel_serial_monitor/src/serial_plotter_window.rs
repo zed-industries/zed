@@ -1,7 +1,7 @@
 use crate::plot_parser::parse_plot_line;
 use crate::serial_connection::{
-    DEFAULT_BAUD_RATE, GlobalSerialConnection, SerialConnection, SerialConnectionError,
-    SerialLineReceived, default_port_name,
+    GlobalSerialConnection, SerialConnection, SerialConnectionError, SerialLineReceived,
+    default_port_name,
 };
 use editor::Editor;
 use gpui::{
@@ -100,8 +100,9 @@ impl SerialPlotterWindow {
         });
 
         if !connection.read(cx).is_open && !default_port.is_empty() {
+            let baud_rate = connection.read(cx).baud_rate;
             connection.update(cx, |connection, cx| {
-                connection.connect(default_port, DEFAULT_BAUD_RATE, cx)
+                connection.connect(default_port, baud_rate, cx)
             });
         }
 
@@ -160,8 +161,9 @@ impl SerialPlotterWindow {
             return;
         }
         self.last_error = None;
+        let baud_rate = self.connection.read(cx).baud_rate;
         self.connection
-            .update(cx, |connection, cx| connection.connect(port_name, DEFAULT_BAUD_RATE, cx));
+            .update(cx, |connection, cx| connection.connect(port_name, baud_rate, cx));
     }
 
     fn render_legend(&self) -> impl IntoElement {
