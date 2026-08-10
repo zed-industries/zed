@@ -59,6 +59,7 @@ web-sys = { version = "0.3", features = [
     "MediaQueryListEvent",
     "MouseEvent",
     "Navigator",
+    "Performance",
     "PointerEvent",
     "ResizeObserver",
     "ResizeObserverBoxOptions",

@@ -1,5 +1,8 @@
 use crate::display::WebDisplay;
-use crate::events::{ClickState, EventListenerHandle, WebEventListeners, is_mac_platform};
+use crate::events::{
+    ClickState, EventListenerHandle, FlingState, TouchGestureState, WebEventListeners,
+    is_android_platform, is_mac_platform,
+};
 use crate::platform::WebWindowLifecycle;
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
@@ -49,9 +52,12 @@ pub(crate) struct WebWindowInner {
     pub(crate) input_element: web_sys::HtmlInputElement,
     pub(crate) has_device_pixel_support: bool,
     pub(crate) is_mac: bool,
+    pub(crate) is_android: bool,
     pub(crate) state: RefCell<WebWindowMutableState>,
     pub(crate) callbacks: RefCell<WebWindowCallbacks>,
     pub(crate) click_state: RefCell<ClickState>,
+    pub(crate) touch_gesture: RefCell<TouchGestureState>,
+    pub(crate) fling: RefCell<Option<FlingState>>,
     pub(crate) pressed_button: Cell<Option<MouseButton>>,
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
@@ -66,7 +72,7 @@ pub struct WebWindow {
     display: Rc<dyn PlatformDisplay>,
     lifecycle: Rc<Cell<WebWindowLifecycle>>,
     active_window: Rc<RefCell<Option<AnyWindowHandle>>>,
-    _raf_closure: Closure<dyn FnMut()>,
+    _raf_closure: Closure<dyn FnMut(f64)>,
     _resize_observer: Option<web_sys::ResizeObserver>,
     _resize_observer_closure: Closure<dyn FnMut(js_sys::Array)>,
     _event_listeners: WebEventListeners,
@@ -149,6 +155,10 @@ impl WebWindow {
         input_style.set_property("width", "1px").ok();
         input_style.set_property("height", "1px").ok();
         input_style.set_property("opacity", "0").ok();
+        // Android Chrome zooms the visual viewport onto a focused text input
+        // whose font is smaller than 16px; with page zoom disabled the user
+        // can never zoom back out, so keep the hidden IME input at 16px.
+        input_style.set_property("font-size", "16px").ok();
         body.append_child(&input_element)
             .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
         input_element.focus().ok();
@@ -176,6 +186,7 @@ impl WebWindow {
         };
 
         let is_mac = is_mac_platform(&browser_window);
+        let is_android = is_android_platform(&browser_window);
 
         let inner = Rc::new(WebWindowInner {
             browser_window,
@@ -183,9 +194,12 @@ impl WebWindow {
             input_element,
             has_device_pixel_support,
             is_mac,
+            is_android,
             state: RefCell::new(mutable_state),
             callbacks: RefCell::new(WebWindowCallbacks::default()),
             click_state: RefCell::new(ClickState::default()),
+            touch_gesture: RefCell::new(TouchGestureState::default()),
+            fling: RefCell::new(None),
             pressed_button: Cell::new(None),
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
@@ -343,12 +357,16 @@ impl WebWindowInner {
         Some(result)
     }
 
-    fn create_raf_closure(self: &Rc<Self>) -> Closure<dyn FnMut()> {
+    fn create_raf_closure(self: &Rc<Self>) -> Closure<dyn FnMut(f64)> {
         let raf_handle: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
         let raf_handle_inner = Rc::clone(&raf_handle);
 
         let this = Rc::clone(self);
-        let closure = Closure::new(move || {
+        let closure = Closure::new(move |frame_time_ms: f64| {
+            // Momentum scrolling advances here, just before the frame is
+            // requested, so its delta is rendered in this frame.
+            this.fling_tick(frame_time_ms);
+
             this.with_callback(
                 |callbacks| &mut callbacks.request_frame,
                 |callback| {
@@ -373,7 +391,7 @@ impl WebWindowInner {
         closure
     }
 
-    fn schedule_raf(&self, closure: &Closure<dyn FnMut()>) {
+    fn schedule_raf(&self, closure: &Closure<dyn FnMut(f64)>) {
         self.raf_id.set(
             self.browser_window
                 .request_animation_frame(closure.as_ref().unchecked_ref())

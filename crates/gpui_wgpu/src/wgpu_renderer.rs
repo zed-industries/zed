@@ -347,6 +347,23 @@ impl WgpuRenderer {
         atlas: Arc<WgpuAtlas>,
     ) -> anyhow::Result<Self> {
         let surface_caps = surface.get_capabilities(&context.adapter);
+        // On the web, the capability list leads with the browser's preferred
+        // canvas format (`rgba8unorm` on Android, `bgra8unorm` on desktop).
+        // Browsers nominally accept either, but configuring the non-preferred
+        // format renders black on some Android Chrome/driver combinations, so
+        // follow the browser's ordering there instead of always leading with
+        // BGRA.
+        #[cfg(target_family = "wasm")]
+        let preferred_formats = [
+            surface_caps
+                .formats
+                .iter()
+                .copied()
+                .find(|format| !format.is_srgb())
+                .unwrap_or(wgpu::TextureFormat::Rgba8Unorm),
+            wgpu::TextureFormat::Bgra8Unorm,
+        ];
+        #[cfg(not(target_family = "wasm"))]
         let preferred_formats = [
             wgpu::TextureFormat::Bgra8Unorm,
             wgpu::TextureFormat::Rgba8Unorm,
