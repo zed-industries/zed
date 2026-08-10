@@ -2954,6 +2954,9 @@ impl LspCommand for GetCodeActions {
             .snapshot()
             .diagnostics_in_range::<_, language::PointUtf16>(self.range.clone(), false)
         {
+            if entry.diagnostic.related_origin.is_some() {
+                continue;
+            }
             relevant_diagnostics.push(entry.to_lsp_diagnostic_stub()?);
         }
 

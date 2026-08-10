@@ -50,6 +50,20 @@ pub struct Diagnostic {
     ///
     /// Kept as sent, since flattening it into non-primary entries is lossy.
     pub related_information: Option<Arc<[DiagnosticRelatedInformation]>>,
+    /// Set when this diagnostic is one of those flattened entries and came from a different
+    /// file. Such a diagnostic is anchored to the range it explains, so this is the only
+    /// record of where it actually came from.
+    pub related_origin: Option<DiagnosticOrigin>,
+}
+
+/// The location of related information that lives in a different file than the diagnostic
+/// it belongs to.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiagnosticOrigin {
+    /// Shortened against the file being diagnosed, such as `_content_row.html.erb:7`.
+    pub label: SharedString,
+    /// Carries the line in its fragment.
+    pub uri: SharedString,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +91,7 @@ impl Default for Diagnostic {
             data: None,
             registration_id: None,
             related_information: None,
+            related_origin: None,
         }
     }
 }

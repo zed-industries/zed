@@ -76,7 +76,8 @@ use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
-    CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff,
+    CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticOrigin, DiagnosticSet,
+    DiagnosticSourceKind, Diff,
     File as _, Language, LanguageAwareStyling, LanguageName, LanguageRegistry, LocalFile,
     LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate, ManifestName, ModelineSettings,
     OffsetUtf16, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16,
@@ -12226,6 +12227,7 @@ impl LspStore {
                         is_disk_based,
                         is_unnecessary,
                         underline,
+                        related_origin: None,
                         data: diagnostic.data.clone(),
                         registration_id: registration_id.clone(),
                         related_information: diagnostic
@@ -12236,34 +12238,55 @@ impl LspStore {
                 });
                 if let Some(infos) = &diagnostic.related_information {
                     for info in infos {
-                        if info.location.uri == lsp_diagnostics.uri && !info.message.is_empty() {
-                            let range = range_from_lsp(info.location.range);
-                            diagnostics.push(DiagnosticEntry {
-                                range,
-                                diagnostic: Diagnostic {
-                                    source: diagnostic.source.clone(),
-                                    source_kind,
-                                    code: diagnostic.code.clone(),
-                                    code_description: diagnostic
-                                        .code_description
-                                        .as_ref()
-                                        .and_then(|d| d.href.clone()),
-                                    severity: DiagnosticSeverity::INFORMATION,
-                                    markdown: adapter.as_ref().and_then(|adapter| {
-                                        adapter.diagnostic_message_to_markdown(&info.message)
-                                    }),
-                                    message: info.message.trim().to_string(),
-                                    group_id,
-                                    is_primary: false,
-                                    is_disk_based,
-                                    is_unnecessary: false,
-                                    underline,
-                                    data: diagnostic.data.clone(),
-                                    registration_id: registration_id.clone(),
-                                    related_information: None,
-                                },
-                            });
+                        if info.message.is_empty() {
+                            continue;
                         }
+
+                        let is_same_file = info.location.uri == lsp_diagnostics.uri;
+
+                        let range = if is_same_file {
+                            range_from_lsp(info.location.range)
+                        } else {
+                            range_from_lsp(diagnostic.range)
+                        };
+
+                        let message = info.message.trim().to_string();
+
+                        let related_origin = if is_same_file {
+                            None
+                        } else {
+                            Some(DiagnosticOrigin {
+                                label: related_information_origin(&document_abs_path, info).into(),
+                                uri: related_information_origin_uri(info),
+                            })
+                        };
+
+                        diagnostics.push(DiagnosticEntry {
+                            range,
+                            diagnostic: Diagnostic {
+                                source: diagnostic.source.clone(),
+                                source_kind,
+                                code: diagnostic.code.clone(),
+                                code_description: diagnostic
+                                    .code_description
+                                    .as_ref()
+                                    .and_then(|d| d.href.clone()),
+                                severity: DiagnosticSeverity::INFORMATION,
+                                markdown: adapter.as_ref().and_then(|adapter| {
+                                    adapter.diagnostic_message_to_markdown(&message)
+                                }),
+                                message,
+                                group_id,
+                                is_primary: false,
+                                is_disk_based,
+                                is_unnecessary: false,
+                                underline,
+                                related_origin,
+                                data: diagnostic.data.clone(),
+                                registration_id: registration_id.clone(),
+                                related_information: None,
+                            },
+                        });
                     }
                 }
             }
@@ -14974,6 +14997,43 @@ pub(crate) fn collapse_newlines(text: &str, separator: &str) -> String {
         .join(separator)
 }
 
+/// The line goes in the fragment, one-based, which is the form the popover reads when
+/// following the link.
+fn related_information_origin_uri(info: &lsp::DiagnosticRelatedInformation) -> SharedString {
+    SharedString::from(format!(
+        "{}#L{}",
+        info.location.uri,
+        info.location.range.start.line + 1
+    ))
+}
+
+fn related_information_origin(
+    document_abs_path: &Path,
+    info: &lsp::DiagnosticRelatedInformation,
+) -> String {
+    let line = info.location.range.start.line + 1;
+
+    let Ok(path) = info.location.uri.to_file_path() else {
+        return format!("{}:{}", info.location.uri, line);
+    };
+
+    let mut base = document_abs_path.parent();
+
+    while let Some(candidate) = base {
+        if candidate.parent().is_none() {
+            break;
+        }
+
+        if let Ok(relative) = path.strip_prefix(candidate) {
+            return format!("{}:{}", relative.display(), line);
+        }
+
+        base = candidate.parent();
+    }
+
+    format!("{}:{}", path.display(), line)
+}
+
 fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
     match server.capabilities().text_document_sync.as_ref()? {
         lsp::TextDocumentSyncCapability::Options(opts) => match opts.save.as_ref()? {
@@ -15142,5 +15202,55 @@ mod tests {
             "Get diagnostics via rust-analyzer failed: Server reset the connection"
         ));
         assert!(should_log_lsp_request_failure("something else entirely"));
+    }
+
+    fn related_information_at(path: &str, line: u32) -> lsp::DiagnosticRelatedInformation {
+        lsp::DiagnosticRelatedInformation {
+            location: lsp::Location {
+                uri: lsp::Uri::from_file_path(Path::new(path)).unwrap(),
+                range: lsp::Range::new(lsp::Position::new(line, 0), lsp::Position::new(line, 0)),
+            },
+            message: "rendered from here".to_string(),
+        }
+    }
+
+    #[test]
+    fn related_information_origin_shortens_against_the_diagnosed_file() {
+        let document = Path::new("/app/app/views/posts/_card.html.erb");
+
+        assert_eq!(
+            related_information_origin(
+                document,
+                &related_information_at("/app/app/views/posts/index.html.erb", 11)
+            ),
+            "index.html.erb:12"
+        );
+
+        assert_eq!(
+            related_information_origin(
+                document,
+                &related_information_at("/app/app/views/layouts/application.html.erb", 3)
+            ),
+            "layouts/application.html.erb:4"
+        );
+
+        assert_eq!(
+            related_information_origin(
+                document,
+                &related_information_at("/other/place/thing.html.erb", 0)
+            ),
+            "/other/place/thing.html.erb:1"
+        );
+    }
+
+    #[test]
+    fn related_information_origin_uri_carries_a_one_based_line_in_its_fragment() {
+        assert_eq!(
+            related_information_origin_uri(&related_information_at(
+                "/app/app/views/posts/index.html.erb",
+                11
+            )),
+            "file:///app/app/views/posts/index.html.erb#L12"
+        );
     }
 }

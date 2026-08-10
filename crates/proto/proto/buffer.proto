@@ -283,6 +283,8 @@ message Diagnostic {
   bool is_disk_based = 10;
   bool is_unnecessary = 11;
   bool underline = 15;
+  optional string related_origin_label = 18;
+  optional string related_origin_uri = 19;
 
   enum Severity {
     None = 0;

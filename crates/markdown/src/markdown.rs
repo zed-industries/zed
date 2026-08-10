@@ -2005,9 +2005,10 @@ impl MarkdownElement {
         builder.push_div(
             div()
                 .when(!self.style.height_is_multiple_of_line_height, |el| {
-                    el.mb_1().gap_1().line_height(rems(1.3))
+                    el.mb_1().line_height(rems(1.3))
                 })
                 .h_flex()
+                .gap_1()
                 .items_start()
                 .child(bullet),
             range,
