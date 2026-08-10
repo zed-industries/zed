@@ -26,9 +26,12 @@ mod windows_impl {
     use windows::{
         Win32::{
             Foundation::{HWND, LPARAM, WPARAM},
-            UI::WindowsAndMessaging::{
-                DispatchMessageW, GetMessageW, MB_ICONERROR, MB_SYSTEMMODAL, MSG, MessageBoxW,
-                PostMessageW, WM_USER,
+            UI::{
+                Shell::ShellExecuteW,
+                WindowsAndMessaging::{
+                    DispatchMessageW, GetMessageW, MB_ICONERROR, MB_SYSTEMMODAL, MSG, MessageBoxW,
+                    PostMessageW, SW_SHOWNORMAL, WM_USER,
+                },
             },
         },
         core::HSTRING,
@@ -54,9 +57,36 @@ mod windows_impl {
             .to_path_buf();
 
         log::info!("======= Starting Zed update =======");
+        let args = parse_args(std::env::args().skip(1));
+
+        // For an all-users installation (e.g. under Program Files) replacing
+        // the app binaries requires administrator privileges. Restart elevated
+        // when the app directory isn't writable; the elevated instance finds
+        // it writable and proceeds without prompting again.
+        if !can_write_to(&app_dir) {
+            log::info!("Requesting elevation for all-users update");
+            let parameters = format!("--launch {}", args.launch);
+            let result = unsafe {
+                ShellExecuteW(
+                    None,
+                    windows::core::w!("runas"),
+                    &HSTRING::from(std::env::current_exe()?.to_string_lossy().into_owned()),
+                    &HSTRING::from(parameters),
+                    None,
+                    SW_SHOWNORMAL,
+                )
+            };
+            if (result.0 as isize) <= 32 {
+                anyhow::bail!(
+                    "Failed to request elevation for update helper (error {})",
+                    result.0 as isize
+                );
+            }
+            return Ok(());
+        }
+
         let (tx, rx) = std::sync::mpsc::channel();
         let hwnd = create_dialog_window(rx)?.0 as isize;
-        let args = parse_args(std::env::args().skip(1));
         std::thread::spawn(move || {
             let result = perform_update(app_dir.as_path(), Some(hwnd), args.launch);
             tx.send(result).ok();
@@ -81,6 +111,21 @@ mod windows_impl {
                 .open(helper_dir.join("auto_update_helper.log"))?,
         )?;
         Ok(())
+    }
+
+    fn can_write_to(dir: &Path) -> bool {
+        let probe = dir.join(".zed_update_probe");
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+        {
+            Ok(_) => {
+                _ = std::fs::remove_file(&probe);
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     fn parse_args(input: impl IntoIterator<Item = String>) -> Args {

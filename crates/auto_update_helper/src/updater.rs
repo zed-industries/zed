@@ -363,6 +363,30 @@ fn release_file_handles(app_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Recreates the updates directory with the users-modify ACL the installer
+/// grants it, since the update jobs delete it after every update. Standard
+/// users need write access there to download future updates.
+pub(crate) fn ensure_updates_dir(app_dir: &Path) -> Result<()> {
+    let updates_dir = app_dir.join("updates");
+    std::fs::create_dir_all(&updates_dir)?;
+    let output = std::process::Command::new("icacls.exe")
+        .arg(format!("\"{}\"", updates_dir.display()))
+        .arg("/grant")
+        .arg("*S-1-5-11:(OI)(CI)M")
+        .arg("/T")
+        .arg("/C")
+        .arg("/Q")
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "icacls failed to grant permissions on {}: {}",
+            updates_dir.display(),
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) -> Result<()> {
     let hwnd = hwnd.map(|ptr| HWND(ptr as _));
 
@@ -429,6 +453,12 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
     if launch {
         #[allow(clippy::disallowed_methods, reason = "doesn't run in the main binary")]
         let _ = std::process::Command::new(app_dir.join("Zed.exe")).spawn();
+    }
+    // The jobs above delete the updates directory; restore it with its
+    // users-modify ACL so standard users can download future updates.
+    // Failure is non-fatal: the next update attempt will recreate it.
+    if let Err(error) = ensure_updates_dir(app_dir) {
+        log::warn!("Failed to restore updates directory: {error}");
     }
     log::info!("Update completed successfully");
     Ok(())
