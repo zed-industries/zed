@@ -115,33 +115,32 @@ impl DispatchPhase {
 }
 
 /// Whether unchanged frames may skip presentation (and re-presentation of
-/// unchanged content may be skipped). On by default; `GPUI_DISABLE_PRESENT_SKIP=1`
-/// restores the previous always-present behavior, as an escape hatch and for
-/// A/B measurements. Always disabled in benchmarks, which measure per-frame
-/// renderer submission and rely on every drawn frame being presented.
+/// unchanged content may be skipped). Experimental; off by default, opt in
+/// with `GPUI_EXPERIMENTAL_PRESENT_SKIP=1`. Always disabled in benchmarks,
+/// which measure per-frame renderer submission and rely on every drawn frame
+/// being presented.
 pub(crate) fn present_skip_enabled() -> bool {
     if cfg!(feature = "bench") {
         return false;
     }
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
-        !std::env::var("GPUI_DISABLE_PRESENT_SKIP")
+        std::env::var("GPUI_EXPERIMENTAL_PRESENT_SKIP")
             .is_ok_and(|value| value != "0" && !value.is_empty())
     })
 }
 
 /// Whether presentation passes scene damage to the renderer so backends that
-/// support it can re-render only the changed region. On by default;
-/// `GPUI_DISABLE_PARTIAL_RENDER=1` restores full re-renders, as an escape
-/// hatch and for A/B measurements. Always disabled in benchmarks, which
-/// measure full-scene renderer submission.
+/// support it can re-render only the changed region. Experimental; off by
+/// default, opt in with `GPUI_EXPERIMENTAL_PARTIAL_RENDER=1`. Always
+/// disabled in benchmarks, which measure full-scene renderer submission.
 pub(crate) fn partial_render_enabled() -> bool {
     if cfg!(feature = "bench") {
         return false;
     }
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
-        !std::env::var("GPUI_DISABLE_PARTIAL_RENDER")
+        std::env::var("GPUI_EXPERIMENTAL_PARTIAL_RENDER")
             .is_ok_and(|value| value != "0" && !value.is_empty())
     })
 }

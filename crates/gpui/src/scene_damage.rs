@@ -103,14 +103,18 @@ fn area(rect: &Bounds<ScaledPixels>) -> f32 {
     rect.size.width.0 * rect.size.height.0
 }
 
-/// When set (`GPUI_DAMAGE_STRICT_ORDER=1`), primitive `order` values are
-/// compared during scene diffing, reproducing the pre-order-tolerant
-/// behavior where any mid-scene insertion cascades damage over everything
-/// painted after it. Exists for A/B measurement of the order-tolerant diff.
-pub(crate) fn strict_order_damage() -> bool {
+/// When set (`GPUI_EXPERIMENTAL_ORDER_TOLERANT_DAMAGE=1`), the scene diff
+/// matches primitives by content, ignoring their per-frame `order` values.
+/// When unset, `order` values are compared, so any mid-scene insertion
+/// cascades damage over everything painted after it - safe but usually
+/// close to full-window damage. The diff only runs at all when one of the
+/// experimental rendering features (`GPUI_EXPERIMENTAL_PRESENT_SKIP`,
+/// `GPUI_EXPERIMENTAL_PARTIAL_RENDER`) is enabled, and they are only
+/// worthwhile in combination with this one.
+pub(crate) fn order_tolerant_damage() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("GPUI_DAMAGE_STRICT_ORDER")
+        std::env::var("GPUI_EXPERIMENTAL_ORDER_TOLERANT_DAMAGE")
             .is_ok_and(|value| value != "0" && !value.is_empty())
     })
 }
@@ -121,9 +125,20 @@ impl SceneDamage {
     /// This may over-report but should not under-report. Both scenes must be
     /// finished (sorted).
     pub fn between(prev: &Scene, next: &Scene) -> SceneDamage {
+        Self::between_with_order_tolerance(prev, next, order_tolerant_damage())
+    }
+
+    /// Like [`Self::between`], with the order-tolerance mode passed
+    /// explicitly rather than read from the environment, so both modes can
+    /// be tested deterministically.
+    pub fn between_with_order_tolerance(
+        prev: &Scene,
+        next: &Scene,
+        order_tolerant: bool,
+    ) -> SceneDamage {
         let mut acc = DamageRects::default();
         let mut matched = Vec::new();
-        let strict = strict_order_damage();
+        let strict = !order_tolerant;
 
         // Kind ranks mirror `PrimitiveKind`'s declaration order, which is how
         // `BatchIterator` breaks draw-order ties across primitive types.
@@ -743,9 +758,32 @@ mod tests {
         let a = scene_of(&quads);
         let b = scene_of(&quads);
         assert!(matches!(
-            SceneDamage::between(&a, &b),
+            SceneDamage::between_with_order_tolerance(&a, &b, true),
             SceneDamage::Unchanged
         ));
+    }
+
+    #[test]
+    fn strict_order_mode_reports_order_shifts_as_damage() {
+        let before = scene_of_ordered(
+            &[quad_with_order(rect(0., 0., 50., 50.), 0.2, 1)],
+            &[],
+        );
+        let after = scene_of_ordered(
+            &[quad_with_order(rect(0., 0., 50., 50.), 0.2, 5)],
+            &[],
+        );
+        // Identical content, shifted order: tolerant mode sees no change,
+        // strict mode conservatively damages the shifted primitive.
+        assert!(matches!(
+            SceneDamage::between_with_order_tolerance(&before, &after, true),
+            SceneDamage::Unchanged
+        ));
+        let strict = SceneDamage::between_with_order_tolerance(&before, &after, false);
+        assert!(
+            damage_covers(&strict, rect(0., 0., 50., 50.)),
+            "strict damage {strict:?}"
+        );
     }
 
     #[test]
@@ -765,7 +803,7 @@ mod tests {
             &[],
         );
         assert!(matches!(
-            SceneDamage::between(&before, &after),
+            SceneDamage::between_with_order_tolerance(&before, &after, true),
             SceneDamage::Unchanged
         ));
     }
@@ -776,7 +814,7 @@ mod tests {
         let changed_bounds = rect(200., 200., 10., 20.);
         let before = scene_of(&[unchanged, quad(changed_bounds, 0.5)]);
         let after = scene_of(&[unchanged, quad(changed_bounds, 0.9)]);
-        let damage = SceneDamage::between(&before, &after);
+        let damage = SceneDamage::between_with_order_tolerance(&before, &after, true);
         assert!(damage_covers(&damage, changed_bounds), "damage {damage:?}");
         assert!(damage_within(&damage, changed_bounds), "damage {damage:?}");
     }
@@ -786,7 +824,7 @@ mod tests {
         let before = scene_of_primitives(&[path_primitive()]);
         let after = scene_of_primitives(&[]);
 
-        let damage = SceneDamage::between(&before, &after);
+        let damage = SceneDamage::between_with_order_tolerance(&before, &after, true);
         assert!(
             damage_covers(&damage, rect(9.0, 19.0, 12.0, 22.0)),
             "damage {damage:?}"
@@ -801,7 +839,7 @@ mod tests {
         let c = quad(rect(100., 0., 50., 50.), 0.9);
         let before = scene_of(&[a, c]);
         let after = scene_of(&[a, cursor, c]);
-        let damage = SceneDamage::between(&before, &after);
+        let damage = SceneDamage::between_with_order_tolerance(&before, &after, true);
         assert!(damage_covers(&damage, cursor_bounds), "damage {damage:?}");
         assert!(damage_within(&damage, cursor_bounds), "damage {damage:?}");
     }
@@ -814,7 +852,7 @@ mod tests {
         let c = quad(rect(100., 0., 50., 50.), 0.9);
         let before = scene_of(&[a, cursor, c]);
         let after = scene_of(&[a, c]);
-        let damage = SceneDamage::between(&before, &after);
+        let damage = SceneDamage::between_with_order_tolerance(&before, &after, true);
         assert!(damage_covers(&damage, cursor_bounds), "damage {damage:?}");
         assert!(damage_within(&damage, cursor_bounds), "damage {damage:?}");
     }
@@ -827,7 +865,7 @@ mod tests {
         let c = quad(rect(40., 40., 50., 50.), 0.9);
         let before = scene_of(&[a, c]);
         let after = scene_of(&[a, inserted, c]);
-        let damage = SceneDamage::between(&before, &after);
+        let damage = SceneDamage::between_with_order_tolerance(&before, &after, true);
         assert!(damage_covers(&damage, inserted_bounds), "damage {damage:?}");
         assert!(damage_within(&damage, inserted_bounds), "damage {damage:?}");
     }
@@ -846,7 +884,7 @@ mod tests {
         background[15] = quad(spinner_b_bounds, 0.6);
         let after = scene_of(&background);
 
-        let damage = SceneDamage::between(&before, &after);
+        let damage = SceneDamage::between_with_order_tolerance(&before, &after, true);
         assert!(damage_covers(&damage, spinner_a_bounds), "damage {damage:?}");
         assert!(damage_covers(&damage, spinner_b_bounds), "damage {damage:?}");
         // The unchanged strip between the two loci must not be damaged.
@@ -872,7 +910,7 @@ mod tests {
             &[quad_with_order(quad_bounds, 0.2, 2)],
             &[underline_with_order(underline_bounds, 0.8, 1)],
         );
-        let damage = SceneDamage::between(&before, &after);
+        let damage = SceneDamage::between_with_order_tolerance(&before, &after, true);
         let overlap = quad_bounds.intersect(&underline_bounds);
         assert!(damage_covers(&damage, overlap), "damage {damage:?}");
     }
@@ -881,7 +919,7 @@ mod tests {
     fn surfaces_damage_their_previous_and_current_bounds() {
         let before = scene_with_surface(rect(10., 10., 20., 20.));
         let after = scene_with_surface(rect(30., 30., 20., 20.));
-        let damage = SceneDamage::between(&before, &after);
+        let damage = SceneDamage::between_with_order_tolerance(&before, &after, true);
         assert!(damage_covers(&damage, rect(10., 10., 20., 20.)));
         assert!(damage_covers(&damage, rect(30., 30., 20., 20.)));
     }

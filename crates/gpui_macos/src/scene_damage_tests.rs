@@ -708,8 +708,8 @@ mod tests {
                 let atlas = renderer.sprite_atlas();
                 let previous_scene = scene_of(&previous_primitives.0, atlas.as_ref());
                 let next_scene = scene_of(&next_primitives.0, atlas.as_ref());
-                let damage = SceneDamage::between(&previous_scene, &next_scene);
-                let reverse_damage = SceneDamage::between(&next_scene, &previous_scene);
+                let damage = SceneDamage::between_with_order_tolerance(&previous_scene, &next_scene, true);
+                let reverse_damage = SceneDamage::between_with_order_tolerance(&next_scene, &previous_scene, true);
 
                 prop_assert!(
                     damage_is_well_formed(&damage),

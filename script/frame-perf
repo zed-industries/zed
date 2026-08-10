@@ -19,9 +19,12 @@
 #     script as root to enable)
 #   - Whole-GPU busy% time series (includes compositor and other apps)
 #
-# Configuration is inherited from the environment, so A/B like:
-#   GPUI_DISABLE_PRESENT_SKIP=1 GPUI_DAMAGE_STRICT_ORDER=1 script/frame-perf record --label before
-#   script/frame-perf record --label after
+# Configuration is inherited from the environment. The rendering
+# optimizations are opt-in, so A/B like:
+#   script/frame-perf record --label before
+#   GPUI_EXPERIMENTAL_PRESENT_SKIP=1 GPUI_EXPERIMENTAL_PARTIAL_RENDER=1 \
+#       GPUI_EXPERIMENTAL_ORDER_TOLERANT_DAMAGE=1 \
+#       script/frame-perf record --label after
 #   script/frame-perf compare perf-runs/before-*/run.json perf-runs/after-*/run.json
 
 set -euo pipefail
@@ -301,9 +304,9 @@ record() {
   "git_rev": "$git_rev",
   "duration_s": $actual_wall,
   "env": {
-    "GPUI_DISABLE_PRESENT_SKIP": "${GPUI_DISABLE_PRESENT_SKIP:-}",
-    "GPUI_DAMAGE_STRICT_ORDER": "${GPUI_DAMAGE_STRICT_ORDER:-}",
-    "GPUI_DISABLE_PARTIAL_RENDER": "${GPUI_DISABLE_PARTIAL_RENDER:-}"
+    "GPUI_EXPERIMENTAL_PRESENT_SKIP": "${GPUI_EXPERIMENTAL_PRESENT_SKIP:-}",
+    "GPUI_EXPERIMENTAL_PARTIAL_RENDER": "${GPUI_EXPERIMENTAL_PARTIAL_RENDER:-}",
+    "GPUI_EXPERIMENTAL_ORDER_TOLERANT_DAMAGE": "${GPUI_EXPERIMENTAL_ORDER_TOLERANT_DAMAGE:-}"
   },
   "other_zed_instances": $(other_zed_instances | wc -l),
   "metrics": {
