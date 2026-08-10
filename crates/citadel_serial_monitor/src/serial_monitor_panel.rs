@@ -205,8 +205,17 @@ impl SerialMonitorPanel {
         let receiver = cx.prompt_for_new_path(&start_dir, Some("serial-log.txt"));
         let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |_this, cx| {
-            let Ok(Ok(Some(path))) = receiver.await else {
-                return;
+            let path = match receiver.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) | Err(_) => return,
+                Ok(Err(error)) => {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            show_error_toast_in_workspace(workspace, error.to_string(), cx);
+                        })
+                        .ok();
+                    return;
+                }
             };
             let contents = lines.join("\n");
             let write_result = cx
