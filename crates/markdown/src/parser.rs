@@ -331,7 +331,9 @@ pub(crate) fn parse_markdown_with_options(
                         ref info,
                     )) => {
                         within_code_block = true;
-                        let content_range = extract_code_block_content_range(&text[range.clone()]);
+                        let code_block_source = &text[range.clone()];
+                        let content_range = extract_code_block_content_range(code_block_source);
+                        let is_fenced_closed = content_range.end < code_block_source.len();
                         let content_range =
                             content_range.start + range.start..content_range.end + range.start;
 
@@ -340,19 +342,6 @@ pub(crate) fn parse_markdown_with_options(
                             .bytes()
                             .filter(|c| *c == b'\n')
                             .count();
-                        let is_fenced_closed = {
-                            let code_block_source = &text[range.clone()];
-                            code_block_source
-                                .trim_end()
-                                .lines()
-                                .last()
-                                .is_some_and(|line| {
-                                    let trimmed = line.trim_start();
-                                    trimmed.len() >= 3
-                                        && (trimmed.chars().all(|c| c == '`')
-                                            || trimmed.chars().all(|c| c == '~'))
-                                })
-                        };
 
                         let metadata = CodeBlockMetadata {
                             content_range,
@@ -1351,6 +1340,18 @@ mod tests {
                 ..Default::default()
             }
         );
+
+        for markdown in ["```mermaid\ngraph TD;\n~~~", "~~~~mermaid\ngraph TD;\n~~~"] {
+            let parsed = parse_markdown_with_options(markdown, false, false, false);
+            let metadata = parsed.events.iter().find_map(|(_, event)| match event {
+                Start(CodeBlock { metadata, .. }) => Some(metadata),
+                _ => None,
+            });
+            assert_eq!(
+                metadata.map(|metadata| metadata.is_fenced_closed),
+                Some(false)
+            );
+        }
     }
 
     fn assert_code_block_does_not_emit_links(markdown: &str) {
