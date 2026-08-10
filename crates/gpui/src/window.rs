@@ -3053,7 +3053,7 @@ impl Window {
         // attached.
         let skip_present = present_skip_enabled()
             && self.presented
-            && matches!(scene_damage, Some((crate::SceneDamage::Unchanged, _)));
+            && matches!(&scene_damage, Some((crate::SceneDamage::Unchanged, _)));
         self.needs_present.set(!skip_present);
 
         if let Some(draw_start) = draw_started_at {

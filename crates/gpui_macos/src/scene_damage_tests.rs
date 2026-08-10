@@ -656,46 +656,40 @@ mod tests {
         (min_x != u32::MAX).then_some((min_x, min_y, max_x, max_y))
     }
 
-    fn damage_rect_bounds(damage: SceneDamage) -> Option<(u32, u32, u32, u32)> {
-        match damage {
-            SceneDamage::Full => Some((0, 0, IMAGE_SIZE, IMAGE_SIZE)),
-            SceneDamage::Unchanged => None,
-            SceneDamage::Rect(rect) => {
-                let left = rect.origin.x.0.floor().max(0.0) as u32;
-                let top = rect.origin.y.0.floor().max(0.0) as u32;
-                let right = (rect.origin.x.0 + rect.size.width.0).ceil().max(0.0) as u32;
-                let bottom = (rect.origin.y.0 + rect.size.height.0).ceil().max(0.0) as u32;
-                Some((
-                    left.min(IMAGE_SIZE),
-                    top.min(IMAGE_SIZE),
-                    right.min(IMAGE_SIZE),
-                    bottom.min(IMAGE_SIZE),
-                ))
-            }
-        }
-    }
-
-    fn damage_is_well_formed(damage: SceneDamage) -> bool {
+    fn damage_is_well_formed(damage: &SceneDamage) -> bool {
         match damage {
             SceneDamage::Full | SceneDamage::Unchanged => true,
-            SceneDamage::Rect(rect) => {
+            SceneDamage::Rects(rects) => rects.as_slice().iter().all(|rect| {
                 rect.origin.x.0.is_finite()
                     && rect.origin.y.0.is_finite()
                     && rect.size.width.0.is_finite()
                     && rect.size.height.0.is_finite()
                     && rect.size.width.0 > 0.0
                     && rect.size.height.0 > 0.0
-            }
+            }),
         }
     }
 
-    fn damage_contains_diff(damage: SceneDamage, diff: (u32, u32, u32, u32)) -> bool {
-        match damage_rect_bounds(damage) {
-            Some((left, top, right, bottom)) => {
-                left <= diff.0 && top <= diff.1 && right >= diff.2 && bottom >= diff.3
+    /// Returns the first pixel that differs between the two renders but is not
+    /// covered by `damage`, i.e. evidence of under-reported damage.
+    fn uncovered_diff_pixel(
+        damage: &SceneDamage,
+        previous: &RgbaImage,
+        next: &RgbaImage,
+    ) -> Option<(u32, u32)> {
+        for y in 0..previous.height() {
+            for x in 0..previous.width() {
+                if previous.get_pixel(x, y) != next.get_pixel(x, y)
+                    && !damage.contains_point(&Point {
+                        x: ScaledPixels(x as f32 + 0.5),
+                        y: ScaledPixels(y as f32 + 0.5),
+                    })
+                {
+                    return Some((x, y));
+                }
             }
-            None => false,
         }
+        None
     }
 
     proptest! {
@@ -718,11 +712,11 @@ mod tests {
                 let reverse_damage = SceneDamage::between(&next_scene, &previous_scene);
 
                 prop_assert!(
-                    damage_is_well_formed(damage),
+                    damage_is_well_formed(&damage),
                     "damage {damage:?} was not well formed; previous={previous_primitives:?}; next={next_primitives:?}"
                 );
                 prop_assert!(
-                    damage_is_well_formed(reverse_damage),
+                    damage_is_well_formed(&reverse_damage),
                     "reverse damage {reverse_damage:?} was not well formed; previous={previous_primitives:?}; next={next_primitives:?}"
                 );
 
@@ -750,18 +744,20 @@ mod tests {
 
                 match rendered_diff {
                     Some(diff) => {
+                        let uncovered = uncovered_diff_pixel(&damage, &previous_image, &next_image);
                         prop_assert!(
-                            damage_contains_diff(damage, diff),
-                            "damage {damage:?} did not cover rendered pixel diff {diff:?}; previous={previous_primitives:?}; next={next_primitives:?}"
+                            uncovered.is_none(),
+                            "damage {damage:?} did not cover differing pixel {uncovered:?} (diff bounds {diff:?}); previous={previous_primitives:?}; next={next_primitives:?}"
                         );
+                        let reverse_uncovered =
+                            uncovered_diff_pixel(&reverse_damage, &previous_image, &next_image);
                         prop_assert!(
-                            damage_contains_diff(reverse_damage, diff),
-                            "reverse damage {reverse_damage:?} did not cover rendered pixel diff {diff:?}; previous={previous_primitives:?}; next={next_primitives:?}"
+                            reverse_uncovered.is_none(),
+                            "reverse damage {reverse_damage:?} did not cover differing pixel {reverse_uncovered:?} (diff bounds {diff:?}); previous={previous_primitives:?}; next={next_primitives:?}"
                         );
 
                         // Future optimal damage tracking should be able to assert that the reported
                         // damage is exactly the rendered pixel diff, not just a conservative superset.
-                        // prop_assert_eq!(damage_rect_bounds(damage), Some(diff));
                     }
                     None => {
                         // Future visibility-aware damage tracking should be able to assert the other

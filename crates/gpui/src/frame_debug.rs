@@ -29,7 +29,18 @@ use std::{
 pub(crate) fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("GPUI_FRAME_DEBUG").is_ok_and(|value| value != "0" && !value.is_empty())
+        let enabled =
+            std::env::var("GPUI_FRAME_DEBUG").is_ok_and(|value| value != "0" && !value.is_empty());
+        if enabled {
+            // Make captures self-describing for A/B comparisons.
+            log::info!(
+                target: "gpui::frame_debug",
+                "frame debugging enabled; present skip: {}, strict order damage: {}",
+                crate::window::present_skip_enabled(),
+                crate::scene_damage::strict_order_damage(),
+            );
+        }
+        enabled
     })
 }
 
@@ -111,8 +122,14 @@ pub(crate) fn record_draw(
                 window.full_damage_draws += 1;
                 window.damage_area_fraction += 1.0;
             }
-            SceneDamage::Rect(rect) => {
-                let area = f64::from(rect.size.width.0) * f64::from(rect.size.height.0);
+            SceneDamage::Rects(rects) => {
+                // Rects may overlap slightly, so this can over-count; fine
+                // for statistics.
+                let area: f64 = rects
+                    .as_slice()
+                    .iter()
+                    .map(|rect| f64::from(rect.size.width.0) * f64::from(rect.size.height.0))
+                    .sum();
                 if viewport_area > 0.0 {
                     window.damage_area_fraction += (area / viewport_area).min(1.0);
                 }
