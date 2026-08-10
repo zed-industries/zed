@@ -394,16 +394,28 @@ impl InstallerDir {
             .parent()
             .context("No parent dir for Zed.exe")?
             .join("updates");
+        // Keep the directory itself (and the users-modify ACL granted by the
+        // installer) intact, only clear leftover files from previous updates.
         if smol::fs::metadata(&installer_dir).await.is_ok() {
-            smol::fs::remove_dir_all(&installer_dir).await?;
+            clear_dir_contents(&installer_dir).await?;
+        } else {
+            smol::fs::create_dir(&installer_dir).await?;
         }
-        smol::fs::create_dir(&installer_dir).await?;
         Ok(Self(installer_dir))
     }
 
     fn path(&self) -> &Path {
         self.0.as_path()
     }
+}
+
+#[cfg(target_os = "windows")]
+async fn clear_dir_contents(dir: &Path) -> Result<()> {
+    let mut entries = smol::fs::read_dir(dir).await?;
+    while let Some(Ok(entry)) = entries.next().await {
+        smol::fs::remove_dir_all(entry.path()).await?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1264,24 +1276,147 @@ async fn cleanup_windows() -> Result<()> {
         .to_owned();
 
     // keep in sync with crates/auto_update_helper/src/updater.rs
-    _ = smol::fs::remove_dir(parent.join("updates")).await;
+    // Remove leftover files but keep the updates directory itself, since the
+    // installer grants it a users-modify ACL that standard users rely on for
+    // downloading updates.
+    if let Ok(mut entries) = smol::fs::read_dir(parent.join("updates")).await {
+        while let Some(Ok(entry)) = entries.next().await {
+            _ = smol::fs::remove_dir_all(entry.path()).await;
+        }
+    }
     _ = smol::fs::remove_dir(parent.join("install")).await;
     _ = smol::fs::remove_dir(parent.join("old")).await;
 
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn to_wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(target_os = "windows")]
+fn is_installed_for_all_users() -> bool {
+    use windows::core::PCWSTR;
+    use windows::Win32::{
+        Foundation::ERROR_SUCCESS,
+        System::Registry::{HKEY, HKEY_LOCAL_MACHINE, KEY_READ, RegCloseKey, RegOpenKeyExW},
+    };
+
+    // keep in sync with script/bundle-windows.ps1
+    const APP_IDS: [&str; 4] = [
+        "{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}", // stable
+        "{F70E4811-D0E2-4D88-AC99-D63752799F95}", // preview
+        "{1BDB21D3-14E7-433C-843C-9C97382B2FE0}", // nightly
+        "{8357632E-24A4-4F32-BA97-E575B4D1FE5D}", // dev
+    ];
+
+    for app_id in APP_IDS {
+        let subkey = format!(
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{app_id}_is1"
+        );
+        let subkey_wide = to_wide(&subkey);
+        let mut key = HKEY::default();
+        let result = unsafe {
+            RegOpenKeyExW(
+                HKEY_LOCAL_MACHINE,
+                PCWSTR(subkey_wide.as_ptr()),
+                None,
+                KEY_READ,
+                &mut key,
+            )
+        };
+        if result == ERROR_SUCCESS {
+            // RegCloseKey failure is not observable: the handle is only used
+            // for presence probing and is released when the process exits.
+            let _ = unsafe { RegCloseKey(key) };
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "windows")]
+async fn run_installer_elevated(installer: &Path, install_dir: &Path) -> Result<i32> {
+    let installer = installer.to_owned();
+    let install_dir = install_dir.to_owned();
+
+    smol::unblock(move || -> Result<i32> {
+        use windows::core::PCWSTR;
+        use windows::Win32::{
+            Foundation::{CloseHandle, WAIT_OBJECT_0},
+            System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE},
+            UI::{
+                Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW},
+                WindowsAndMessaging::SW_HIDE,
+            },
+        };
+
+        let verb = to_wide("runas");
+        let file = to_wide(&installer.to_string_lossy());
+        let parameters = to_wide(&format!(
+            "/verysilent /update=true /MERGETASKS=!desktopicon /ALLUSERS /dir=\"{}\"",
+            install_dir.display()
+        ));
+
+        let mut info = SHELLEXECUTEINFOW {
+            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOCLOSEPROCESS,
+            lpVerb: PCWSTR(verb.as_ptr()),
+            lpFile: PCWSTR(file.as_ptr()),
+            lpParameters: PCWSTR(parameters.as_ptr()),
+            nShow: SW_HIDE.0,
+            ..Default::default()
+        };
+        unsafe { ShellExecuteExW(&mut info) }
+            .context("failed to start installer with elevation")?;
+
+        let process = info.hProcess;
+        anyhow::ensure!(
+            !process.is_invalid(),
+            "failed to start installer: no process handle"
+        );
+        let wait_result = unsafe { WaitForSingleObject(process, INFINITE) };
+        anyhow::ensure!(
+            wait_result == WAIT_OBJECT_0,
+            "failed to wait for installer to finish"
+        );
+        let mut exit_code = 0;
+        unsafe { GetExitCodeProcess(process, &mut exit_code) }
+            .context("failed to get installer exit code")?;
+        unsafe { CloseHandle(process) }?;
+        Ok(exit_code as i32)
+    })
+    .await
+}
+
 async fn install_release_windows(downloaded_installer: &Path) -> Result<Option<PathBuf>> {
-    let mut cmd = new_command(downloaded_installer);
-    cmd.arg("/verysilent")
-        .arg("/update=true")
-        .arg("/MERGETASKS=!desktopicon");
-    let output = cmd.output().await?;
-    anyhow::ensure!(
-        output.status.success(),
-        "failed to start installer: {:?}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    #[cfg(target_os = "windows")]
+    if is_installed_for_all_users() {
+        // Zed is installed for all users: run the installer elevated in
+        // all-users mode, otherwise it would silently create a second
+        // per-user installation under %LOCALAPPDATA%.
+        let current_exe = std::env::current_exe()?;
+        let install_dir = current_exe
+            .parent()
+            .context("No parent dir for Zed.exe")?;
+        let exit_code = run_installer_elevated(downloaded_installer, install_dir).await?;
+        anyhow::ensure!(
+            exit_code == 0,
+            "failed to start installer: exit code {exit_code}"
+        );
+    } else {
+        let mut cmd = new_command(downloaded_installer);
+        cmd.arg("/verysilent")
+            .arg("/update=true")
+            .arg("/MERGETASKS=!desktopicon");
+        let output = cmd.output().await?;
+        anyhow::ensure!(
+            output.status.success(),
+            "failed to start installer: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     // We return the path to the update helper program, because it will
     // perform the final steps of the update process, copying the new binary,
     // deleting the old one, and launching the new binary.
