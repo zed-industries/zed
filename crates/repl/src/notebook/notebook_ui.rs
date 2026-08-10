@@ -382,6 +382,7 @@ impl NotebookEditor {
             .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
             .unwrap_or_else(std::env::temp_dir);
         let fs = self.project.read(cx).fs().clone();
+        let project_environment = self.project.read(cx).environment().clone();
         let view = cx.entity();
 
         self.kernel_specification = Some(spec.clone());
@@ -415,6 +416,7 @@ impl NotebookEditor {
                 local_spec,
                 entity_id,
                 working_directory,
+                Some(project_environment),
                 fs,
                 view,
                 window,
@@ -424,6 +426,7 @@ impl NotebookEditor {
                 env_spec.as_local_spec(),
                 entity_id,
                 working_directory,
+                Some(project_environment),
                 fs,
                 view,
                 window,
