@@ -1037,12 +1037,19 @@
     },
   },
   {
+    "context": "QueryConsole",
+    "bindings": {
+      "ctrl-s": "database_panel::SaveQuery",
+    },
+  },
+  {
     "context": "DatabasePanel",
     "bindings": {
       "ctrl-f": "database_panel::FocusFilter",
       "left": "database_panel::CollapseSelectedEntry",
       "right": "database_panel::ExpandSelectedEntry",
       "f5": "database_panel::Refresh",
+      "ctrl-enter": "database_panel::ShowTable",
     },
   },
   {

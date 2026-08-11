@@ -4937,6 +4937,7 @@ dependencies = [
  "gpui_tokio",
  "language",
  "menu",
+ "picker",
  "project",
  "serde",
  "serde_json",

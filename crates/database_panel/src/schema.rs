@@ -9,7 +9,7 @@ use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::TryStreamExt as _;
 use sqlx::{
-    Column as _, ConnectOptions as _, Either, Row as _, ValueRef as _,
+    Column as _, ConnectOptions as _, Either, Row as _, TypeInfo as _, ValueRef as _,
     mysql::{MySqlConnectOptions, MySqlConnection, MySqlRow},
     sqlite::{SqliteConnectOptions, SqliteConnection, SqliteRow},
 };
@@ -140,6 +140,38 @@ pub async fn list_all_columns(
     .await
 }
 
+/// Reads the names in Laravel's `migrations` table of a database. Errors when
+/// the table does not exist, which callers treat as "not a Laravel database".
+pub async fn list_ran_migrations(
+    config: ConnectionConfig,
+    database: String,
+) -> Result<HashSet<String>> {
+    with_timeout(QUERY_TIMEOUT, async move {
+        let rows = match &config {
+            ConnectionConfig::Sqlite { path } => {
+                let mut connection = open_sqlite(path).await?;
+                sqlx::query("SELECT migration FROM migrations")
+                    .fetch_all(&mut connection)
+                    .await?
+                    .into_iter()
+                    .map(|row| row.try_get::<String, _>("migration"))
+                    .collect::<Result<HashSet<String>, _>>()?
+            }
+            ConnectionConfig::MariaDb { .. } => {
+                let mut connection = open_mariadb_with_database(&config, Some(&database)).await?;
+                sqlx::query("SELECT migration FROM migrations")
+                    .fetch_all(&mut connection)
+                    .await?
+                    .into_iter()
+                    .map(|row| row.try_get::<String, _>("migration"))
+                    .collect::<Result<HashSet<String>, _>>()?
+            }
+        };
+        Ok(rows)
+    })
+    .await
+}
+
 async fn with_timeout<T>(duration: Duration, future: impl Future<Output = Result<T>>) -> Result<T> {
     tokio::time::timeout(duration, future)
         .await
@@ -209,6 +241,34 @@ async fn open_mariadb_with_database(
 /// does not support binding identifiers.
 fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+/// Quotes an identifier in the dialect of the connection, for building
+/// statements shown to (and editable by) the user.
+pub fn quote_ident(config: &ConnectionConfig, identifier: &str) -> String {
+    match config {
+        ConnectionConfig::Sqlite { .. } => quote_identifier(identifier),
+        ConnectionConfig::MariaDb { .. } => {
+            format!("`{}`", identifier.replace('`', "``"))
+        }
+    }
+}
+
+/// Renders a cell value as a SQL literal for interpolation into a generated
+/// statement (e.g. following a foreign key).
+pub fn sql_literal(value: &CellValue) -> String {
+    match value {
+        CellValue::Null => "NULL".to_string(),
+        CellValue::Bool(value) => value.to_string(),
+        CellValue::Integer(value) => value.to_string(),
+        CellValue::UInteger(value) => value.to_string(),
+        CellValue::Real(value) => value.to_string(),
+        CellValue::Text(value) => format!("'{}'", value.replace('\'', "''")),
+        CellValue::Json(value) => {
+            format!("'{}'", value.to_string().replace('\'', "''"))
+        }
+        CellValue::Bytes(_) | CellValue::Unsupported => "NULL".to_string(),
+    }
 }
 
 async fn sqlite_list_databases(path: &str) -> Result<Vec<DatabaseInfo>> {
@@ -584,9 +644,70 @@ async fn mariadb_list_all_columns(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryColumn {
+    pub name: String,
+    /// The result-set type reported by the driver, e.g. `VARCHAR`. Unlike
+    /// [`ColumnInfo::data_type`] it is available for computed columns too, but
+    /// lacks length and signedness details.
+    pub type_name: Option<String>,
+}
+
+/// A single result cell, decoded into the closest Rust type so consumers can
+/// serialize it faithfully (e.g. numbers and NULLs in JSON exports) instead of
+/// working from the display string.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CellValue {
+    Null,
+    Bool(bool),
+    Integer(i64),
+    UInteger(u64),
+    Real(f64),
+    Text(String),
+    Json(serde_json::Value),
+    /// Binary data that is not valid UTF-8, reduced to its byte count.
+    Bytes(usize),
+    Unsupported,
+}
+
+impl CellValue {
+    pub fn is_null(&self) -> bool {
+        matches!(self, CellValue::Null)
+    }
+
+    pub fn display(&self) -> String {
+        match self {
+            CellValue::Null => "NULL".to_string(),
+            CellValue::Bool(value) => value.to_string(),
+            CellValue::Integer(value) => value.to_string(),
+            CellValue::UInteger(value) => value.to_string(),
+            CellValue::Real(value) => value.to_string(),
+            CellValue::Text(value) => value.clone(),
+            CellValue::Json(value) => value.to_string(),
+            CellValue::Bytes(len) => format!("<{len} bytes>"),
+            CellValue::Unsupported => "<unsupported>".to_string(),
+        }
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            CellValue::Null => serde_json::Value::Null,
+            CellValue::Bool(value) => (*value).into(),
+            CellValue::Integer(value) => (*value).into(),
+            CellValue::UInteger(value) => (*value).into(),
+            CellValue::Real(value) => serde_json::Number::from_f64(*value)
+                .map(serde_json::Value::Number)
+                .unwrap_or_else(|| self.display().into()),
+            CellValue::Text(value) => value.clone().into(),
+            CellValue::Json(value) => value.clone(),
+            CellValue::Bytes(_) | CellValue::Unsupported => self.display().into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct QueryResult {
-    pub columns: Vec<String>,
-    pub rows: Vec<Vec<String>>,
+    pub columns: Vec<QueryColumn>,
+    pub rows: Vec<Vec<CellValue>>,
     pub affected_rows: Option<u64>,
     /// Index of the first returned row within the full result set.
     pub offset: usize,
@@ -646,7 +767,14 @@ async fn sqlite_run_query(
                     result.columns = row
                         .columns()
                         .iter()
-                        .map(|column| column.name().to_string())
+                        .map(|column| {
+                            let type_name = column.type_info().name();
+                            QueryColumn {
+                                name: column.name().to_string(),
+                                type_name: (type_name != "NULL")
+                                    .then(|| type_name.to_string()),
+                            }
+                        })
                         .collect();
                 }
                 if skipped < offset {
@@ -659,7 +787,7 @@ async fn sqlite_run_query(
                 }
                 result.rows.push(
                     (0..row.columns().len())
-                        .map(|index| sqlite_value_to_string(&row, index))
+                        .map(|index| sqlite_cell_value(&row, index))
                         .collect(),
                 );
             }
@@ -693,7 +821,10 @@ async fn mariadb_run_query(
                     result.columns = row
                         .columns()
                         .iter()
-                        .map(|column| column.name().to_string())
+                        .map(|column| QueryColumn {
+                            name: column.name().to_string(),
+                            type_name: Some(column.type_info().name().to_string()),
+                        })
                         .collect();
                 }
                 if skipped < offset {
@@ -706,7 +837,7 @@ async fn mariadb_run_query(
                 }
                 result.rows.push(
                     (0..row.columns().len())
-                        .map(|index| mariadb_value_to_string(&row, index))
+                        .map(|index| mariadb_cell_value(&row, index))
                         .collect(),
                 );
             }
@@ -715,80 +846,80 @@ async fn mariadb_run_query(
     Ok(result)
 }
 
-fn sqlite_value_to_string(row: &SqliteRow, index: usize) -> String {
+fn sqlite_cell_value(row: &SqliteRow, index: usize) -> CellValue {
     match row.try_get_raw(index) {
-        Ok(value) if value.is_null() => return "NULL".to_string(),
+        Ok(value) if value.is_null() => return CellValue::Null,
         Ok(_) => {}
-        Err(_) => return "?".to_string(),
+        Err(_) => return CellValue::Unsupported,
     }
     if let Ok(value) = row.try_get::<String, _>(index) {
-        return value;
+        return CellValue::Text(value);
     }
     if let Ok(value) = row.try_get::<i64, _>(index) {
-        return value.to_string();
+        return CellValue::Integer(value);
     }
     if let Ok(value) = row.try_get::<f64, _>(index) {
-        return value.to_string();
+        return CellValue::Real(value);
     }
     if let Ok(value) = row.try_get::<bool, _>(index) {
-        return value.to_string();
+        return CellValue::Bool(value);
     }
     if let Ok(value) = row.try_get::<Vec<u8>, _>(index) {
-        return bytes_to_string(value);
+        return bytes_cell_value(value);
     }
-    "<unsupported>".to_string()
+    CellValue::Unsupported
 }
 
-fn mariadb_value_to_string(row: &MySqlRow, index: usize) -> String {
+fn mariadb_cell_value(row: &MySqlRow, index: usize) -> CellValue {
     match row.try_get_raw(index) {
-        Ok(value) if value.is_null() => return "NULL".to_string(),
+        Ok(value) if value.is_null() => return CellValue::Null,
         Ok(_) => {}
-        Err(_) => return "?".to_string(),
+        Err(_) => return CellValue::Unsupported,
     }
     if let Ok(value) = row.try_get::<String, _>(index) {
-        return value;
+        return CellValue::Text(value);
     }
     if let Ok(value) = row.try_get::<i64, _>(index) {
-        return value.to_string();
+        return CellValue::Integer(value);
     }
     if let Ok(value) = row.try_get::<u64, _>(index) {
-        return value.to_string();
+        return CellValue::UInteger(value);
     }
     if let Ok(value) = row.try_get::<f64, _>(index) {
-        return value.to_string();
+        return CellValue::Real(value);
     }
     if let Ok(value) = row.try_get::<bool, _>(index) {
-        return value.to_string();
+        return CellValue::Bool(value);
     }
     if let Ok(value) = row.try_get::<chrono::NaiveDateTime, _>(index) {
-        return value.to_string();
+        return CellValue::Text(value.to_string());
     }
     if let Ok(value) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(index) {
-        return value.to_string();
+        return CellValue::Text(value.to_string());
     }
     if let Ok(value) = row.try_get::<chrono::NaiveDate, _>(index) {
-        return value.to_string();
+        return CellValue::Text(value.to_string());
     }
     if let Ok(value) = row.try_get::<chrono::NaiveTime, _>(index) {
-        return value.to_string();
+        return CellValue::Text(value.to_string());
     }
     // MySQL's native JSON type is not decodable as String.
     if let Ok(value) = row.try_get::<serde_json::Value, _>(index) {
-        return value.to_string();
+        return CellValue::Json(value);
     }
     if let Ok(value) = row.try_get::<Vec<u8>, _>(index) {
-        return bytes_to_string(value);
+        return bytes_cell_value(value);
     }
-    "<unsupported>".to_string()
+    CellValue::Unsupported
 }
 
 /// MariaDB stores JSON as `LONGTEXT` with a binary collation, and columns of
-/// binary types often hold readable text; show the text when the bytes are
+/// binary types often hold readable text; keep the text when the bytes are
 /// valid UTF-8 instead of hiding it behind a byte count.
-fn bytes_to_string(bytes: Vec<u8>) -> String {
+fn bytes_cell_value(bytes: Vec<u8>) -> CellValue {
     match String::from_utf8(bytes) {
-        Ok(text) => text,
-        Err(error) => format!("<{} bytes>", error.as_bytes().len()),
+        Ok(text) => CellValue::Text(text),
+        Err(error) => CellValue::Bytes(error.as_bytes().len()),
     }
 }
 
@@ -796,6 +927,24 @@ fn bytes_to_string(bytes: Vec<u8>) -> String {
 mod tests {
     use super::*;
     use sqlx::Connection as _;
+
+    #[test]
+    fn test_cell_value_json() {
+        assert_eq!(CellValue::Null.to_json(), serde_json::Value::Null);
+        assert_eq!(CellValue::Integer(-3).to_json(), serde_json::json!(-3));
+        assert_eq!(CellValue::UInteger(7).to_json(), serde_json::json!(7));
+        assert_eq!(CellValue::Real(1.5).to_json(), serde_json::json!(1.5));
+        assert_eq!(CellValue::Bool(true).to_json(), serde_json::json!(true));
+        assert_eq!(
+            CellValue::Text("a\"b".into()).to_json(),
+            serde_json::json!("a\"b")
+        );
+        assert_eq!(
+            CellValue::Json(serde_json::json!({"a": [1, 2]})).to_json(),
+            serde_json::json!({"a": [1, 2]})
+        );
+        assert_eq!(CellValue::Bytes(4).to_json(), serde_json::json!("<4 bytes>"));
+    }
 
     #[test]
     fn test_sqlite_introspection() {
@@ -898,12 +1047,29 @@ mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(result.columns, ["id", "email", "name"]);
+            assert_eq!(
+                result
+                    .columns
+                    .iter()
+                    .map(|column| column.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["id", "email", "name"]
+            );
+            assert_eq!(result.columns[0].type_name.as_deref(), Some("INTEGER"));
+            assert_eq!(result.columns[1].type_name.as_deref(), Some("TEXT"));
             assert_eq!(
                 result.rows,
                 [
-                    ["1", "a@example.com", "Ada"],
-                    ["2", "b@example.com", "NULL"],
+                    vec![
+                        CellValue::Integer(1),
+                        CellValue::Text("a@example.com".into()),
+                        CellValue::Text("Ada".into()),
+                    ],
+                    vec![
+                        CellValue::Integer(2),
+                        CellValue::Text("b@example.com".into()),
+                        CellValue::Null,
+                    ],
                 ]
             );
             assert!(!result.has_more);
@@ -917,7 +1083,7 @@ mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(first_page.rows, [["1"]]);
+            assert_eq!(first_page.rows, [[CellValue::Integer(1)]]);
             assert!(first_page.has_more);
 
             let second_page = run_query(
@@ -929,7 +1095,7 @@ mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(second_page.rows, [["2"]]);
+            assert_eq!(second_page.rows, [[CellValue::Integer(2)]]);
             assert_eq!(second_page.offset, 1);
             assert!(!second_page.has_more);
 

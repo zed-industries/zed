@@ -1,7 +1,9 @@
 mod connection_modal;
 mod query_console;
+mod saved_queries;
 mod schema;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -21,7 +23,7 @@ use schema::{ColumnInfo, ConnectionConfig, DatabaseInfo, TableInfo, TableType};
 use settings::{
     DatabaseAdapter, DatabaseConnectionContent, DockSide, RegisterSetting, Settings, SettingsStore,
 };
-use ui::{CommonAnimationExt as _, ContextMenu, Tooltip, prelude::*};
+use ui::{CommonAnimationExt as _, ContextMenu, Tooltip, WithScrollbar as _, prelude::*};
 use workspace::{
     Panel, Workspace,
     dock::{DockPosition, PanelEvent},
@@ -29,6 +31,7 @@ use workspace::{
 
 pub use connection_modal::ConnectionModal;
 pub use query_console::QueryConsole;
+pub use saved_queries::{SaveQueryModal, SavedQueryPicker};
 
 actions!(
     database_panel,
@@ -51,6 +54,9 @@ actions!(
         /// Opens a SQL query console for the selected connection, database, or
         /// table.
         NewQueryConsole,
+        /// Opens a query console on the selected table and immediately runs
+        /// `SELECT * FROM table` to show its rows.
+        ShowTable,
         /// Runs the query in the current query console.
         RunQuery,
         /// Focuses the database panel's filter field.
@@ -59,6 +65,13 @@ actions!(
         /// and their columns, so filtering and completions cover the whole
         /// schema without expanding entries first.
         IndexAllDatabases,
+        /// Collapses every expanded entry in the database panel.
+        CollapseAll,
+        /// Opens the picker listing the saved queries; confirming one opens a
+        /// query console and runs it.
+        OpenSavedQueries,
+        /// Saves the query console's current SQL under a name.
+        SaveQuery,
     ]
 );
 
@@ -120,9 +133,11 @@ struct CachedTable {
 }
 
 /// Identifies a connection's cache entry. The password is deliberately left
-/// out: it is a secret and does not change the schema.
-fn schema_cache_key(config: &ConnectionConfig) -> String {
-    match config {
+/// out: it is a secret and does not change the schema. The worktree database
+/// prefix is part of the key so a worktree window's filtered snapshot never
+/// overwrites the main window's full one.
+fn schema_cache_key(config: &ConnectionConfig, database_prefix: Option<&str>) -> String {
+    let base = match config {
         ConnectionConfig::Sqlite { path } => {
             format!("database_panel_schema::v1::sqlite::{path}")
         }
@@ -136,7 +151,55 @@ fn schema_cache_key(config: &ConnectionConfig) -> String {
             "database_panel_schema::v1::mariadb::{username}@{host}:{port}/{}",
             databases.join(",")
         ),
+    };
+    match database_prefix {
+        Some(prefix) => format!("{base}::scope::{prefix}"),
+        None => base,
     }
+}
+
+/// The scope of a project rooted in a parallel worktree: the database name
+/// prefix its databases share, the worktree's absolute root, and its slug.
+/// Worktrees live in a `<repo>-wt/<slug>` directory and their databases are
+/// named `wt_<slug>_*`; the main checkout sees everything.
+fn worktree_scope(workspace: &Workspace, cx: &App) -> Option<(String, PathBuf, String)> {
+    let worktree = workspace.project().read(cx).visible_worktrees(cx).next()?;
+    let root = worktree.read(cx).abs_path();
+    let slug = root.file_name()?.to_str()?.to_string();
+    let parent = root.parent()?.file_name()?.to_str()?;
+    parent
+        .ends_with("-wt")
+        .then(|| (format!("wt_{slug}_"), root.to_path_buf(), slug))
+}
+
+/// The stems of the migration files in `dir` (e.g.
+/// `2026_08_11_120000_add_foo`), the names Laravel records in the
+/// `migrations` table.
+fn read_migration_stems(dir: &std::path::Path) -> HashSet<String> {
+    let mut stems = HashSet::default();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file()
+                && path.extension().is_some_and(|extension| extension == "php")
+                && let Some(stem) = path.file_stem().and_then(|stem| stem.to_str())
+            {
+                stems.insert(stem.to_string());
+            }
+        }
+    }
+    stems
+}
+
+enum MigrationsState {
+    /// Not checked yet, not applicable, or nothing pending.
+    Idle,
+    Pending {
+        total: usize,
+        details: SharedString,
+    },
+    Running,
+    Failed(SharedString),
 }
 
 enum LoadState<T> {
@@ -226,10 +289,20 @@ pub struct DatabasePanel {
     /// schema load completions keep advancing these until every database,
     /// table, and column is loaded.
     indexing: HashSet<usize>,
+    /// When the project is a parallel worktree, only databases named
+    /// `wt_<slug>_*` are listed; `None` shows everything.
+    database_prefix: Option<String>,
+    /// The worktree's `(root, slug)` when the project is one, for checking
+    /// and running its migrations.
+    worktree: Option<(PathBuf, String)>,
+    migrations: MigrationsState,
+    /// The in-flight migrations check or run; a new check drops (cancels)
+    /// the previous one.
+    migrations_task: Option<gpui::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
-fn resolve_connection(
+pub(crate) fn resolve_connection(
     content: &DatabaseConnectionContent,
 ) -> Option<(SharedString, ConnectionConfig)> {
     match content.adapter.unwrap_or_default() {
@@ -282,6 +355,10 @@ impl DatabasePanel {
     ) -> Entity<Self> {
         let fs = workspace.project().read(cx).fs().clone();
         let weak_workspace = workspace.weak_handle();
+        let (database_prefix, worktree) = match worktree_scope(workspace, cx) {
+            Some((prefix, root, slug)) => (Some(prefix), Some((root, slug))),
+            None => (None, None),
+        };
         cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
@@ -310,6 +387,10 @@ impl DatabasePanel {
                 filter_editor,
                 filter_was_active: false,
                 indexing: HashSet::default(),
+                database_prefix,
+                worktree,
+                migrations: MigrationsState::Idle,
+                migrations_task: None,
                 _subscriptions: subscriptions,
             };
             this.settings_changed(cx);
@@ -936,7 +1017,7 @@ impl DatabasePanel {
                 })
                 .collect(),
         };
-        let key = schema_cache_key(&connection.config);
+        let key = schema_cache_key(&connection.config, self.database_prefix.as_deref());
         let kvp = KeyValueStore::global(cx);
         cx.background_spawn(async move {
             let value = serde_json::to_string(&snapshot)?;
@@ -953,7 +1034,7 @@ impl DatabasePanel {
             return;
         }
         let config = connection.config.clone();
-        let key = schema_cache_key(&config);
+        let key = schema_cache_key(&config, self.database_prefix.as_deref());
         let kvp = KeyValueStore::global(cx);
         let task = cx.background_spawn(async move {
             anyhow::Ok(
@@ -967,6 +1048,7 @@ impl DatabasePanel {
                 return anyhow::Ok(());
             };
             this.update(cx, |this, cx| {
+                let prefix = this.database_prefix.clone();
                 let Some(connection) = this.connections.get_mut(connection_ix) else {
                     return;
                 };
@@ -979,6 +1061,11 @@ impl DatabasePanel {
                     cache
                         .databases
                         .into_iter()
+                        .filter(|database| {
+                            prefix
+                                .as_deref()
+                                .is_none_or(|prefix| database.info.name.starts_with(prefix))
+                        })
                         .map(|database| DatabaseState {
                             info: database.info,
                             expanded: false,
@@ -1002,6 +1089,7 @@ impl DatabasePanel {
                         .collect(),
                 );
                 this.rebuild_entries(cx);
+                this.check_pending_migrations(cx);
             })?;
             anyhow::Ok(())
         })
@@ -1021,6 +1109,7 @@ impl DatabasePanel {
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
+                let prefix = this.database_prefix.clone();
                 let Some(connection) = this.connections.get_mut(connection_ix) else {
                     return;
                 };
@@ -1031,6 +1120,11 @@ impl DatabasePanel {
                     Ok(databases) => LoadState::Loaded(
                         databases
                             .into_iter()
+                            .filter(|info| {
+                                prefix
+                                    .as_deref()
+                                    .is_none_or(|prefix| info.name.starts_with(prefix))
+                            })
                             .map(|info| DatabaseState {
                                 info,
                                 expanded: false,
@@ -1043,6 +1137,7 @@ impl DatabasePanel {
                 this.save_schema_cache(connection_ix, cx);
                 this.rebuild_entries(cx);
                 this.continue_indexing(connection_ix, cx);
+                this.check_pending_migrations(cx);
             })
         })
         .detach_and_log_err(cx);
@@ -1268,6 +1363,274 @@ impl DatabasePanel {
         }
     }
 
+    fn collapse_all(&mut self, _: &CollapseAll, _: &mut Window, cx: &mut Context<Self>) {
+        for connection in &mut self.connections {
+            connection.expanded = false;
+            if let LoadState::Loaded(databases) = &mut connection.databases {
+                for database in databases.iter_mut() {
+                    database.expanded = false;
+                    if let LoadState::Loaded(tables) = &mut database.tables {
+                        for table in tables.iter_mut() {
+                            table.expanded = false;
+                        }
+                    }
+                }
+            }
+        }
+        self.selected_index = None;
+        self.rebuild_entries(cx);
+    }
+
+    /// Compares each visible worktree database's `migrations` table with the
+    /// project's migration files (`database/migrations/` for the central
+    /// database, `database/migrations/tenant/` for `*_tenant_*` databases)
+    /// and surfaces the count of migrations that never ran. Databases whose
+    /// name marks them as test databases are ignored, as are databases
+    /// without a `migrations` table.
+    fn check_pending_migrations(&mut self, cx: &mut Context<Self>) {
+        let Some((root, _)) = self.worktree.clone() else {
+            return;
+        };
+        if matches!(self.migrations, MigrationsState::Running) {
+            return;
+        }
+        let mut targets = Vec::new();
+        for connection in &self.connections {
+            if !matches!(connection.config, ConnectionConfig::MariaDb { .. }) {
+                continue;
+            }
+            if let LoadState::Loaded(databases) = &connection.databases {
+                for database in databases {
+                    if !database.info.name.contains("_test") {
+                        targets.push((connection.config.clone(), database.info.name.clone()));
+                    }
+                }
+            }
+        }
+        if targets.is_empty() {
+            return;
+        }
+        let task = Tokio::spawn_result(cx, async move {
+            let central = read_migration_stems(&root.join("database/migrations"));
+            let tenant = read_migration_stems(&root.join("database/migrations/tenant"));
+            let mut total = 0;
+            let mut details = Vec::new();
+            for (config, database) in targets {
+                let expected = if database.contains("_tenant_") {
+                    &tenant
+                } else {
+                    &central
+                };
+                let Ok(ran) = schema::list_ran_migrations(config, database.clone()).await else {
+                    continue;
+                };
+                let missing = expected
+                    .iter()
+                    .filter(|migration| !ran.contains(*migration))
+                    .count();
+                if missing > 0 {
+                    total += missing;
+                    details.push(format!("{database}: {missing}"));
+                }
+            }
+            anyhow::Ok((total, details))
+        });
+        self.migrations_task = Some(cx.spawn(async move |this, cx| {
+            let Ok((total, details)) = task.await else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                if matches!(this.migrations, MigrationsState::Running) {
+                    return;
+                }
+                this.migrations = if total == 0 {
+                    MigrationsState::Idle
+                } else {
+                    MigrationsState::Pending {
+                        total,
+                        details: details.join(" · ").into(),
+                    }
+                };
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Runs `wt run migrate <slug>`, which migrates the worktree's central
+    /// and tenant databases and refuses to run when the databases are shared
+    /// with the main checkout.
+    fn run_worktree_migrations(&mut self, cx: &mut Context<Self>) {
+        let Some((root, slug)) = self.worktree.clone() else {
+            return;
+        };
+        if matches!(self.migrations, MigrationsState::Running) {
+            return;
+        }
+        self.migrations = MigrationsState::Running;
+        cx.notify();
+        let task = cx.background_spawn(async move {
+            let mut command = util::command::new_command("wt");
+            command
+                .arg("-C")
+                .arg(&root)
+                .arg("run")
+                .arg("migrate")
+                .arg(&slug);
+            let output = command.output().await?;
+            if output.status.success() {
+                return anyhow::Ok(());
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let message = if stderr.trim().is_empty() {
+                stdout
+            } else {
+                stderr
+            };
+            let tail = message
+                .lines()
+                .rev()
+                .take(6)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+            anyhow::bail!("{tail}")
+        });
+        self.migrations_task = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => {
+                        this.migrations = MigrationsState::Idle;
+                        this.check_pending_migrations(cx);
+                    }
+                    Err(error) => {
+                        this.migrations = MigrationsState::Failed(format!("{error:#}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    fn render_migrations_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let colors = cx.theme().colors();
+        let status = cx.theme().status();
+        let banner = |background| {
+            h_flex()
+                .id("database-panel-migrations-banner")
+                .px_2()
+                .py_1()
+                .gap_1p5()
+                .justify_between()
+                .border_t_1()
+                .border_color(colors.border)
+                .bg(background)
+        };
+        match &self.migrations {
+            MigrationsState::Idle => None,
+            MigrationsState::Pending { total, details } => {
+                let label = if *total == 1 {
+                    "1 pending migration".to_string()
+                } else {
+                    format!("{total} pending migrations")
+                };
+                Some(
+                    banner(status.warning_background)
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .min_w_0()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .size(IconSize::Small)
+                                        .color(Color::Warning),
+                                )
+                                .child(
+                                    Label::new(label)
+                                        .size(LabelSize::Small)
+                                        .single_line()
+                                        .truncate(),
+                                ),
+                        )
+                        .child(
+                            Button::new("database-panel-run-migrations", "Run Migrations")
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.run_worktree_migrations(cx)
+                                })),
+                        )
+                        .tooltip(Tooltip::text(details.clone()))
+                        .into_any_element(),
+                )
+            }
+            MigrationsState::Running => Some(
+                banner(colors.panel_background)
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::LoadCircle)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted)
+                                    .with_rotate_animation(2),
+                            )
+                            .child(
+                                Label::new("Running migrations…")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .into_any_element(),
+            ),
+            MigrationsState::Failed(error) => Some(
+                banner(status.error_background)
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .min_w_0()
+                            .child(
+                                Icon::new(IconName::XCircle)
+                                    .size(IconSize::Small)
+                                    .color(Color::Error),
+                            )
+                            .child(
+                                Label::new("Migrations failed")
+                                    .size(LabelSize::Small)
+                                    .single_line()
+                                    .truncate(),
+                            ),
+                    )
+                    .child(
+                        Button::new("database-panel-retry-migrations", "Retry")
+                            .label_size(LabelSize::Small)
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.run_worktree_migrations(cx)),
+                            ),
+                    )
+                    .tooltip(Tooltip::text(error.clone()))
+                    .into_any_element(),
+            ),
+        }
+    }
+
+    fn open_saved_queries(
+        &mut self,
+        _: &OpenSavedQueries,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                SavedQueryPicker::toggle(workspace, window, cx);
+            });
+        }
+    }
+
     fn refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
         match self.selected_index {
             Some(index) => self.refresh_entry(index, cx),
@@ -1417,19 +1780,11 @@ impl DatabasePanel {
         }
     }
 
-    fn new_query_console(
-        &mut self,
-        _: &NewQueryConsole,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(index) = self.selected_index else {
-            return;
-        };
-        let Some(entry) = self.entries.get(index).cloned() else {
-            return;
-        };
-        let (connection_ix, database, table) = match entry {
+    /// The `(connection, database, table)` a console opened from the current
+    /// selection should target.
+    fn console_target(&self) -> Option<(usize, Option<String>, Option<String>)> {
+        let entry = self.entries.get(self.selected_index?)?;
+        Some(match *entry {
             ListEntry::Connection { connection_ix } => (connection_ix, None, None),
             ListEntry::Database {
                 connection_ix,
@@ -1454,7 +1809,18 @@ impl DatabasePanel {
                 self.database_name(connection_ix, database_ix),
                 self.table_name(connection_ix, database_ix, table_ix),
             ),
-            ListEntry::Status { .. } => return,
+            ListEntry::Status { .. } => return None,
+        })
+    }
+
+    fn new_query_console(
+        &mut self,
+        _: &NewQueryConsole,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((connection_ix, database, table)) = self.console_target() else {
+            return;
         };
         let Some(connection) = self.connections.get(connection_ix) else {
             return;
@@ -1462,15 +1828,40 @@ impl DatabasePanel {
         let name = connection.name.clone();
         let config = connection.config.clone();
         let initial_query = table.map(|table| {
-            let quoted = match &config {
-                ConnectionConfig::Sqlite { .. } => format!("\"{table}\""),
-                ConnectionConfig::MariaDb { .. } => format!("`{table}`"),
-            };
-            format!("SELECT * FROM {quoted} LIMIT 100;")
+            format!(
+                "SELECT * FROM {} LIMIT 100;",
+                schema::quote_ident(&config, &table)
+            )
         });
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                QueryConsole::open(workspace, name, config, database, initial_query, window, cx);
+                QueryConsole::open(
+                    workspace,
+                    name,
+                    config,
+                    database,
+                    initial_query,
+                    false,
+                    window,
+                    cx,
+                );
+            });
+        }
+    }
+
+    fn show_table(&mut self, _: &ShowTable, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((connection_ix, database, Some(table))) = self.console_target() else {
+            return;
+        };
+        let Some(connection) = self.connections.get(connection_ix) else {
+            return;
+        };
+        let name = connection.name.clone();
+        let config = connection.config.clone();
+        let query = format!("SELECT * FROM {};", schema::quote_ident(&config, &table));
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                QueryConsole::open(workspace, name, config, database, Some(query), true, window, cx);
             });
         }
     }
@@ -1538,11 +1929,16 @@ impl DatabasePanel {
         }
         self.selected_index = Some(index);
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
-            let query_label = match entry {
-                ListEntry::Table { .. } | ListEntry::Column { .. } => "Query Table",
-                _ => "New Query Console",
+            let on_table = matches!(entry, ListEntry::Table { .. } | ListEntry::Column { .. });
+            let query_label = if on_table {
+                "Query Table"
+            } else {
+                "New Query Console"
             };
             menu.context(self.focus_handle.clone())
+                .when(on_table, |menu| {
+                    menu.action("Show Table", ShowTable.boxed_clone())
+                })
                 .action(query_label, NewQueryConsole.boxed_clone())
                 .separator()
                 .action("Refresh", Refresh.boxed_clone())
@@ -1933,14 +2329,52 @@ impl DatabasePanel {
             .justify_between()
             .border_b_1()
             .border_color(cx.theme().colors().border)
-            .child(
-                Label::new("Connections")
+            .child(match &self.database_prefix {
+                None => Label::new("Connections")
                     .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
+                    .color(Color::Muted)
+                    .into_any_element(),
+                Some(prefix) => h_flex()
+                    .id("database-panel-scope")
+                    .gap_1()
+                    .child(
+                        Label::new("Connections")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(format!("{prefix}*"))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Accent)
+                            .single_line()
+                            .truncate(),
+                    )
+                    .tooltip(Tooltip::text(format!(
+                        "Worktree project: only databases named {prefix}* are shown"
+                    )))
+                    .into_any_element(),
+            })
             .child(
                 h_flex()
                     .gap_1()
+                    .child(
+                        IconButton::new("database-panel-saved-queries", IconName::Bookmark)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Saved Queries"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_saved_queries(&OpenSavedQueries, window, cx)
+                            })),
+                    )
+                    .child(
+                        IconButton::new("database-panel-collapse-all", IconName::ListCollapse)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Collapse All"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.collapse_all(&CollapseAll, window, cx)
+                            })),
+                    )
                     .child(if self.indexing.is_empty() {
                         IconButton::new("database-panel-index-all", IconName::DatabaseZap)
                             .icon_size(IconSize::Small)
@@ -2032,6 +2466,9 @@ impl Render for DatabasePanel {
             .on_action(cx.listener(Self::add_connection))
             .on_action(cx.listener(Self::remove_connection))
             .on_action(cx.listener(Self::new_query_console))
+            .on_action(cx.listener(Self::show_table))
+            .on_action(cx.listener(Self::collapse_all))
+            .on_action(cx.listener(Self::open_saved_queries))
             .child(self.render_header(cx))
             .when(has_connections, |this| this.child(self.render_filter_bar(cx)))
             .when(!has_connections, |this| {
@@ -2057,17 +2494,36 @@ impl Render for DatabasePanel {
             })
             .when(has_connections, |this| {
                 this.child(
-                    uniform_list(
-                        "database-panel-entries",
-                        entry_count,
-                        cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
-                            range.map(|index| this.render_entry(index, cx)).collect()
-                        }),
-                    )
-                    .size_full()
-                    .track_scroll(&self.scroll_handle),
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(
+                            uniform_list(
+                                "database-panel-entries",
+                                entry_count,
+                                cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
+                                    range.map(|index| this.render_entry(index, cx)).collect()
+                                }),
+                            )
+                            .size_full()
+                            .track_scroll(&self.scroll_handle),
+                        )
+                        // A track along the vertical axis keeps the whole edge
+                        // strip part of the scrollbar's hitbox, so clicks next
+                        // to the thumb never fall through to the tree rows.
+                        .custom_scrollbars(
+                            ui::Scrollbars::new(ui::ScrollAxes::Vertical)
+                                .tracked_scroll_handle(&self.scroll_handle)
+                                .with_track_along(
+                                    ui::ScrollAxes::Vertical,
+                                    cx.theme().colors().panel_background,
+                                ),
+                            window,
+                            cx,
+                        ),
                 )
             })
+            .children(self.render_migrations_banner(cx))
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
                     anchored()
