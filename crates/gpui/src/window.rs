@@ -119,14 +119,16 @@ struct WindowInvalidatorInner {
     pub draw_phase: DrawPhase,
     pub dirty_views: FxHashSet<EntityId>,
     pub update_count: usize,
+    #[cfg(feature = "profiler")]
     pub frame_dirty: FrameDirtyAccumulator,
     pub platform_waker: Option<Rc<dyn Fn()>>,
 }
 
 /// Per-frame invalidation bookkeeping, drained at draw time and emitted to the
 /// frame profiler. Tracks when the current frame first became dirty and how
-/// many invalidations were coalesced into it. Only populated while
-/// `profiler::trace_enabled()` is set.
+/// many invalidations were coalesced into it. Only populated when the profiler
+/// is compiled in and `profiler::trace_enabled()` is set.
+#[cfg(feature = "profiler")]
 #[derive(Default)]
 struct FrameDirtyAccumulator {
     dirty_at: Option<Instant>,
@@ -146,6 +148,7 @@ impl WindowInvalidator {
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
                 update_count: 0,
+                #[cfg(feature = "profiler")]
                 frame_dirty: FrameDirtyAccumulator::default(),
                 platform_waker: None,
             })),
@@ -157,6 +160,7 @@ impl WindowInvalidator {
         inner.update_count += 1;
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
+            #[cfg(feature = "profiler")]
             Self::record_frame_dirty(&mut inner);
             let became_dirty = !inner.dirty;
             inner.dirty = true;
@@ -182,6 +186,7 @@ impl WindowInvalidator {
         inner.dirty = dirty;
         if dirty {
             inner.update_count += 1;
+            #[cfg(feature = "profiler")]
             Self::record_frame_dirty(&mut inner);
         }
         let waker = became_dirty.then(|| inner.platform_waker.clone()).flatten();
@@ -219,6 +224,7 @@ impl WindowInvalidator {
         self.inner.borrow().update_count
     }
 
+    #[cfg(feature = "profiler")]
     fn record_frame_dirty(inner: &mut WindowInvalidatorInner) {
         if profiler::trace_enabled() {
             inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
@@ -226,6 +232,7 @@ impl WindowInvalidator {
         }
     }
 
+    #[cfg(feature = "profiler")]
     fn take_frame_dirty(&self) -> FrameDirtyAccumulator {
         mem::take(&mut self.inner.borrow_mut().frame_dirty)
     }
@@ -1159,6 +1166,7 @@ pub struct Window {
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     #[cfg(feature = "profiler")]
     input_latency_tracker: InputLatencyTracker,
+    #[cfg(feature = "profiler")]
     frame_profiler: profiler::WindowFrameProfiler,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
@@ -1923,6 +1931,7 @@ impl Window {
             input_rate_tracker,
             #[cfg(feature = "profiler")]
             input_latency_tracker: InputLatencyTracker::new()?,
+            #[cfg(feature = "profiler")]
             frame_profiler: profiler::WindowFrameProfiler::new(handle.window_id())?,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
@@ -2876,9 +2885,11 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
-        // Drain unconditionally so a stale first-invalidation timestamp can't
-        // leak into a later frame across enable/disable of profiler tracing.
+        // Drain every draw in profiler builds so a stale first-invalidation
+        // timestamp can't leak across enable/disable of runtime tracing.
+        #[cfg(feature = "profiler")]
         let frame_dirty = self.invalidator.take_frame_dirty();
+        #[cfg(feature = "profiler")]
         let draw_started_at = self.frame_profiler.begin_draw();
 
         // Set up the per-App arena for element allocation during this draw.
@@ -2987,6 +2998,7 @@ impl Window {
         }
         self.needs_present.set(true);
 
+        #[cfg(feature = "profiler")]
         self.frame_profiler.end_draw(
             draw_started_at,
             frame_dirty.dirty_at,
@@ -3025,6 +3037,7 @@ impl Window {
         self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "profiler")]
         self.input_latency_tracker.record_frame_presented();
+        #[cfg(feature = "profiler")]
         self.frame_profiler.record_present(
             Instant::now(),
             self.active.get(),
