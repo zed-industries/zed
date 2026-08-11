@@ -38,6 +38,7 @@ screen-capture = [
 ]
 windows-manifest = ["dep:embed-resource"]
 input-latency-histogram = ["dep:hdrhistogram"]
+frame-duration-histogram = ["dep:hdrhistogram"]
 profiler = []
 
 [lib]
