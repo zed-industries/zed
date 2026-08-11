@@ -1211,6 +1211,11 @@ pub struct MarkdownPreviewSettingsContent {
     ///
     /// Default: 800
     pub max_width: Option<f32>,
+    /// Whether to render YAML frontmatter as a table in Markdown previews.
+    /// When disabled, frontmatter is hidden from the preview.
+    ///
+    /// Default: true
+    pub render_frontmatter: Option<bool>,
 }
 
 /// The settings for the image viewer.

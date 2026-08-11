@@ -7,6 +7,8 @@ pub struct MarkdownPreviewSettings {
     /// The maximum width of the rendered markdown content, or `None` to render
     /// content edge to edge.
     pub max_width: Option<Pixels>,
+    /// Whether to render YAML frontmatter as a table.
+    pub render_frontmatter: bool,
 }
 
 impl Settings for MarkdownPreviewSettings {
@@ -17,6 +19,9 @@ impl Settings for MarkdownPreviewSettings {
         } else {
             None
         };
-        Self { max_width }
+        Self {
+            max_width,
+            render_frontmatter: content.render_frontmatter.unwrap_or(true),
+        }
     }
 }

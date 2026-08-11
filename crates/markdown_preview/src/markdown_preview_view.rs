@@ -24,7 +24,7 @@ use markdown::{
 };
 use project::search::SearchQuery;
 use project::{Project, ProjectPath};
-use settings::{SeedQuerySetting, Settings, update_settings_file};
+use settings::{SeedQuerySetting, Settings, SettingsStore, update_settings_file};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::utils::WithRemSize;
@@ -54,12 +54,24 @@ use crate::{ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ScrollUp,
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
+fn markdown_preview_options(cx: &App) -> MarkdownOptions {
+    MarkdownOptions {
+        parse_html: true,
+        render_mermaid_diagrams: true,
+        parse_heading_slugs: true,
+        parse_metadata_blocks: true,
+        render_metadata_blocks: MarkdownPreviewSettings::get_global(cx).render_frontmatter,
+        ..Default::default()
+    }
+}
+
 pub struct MarkdownPreviewView {
     workspace: WeakEntity<Workspace>,
     active_editor: Option<EditorState>,
     focus_handle: FocusHandle,
     markdown: Entity<Markdown>,
     _markdown_subscription: Subscription,
+    _settings_subscription: Subscription,
     active_source_index: Option<usize>,
     scroll_handle: ScrollHandle,
     image_cache: Entity<RetainAllImageCache>,
@@ -292,13 +304,7 @@ impl MarkdownPreviewView {
                     SharedString::default(),
                     Some(language_registry),
                     None,
-                    MarkdownOptions {
-                        parse_html: true,
-                        render_mermaid_diagrams: true,
-                        parse_heading_slugs: true,
-                        render_metadata_blocks: true,
-                        ..Default::default()
-                    },
+                    markdown_preview_options(cx),
                     cx,
                 )
             });
@@ -312,6 +318,11 @@ impl MarkdownPreviewView {
                         this.sync_active_root_block(cx);
                     },
                 ),
+                _settings_subscription: cx.observe_global::<SettingsStore>(|this, cx| {
+                    let options = markdown_preview_options(cx);
+                    this.markdown
+                        .update(cx, |markdown, cx| markdown.set_options(options, cx));
+                }),
                 markdown,
                 active_source_index: None,
                 scroll_handle: ScrollHandle::new(),
