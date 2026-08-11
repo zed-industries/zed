@@ -18,6 +18,7 @@ use agent_settings::UserAgentsMd;
 use collections::HashSet;
 use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
+use project::agent_server_store::AllAgentServersSettings;
 use project::{AgentId, ProjectItem};
 use serde::{Deserialize, Serialize};
 
@@ -1433,13 +1434,22 @@ impl AgentPanel {
                     // so the draft survives reload bound to the right
                     // backend; otherwise fall back to the serialized
                     // selection, then the global last-used agent.
+                    //
+                    // Only the restored thread keeps an agent that is no
+                    // longer installed, so that it stays resumable if the
+                    // user reinstalls it. A *preference* naming a removed
+                    // agent is dropped instead: the global one outlives the
+                    // workspace it was set in, so every project opened after
+                    // an uninstall would otherwise keep selecting an agent
+                    // that can no longer be launched.
                     let initial_agent = match &thread_to_restore {
                         Some((info, _)) => Some(clamp(info.agent_type.clone())),
                         None => serialized_panel
                             .as_ref()
                             .and_then(|p| p.selected_agent.clone())
                             .map(clamp)
-                            .or(global_fallback),
+                            .or(global_fallback)
+                            .filter(|agent| panel.is_agent_available(agent, cx)),
                     };
                     if let Some(agent) = initial_agent {
                         panel.selected_agent = agent;
@@ -1654,6 +1664,42 @@ impl AgentPanel {
             Agent::NativeAgent
         } else {
             self.selected_agent.clone()
+        }
+    }
+
+    /// Whether `agent` still exists as far as this panel is concerned.
+    ///
+    /// Both the `agent_servers` setting and the project's [`AgentServerStore`]
+    /// are consulted, because neither is conclusive on its own: registry-backed
+    /// agents only reach the store once the agent registry has finished
+    /// loading, and remote projects register agents that this machine's
+    /// settings don't describe. An agent the user uninstalled is absent from
+    /// both, so only treating it as gone when both agree keeps a slow registry
+    /// load from looking like an uninstall.
+    fn is_agent_available(&self, agent: &Agent, cx: &App) -> bool {
+        let Agent::Custom { id } = agent else {
+            return true;
+        };
+
+        AllAgentServersSettings::get_global(cx).contains_key(id.0.as_ref())
+            || self
+                .project
+                .read(cx)
+                .agent_server_store()
+                .read(cx)
+                .external_agents()
+                .any(|registered| registered == id)
+    }
+
+    /// The panel's selection, or the Zed Agent when the selected agent has
+    /// been uninstalled. Used where the selection is carried over to a panel
+    /// that has yet to pick an agent of its own.
+    fn available_agent_selection(&self, cx: &App) -> Agent {
+        let agent = self.selected_agent(cx);
+        if self.is_agent_available(&agent, cx) {
+            agent
+        } else {
+            Agent::NativeAgent
         }
     }
 
@@ -5239,7 +5285,7 @@ impl AgentPanel {
         let source_panel = source_workspace.read(cx).panel::<AgentPanel>(cx)?;
         let source_panel = source_panel.read(cx);
         Some(SourcePanelInitialization {
-            agent: source_panel.selected_agent(cx),
+            agent: source_panel.available_agent_selection(cx),
             initial_content: source_panel.active_initial_content(cx),
         })
     }
@@ -6849,6 +6895,38 @@ mod tests {
     use std::sync::Arc;
     use std::time::Instant;
 
+    /// Adds `id` to the `agent_servers` setting, as installing an external
+    /// agent does.
+    fn install_custom_agent(id: &str, cx: &mut App) {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.agent_servers.get_or_insert_default().insert(
+                    id.to_string(),
+                    settings::CustomAgentServerSettings::Custom {
+                        path: PathBuf::from("/usr/bin/fake-agent"),
+                        args: Vec::new(),
+                        env: Default::default(),
+                        default_mode: None,
+                        default_config_options: Default::default(),
+                        favorite_config_option_values: Default::default(),
+                    },
+                );
+            });
+        });
+    }
+
+    /// Removes `id` from the `agent_servers` setting, as uninstalling an
+    /// external agent does.
+    fn uninstall_custom_agent(id: &str, cx: &mut App) {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |content| {
+                if let Some(agent_servers) = content.agent_servers.as_mut() {
+                    agent_servers.remove(id);
+                }
+            });
+        });
+    }
+
     #[test]
     fn test_is_known_terminal_agent_command() {
         assert!(is_known_terminal_agent_command("claude"));
@@ -7307,6 +7385,7 @@ mod tests {
             cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
 
+        cx.update(|_window, cx| install_custom_agent("claude-acp", cx));
         panel_b.update(cx, |panel, _cx| {
             panel.selected_agent = Agent::Custom {
                 id: "claude-acp".into(),
@@ -11471,6 +11550,7 @@ mod tests {
         let custom_agent = Agent::Custom {
             id: "my-preferred-agent".into(),
         };
+        cx.update(|cx| install_custom_agent("my-preferred-agent", cx));
 
         // Write a known agent to the global KVP to simulate a user who has
         // previously used this agent in another workspace.
@@ -11509,6 +11589,325 @@ mod tests {
                 "new workspace should inherit the global last-used agent"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_new_workspace_ignores_uninstalled_global_last_used_agent(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            // Use an isolated DB so parallel tests can't overwrite our global key.
+            cx.set_global(db::AppDatabase::test_new());
+        });
+
+        // The last-used agent was uninstalled, so it is absent from
+        // `agent_servers` — but the global preference still names it.
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        write_global_last_used_agent(
+            kvp,
+            Agent::Custom {
+                id: "uninstalled-agent".into(),
+            },
+        )
+        .await;
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                panel.selected_agent,
+                Agent::NativeAgent,
+                "a workspace should not inherit a last-used agent that is no longer installed"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reopened_workspace_ignores_uninstalled_selected_agent(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            install_custom_agent("my-custom-agent", cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        // The workspace remembers a custom agent as its selection...
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
+        });
+        panel.update(cx, |panel, cx| {
+            panel.selected_agent = Agent::Custom {
+                id: "my-custom-agent".into(),
+            };
+            panel.serialize(cx);
+        });
+        cx.run_until_parked();
+
+        // ...and the user uninstalls it before opening the workspace again.
+        cx.update(|_window, cx| uninstall_custom_agent("my-custom-agent", cx));
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let reloaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        reloaded_panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                panel.selected_agent,
+                Agent::NativeAgent,
+                "a reopened workspace should not select an agent that is no longer installed"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_opened_workspace_does_not_inherit_uninstalled_agent_from_source(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            install_custom_agent("my-custom-agent", cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project_a", json!({ "file.txt": "" }))
+            .await;
+        fs.insert_tree("/project_b", json!({ "file.txt": "" }))
+            .await;
+        let project_a = Project::test(fs.clone(), [Path::new("/project_a")], cx).await;
+        let project_b = Project::test(fs.clone(), [Path::new("/project_b")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+        let workspace_a = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        let workspace_b = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b.clone(), window, cx)
+            })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        panel_a.update(cx, |panel, _cx| {
+            panel.selected_agent = Agent::Custom {
+                id: "my-custom-agent".into(),
+            };
+        });
+
+        // Opening another project in the same window copies the source
+        // panel's selection into the fresh panel.
+        cx.update(|_window, cx| uninstall_custom_agent("my-custom-agent", cx));
+
+        let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        panel_b.update_in(cx, |panel, window, cx| {
+            panel.initialize_from_source_workspace_if_needed(workspace_a.downgrade(), window, cx);
+        });
+        cx.run_until_parked();
+
+        panel_b.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                panel.selected_agent,
+                Agent::NativeAgent,
+                "a newly opened project should not inherit an uninstalled agent"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restored_thread_keeps_uninstalled_agent(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let external_agent_id = StubAgentServer::default_response().agent_id();
+        cx.update(|_window, cx| install_custom_agent(external_agent_id.0.as_ref(), cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        open_thread_with_connection(&panel, StubAgentConnection::new(), cx);
+        send_message(&panel, cx);
+        let thread_id = active_thread_id(&panel, cx);
+        panel.update(cx, |panel, cx| panel.serialize(cx));
+        cx.run_until_parked();
+
+        cx.update(|_window, cx| uninstall_custom_agent(external_agent_id.0.as_ref(), cx));
+        cx.run_until_parked();
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let reloaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        // The thread stays bound to the agent it was created with, so it
+        // reports that agent as unavailable instead of silently reopening as a
+        // Zed Agent thread that can't hold its history. Reinstalling the agent
+        // is enough to make it work again.
+        reloaded_panel.read_with(cx, |panel, cx| {
+            let conversation_view = panel
+                .active_conversation_view()
+                .expect("the last active thread should be restored");
+            assert_eq!(
+                conversation_view.read(cx).thread_id, thread_id,
+                "the same thread should be restored"
+            );
+            assert_eq!(
+                *conversation_view.read(cx).agent_key(),
+                Agent::Custom {
+                    id: external_agent_id.clone()
+                },
+                "a restored thread should keep its original agent"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restored_draft_keeps_uninstalled_agent_and_text(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let external_agent_id = StubAgentServer::default_response().agent_id();
+        cx.update(|_window, cx| install_custom_agent(external_agent_id.0.as_ref(), cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        crate::test_support::open_draft_with_connection(&panel, StubAgentConnection::new(), cx);
+        crate::test_support::type_draft_prompt(&panel, "Unsent draft", cx);
+        let draft_thread_id = active_thread_id(&panel, cx);
+        panel.update(cx, |panel, cx| panel.serialize(cx));
+        cx.run_until_parked();
+
+        cx.update(|_window, cx| uninstall_custom_agent(external_agent_id.0.as_ref(), cx));
+        cx.run_until_parked();
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let reloaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        // A draft keeps both its text and its agent, so reinstalling the agent
+        // lets the user pick the draft back up where they left off.
+        reloaded_panel.read_with(cx, |panel, cx| {
+            let draft = panel
+                .draft_thread
+                .as_ref()
+                .expect("the draft should be restored");
+            assert_eq!(
+                draft.read(cx).thread_id,
+                draft_thread_id,
+                "the same draft should be restored"
+            );
+            assert_eq!(
+                *draft.read(cx).agent_key(),
+                Agent::Custom {
+                    id: external_agent_id.clone()
+                },
+                "a restored draft should keep its original agent"
+            );
+        });
+
+        let persisted_prompt =
+            cx.update(|_window, cx| crate::draft_prompt_store::read(draft_thread_id, cx));
+        assert!(
+            persisted_prompt.is_some_and(|blocks| !blocks.is_empty()),
+            "a restored draft should keep the text the user had typed"
+        );
     }
 
     #[gpui::test(iterations = 25)]
@@ -11607,6 +12006,10 @@ mod tests {
         let agent_b = Agent::Custom {
             id: "agent-beta".into(),
         };
+        cx.update(|_window, cx| {
+            install_custom_agent("agent-alpha", cx);
+            install_custom_agent("agent-beta", cx);
+        });
 
         // Set up workspace A with agent_a
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
@@ -13183,6 +13586,13 @@ mod tests {
             .unwrap();
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        // The stub server stands in for an installed external agent, so the
+        // destination panel inherits it rather than falling back to the Zed
+        // Agent.
+        cx.update(|_window, cx| {
+            install_custom_agent(StubAgentServer::default_response().agent_id().0.as_ref(), cx)
+        });
 
         // Set up panel_a with an active thread and type draft text.
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
