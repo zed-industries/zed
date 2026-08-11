@@ -295,17 +295,19 @@ impl ChatGptModel {
         }
     }
 
+    /// Subscription requests are billed by OpenAI, so use the models' full
+    /// public API context windows instead of long-context pricing thresholds.
     fn max_token_count(&self) -> u64 {
         match self {
-            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => 372_000,
-            Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => 272_000,
+            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna | Self::Gpt55 | Self::Gpt54 => {
+                1_050_000
+            }
+            Self::Gpt54Mini => 400_000,
         }
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        // Codex model metadata does not expose a max output token cap for these
-        // models. Source: openai/codex models-manager/models.json.
-        None
+        Some(128_000)
     }
 
     fn supports_images(&self) -> bool {
