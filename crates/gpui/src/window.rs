@@ -131,6 +131,8 @@ struct WindowInvalidatorInner {
 struct FrameDirtyAccumulator {
     dirty_at: Option<Instant>,
     invalidations: u64,
+    invalidating_task_location: Option<&'static std::panic::Location<'static>>,
+    invalidating_action_name: Option<&'static str>,
 }
 
 #[derive(Clone)]
@@ -221,7 +223,11 @@ impl WindowInvalidator {
 
     fn record_frame_dirty(inner: &mut WindowInvalidatorInner) {
         if cfg!(feature = "frame-duration-histogram") || profiler::frame_trace_enabled() {
-            inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
+            if inner.frame_dirty.dirty_at.is_none() {
+                inner.frame_dirty.dirty_at = Some(Instant::now());
+                inner.frame_dirty.invalidating_task_location = profiler::current_task_location();
+                inner.frame_dirty.invalidating_action_name = profiler::current_action_name();
+            }
             inner.frame_dirty.invalidations += 1;
         }
     }
@@ -3069,6 +3075,8 @@ impl Window {
                 invalidations: frame_dirty.invalidations,
                 draw_start,
                 draw_end,
+                invalidating_task_location: frame_dirty.invalidating_task_location,
+                invalidating_action_name: frame_dirty.invalidating_action_name,
             };
             #[cfg(feature = "frame-duration-histogram")]
             self.frame_duration_tracker
@@ -7554,7 +7562,7 @@ mod tests {
     mod frame_duration_tracker {
         use crate::{WindowId, profiler::FrameTiming, window::FrameDurationTracker};
         use scheduler::Instant;
-        use std::time::Duration;
+        use std::{panic::Location, time::Duration};
 
         const FRAME: Duration = Duration::from_millis(16);
 
@@ -7657,12 +7665,15 @@ mod tests {
         fn records_profiler_frame_details() {
             let mut tracker = FrameDurationTracker::new().unwrap();
             let draw_start = Instant::now();
+            let task_location = Location::caller();
             let timing = FrameTiming {
                 window_id: WindowId::from(0),
                 dirty_at: Some(draw_start - Duration::from_millis(3)),
                 invalidations: 4,
                 draw_start,
-                draw_end: draw_start + Duration::from_millis(2),
+                draw_end: draw_start + Duration::from_millis(20),
+                invalidating_task_location: Some(task_location),
+                invalidating_action_name: Some("test::SlowAction"),
             };
 
             tracker.record_frame_timing(&timing);
@@ -7670,6 +7681,38 @@ mod tests {
             assert_eq!(tracker.snapshot.draw_duration_histogram.len(), 1);
             assert_eq!(tracker.snapshot.dirty_to_draw_duration_histogram.len(), 1);
             assert_eq!(tracker.snapshot.invalidations_per_frame_histogram.max(), 4);
+            assert_eq!(
+                tracker
+                    .snapshot
+                    .slow_draws_by_task_location
+                    .get(task_location),
+                Some(&1)
+            );
+            assert_eq!(
+                tracker
+                    .snapshot
+                    .slow_draws_by_action_name
+                    .get("test::SlowAction"),
+                Some(&1)
+            );
+        }
+
+        #[test]
+        fn ignores_attribution_for_fast_draws() {
+            let mut tracker = FrameDurationTracker::new().unwrap();
+            let draw_start = Instant::now();
+            tracker.record_frame_timing(&FrameTiming {
+                window_id: WindowId::from(0),
+                dirty_at: Some(draw_start),
+                invalidations: 1,
+                draw_start,
+                draw_end: draw_start + Duration::from_millis(15),
+                invalidating_task_location: Some(Location::caller()),
+                invalidating_action_name: Some("test::FastAction"),
+            });
+
+            assert!(tracker.snapshot.slow_draws_by_task_location.is_empty());
+            assert!(tracker.snapshot.slow_draws_by_action_name.is_empty());
         }
 
         fn record_draw(tracker: &mut FrameDurationTracker, duration: Duration) {
@@ -7680,6 +7723,8 @@ mod tests {
                 invalidations: 0,
                 draw_start,
                 draw_end: draw_start + duration,
+                invalidating_task_location: None,
+                invalidating_action_name: None,
             });
         }
     }

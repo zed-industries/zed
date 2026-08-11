@@ -1,7 +1,10 @@
 use collections::{HashMap, HashSet};
 use gpui::{App, FrameDurationSnapshot, Global, InputLatencySnapshot, Window, WindowId, actions};
 use hdrhistogram::Histogram;
-use std::time::Instant;
+use std::{
+    hash::{BuildHasher, Hash},
+    time::Instant,
+};
 
 actions!(
     dev,
@@ -177,6 +180,12 @@ struct FrameDurationTelemetryState {
 
 impl Global for FrameDurationTelemetryState {}
 
+#[derive(Debug, Eq, PartialEq, serde::Serialize)]
+struct SlowFrameAttribution {
+    label: String,
+    slow_draw_count: u64,
+}
+
 /// Nanosecond boundaries for the present-interval buckets used in telemetry:
 /// roughly the 120Hz, 60Hz, and 30Hz frame budgets, with headroom for jitter.
 const MS9_NS: u64 = 9_000_000;
@@ -208,8 +217,27 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         .retain(|window_id, _| open_window_ids.contains(window_id));
     let now = Instant::now();
 
+    let previous = state.previous.get(&window_id);
+    let slow_draw_task_locations = top_count_deltas(
+        &current.slow_draws_by_task_location,
+        previous.map(|(_, snapshot)| &snapshot.slow_draws_by_task_location),
+        |location| {
+            format!(
+                "{}:{}:{}",
+                location.file(),
+                location.line(),
+                location.column()
+            )
+        },
+    );
+    let slow_draw_action_names = top_count_deltas(
+        &current.slow_draws_by_action_name,
+        previous.map(|(_, snapshot)| &snapshot.slow_draws_by_action_name),
+        |action_name| (*action_name).to_string(),
+    );
+
     let (delta_draws, delta_intervals, report_window_seconds) =
-        if let Some((prev_instant, prev_snapshot)) = state.previous.get(&window_id) {
+        if let Some((prev_instant, prev_snapshot)) = previous {
             let mut delta_draws = current.draw_duration_histogram.clone();
             delta_draws
                 .subtract(&prev_snapshot.draw_duration_histogram)
@@ -264,8 +292,45 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         intervals_18to36 = intervals_18to36,
         intervals_36to100 = intervals_36to100,
         total_intervals = total_intervals,
+        slow_draw_task_locations = slow_draw_task_locations,
+        slow_draw_action_names = slow_draw_action_names,
         report_window_seconds = report_window_seconds,
     );
+}
+
+fn top_count_deltas<K, S>(
+    current: &std::collections::HashMap<K, u64, S>,
+    previous: Option<&std::collections::HashMap<K, u64, S>>,
+    format_label: impl Fn(&K) -> String,
+) -> Vec<SlowFrameAttribution>
+where
+    K: Eq + Hash,
+    S: BuildHasher,
+{
+    const MAX_ATTRIBUTIONS: usize = 5;
+
+    let mut attributions = current
+        .iter()
+        .filter_map(|(key, current_count)| {
+            let previous_count = previous
+                .and_then(|previous| previous.get(key))
+                .copied()
+                .unwrap_or_default();
+            let slow_draw_count = current_count.saturating_sub(previous_count);
+            (slow_draw_count > 0).then(|| SlowFrameAttribution {
+                label: format_label(key),
+                slow_draw_count,
+            })
+        })
+        .collect::<Vec<_>>();
+    attributions.sort_unstable_by(|left, right| {
+        right
+            .slow_draw_count
+            .cmp(&left.slow_draw_count)
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    attributions.truncate(MAX_ATTRIBUTIONS);
+    attributions
 }
 
 fn open_window_ids(cx: &App) -> HashSet<WindowId> {
@@ -467,5 +532,37 @@ fn write_latency_distribution(report: &mut String, heading: &str, histogram: &Hi
             "  {range:>8}  {note:<11}: {count:>6} ({:>5.1}%) {bar}\n",
             fraction * 100.0,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn top_count_deltas_returns_ranked_new_counts() {
+        let previous = HashMap::from_iter([("unchanged", 2), ("increased", 1)]);
+        let current =
+            HashMap::from_iter([("unchanged", 2), ("increased", 4), ("new", 5), ("small", 1)]);
+
+        let attributions = top_count_deltas(&current, Some(&previous), |name| name.to_string());
+
+        assert_eq!(
+            attributions,
+            vec![
+                SlowFrameAttribution {
+                    label: "new".to_string(),
+                    slow_draw_count: 5,
+                },
+                SlowFrameAttribution {
+                    label: "increased".to_string(),
+                    slow_draw_count: 3,
+                },
+                SlowFrameAttribution {
+                    label: "small".to_string(),
+                    slow_draw_count: 1,
+                },
+            ]
+        );
     }
 }
