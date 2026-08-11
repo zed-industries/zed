@@ -2780,7 +2780,7 @@ impl Session {
                     Ok(response) => {
                         let event = dap::OutputEvent {
                             category: None,
-                            output: format!("< {}", &response.result),
+                            output: format!("< {}", response.result),
                             group: None,
                             variables_reference: Some(response.variables_reference),
                             source: None,
