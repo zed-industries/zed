@@ -417,6 +417,7 @@ fn test_text_summary_for_range() {
             last_line_len_utf16: 2,
             longest_row: 0,
             longest_row_chars: 2,
+            tabs: 0,
         }
     );
     assert_eq!(
@@ -431,6 +432,7 @@ fn test_text_summary_for_range() {
             last_line_len_utf16: 0,
             longest_row: 0,
             longest_row_chars: 1,
+            tabs: 0,
         }
     );
     assert_eq!(
@@ -445,6 +447,7 @@ fn test_text_summary_for_range() {
             last_line_len_utf16: 0,
             longest_row: 2,
             longest_row_chars: 4,
+            tabs: 0,
         }
     );
     assert_eq!(
@@ -459,6 +462,7 @@ fn test_text_summary_for_range() {
             last_line_len_utf16: 1,
             longest_row: 3,
             longest_row_chars: 6,
+            tabs: 0,
         }
     );
     assert_eq!(
@@ -473,6 +477,7 @@ fn test_text_summary_for_range() {
             last_line_len_utf16: 3,
             longest_row: 3,
             longest_row_chars: 6,
+            tabs: 0,
         }
     );
     assert_eq!(
@@ -487,6 +492,7 @@ fn test_text_summary_for_range() {
             last_line_len_utf16: 3,
             longest_row: 1,
             longest_row_chars: 6,
+            tabs: 0,
         }
     );
 }

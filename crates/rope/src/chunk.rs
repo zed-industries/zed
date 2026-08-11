@@ -327,6 +327,7 @@ impl<'a> ChunkSlice<'a> {
             last_line_len_utf16: self.last_line_len_utf16(),
             longest_row,
             longest_row_chars,
+            tabs: self.tabs.count_ones() as usize,
         }
     }
 

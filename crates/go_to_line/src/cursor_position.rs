@@ -113,14 +113,14 @@ impl CursorPosition {
                                 let snapshot = editor.display_snapshot(cx);
                                 if snapshot.buffer_snapshot().excerpts().count() > 0 {
                                     for selection in editor.selections.all_adjusted(&snapshot) {
-                                        let selection_summary = snapshot
-                                            .buffer_snapshot()
-                                            .text_summary_for_range::<MBTextSummary, _>(
-                                            selection.start..selection.end,
-                                        );
-                                        cursor_position.selected_count.characters +=
-                                            selection_summary.chars;
                                         if selection.end != selection.start {
+                                            let selection_summary = snapshot
+                                                .buffer_snapshot()
+                                                .text_summary_for_range::<MBTextSummary, _>(
+                                                selection.start..selection.end,
+                                            );
+                                            cursor_position.selected_count.characters +=
+                                                selection_summary.chars;
                                             cursor_position.selected_count.lines +=
                                                 (selection.end.row - selection.start.row) as usize;
                                             if selection.end.column != 0 {
