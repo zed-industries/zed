@@ -4123,7 +4123,8 @@ impl Thread {
             // Models that can't run with thinking disabled ignore the
             // toggle state, which may be stale from a previously selected
             // model that could.
-            thinking_allowed: self.thinking_enabled || !model.supports_disabling_thinking(),
+            thinking_allowed: self.thinking_enabled
+                || !model.supports_disabling_thinking_at_effort(self.thinking_effort.as_deref()),
             thinking_effort: self.thinking_effort.clone(),
             speed: self.speed(),
             compact_at_tokens: None,
