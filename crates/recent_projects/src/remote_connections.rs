@@ -498,14 +498,10 @@ async fn path_exists(connection: &Arc<dyn RemoteConnection>, path: &Path) -> boo
     ) else {
         return false;
     };
-    let Ok(mut child) = util::command::new_command(command.program)
-        .args(command.args)
-        .envs(command.env)
-        .spawn()
-    else {
-        return false;
-    };
-    child.status().await.is_ok_and(|status| status.success())
+    command
+        .output()
+        .await
+        .is_ok_and(|output| output.status.success())
 }
 
 #[cfg(test)]

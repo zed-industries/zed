@@ -123,6 +123,24 @@ pub struct CommandTemplate {
     pub env: HashMap<String, String>,
 }
 
+impl CommandTemplate {
+    /// Runs the command on the local machine and waits for it to exit,
+    /// capturing its output.
+    ///
+    /// The command is local only in the sense that the process is spawned
+    /// here; a template built by [`RemoteConnection::build_command`] wraps
+    /// whatever transport reaches the remote, so the program itself runs
+    /// there.
+    pub async fn output(&self) -> Result<std::process::Output> {
+        util::command::new_command(&self.program)
+            .args(&self.args)
+            .envs(&self.env)
+            .output()
+            .await
+            .with_context(|| format!("running command `{}`", self.program))
+    }
+}
+
 /// Whether a command should be run with TTY allocation for interactive use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Interactive {
@@ -1371,6 +1389,32 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use rpc::{ErrorCodeExt, proto::ErrorCode};
+
+    /// Callers branch on the exit status and read stdout, so both have to
+    /// survive the round trip through `CommandTemplate::output`.
+    ///
+    /// Deliberately not a `gpui::test`: spawning a real process parks the
+    /// thread, which the test scheduler forbids.
+    #[cfg(unix)]
+    #[test]
+    fn test_command_template_captures_output_and_status() {
+        let template = CommandTemplate {
+            program: "sh".into(),
+            args: vec!["-c".into(), "printf captured; exit 3".into()],
+            env: HashMap::default(),
+        };
+        let output = smol::block_on(template.output()).unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "captured");
+        assert_eq!(output.status.code(), Some(3));
+
+        let with_env = CommandTemplate {
+            program: "sh".into(),
+            args: vec!["-c".into(), "printf %s \"$ZED_TEST_VAR\"".into()],
+            env: HashMap::from_iter([("ZED_TEST_VAR".to_string(), "set".to_string())]),
+        };
+        let output = smol::block_on(with_env.output()).unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "set");
+    }
 
     #[test]
     fn test_ssh_display_name_prefers_nickname() {
