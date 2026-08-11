@@ -95,8 +95,22 @@ fn get_safe_id(input: &str) -> String {
     result
 }
 
+/// The machine whose container engine builds and runs a dev container, and on
+/// whose filesystem the project being opened lives.
+///
+/// These are deliberately the same choice: the engine has to be able to bind
+/// mount the project directory, so a container cannot be built by one machine
+/// for a project that lives on another.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum DevContainerHost {
+    /// The machine running Zed.
+    #[default]
+    Local,
+}
+
 pub struct DevContainerContext {
     pub project_directory: Arc<Path>,
+    pub host: DevContainerHost,
     pub use_podman: bool,
     pub use_buildkit: Option<bool>,
     pub fs: Arc<dyn Fs>,
@@ -115,6 +129,7 @@ impl DevContainerContext {
         let environment = workspace.project().read(cx).environment().downgrade();
         Some(Self {
             project_directory,
+            host: DevContainerHost::Local,
             use_podman,
             use_buildkit,
             fs,

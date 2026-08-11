@@ -13,7 +13,7 @@ use http_client::HttpClient;
 use util::{ResultExt, command::Command, normalize_path};
 
 use crate::{
-    DevContainerConfig, DevContainerContext,
+    DevContainerConfig, DevContainerContext, DevContainerHost,
     command_json::{CommandRunner, DefaultCommandRunner},
     devcontainer_api::{DevContainerError, DevContainerUp},
     devcontainer_json::{
@@ -2702,23 +2702,37 @@ async fn load_devcontainer_contents(
     })
 }
 
+/// Builds the container-engine client for a context's [`DevContainerHost`].
+///
+/// The host determines not just which engine binary to invoke but where it is
+/// invoked, so every client the manifest uses is obtained here rather than
+/// constructed at the point of use.
+async fn container_client_for(context: &DevContainerContext) -> Arc<dyn DockerClient> {
+    match context.host {
+        DevContainerHost::Local => {
+            let engine = if context.use_podman {
+                "podman"
+            } else {
+                "docker"
+            };
+            Arc::new(Docker::new(engine, context.use_buildkit).await)
+        }
+    }
+}
+
 pub(crate) async fn read_devcontainer_configuration(
     config: DevContainerConfig,
     context: &DevContainerContext,
     environment: HashMap<String, String>,
 ) -> Result<DevContainer, DevContainerError> {
-    let docker = if context.use_podman {
-        Docker::new("podman", context.use_buildkit).await
-    } else {
-        Docker::new("docker", context.use_buildkit).await
-    };
+    let docker_client = container_client_for(context).await;
     let project_path = context.project_directory.as_ref();
     let config_path = config_path_for(project_path, &config);
     let devcontainer_contents = load_devcontainer_contents(context, &config_path).await?;
     let mut dev_container = DevContainerManifest::new(
         context,
         environment,
-        Arc::new(docker),
+        docker_client,
         Arc::new(DefaultCommandRunner::new()),
         config,
         project_path,
@@ -2734,17 +2748,13 @@ pub(crate) async fn spawn_dev_container(
     config: DevContainerConfig,
     local_project_path: &Path,
 ) -> Result<DevContainerUp, DevContainerError> {
-    let docker = if context.use_podman {
-        Docker::new("podman", context.use_buildkit).await
-    } else {
-        Docker::new("docker", context.use_buildkit).await
-    };
+    let docker_client = container_client_for(context).await;
     let config_path = config_path_for(local_project_path, &config);
     let devcontainer_contents = load_devcontainer_contents(context, &config_path).await?;
     let mut devcontainer_manifest = DevContainerManifest::new(
         context,
         environment,
-        Arc::new(docker),
+        docker_client,
         Arc::new(DefaultCommandRunner::new()),
         config,
         local_project_path,
@@ -3511,7 +3521,7 @@ mod test {
     use util::{command::Command, paths::SanitizedPath};
 
     use crate::{
-        DevContainerConfig, DevContainerContext,
+        DevContainerConfig, DevContainerContext, DevContainerHost,
         command_json::CommandRunner,
         devcontainer_api::{DevContainerError, DevContainerUp},
         devcontainer_json::MountDefinition,
@@ -3633,6 +3643,7 @@ mod test {
 
         let context = DevContainerContext {
             project_directory: SanitizedPath::cast_arc(project_path),
+            host: DevContainerHost::Local,
             use_podman: false,
             use_buildkit: None,
             fs: fs.clone(),
