@@ -112,6 +112,160 @@ pub enum DevContainerHost {
     Remote(Arc<dyn RemoteConnection>),
 }
 
+impl DevContainerHost {
+    /// Builds the process Zed spawns in order to run `program args` on this
+    /// host, with `working_dir` interpreted as a path on the host.
+    ///
+    /// For a remote host the returned command is the transport's, wrapping the
+    /// requested one; the transport owns quoting, so callers must pass
+    /// arguments unquoted and must not join them into a shell string.
+    pub(crate) fn command(
+        &self,
+        program: &str,
+        args: &[String],
+        env: &HashMap<String, String>,
+        working_dir: Option<&Path>,
+    ) -> Result<util::command::Command, DevContainerError> {
+        match self {
+            DevContainerHost::Local => {
+                let mut command = util::command::Command::new(program);
+                command.args(args);
+                command.envs(env);
+                if let Some(working_dir) = working_dir {
+                    command.current_dir(working_dir);
+                }
+                Ok(command)
+            }
+            DevContainerHost::Remote(connection) => {
+                let template = connection
+                    .build_command(
+                        Some(program.to_string()),
+                        args,
+                        &env.iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect(),
+                        working_dir.map(|dir| dir.display().to_string()),
+                        None,
+                        remote::Interactive::No,
+                    )
+                    .map_err(|e| {
+                        log::error!("Failed to build a remote `{program}` invocation: {e}");
+                        DevContainerError::CommandFailed(program.to_string())
+                    })?;
+                let mut command = util::command::Command::new(&template.program);
+                command.args(&template.args);
+                command.envs(&template.env);
+                Ok(command)
+            }
+        }
+    }
+}
+
+/// Stands in for a connected host. Only command construction matters here,
+/// and it mimics the POSIX SSH transport: a `cd` into the working directory
+/// followed by single-quoted arguments, so a test can see whether quoting and
+/// the working directory were applied by the transport rather than by the
+/// caller.
+#[cfg(test)]
+pub(crate) struct FakeRemoteConnection;
+
+#[cfg(test)]
+#[async_trait::async_trait(?Send)]
+impl RemoteConnection for FakeRemoteConnection {
+    fn start_proxy(
+        &self,
+        _unique_identifier: String,
+        _reconnect: bool,
+        _incoming_tx: futures::channel::mpsc::UnboundedSender<rpc::proto::Envelope>,
+        _outgoing_rx: futures::channel::mpsc::UnboundedReceiver<rpc::proto::Envelope>,
+        _connection_activity_tx: futures::channel::mpsc::Sender<()>,
+        _delegate: Arc<dyn remote::RemoteClientDelegate>,
+        _cx: &mut gpui::AsyncApp,
+    ) -> gpui::Task<anyhow::Result<i32>> {
+        gpui::Task::ready(Err(anyhow::anyhow!("not supported in tests")))
+    }
+
+    fn upload_directory(
+        &self,
+        _src_path: std::path::PathBuf,
+        _dest_path: util::paths::RemotePathBuf,
+        _cx: &gpui::App,
+    ) -> gpui::Task<anyhow::Result<()>> {
+        gpui::Task::ready(Err(anyhow::anyhow!("not supported in tests")))
+    }
+
+    async fn kill(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn has_been_killed(&self) -> bool {
+        false
+    }
+
+    fn build_command(
+        &self,
+        program: Option<String>,
+        args: &[String],
+        env: &collections::HashMap<String, String>,
+        working_dir: Option<String>,
+        _port_forward: Option<(u16, String, u16)>,
+        _interactive: remote::Interactive,
+    ) -> anyhow::Result<remote::CommandTemplate> {
+        let mut wrapped = vec!["host".to_string(), "--".to_string()];
+        if let Some(working_dir) = working_dir {
+            wrapped.push(format!("cd {working_dir} &&"));
+        }
+        wrapped.extend(env.iter().map(|(key, value)| format!("{key}={value}")));
+        if let Some(program) = program {
+            wrapped.push(format!("'{program}'"));
+        }
+        wrapped.extend(args.iter().map(|arg| format!("'{arg}'")));
+        Ok(remote::CommandTemplate {
+            program: "ssh".to_string(),
+            args: wrapped,
+            env: Default::default(),
+        })
+    }
+
+    fn build_forward_ports_command(
+        &self,
+        _forwards: Vec<(u16, String, u16)>,
+    ) -> anyhow::Result<remote::CommandTemplate> {
+        Err(anyhow::anyhow!("not supported in tests"))
+    }
+
+    fn connection_options(&self) -> remote::RemoteConnectionOptions {
+        remote::RemoteConnectionOptions::Ssh(remote::SshConnectionOptions::default())
+    }
+
+    fn path_style(&self) -> util::paths::PathStyle {
+        util::paths::PathStyle::Unix
+    }
+
+    fn remote_platform(&self) -> remote::RemotePlatform {
+        remote::RemotePlatform {
+            os: remote::RemoteOs::Linux,
+            arch: remote::RemoteArch::X86_64,
+        }
+    }
+
+    fn remote_os_version(&self) -> Option<String> {
+        None
+    }
+
+    fn shell(&self) -> String {
+        "sh".to_string()
+    }
+
+    fn default_system_shell(&self) -> String {
+        "sh".to_string()
+    }
+
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
+}
+
 pub struct DevContainerContext {
     pub project_directory: Arc<Path>,
     pub host: DevContainerHost,

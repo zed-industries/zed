@@ -23,7 +23,7 @@ use crate::{
     },
     docker::{
         Docker, DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
-        DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs, EngineHost,
+        DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
     },
     features::{DevContainerFeatureJson, FeatureManifest, parse_oci_feature_ref},
     get_oci_token,
@@ -48,6 +48,7 @@ pub(crate) struct DockerComposeResources {
 }
 
 struct DevContainerManifest {
+    host: DevContainerHost,
     http_client: Arc<dyn HttpClient>,
     fs: Arc<dyn Fs>,
     docker_client: Arc<dyn DockerClient>,
@@ -91,6 +92,7 @@ impl DevContainerManifest {
             })?;
 
         Ok(Self {
+            host: context.host.clone(),
             fs: context.fs.clone(),
             http_client: context.http_client.clone(),
             docker_client,
@@ -2435,7 +2437,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         if let Some(initialize_command) = &config.initialize_command {
             log::debug!("Running initialize command");
             initialize_command
-                .run(&self.command_runner, &self.local_project_directory)
+                .run(
+                    &self.host,
+                    &self.command_runner,
+                    &self.local_project_directory,
+                )
                 .await
         } else {
             log::warn!("No initialize command found");
@@ -2718,11 +2724,7 @@ async fn container_client_for(context: &DevContainerContext) -> Arc<dyn DockerCl
     } else {
         "docker"
     };
-    let host = match &context.host {
-        DevContainerHost::Local => EngineHost::Local,
-        DevContainerHost::Remote(connection) => EngineHost::Remote(connection.clone()),
-    };
-    Arc::new(Docker::new(host, engine, context.use_buildkit).await)
+    Arc::new(Docker::new(context.host.clone(), engine, context.use_buildkit).await)
 }
 
 pub(crate) async fn read_devcontainer_configuration(
@@ -3626,8 +3628,59 @@ mod test {
             command_runner,
             environment,
             devcontainer_contents,
+            DevContainerHost::Local,
         )
         .await
+    }
+
+    /// The spec runs `initializeCommand` on "the host machine", which for a
+    /// remote dev container is the remote — running it locally would apply the
+    /// side effects to the wrong filesystem.
+    #[gpui::test]
+    async fn initialize_command_runs_on_a_remote_host(cx: &mut TestAppContext) {
+        let (test_dependencies, mut devcontainer_manifest) = init_devcontainer_manifest(
+            cx,
+            FakeFs::new(cx.executor()),
+            fake_http_client(),
+            Arc::new(FakeDocker::new()),
+            Arc::new(TestCommandRunner::new()),
+            HashMap::new(),
+            r#"
+{
+    "image": "image",
+    "initializeCommand": "touch IAM.md",
+}
+            "#,
+            DevContainerHost::Remote(Arc::new(crate::FakeRemoteConnection)),
+        )
+        .await
+        .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        devcontainer_manifest
+            .run_initialize_commands()
+            .await
+            .unwrap();
+
+        let recorded = test_dependencies.command_runner.commands_by_program("ssh");
+        assert_eq!(
+            recorded.len(),
+            1,
+            "initializeCommand should be spawned once, through the host transport: {:?}",
+            test_dependencies.command_runner.commands_by_program("sh"),
+        );
+        assert_eq!(
+            recorded[0].args,
+            vec![
+                "host".to_string(),
+                "--".to_string(),
+                format!("cd {} &&", PathBuf::from(TEST_PROJECT_PATH).display()),
+                "'/bin/sh'".to_string(),
+                "'-c'".to_string(),
+                "'touch IAM.md'".to_string(),
+            ],
+            "the transport must receive the script unquoted and unjoined"
+        );
     }
 
     async fn init_devcontainer_manifest(
@@ -3638,6 +3691,7 @@ mod test {
         command_runner: Arc<TestCommandRunner>,
         environment: HashMap<String, String>,
         devcontainer_contents: &str,
+        host: DevContainerHost,
     ) -> Result<(TestDependencies, DevContainerManifest), DevContainerError> {
         let local_config = init_devcontainer_config(&fs, devcontainer_contents).await;
         let project_path = SanitizedPath::new_arc(&PathBuf::from(TEST_PROJECT_PATH));
@@ -3648,7 +3702,7 @@ mod test {
 
         let context = DevContainerContext {
             project_directory: SanitizedPath::cast_arc(project_path),
-            host: DevContainerHost::Local,
+            host,
             use_podman: false,
             use_buildkit: None,
             fs: fs.clone(),
@@ -4311,6 +4365,7 @@ mod test {
                 ("my_other_env".to_string(), "THISVALUEHERE".to_string()),
             ]),
             given_devcontainer_contents,
+            DevContainerHost::Local,
         )
         .await
         .unwrap();
@@ -6070,6 +6125,7 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             Arc::new(TestCommandRunner::new()),
             HashMap::new(),
             given_devcontainer_contents,
+            DevContainerHost::Local,
         )
         .await
         .unwrap();

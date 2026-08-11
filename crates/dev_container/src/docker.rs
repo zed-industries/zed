@@ -1,11 +1,11 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf};
 
 use async_trait::async_trait;
-use remote::{Interactive, RemoteConnection};
 use serde::{Deserialize, Deserializer, Serialize, de};
 use util::command::Command;
 
 use crate::{
+    DevContainerHost,
     command_json::{deserialize_json_output, deserialize_yaml_output},
     devcontainer_api::DevContainerError,
     devcontainer_json::MountDefinition,
@@ -191,61 +191,8 @@ pub(crate) struct DockerComposeConfig {
     pub(crate) volumes: HashMap<String, DockerComposeVolume>,
 }
 
-/// The machine whose container engine runs a command.
-///
-/// Only the process Zed spawns locally differs between the variants: for a
-/// remote host the transport wraps the engine invocation, so argument
-/// construction — and the quoting the transport applies to it — stays in one
-/// place regardless of where the engine lives.
-#[derive(Clone)]
-pub(crate) enum EngineHost {
-    /// The machine running Zed.
-    Local,
-    /// A machine reached over an already-established remote connection.
-    Remote(Arc<dyn RemoteConnection>),
-}
-
-impl EngineHost {
-    fn command(
-        &self,
-        program: &str,
-        args: &[String],
-        env: &HashMap<String, String>,
-    ) -> Result<Command, DevContainerError> {
-        match self {
-            EngineHost::Local => {
-                let mut command = Command::new(program);
-                command.args(args);
-                command.envs(env);
-                Ok(command)
-            }
-            EngineHost::Remote(connection) => {
-                let template = connection
-                    .build_command(
-                        Some(program.to_string()),
-                        args,
-                        &env.iter()
-                            .map(|(key, value)| (key.clone(), value.clone()))
-                            .collect(),
-                        None,
-                        None,
-                        Interactive::No,
-                    )
-                    .map_err(|e| {
-                        log::error!("Failed to build a remote `{program}` invocation: {e}");
-                        DevContainerError::CommandFailed(program.to_string())
-                    })?;
-                let mut command = Command::new(&template.program);
-                command.args(&template.args);
-                command.envs(&template.env);
-                Ok(command)
-            }
-        }
-    }
-}
-
 pub(crate) struct Docker {
-    host: EngineHost,
+    host: DevContainerHost,
     docker_cli: String,
     has_buildx: bool,
 }
@@ -258,7 +205,7 @@ impl DockerInspect {
 
 impl Docker {
     pub(crate) async fn new(
-        host: EngineHost,
+        host: DevContainerHost,
         docker_cli: &str,
         use_buildkit: Option<bool>,
     ) -> Self {
@@ -274,7 +221,7 @@ impl Docker {
             // multi-stage `FROM`.
             use_buildkit
         } else {
-            let probe = EngineHost::command(&host, docker_cli, &buildx_version_args(), &no_env());
+            let probe = host.command(docker_cli, &buildx_version_args(), &no_env(), None);
             match probe {
                 Ok(mut command) => command
                     .output()
@@ -304,7 +251,7 @@ impl Docker {
         args: Vec<String>,
         env: HashMap<String, String>,
     ) -> Result<std::process::Output, DevContainerError> {
-        let mut command = self.host.command(&self.docker_cli, &args, &env)?;
+        let mut command = self.host.command(&self.docker_cli, &args, &env, None)?;
         log::debug!("Running `{} {}`", self.docker_cli, args.join(" "));
         command.output().await.map_err(|e| {
             log::error!(
@@ -570,7 +517,7 @@ impl DockerClient for Docker {
     }
 
     fn deploy(&self, command: Command) -> Result<Command, DevContainerError> {
-        if matches!(self.host, EngineHost::Local) {
+        if matches!(self.host, DevContainerHost::Local) {
             return Ok(command);
         }
         let args: Vec<String> = command
@@ -583,7 +530,7 @@ impl DockerClient for Docker {
                 Some((key.display().to_string(), value?.display().to_string()))
             })
             .collect();
-        self.host.command(&self.docker_cli, &args, &env)
+        self.host.command(&self.docker_cli, &args, &env, None)
     }
 
     fn is_podman(&self) -> bool {
@@ -914,134 +861,36 @@ mod test {
         sync::Arc,
     };
 
-    use async_trait::async_trait;
-    use remote::RemoteConnection;
-
     use crate::{
+        DevContainerHost, FakeRemoteConnection,
         command_json::deserialize_json_output,
         devcontainer_api::DevContainerError,
         devcontainer_json::MountDefinition,
         docker::{
             Docker, DockerClient, DockerComposeConfig, DockerComposeService,
-            DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs, EngineHost,
+            DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
             compose_build_args, compose_build_env, compose_config_args, exec_args, inspect_args,
             parse_find_process_output, query_containers_args, start_container_args,
         },
     };
     use util::command::Command;
 
-    /// Stands in for a connected host. Only command construction matters here,
-    /// and it mimics the POSIX SSH transport: single-quoted arguments after an
-    /// `env`-style assignment list, so a test can see whether quoting was
-    /// applied by the transport rather than by the caller.
-    struct FakeRemoteConnection;
-
-    #[async_trait(?Send)]
-    impl RemoteConnection for FakeRemoteConnection {
-        fn start_proxy(
-            &self,
-            _unique_identifier: String,
-            _reconnect: bool,
-            _incoming_tx: futures::channel::mpsc::UnboundedSender<rpc::proto::Envelope>,
-            _outgoing_rx: futures::channel::mpsc::UnboundedReceiver<rpc::proto::Envelope>,
-            _connection_activity_tx: futures::channel::mpsc::Sender<()>,
-            _delegate: Arc<dyn remote::RemoteClientDelegate>,
-            _cx: &mut gpui::AsyncApp,
-        ) -> gpui::Task<anyhow::Result<i32>> {
-            gpui::Task::ready(Err(anyhow::anyhow!("not supported in tests")))
-        }
-
-        fn upload_directory(
-            &self,
-            _src_path: std::path::PathBuf,
-            _dest_path: util::paths::RemotePathBuf,
-            _cx: &gpui::App,
-        ) -> gpui::Task<anyhow::Result<()>> {
-            gpui::Task::ready(Err(anyhow::anyhow!("not supported in tests")))
-        }
-
-        async fn kill(&self) -> anyhow::Result<()> {
-            Ok(())
-        }
-
-        fn has_been_killed(&self) -> bool {
-            false
-        }
-
-        fn build_command(
-            &self,
-            program: Option<String>,
-            args: &[String],
-            env: &collections::HashMap<String, String>,
-            _working_dir: Option<String>,
-            _port_forward: Option<(u16, String, u16)>,
-            _interactive: remote::Interactive,
-        ) -> anyhow::Result<remote::CommandTemplate> {
-            let mut wrapped = vec!["host".to_string(), "--".to_string()];
-            wrapped.extend(env.iter().map(|(key, value)| format!("{key}={value}")));
-            if let Some(program) = program {
-                wrapped.push(format!("'{program}'"));
-            }
-            wrapped.extend(args.iter().map(|arg| format!("'{arg}'")));
-            Ok(remote::CommandTemplate {
-                program: "ssh".to_string(),
-                args: wrapped,
-                env: Default::default(),
-            })
-        }
-
-        fn build_forward_ports_command(
-            &self,
-            _forwards: Vec<(u16, String, u16)>,
-        ) -> anyhow::Result<remote::CommandTemplate> {
-            Err(anyhow::anyhow!("not supported in tests"))
-        }
-
-        fn connection_options(&self) -> remote::RemoteConnectionOptions {
-            remote::RemoteConnectionOptions::Ssh(remote::SshConnectionOptions::default())
-        }
-
-        fn path_style(&self) -> util::paths::PathStyle {
-            util::paths::PathStyle::Unix
-        }
-
-        fn remote_platform(&self) -> remote::RemotePlatform {
-            remote::RemotePlatform {
-                os: remote::RemoteOs::Linux,
-                arch: remote::RemoteArch::X86_64,
-            }
-        }
-
-        fn remote_os_version(&self) -> Option<String> {
-            None
-        }
-
-        fn shell(&self) -> String {
-            "sh".to_string()
-        }
-
-        fn default_system_shell(&self) -> String {
-            "sh".to_string()
-        }
-
-        fn has_wsl_interop(&self) -> bool {
-            false
-        }
-    }
-
     #[test]
     fn use_buildkit_setting_overrides_buildx_detection() {
         // `Some(_)` short-circuits the `buildx version` probe, so these run
         // without invoking docker.
-        let forced_off =
-            futures::executor::block_on(Docker::new(EngineHost::Local, "docker", Some(false)));
+        let forced_off = futures::executor::block_on(Docker::new(
+            DevContainerHost::Local,
+            "docker",
+            Some(false),
+        ));
         assert!(
             !forced_off.supports_compose_buildkit(),
             "use_buildkit=false must force the classic builder"
         );
 
         let forced_on =
-            futures::executor::block_on(Docker::new(EngineHost::Local, "docker", Some(true)));
+            futures::executor::block_on(Docker::new(DevContainerHost::Local, "docker", Some(true)));
         assert!(
             forced_on.supports_compose_buildkit(),
             "use_buildkit=true must enable BuildKit"
@@ -1049,7 +898,7 @@ mod test {
 
         // podman never supports the BuildKit/buildx path, regardless of the setting.
         let podman =
-            futures::executor::block_on(Docker::new(EngineHost::Local, "podman", Some(true)));
+            futures::executor::block_on(Docker::new(DevContainerHost::Local, "podman", Some(true)));
         assert!(!podman.supports_compose_buildkit());
     }
 
@@ -1222,12 +1071,13 @@ mod test {
     #[test]
     fn should_route_commands_through_the_host_connection() {
         let connection = Arc::new(FakeRemoteConnection);
-        let host = EngineHost::Remote(connection);
+        let host = DevContainerHost::Remote(connection);
         let command = host
             .command(
                 "docker",
                 &inspect_args("id with spaces"),
                 &HashMap::from([("DOCKER_BUILDKIT".to_string(), "0".to_string())]),
+                None,
             )
             .expect("building a remote invocation should succeed");
 
@@ -1255,7 +1105,7 @@ mod test {
     #[test]
     fn should_deploy_escape_hatch_commands_to_the_host() {
         let local = Docker {
-            host: EngineHost::Local,
+            host: DevContainerHost::Local,
             docker_cli: "docker".to_string(),
             has_buildx: false,
         };
@@ -1265,7 +1115,7 @@ mod test {
         assert_eq!(deployed.get_program().display().to_string(), "docker");
 
         let remote = Docker {
-            host: EngineHost::Remote(Arc::new(FakeRemoteConnection)),
+            host: DevContainerHost::Remote(Arc::new(FakeRemoteConnection)),
             docker_cli: "docker".to_string(),
             has_buildx: false,
         };
@@ -1296,7 +1146,7 @@ mod test {
     #[test]
     fn docker_exec_returns_error_on_nonzero_exit() {
         let docker = Docker {
-            host: EngineHost::Local,
+            host: DevContainerHost::Local,
             docker_cli: "false".to_string(),
             has_buildx: false,
         };
