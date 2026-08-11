@@ -5747,11 +5747,22 @@ impl Editor {
 
     fn enable_wrap_selections_in_tag(&self, cx: &App) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        for selection in self.selections.disjoint_anchors_arc().iter() {
-            if snapshot
-                .language_at(selection.start)
-                .and_then(|lang| lang.config().wrap_characters.as_ref())
-                .is_some()
+        let mut checked_buffer_ids = HashSet::default();
+        for selection in self.selections.disjoint_anchors().iter() {
+            let Some(buffer_id) = selection.start.buffer_id() else {
+                continue;
+            };
+            if !checked_buffer_ids.insert(buffer_id) {
+                continue;
+            }
+            let Some(buffer) = snapshot.buffer_for_id(buffer_id) else {
+                continue;
+            };
+            if buffer
+                .language()
+                .into_iter()
+                .chain(buffer.syntax_layers_languages())
+                .any(|language| language.config().wrap_characters.is_some())
             {
                 return true;
             }
@@ -8085,13 +8096,14 @@ impl Editor {
 
         let project = project.read(cx);
         let multi_buffer = self.buffer.read(cx);
-        let snapshot = multi_buffer.snapshot(cx);
 
+        let mut checked_buffer_ids = HashSet::default();
         self.selections
             .disjoint_anchor_ranges()
             .flat_map(|range| [range.start, range.end])
-            .filter_map(|anchor| snapshot.anchor_to_buffer_anchor(anchor))
-            .filter_map(|(_, buffer_snapshot)| multi_buffer.buffer(buffer_snapshot.remote_id()))
+            .filter_map(|anchor| anchor.buffer_id())
+            .filter(|buffer_id| checked_buffer_ids.insert(*buffer_id))
+            .filter_map(|buffer_id| multi_buffer.buffer(buffer_id))
             .any(|buffer| project.supports_range_formatting(&buffer, cx))
     }
 

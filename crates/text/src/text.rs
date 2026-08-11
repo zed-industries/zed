@@ -511,6 +511,52 @@ impl History {
     }
 }
 
+pub struct AnchorConverter<'a> {
+    snapshot: &'a BufferSnapshot,
+    cursor: sum_tree::Cursor<'a, 'static, Fragment, usize>,
+    boundary: rope::CharBoundaryConverter<'a>,
+    prev: Option<(usize, Bias)>,
+}
+
+impl AnchorConverter<'_> {
+    pub fn map(&mut self, offset: usize, bias: Bias) -> Anchor {
+        let snapshot = self.snapshot;
+        if bias == Bias::Left && offset == 0 {
+            return Anchor::min_for_buffer(snapshot.remote_id);
+        } else if bias == Bias::Right
+            && ((!cfg!(debug_assertions) && offset >= snapshot.len()) || offset == snapshot.len())
+        {
+            return Anchor::max_for_buffer(snapshot.remote_id);
+        }
+        let offset = self.boundary.round(offset, bias);
+        if self
+            .prev
+            .is_none_or(|(prev_offset, prev_bias)| (offset, bias) < (prev_offset, prev_bias))
+        {
+            self.cursor.seek(&offset, bias);
+        } else {
+            self.cursor.seek_forward(&offset, bias);
+        }
+        self.prev = Some((offset, bias));
+
+        let Some(fragment) = self.cursor.item() else {
+            debug_panic!(
+                "Failed to find fragment at offset {} (len: {})",
+                offset,
+                snapshot.len()
+            );
+            return Anchor::max_for_buffer(snapshot.remote_id);
+        };
+        let overshoot = offset - self.cursor.start();
+        Anchor::new(
+            fragment.timestamp,
+            fragment.insertion_offset + overshoot as u32,
+            bias,
+            snapshot.remote_id,
+        )
+    }
+}
+
 struct Edits<'a, D: TextDimension, F: FnMut(&FragmentSummary) -> bool> {
     visible_cursor: rope::Cursor<'a>,
     deleted_cursor: rope::Cursor<'a>,
@@ -2665,6 +2711,15 @@ impl BufferSnapshot {
                 bias,
                 self.remote_id,
             )
+        }
+    }
+
+    pub fn anchor_converter(&self) -> AnchorConverter<'_> {
+        AnchorConverter {
+            snapshot: self,
+            cursor: self.fragments.cursor::<usize>(&None),
+            boundary: self.visible_text.char_boundary_converter(),
+            prev: None,
         }
     }
 

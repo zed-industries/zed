@@ -1704,12 +1704,21 @@ impl Editor {
 
         let selections = &self.selections.disjoint_anchors_arc();
         if local && let Some(buffer_snapshot) = buffer.as_singleton() {
+            let mut points = buffer_snapshot.summaries_for_anchors::<Point, _>(
+                selections.iter().flat_map(|s| {
+                    let range = s.range();
+                    [
+                        range.start.text_anchor_in(buffer_snapshot),
+                        range.end.text_anchor_in(buffer_snapshot),
+                    ]
+                }),
+            );
             let inmemory_selections = selections
                 .iter()
-                .map(|s| {
-                    let start = s.range().start.text_anchor_in(buffer_snapshot);
-                    let end = s.range().end.text_anchor_in(buffer_snapshot);
-                    (start..end).to_point(buffer_snapshot)
+                .map(|_| {
+                    let start = points.next().unwrap();
+                    let end = points.next().unwrap();
+                    start..end
                 })
                 .collect();
             self.update_restoration_data(cx, |data| {
@@ -1727,14 +1736,14 @@ impl Editor {
                 let db = EditorDb::global(cx);
                 self.serialize_selections = cx.background_spawn(async move {
                     background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-                    let db_selections = selections
-                        .iter()
-                        .map(|selection| {
-                            (
-                                selection.start.to_offset(&snapshot).0,
-                                selection.end.to_offset(&snapshot).0,
-                            )
-                        })
+                    let offsets = snapshot.summaries_for_anchors::<MultiBufferOffset, _>(
+                        selections
+                            .iter()
+                            .flat_map(|selection| [&selection.start, &selection.end]),
+                    );
+                    let db_selections = offsets
+                        .chunks_exact(2)
+                        .map(|offsets| (offsets[0].0, offsets[1].0))
                         .collect();
 
                     db.save_editor_selections(editor_id, workspace_id, db_selections)

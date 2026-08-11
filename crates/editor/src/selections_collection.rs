@@ -832,29 +832,35 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             .collect::<Vec<_>>();
         selections.sort_unstable_by_key(|s| s.start);
 
-        let mut i = 1;
-        while i < selections.len() {
-            let prev = &selections[i - 1];
-            let current = &selections[i];
-
+        selections.dedup_by(|current, prev| {
             if should_merge(prev.start, prev.end, current.start, current.end, true) {
-                let removed = selections.remove(i);
-                if removed.start < selections[i - 1].start {
-                    selections[i - 1].start = removed.start;
+                if current.start < prev.start {
+                    prev.start = current.start;
                 }
-                if selections[i - 1].end < removed.end {
-                    selections[i - 1].end = removed.end;
+                if prev.end < current.end {
+                    prev.end = current.end;
                 }
+                true
             } else {
-                i += 1;
+                false
             }
-        }
+        });
 
-        self.collection.disjoint = Arc::from_iter(
-            selections
-                .into_iter()
-                .map(|selection| selection_to_anchor_selection(selection, self.snapshot)),
-        );
+        let mut converter = self.snapshot.buffer_snapshot().anchor_converter();
+        self.collection.disjoint = Arc::from_iter(selections.into_iter().map(|selection| {
+            let end_bias = if selection.start == selection.end {
+                Bias::Right
+            } else {
+                Bias::Left
+            };
+            Selection {
+                id: selection.id,
+                start: converter.map(selection.start, Bias::Right),
+                end: converter.map(selection.end, end_bias),
+                reversed: selection.reversed,
+                goal: selection.goal,
+            }
+        }));
         self.collection.pending = None;
         self.collection.select_mode = SelectMode::Character;
         self.selections_changed = true;
@@ -995,6 +1001,10 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     ) {
         let mut changed = false;
         let display_map = self.display_snapshot();
+        let mut converter = display_map.display_point_to_point_converter();
+        let mut offset_converter = display_map
+            .buffer_snapshot()
+            .point_dimension_converter::<MultiBufferOffset>();
         let selections = self.collection.all_display(&display_map);
         let selections = selections
             .into_iter()
@@ -1004,7 +1014,13 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
                 if selection != moved_selection {
                     changed = true;
                 }
-                moved_selection.map(|display_point| display_point.to_point(&display_map))
+                Selection {
+                    id: moved_selection.id,
+                    start: offset_converter.map(converter.map(moved_selection.start, Bias::Left)),
+                    end: offset_converter.map(converter.map(moved_selection.end, Bias::Left)),
+                    reversed: moved_selection.reversed,
+                    goal: moved_selection.goal,
+                }
             })
             .collect();
 
@@ -1172,9 +1188,10 @@ fn resolve_selections_display<'a>(
     selections: impl 'a + IntoIterator<Item = &'a Selection<Anchor>>,
     map: &'a DisplaySnapshot,
 ) -> impl 'a + Iterator<Item = Selection<DisplayPoint>> {
+    let mut converter = map.point_to_display_point_converter();
     let selections = resolve_selections_point(selections, map).map(move |s| {
-        let display_start = map.point_to_display_point(s.start, Bias::Left);
-        let display_end = map.point_to_display_point(
+        let display_start = converter.map(s.start, Bias::Left);
+        let display_end = converter.map(
             s.end,
             if s.start == s.end {
                 Bias::Right

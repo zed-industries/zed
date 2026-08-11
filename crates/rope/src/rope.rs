@@ -463,6 +463,14 @@ impl Rope {
         start.1 + item.map_or(0, |chunk| chunk.as_slice().point_to_offset(overshoot))
     }
 
+    pub fn point_to_offset_converter(&self) -> PointToOffsetConverter<'_> {
+        PointToOffsetConverter {
+            rope: self,
+            cursor: self.chunks.cursor::<Dimensions<Point, usize>>(()),
+            prev_point: Point::zero(),
+        }
+    }
+
     pub fn point_to_offset_utf16(&self, point: Point) -> OffsetUtf16 {
         if point >= self.summary().lines {
             return self.summary().len_utf16;
@@ -557,6 +565,22 @@ impl Rope {
             start + chunk.as_slice().clip_point(overshoot, bias)
         } else {
             self.summary().lines
+        }
+    }
+
+    pub fn clip_point_converter(&self) -> ClipPointConverter<'_> {
+        ClipPointConverter {
+            rope: self,
+            cursor: self.chunks.cursor::<Point>(()),
+            prev_point: Point::zero(),
+        }
+    }
+
+    pub fn char_boundary_converter(&self) -> CharBoundaryConverter<'_> {
+        CharBoundaryConverter {
+            rope: self,
+            cursor: self.chunks.cursor::<usize>(()),
+            prev_offset: 0,
         }
     }
 
@@ -672,6 +696,90 @@ impl fmt::Debug for Rope {
         }
         write!(f, "\"")?;
         Ok(())
+    }
+}
+
+pub struct ClipPointConverter<'a> {
+    rope: &'a Rope,
+    cursor: sum_tree::Cursor<'a, 'static, Chunk, Point>,
+    prev_point: Point,
+}
+
+impl ClipPointConverter<'_> {
+    pub fn map(&mut self, point: Point, bias: Bias) -> Point {
+        if !self.cursor.did_seek() || point < self.prev_point {
+            self.cursor.seek(&point, Bias::Right);
+        } else {
+            self.cursor.seek_forward(&point, Bias::Right);
+        }
+        self.prev_point = point;
+
+        if let Some(chunk) = self.cursor.item() {
+            let overshoot = point - *self.cursor.start();
+            *self.cursor.start() + chunk.as_slice().clip_point(overshoot, bias)
+        } else {
+            self.rope.summary().lines
+        }
+    }
+}
+
+pub struct CharBoundaryConverter<'a> {
+    rope: &'a Rope,
+    cursor: sum_tree::Cursor<'a, 'static, Chunk, usize>,
+    prev_offset: usize,
+}
+
+impl CharBoundaryConverter<'_> {
+    pub fn round(&mut self, offset: usize, bias: Bias) -> usize {
+        if offset >= self.rope.len() {
+            return self.rope.len();
+        }
+        if !self.cursor.did_seek() || offset < self.prev_offset {
+            self.cursor.seek(&offset, Bias::Left);
+        } else {
+            self.cursor.seek_forward(&offset, Bias::Left);
+        }
+        self.prev_offset = offset;
+
+        let Some(chunk) = self.cursor.item() else {
+            return self.rope.len();
+        };
+        let chunk_offset = offset - self.cursor.start();
+        if chunk.assert_char_boundary::<{ cfg!(debug_assertions) }>(chunk_offset) {
+            offset
+        } else {
+            match bias {
+                Bias::Left => self.cursor.start() + chunk.floor_char_boundary(chunk_offset),
+                Bias::Right => self.cursor.start() + chunk.text.ceil_char_boundary(chunk_offset),
+            }
+        }
+    }
+}
+
+pub struct PointToOffsetConverter<'a> {
+    rope: &'a Rope,
+    cursor: sum_tree::Cursor<'a, 'static, Chunk, Dimensions<Point, usize>>,
+    prev_point: Point,
+}
+
+impl PointToOffsetConverter<'_> {
+    pub fn map(&mut self, point: Point) -> usize {
+        if point >= self.rope.summary().lines {
+            return self.rope.summary().len;
+        }
+        if !self.cursor.did_seek() || point < self.prev_point {
+            self.cursor.seek(&point, Bias::Left);
+        } else {
+            self.cursor.seek_forward(&point, Bias::Left);
+        }
+        self.prev_point = point;
+
+        let overshoot = point - self.cursor.start().0;
+        self.cursor.start().1
+            + self
+                .cursor
+                .item()
+                .map_or(0, |chunk| chunk.as_slice().point_to_offset(overshoot))
     }
 }
 

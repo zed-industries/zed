@@ -6184,6 +6184,20 @@ impl LspStore {
         None
     }
 
+    pub fn supports_linked_edits(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
+        let has_capable_server = match self.as_local() {
+            Some(local) => buffer.update(cx, |buffer, cx| {
+                local
+                    .language_servers_for_buffer(buffer, cx)
+                    .any(|(_, server)| {
+                        LinkedEditingRange::check_server_capabilities(server.capabilities())
+                    })
+            }),
+            None => self.upstream_client().is_some(),
+        };
+        has_capable_server && buffer.read(cx).language().is_some()
+    }
+
     pub(crate) fn linked_edits(
         &mut self,
         buffer: &Entity<Buffer>,

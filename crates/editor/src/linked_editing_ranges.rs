@@ -60,14 +60,31 @@ pub(super) fn refresh_linked_ranges(
         let mut applicable_selections = Vec::new();
         editor
             .update(cx, |editor, cx| {
+                let Some(project) = project.upgrade() else {
+                    return;
+                };
+                let mut buffers_supporting_linked_edits =
+                    HashMap::<BufferId, Option<Entity<Buffer>>>::default();
                 let display_snapshot = editor.display_snapshot(cx);
                 let selections = editor.selections.all_anchors(&display_snapshot);
                 let snapshot = display_snapshot.buffer_snapshot();
-                let buffer = editor.buffer.read(cx);
                 for selection in selections.iter() {
-                    if let Some((_, range)) =
-                        snapshot.anchor_range_to_buffer_anchor_range(selection.range())
-                        && let Some(buffer) = buffer.buffer(range.start.buffer_id)
+                    let Some(buffer_id) = selection.start.buffer_id() else {
+                        continue;
+                    };
+                    let supporting_buffer = buffers_supporting_linked_edits
+                        .entry(buffer_id)
+                        .or_insert_with(|| {
+                            editor.buffer.read(cx).buffer(buffer_id).filter(|buffer| {
+                                project.update(cx, |project, cx| {
+                                    project.supports_linked_edits(buffer, cx)
+                                })
+                            })
+                        })
+                        .clone();
+                    if let Some(buffer) = supporting_buffer
+                        && let Some((_, range)) =
+                            snapshot.anchor_range_to_buffer_anchor_range(selection.range())
                     {
                         applicable_selections.push((buffer, range.start, range.end));
                     }

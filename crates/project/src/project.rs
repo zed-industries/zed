@@ -4552,6 +4552,12 @@ impl Project {
         })
     }
 
+    pub fn supports_linked_edits(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.supports_linked_edits(buffer, cx)
+        })
+    }
+
     pub fn completions<T: ToOffset + ToPointUtf16>(
         &self,
         buffer: &Entity<Buffer>,

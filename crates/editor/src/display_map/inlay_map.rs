@@ -1037,6 +1037,30 @@ impl InlaySnapshot {
         self.transforms.summary().has_inlays()
     }
 
+    pub fn inlay_point_to_offset_converter(&self) -> InlayPointToOffsetConverter<'_> {
+        InlayPointToOffsetConverter {
+            snapshot: self,
+            cursor: self
+                .transforms
+                .cursor::<Dimensions<InlayPoint, InlayOffset, Point>>(()),
+            buffer_converter: self.buffer.point_dimension_converter::<MultiBufferOffset>(),
+            prev_point: InlayPoint::default(),
+        }
+    }
+
+    pub fn inlay_offset_to_point_converter(&self) -> InlayOffsetToPointConverter<'_> {
+        InlayOffsetToPointConverter {
+            snapshot: self,
+            cursor: self
+                .transforms
+                .cursor::<Dimensions<InlayOffset, InlayPoint, MultiBufferOffset>>(()),
+            buffer_converter: self
+                .buffer
+                .dimension_converter(text::BufferSnapshot::offset_to_point),
+            prev_offset: InlayOffset::default(),
+        }
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn inlay_point_cursor(&self) -> InlayPointCursor<'_> {
         let cursor = self.transforms.cursor::<Dimensions<Point, InlayPoint>>(());
@@ -1326,6 +1350,10 @@ pub struct InlayPointCursor<'transforms> {
 }
 
 impl InlayPointCursor<'_> {
+    pub fn reset(&mut self) {
+        self.cursor.reset();
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn map(&mut self, point: Point, bias: Bias) -> InlayPoint {
         let cursor = &mut self.cursor;
@@ -1362,6 +1390,76 @@ impl InlayPointCursor<'_> {
                     return InlayPoint(self.transforms.summary().output.lines);
                 }
             }
+        }
+    }
+}
+
+pub struct InlayPointToOffsetConverter<'a> {
+    snapshot: &'a InlaySnapshot,
+    cursor: Cursor<'a, 'static, Transform, Dimensions<InlayPoint, InlayOffset, Point>>,
+    buffer_converter: multi_buffer::PointDimensionConverter<'a, MultiBufferOffset>,
+    prev_point: InlayPoint,
+}
+
+pub struct InlayOffsetToPointConverter<'a> {
+    snapshot: &'a InlaySnapshot,
+    cursor: Cursor<'a, 'static, Transform, Dimensions<InlayOffset, InlayPoint, MultiBufferOffset>>,
+    buffer_converter: multi_buffer::DimensionConverter<'a, MultiBufferOffset, Point, usize, Point>,
+    prev_offset: InlayOffset,
+}
+
+impl InlayOffsetToPointConverter<'_> {
+    pub fn map(&mut self, offset: InlayOffset) -> InlayPoint {
+        if !self.cursor.did_seek() || offset < self.prev_offset {
+            self.cursor.seek(&offset, Bias::Right);
+        } else {
+            self.cursor.seek_forward(&offset, Bias::Right);
+        }
+        self.prev_offset = offset;
+
+        let start = self.cursor.start();
+        let overshoot = offset.0 - start.0.0;
+        match self.cursor.item() {
+            Some(Transform::Isomorphic(_)) => {
+                let buffer_offset_start = start.2;
+                let buffer_offset_end = buffer_offset_start + overshoot;
+                let buffer_start = self.buffer_converter.map(buffer_offset_start);
+                let buffer_end = self.buffer_converter.map(buffer_offset_end);
+                InlayPoint(start.1.0 + (buffer_end - buffer_start))
+            }
+            Some(Transform::Inlay(inlay)) => {
+                let overshoot = inlay.text().offset_to_point(overshoot);
+                InlayPoint(start.1.0 + overshoot)
+            }
+            None => self.snapshot.max_point(),
+        }
+    }
+}
+
+impl InlayPointToOffsetConverter<'_> {
+    pub fn map(&mut self, point: InlayPoint) -> InlayOffset {
+        if !self.cursor.did_seek() || point < self.prev_point {
+            self.cursor.seek(&point, Bias::Right);
+        } else {
+            self.cursor.seek_forward(&point, Bias::Right);
+        }
+        self.prev_point = point;
+
+        let start = self.cursor.start();
+        let overshoot = point.0 - start.0.0;
+        match self.cursor.item() {
+            Some(Transform::Isomorphic(_)) => {
+                let buffer_point_start = start.2;
+                let buffer_point_end = buffer_point_start + overshoot;
+                let buffer_offset_start = self.buffer_converter.map(buffer_point_start);
+                let buffer_offset_end = self.buffer_converter.map(buffer_point_end);
+                InlayOffset(start.1.0 + (buffer_offset_end - buffer_offset_start))
+            }
+            Some(Transform::Inlay(inlay)) => {
+                let overshoot = inlay.text().point_to_offset(overshoot);
+                InlayOffset(start.1.0 + overshoot)
+            }
+            None => self.snapshot.len(),
         }
     }
 }
