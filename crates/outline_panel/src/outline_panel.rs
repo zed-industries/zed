@@ -12,7 +12,7 @@ use editor::{
 };
 use file_icons::FileIcons;
 
-use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context,
     DismissEvent, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
@@ -4058,19 +4058,14 @@ impl OutlinePanel {
                 );
             };
 
-            let mut matched_ids = match_strings(
-                &generation_state.match_candidates,
-                &query,
-                true,
-                true,
-                usize::MAX,
-                &AtomicBool::default(),
-                cx.background_executor().clone(),
-            )
-            .await
-            .into_iter()
-            .map(|string_match| (string_match.candidate_id, string_match))
-            .collect::<HashMap<_, _>>();
+            let mut matched_ids = generation_state
+                .match_candidates
+                .iter()
+                .filter_map(|candidate| {
+                    contiguous_string_match(candidate, &query)
+                        .map(|string_match| (string_match.candidate_id, string_match))
+                })
+                .collect::<HashMap<_, _>>();
 
             let mut id = 0;
             generation_state.entries.retain_mut(|cached_entry| {
@@ -5309,6 +5304,56 @@ fn subscribe_for_editor_events(
     )
 }
 
+fn contiguous_string_match(candidate: &StringMatchCandidate, query: &str) -> Option<StringMatch> {
+    if query.is_empty() {
+        return Some(StringMatch {
+            candidate_id: candidate.id,
+            score: 0.,
+            positions: Vec::new(),
+            string: candidate.string.clone(),
+        });
+    }
+
+    let query_chars = query
+        .chars()
+        .map(|c| c.to_lowercase().next().unwrap_or(c))
+        .collect::<Vec<_>>();
+
+    let candidate_chars = candidate.string.char_indices().collect::<Vec<_>>();
+
+    for start in 0..candidate_chars.len() {
+        let mut positions = Vec::with_capacity(query_chars.len());
+
+        for (offset, query_char) in query_chars.iter().enumerate() {
+            let Some((byte_index, candidate_char)) = candidate_chars.get(start + offset) else {
+                break;
+            };
+
+            if candidate_char
+                .to_lowercase()
+                .next()
+                .unwrap_or(*candidate_char)
+                != *query_char
+            {
+                break;
+            }
+
+            positions.push(*byte_index);
+        }
+
+        if positions.len() == query_chars.len() {
+            return Some(StringMatch {
+                candidate_id: candidate.id,
+                score: 0.,
+                positions,
+                string: candidate.string.clone(),
+            });
+        }
+    }
+
+    None
+}
+
 fn empty_icon() -> AnyElement {
     h_flex()
         .size(IconSize::default().rems())
@@ -5351,6 +5396,32 @@ mod tests {
     use super::*;
 
     const SELECTED_MARKER: &str = "  <==== selected";
+
+    #[test]
+    fn test_contiguous_string_match() {
+        let candidate =
+            StringMatchCandidate::new(0, "UpsertAsync_DuplicateEmail_ThrowsConflictException()");
+
+        let string_match =
+            contiguous_string_match(&candidate, "email").expect("expected a contiguous match");
+
+        assert_eq!(string_match.candidate_id, 0);
+        assert_eq!(string_match.positions, vec![21, 22, 23, 24, 25]);
+        assert_eq!(string_match.ranges().collect::<Vec<_>>(), vec![21..26]);
+    }
+
+    #[test]
+    fn test_contiguous_string_match_rejects_scattered_characters() {
+        let candidate = StringMatchCandidate::new(
+            0,
+            "UpsertAsync_AccountType_OnlyReturnedForMatchingTypeFilter()",
+        );
+
+        assert!(
+            contiguous_string_match(&candidate, "email").is_none(),
+            "a query should not match characters scattered throughout the candidate"
+        );
+    }
 
     #[gpui::test(iterations = 10)]
     async fn test_project_search_results_toggling(cx: &mut TestAppContext) {
