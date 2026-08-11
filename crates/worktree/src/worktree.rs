@@ -3063,6 +3063,16 @@ impl LocalSnapshot {
         let mut new_ignores = Vec::new();
         let mut repo_excludes = Vec::new();
         let mut repo_root = None;
+        // Deepest registered work dir covering this path — already validated at
+        // registration, so `reload_entries_for_paths` can skip a full resolve on the
+        // hot path (thousands of event paths per checkout). Invalid `.git` never
+        // enters `git_repositories`, so a phantom cannot win as a registered root.
+        let covering_registered = self
+            .git_repositories
+            .values()
+            .filter(|repo| abs_path.starts_with(repo.work_directory_abs_path.as_ref()))
+            .max_by_key(|repo| repo.work_directory_abs_path.as_os_str().len())
+            .map(|repo| repo.work_directory_abs_path.clone());
         for (index, ancestor) in abs_path.ancestors().enumerate() {
             if index > 0 {
                 if let Some((ignore, _)) = self.ignores_by_parent_abs_path.get(ancestor) {
@@ -3079,11 +3089,29 @@ impl LocalSnapshot {
                 repo_excludes.push(repo_exclude.clone());
             }
 
-            if repo_root.is_none() {
-                let metadata = fs.metadata(&ancestor.join(DOT_GIT)).await.ok().flatten();
-                if metadata.is_some() {
-                    repo_root = Some(Arc::from(ancestor));
-                }
+            // Anchor the ignore root at a *validated* repository, so an invalid nested
+            // `.git` cannot shadow the real parent's excludes/ignore rooting.
+            if repo_root.is_some() {
+                continue;
+            }
+
+            // Covering registered root: free, no filesystem.
+            if covering_registered
+                .as_ref()
+                .is_some_and(|root| root.as_ref() == ancestor)
+            {
+                repo_root = covering_registered.clone();
+                continue;
+            }
+
+            // Deeper than the covering registration, or nothing registered yet: resolve.
+            // `reload_entries_for_paths` runs before `update_git_repositories`, so a
+            // newly-appeared nested repo may not be registered yet and must still win.
+            if discover_valid_git_repository(&ancestor.join(DOT_GIT), fs)
+                .await
+                .is_some()
+            {
+                repo_root = Some(Arc::from(ancestor));
             }
         }
 
@@ -3542,13 +3570,15 @@ impl BackgroundScannerState {
         .log_err();
     }
 
+    /// Registers a validated git repository for `work_directory`, returning whether a
+    /// repository was inserted (`Ok(false)` when the `.git` entry is not a repository).
     async fn insert_git_repository_for_path(
         &mut self,
         work_directory: WorkDirectory,
         dot_git_abs_path: Arc<Path>,
         fs: &dyn Fs,
         watcher: &dyn Watcher,
-    ) -> Result<LocalRepositoryEntry> {
+    ) -> Result<bool> {
         let work_dir_entry = self
             .snapshot
             .entry_for_path(&work_directory.path_key().0)
@@ -3563,8 +3593,13 @@ impl BackgroundScannerState {
             })?;
         let work_directory_abs_path = self.snapshot.work_directory_abs_path(&work_directory);
 
-        let (repository_dir_abs_path, common_dir_abs_path) =
-            discover_git_paths(&dot_git_abs_path, fs).await;
+        // Bail before setting up any watches if the `.git` entry isn't a real repository.
+        let Some((repository_dir_abs_path, common_dir_abs_path)) =
+            discover_valid_git_repository(&dot_git_abs_path, fs).await
+        else {
+            return Ok(false);
+        };
+
         watcher
             .add(&common_dir_abs_path)
             .context("failed to add common directory to watcher")
@@ -3598,22 +3633,21 @@ impl BackgroundScannerState {
             .get(&work_directory_id)
             .map_or(0, |existing_repository| existing_repository.git_dir_scan_id);
 
-        let local_repository = LocalRepositoryEntry {
+        self.snapshot.git_repositories.insert(
             work_directory_id,
-            work_directory,
-            work_directory_abs_path: work_directory_abs_path.as_path().into(),
-            git_dir_scan_id,
-            dot_git_abs_path,
-            common_dir_abs_path,
-            repository_dir_abs_path,
-        };
-
-        self.snapshot
-            .git_repositories
-            .insert(work_directory_id, local_repository.clone());
+            LocalRepositoryEntry {
+                work_directory_id,
+                work_directory,
+                work_directory_abs_path: work_directory_abs_path.as_path().into(),
+                git_dir_scan_id,
+                dot_git_abs_path,
+                common_dir_abs_path,
+                repository_dir_abs_path,
+            },
+        );
 
         log::trace!("inserting new local git repository");
-        Ok(local_repository)
+        Ok(true)
     }
 }
 
@@ -4363,7 +4397,8 @@ impl BackgroundScanner {
             && self.track_git_repositories
         {
             maybe!(async {
-                self.state
+                let inserted = self
+                    .state
                     .lock()
                     .await
                     .insert_git_repository_for_path(
@@ -4373,8 +4408,10 @@ impl BackgroundScanner {
                         self.watcher.as_ref(),
                     )
                     .await
+                    // Bail on both an error and an invalid `.git` (`Ok(false)`), so a
+                    // non-repository is never reported as the containing repo.
                     .log_err()?;
-                Some(ancestor_dot_git)
+                inserted.then_some(ancestor_dot_git)
             })
             .await
         } else {
@@ -5314,6 +5351,9 @@ impl BackgroundScanner {
 
         if let Some(path) = child_paths.first()
             && path.ends_with(DOT_GIT)
+            && discover_valid_git_repository(path, self.fs.as_ref())
+                .await
+                .is_some()
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
         }
@@ -5939,8 +5979,11 @@ impl BackgroundScanner {
             return;
         };
 
-        if let Ok(Some(metadata)) = self.fs.metadata(&job.abs_path.join(DOT_GIT)).await
-            && metadata.is_dir
+        // Anchor the ignore root at a *validated* repository (a `.git` directory or a
+        // linked-worktree gitfile), so an invalid/leftover `.git` doesn't shadow it.
+        if discover_valid_git_repository(&job.abs_path.join(DOT_GIT), self.fs.as_ref())
+            .await
+            .is_some()
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
         }
@@ -6203,7 +6246,13 @@ async fn discover_ancestor_git_repo(
                 ancestor_dot_git.clone()
             };
             let dot_git_abs_path: Arc<Path> = dot_git_abs_path.as_path().into();
-            let (_, common_dir_abs_path) = discover_git_paths(&dot_git_abs_path, fs.as_ref()).await;
+
+            // Keep walking up past an invalid `.git`.
+            let Some((_, common_dir_abs_path)) =
+                discover_valid_git_repository(&dot_git_abs_path, fs.as_ref()).await
+            else {
+                continue;
+            };
 
             let repo_exclude_abs_path = common_dir_abs_path.join(REPO_EXCLUDE);
             if let Ok(repo_exclude) =
@@ -6995,33 +7044,6 @@ impl CreatedEntry {
     }
 }
 
-fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
-    let path = content
-        .strip_prefix("gitdir:")
-        .with_context(|| format!("parsing gitfile content {content:?}"))?;
-    Ok(Path::new(path.trim()))
-}
-
-fn resolve_gitfile_path(dot_git_abs_path: &Path, gitfile_path: &Path) -> PathBuf {
-    if gitfile_path.is_absolute() {
-        gitfile_path.into()
-    } else {
-        dot_git_abs_path
-            .parent()
-            .unwrap_or_else(|| Path::new(""))
-            .join(gitfile_path)
-    }
-}
-
-fn resolve_commondir_path(repository_dir_abs_path: &Path, commondir_path: &str) -> PathBuf {
-    let commondir_path = Path::new(commondir_path.trim());
-    if commondir_path.is_absolute() {
-        commondir_path.into()
-    } else {
-        repository_dir_abs_path.join(commondir_path)
-    }
-}
-
 pub async fn discover_root_repo_common_dir(root_abs_path: &Path, fs: &dyn Fs) -> Option<Arc<Path>> {
     discover_root_repo_metadata(root_abs_path, fs)
         .await
@@ -7032,43 +7054,27 @@ async fn discover_root_repo_metadata(
     root_abs_path: &Path,
     fs: &dyn Fs,
 ) -> Option<(Arc<Path>, bool)> {
-    let root_dot_git = root_abs_path.join(DOT_GIT);
-    if !fs.metadata(&root_dot_git).await.is_ok_and(|m| m.is_some()) {
-        return None;
-    }
-    let dot_git_path: Arc<Path> = root_dot_git.into();
-    let (repository_dir, common_dir) = discover_git_paths(&dot_git_path, fs).await;
+    let (repository_dir, common_dir) =
+        discover_valid_git_repository(&root_abs_path.join(DOT_GIT), fs).await?;
     let is_linked_worktree = repository_dir != common_dir;
     Some((common_dir, is_linked_worktree))
 }
 
-async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, Arc<Path>) {
-    let mut repository_dir_abs_path = dot_git_abs_path.clone();
-    let mut common_dir_abs_path = dot_git_abs_path.clone();
-
-    if let Some(path) = fs
-        .load(dot_git_abs_path)
-        .await
-        .ok()
-        .as_ref()
-        .and_then(|contents| parse_gitfile(contents).log_err())
-    {
-        let path = resolve_gitfile_path(dot_git_abs_path, path);
-        if let Some(path) = fs.canonicalize(&path).await.log_err() {
-            repository_dir_abs_path = Path::new(&path).into();
-            common_dir_abs_path = repository_dir_abs_path.clone();
-
-            if let Some(commondir_contents) = fs.load(&path.join("commondir")).await.ok()
-                && let Some(commondir_path) = fs
-                    .canonicalize(&resolve_commondir_path(&path, &commondir_contents))
-                    .await
-                    .log_err()
-            {
-                common_dir_abs_path = commondir_path.as_path().into();
-            }
+/// Adapts [`fs::resolve_git_repository`] to the `Arc<Path>` identities discovery stores.
+/// A transient I/O error is collapsed to `None` here (a later rescan retries) — discovery
+/// either registers a repository or moves on, it holds no registration to preserve.
+async fn discover_valid_git_repository(
+    dot_git_abs_path: &Path,
+    fs: &dyn Fs,
+) -> Option<(Arc<Path>, Arc<Path>)> {
+    match fs::resolve_git_repository(dot_git_abs_path, fs).await {
+        Ok(Some((repository_dir, common_dir))) => Some((repository_dir.into(), common_dir.into())),
+        Ok(None) => None,
+        Err(error) => {
+            log::debug!("failed to resolve git repository at {dot_git_abs_path:?}: {error:#}");
+            None
         }
-    };
-    (repository_dir_abs_path, common_dir_abs_path)
+    }
 }
 
 struct NullWatcher;
