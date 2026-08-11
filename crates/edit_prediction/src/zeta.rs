@@ -1,20 +1,24 @@
 use crate::{
     CloudRequestTimeoutError, CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent,
-    EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
-    EditPredictionStore, PromptHistoryBoundary, ZedUpdateRequiredError,
-    buffer_path_with_id_fallback,
+    EditPredictionId, EditPredictionInputs, EditPredictionModelInput,
+    EditPredictionStartedDebugEvent, EditPredictionStore, PromptHistoryBoundary,
+    ZedUpdateRequiredError, buffer_path_with_id_fallback,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
     data_collection::CapturedPredictionContext,
     prediction::EditPredictionResult,
+    udiff::prediction_edits_for_single_file_diff,
 };
-use anyhow::Result;
-use cloud_llm_client::{AcceptEditPredictionBody, predict_edits_v3::RawCompletionRequest};
+use anyhow::{Context as _, Result};
+use cloud_llm_client::{
+    AcceptEditPredictionBody, EditPredictionRejectReason, predict_edits_v3::RawCompletionRequest,
+};
 use edit_prediction_types::PredictedCursorPosition;
 use gpui::{App, AppContext as _, Entity, Task, TaskExt, WeakEntity, prelude::*};
 use language::{
     Buffer, BufferSnapshot, DiagnosticSeverity, EditPredictionPromptFormat, OffsetRangeExt as _,
     ToOffset as _, ZetaVersion, language_settings::all_language_settings, text_diff,
 };
+use project::Project;
 use release_channel::AppVersion;
 use text::{Anchor, Bias, Point};
 use ui::SharedString;
@@ -24,8 +28,9 @@ use workspace::workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError};
 
 use std::{ops::Range, path::Path, sync::Arc};
 use zeta_prompt::{
-    ParsedOutput, ZetaFormat, ZetaPromptInput, excerpt_ranges_for_format, format_zeta_prompt,
-    get_prefill, parse_zeta2_model_output, stop_tokens_for_format,
+    FilePosition, ParsedOutput, Zeta2PromptInput, Zeta3PromptInput, ZetaFormat,
+    excerpt_ranges_for_format, format_zeta_prompt, get_prefill, parse_zeta2_model_output,
+    stop_tokens_for_format,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
 
@@ -40,6 +45,7 @@ pub(crate) fn request_prediction_with_zeta(
         snapshot,
         position,
         related_files,
+        editable_context,
         events,
         debug_tx,
         mode,
@@ -48,6 +54,7 @@ pub(crate) fn request_prediction_with_zeta(
         diagnostic_search_range,
         can_collect_data,
         is_open_source,
+        allow_jump,
         ..
     }: EditPredictionModelInput,
     context_task: Option<Task<Result<CapturedPredictionContext>>>,
@@ -83,15 +90,25 @@ pub(crate) fn request_prediction_with_zeta(
         .map(|organization| organization.id.clone());
     let app_version = AppVersion::global(cx);
 
-    struct Prediction {
-        prompt_input: ZetaPromptInput,
-        buffer: Entity<Buffer>,
-        snapshot: BufferSnapshot,
-        edits: Vec<(Range<Anchor>, Arc<str>)>,
-        cursor_position: Option<PredictedCursorPosition>,
-        editable_range_in_buffer: Range<usize>,
+    enum PendingPrediction {
+        Resolved {
+            inputs: EditPredictionInputs,
+            buffer: Entity<Buffer>,
+            snapshot: BufferSnapshot,
+            edits: Vec<(Range<Anchor>, Arc<str>)>,
+            cursor_position: Option<PredictedCursorPosition>,
+            editable_range_in_buffer: Option<Range<usize>>,
+        },
+        Patch {
+            inputs: EditPredictionInputs,
+            project: Entity<Project>,
+            buffer: Entity<Buffer>,
+            snapshot: BufferSnapshot,
+            patch: String,
+        },
     }
 
+    let project_for_request = project.clone();
     let request_task = cx.background_spawn({
         async move {
             let local_zeta_version = custom_server_settings
@@ -119,27 +136,78 @@ pub(crate) fn request_prediction_with_zeta(
                 })
                 .unwrap_or_default();
 
-            let cursor_offset = position.to_offset(&snapshot);
-            let (full_context_offset_range, prompt_input) = zeta2_prompt_input(
-                &snapshot,
-                related_files,
-                events,
-                diagnostic_search_range,
-                excerpt_path,
-                cursor_offset,
-                is_open_source,
-                can_collect_data,
-                repo_url,
-            );
+            enum RequestInput {
+                V3 {
+                    full_context_offset_range: Range<usize>,
+                    prompt_input: Zeta2PromptInput,
+                    formatted_prompt: Option<String>,
+                },
+                V4(Zeta3PromptInput),
+            }
 
-            let formatted_prompt = format_zeta_prompt(&prompt_input, zeta_format);
+            let cursor_offset = position.to_offset(&snapshot);
+            let request_input =
+                if allow_jump && custom_server_settings.is_none() && raw_config.is_none() {
+                    let cursor_point = snapshot.offset_to_point(cursor_offset);
+                    let editable_context = editable_context
+                        .context("missing editable context task")?
+                        .await?;
+                    let active_buffer_diagnostics = active_buffer_diagnostics(
+                        &snapshot,
+                        diagnostic_search_range,
+                        cursor_point.row,
+                        ACTIVE_BUFFER_DIAGNOSTIC_ADDITIONAL_CONTEXT_TOKEN_COUNT,
+                    );
+                    let syntax_ranges =
+                        compute_syntax_ranges(&snapshot, cursor_offset, &(0..snapshot.len()));
+
+                    RequestInput::V4(Zeta3PromptInput {
+                        cursor_path: excerpt_path,
+                        cursor_position: FilePosition {
+                            row: cursor_point.row,
+                            column: cursor_point.column,
+                        },
+                        events,
+                        editable_context,
+                        syntax_ranges,
+                        active_buffer_diagnostics,
+                        in_open_source_repo: is_open_source,
+                        can_collect_data,
+                        repo_url,
+                    })
+                } else {
+                    let (full_context_offset_range, prompt_input) = zeta2_prompt_input(
+                        &snapshot,
+                        related_files,
+                        events,
+                        diagnostic_search_range,
+                        excerpt_path,
+                        cursor_offset,
+                        is_open_source,
+                        can_collect_data,
+                        repo_url,
+                    );
+                    let formatted_prompt = format_zeta_prompt(&prompt_input, zeta_format);
+
+                    RequestInput::V3 {
+                        full_context_offset_range,
+                        prompt_input,
+                        formatted_prompt,
+                    }
+                };
 
             if let Some(debug_tx) = &debug_tx {
+                let prompt = match &request_input {
+                    RequestInput::V3 {
+                        formatted_prompt, ..
+                    } => formatted_prompt.clone(),
+                    RequestInput::V4(_) => None,
+                };
                 debug_tx
                     .unbounded_send(DebugEvent::EditPredictionStarted(
                         EditPredictionStartedDebugEvent {
                             buffer: buffer.downgrade(),
-                            prompt: formatted_prompt.clone(),
+                            prompt,
                             position,
                         },
                     ))
@@ -147,6 +215,45 @@ pub(crate) fn request_prediction_with_zeta(
             }
 
             log::trace!("Sending edit prediction request");
+
+            let (full_context_offset_range, prompt_input, formatted_prompt) = match request_input {
+                RequestInput::V3 {
+                    full_context_offset_range,
+                    prompt_input,
+                    formatted_prompt,
+                } => (full_context_offset_range, prompt_input, formatted_prompt),
+                RequestInput::V4(v4_prompt_input) => {
+                    let inputs = EditPredictionInputs::V3(v4_prompt_input.clone());
+                    let (response, usage) = EditPredictionStore::send_v4_request(
+                        v4_prompt_input,
+                        preferred_experiment.clone(),
+                        client,
+                        llm_token,
+                        organization_id,
+                        app_version,
+                        trigger,
+                        mode,
+                    )
+                    .await?;
+
+                    let request_id = EditPredictionId(response.request_id.into());
+                    let model_version = response.model_version;
+                    return anyhow::Ok((
+                        Some((
+                            request_id,
+                            Some(PendingPrediction::Patch {
+                                inputs,
+                                project: project_for_request,
+                                buffer,
+                                snapshot: snapshot.clone(),
+                                patch: response.patch,
+                            }),
+                            model_version,
+                        )),
+                        usage,
+                    ));
+                }
+            };
 
             let Some((request_id, output, model_version, usage)) =
                 (if let Some(custom_settings) = &custom_server_settings {
@@ -272,7 +379,6 @@ pub(crate) fn request_prediction_with_zeta(
 
                     Some((request_id, output, None, usage))
                 } else {
-                    // Use V3 endpoint - server handles model/version selection and suffix stripping
                     let (response, usage) = EditPredictionStore::send_v3_request(
                         prompt_input.clone(),
                         preferred_experiment.clone(),
@@ -357,14 +463,14 @@ pub(crate) fn request_prediction_with_zeta(
                 })
                 .unwrap_or_default();
 
-            let prediction = Prediction {
-                prompt_input,
+            let prediction = Some(PendingPrediction::Resolved {
+                inputs: EditPredictionInputs::V2(prompt_input),
                 buffer,
                 snapshot: snapshot.clone(),
                 edits,
                 cursor_position,
-                editable_range_in_buffer,
-            };
+                editable_range_in_buffer: Some(editable_range_in_buffer),
+            });
 
             anyhow::Ok((Some((request_id, prediction, model_version)), usage))
         }
@@ -378,24 +484,109 @@ pub(crate) fn request_prediction_with_zeta(
         };
         let request_duration = cx.background_executor().now() - request_start;
 
-        let Prediction {
-            prompt_input: inputs,
-            buffer: edited_buffer,
-            snapshot: edited_buffer_snapshot,
+        let Some(prediction) = prediction else {
+            return Ok(None);
+        };
+
+        let (
+            inputs,
+            edited_buffer,
+            edited_buffer_snapshot,
             edits,
             cursor_position,
             editable_range_in_buffer,
-        } = prediction;
+        ) = match prediction {
+            PendingPrediction::Resolved {
+                inputs,
+                buffer,
+                snapshot,
+                edits,
+                cursor_position,
+                editable_range_in_buffer,
+            } => (
+                inputs,
+                buffer,
+                snapshot,
+                edits,
+                cursor_position,
+                editable_range_in_buffer,
+            ),
+            PendingPrediction::Patch {
+                inputs,
+                project,
+                buffer: fallback_buffer,
+                snapshot: fallback_snapshot,
+                patch,
+            } => {
+                let (buffer, snapshot, edits, cursor_position) =
+                    match prediction_edits_for_single_file_diff(&patch, &project, cx).await {
+                        Ok(Some(edits)) => edits,
+                        Ok(None) => {
+                            return Ok(Some(
+                                EditPredictionResult::new(
+                                    id,
+                                    &fallback_buffer,
+                                    &fallback_snapshot,
+                                    Arc::new([]),
+                                    None,
+                                    None,
+                                    inputs,
+                                    model_version,
+                                    trigger,
+                                    request_duration,
+                                    cx,
+                                )
+                                .await,
+                            ));
+                        }
+                        Err(error) => {
+                            log::error!("failed to apply edit prediction patch: {error:?}");
+                            return Ok(Some(EditPredictionResult::new_rejected(
+                                id,
+                                &fallback_buffer,
+                                &fallback_snapshot,
+                                inputs,
+                                model_version,
+                                trigger,
+                                request_duration,
+                                EditPredictionRejectReason::PatchApplyFailed,
+                            )));
+                        }
+                    };
+                let editable_range_in_buffer =
+                    edits
+                        .iter()
+                        .fold(None, |range: Option<Range<usize>>, (edit_range, _)| {
+                            let edit_range = edit_range.start.to_offset(&snapshot)
+                                ..edit_range.end.to_offset(&snapshot);
+                            Some(match range {
+                                Some(range) => {
+                                    range.start.min(edit_range.start)..range.end.max(edit_range.end)
+                                }
+                                None => edit_range,
+                            })
+                        });
 
-        let editable_anchor_range =
-            edited_buffer_snapshot.anchor_range_inside(editable_range_in_buffer.clone());
+                (
+                    inputs,
+                    buffer,
+                    snapshot,
+                    edits,
+                    cursor_position,
+                    editable_range_in_buffer,
+                )
+            }
+        };
+
         let result = EditPredictionResult::new(
             id,
             &edited_buffer,
             &edited_buffer_snapshot,
             edits.into(),
             cursor_position,
-            Some(editable_anchor_range),
+            editable_range_in_buffer
+                .clone()
+                .map(|range| edited_buffer_snapshot.anchor_range_inside(range)),
             inputs,
             model_version,
             trigger,
@@ -404,34 +595,35 @@ pub(crate) fn request_prediction_with_zeta(
         )
         .await;
 
-        let prediction = &result.prediction;
-        let weak_this = this.clone();
-        let request_id = prediction.id.clone();
-        let edited_buffer = edited_buffer.clone();
-        let edited_buffer_snapshot = edited_buffer_snapshot.clone();
-        let editable_range_in_buffer = editable_range_in_buffer.clone();
-        let edit_preview = prediction.edit_preview.clone();
-        let model_version = prediction.model_version.clone();
-        cx.spawn(async move |cx| {
-            weak_this
-                .update(cx, |this, cx| {
-                    this.enqueue_settled_prediction(
-                        request_id.clone(),
-                        &project,
-                        &edited_buffer,
-                        &edited_buffer_snapshot,
-                        editable_range_in_buffer,
-                        &edit_preview,
-                        context_task,
-                        prompt_history_boundary,
-                        model_version,
-                        request_duration,
-                        cx,
-                    );
-                })
-                .ok();
-        })
-        .detach();
+        if let Some(editable_range_in_buffer) = editable_range_in_buffer.clone() {
+            let prediction = &result.prediction;
+            let weak_this = this.clone();
+            let request_id = prediction.id.clone();
+            let edited_buffer = edited_buffer.clone();
+            let edited_buffer_snapshot = edited_buffer_snapshot.clone();
+            let edit_preview = prediction.edit_preview.clone();
+            let model_version = prediction.model_version.clone();
+            cx.spawn(async move |cx| {
+                weak_this
+                    .update(cx, |this, cx| {
+                        this.enqueue_settled_prediction(
+                            request_id.clone(),
+                            &project,
+                            &edited_buffer,
+                            &edited_buffer_snapshot,
+                            editable_range_in_buffer,
+                            &edit_preview,
+                            context_task,
+                            prompt_history_boundary,
+                            model_version,
+                            request_duration,
+                            cx,
+                        );
+                    })
+                    .ok();
+            })
+            .detach();
+        }
 
         Ok(Some(result))
     })
@@ -594,7 +786,7 @@ pub(crate) fn active_buffer_diagnostics(
 
 pub fn zeta2_prompt_input(
     snapshot: &language::BufferSnapshot,
-    related_files: Vec<zeta_prompt::RelatedFile>,
+    mut related_files: Vec<zeta_prompt::RelatedFile>,
     events: Vec<Arc<zeta_prompt::Event>>,
     diagnostic_search_range: Range<Point>,
     excerpt_path: Arc<Path>,
@@ -602,7 +794,7 @@ pub fn zeta2_prompt_input(
     is_open_source: bool,
     can_collect_data: bool,
     repo_url: Option<String>,
-) -> (Range<usize>, zeta_prompt::ZetaPromptInput) {
+) -> (Range<usize>, zeta_prompt::Zeta2PromptInput) {
     let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
         compute_cursor_excerpt(snapshot, cursor_offset);
 
@@ -623,8 +815,13 @@ pub fn zeta2_prompt_input(
         snapshot.offset_to_point(cursor_offset).row,
         ACTIVE_BUFFER_DIAGNOSTIC_ADDITIONAL_CONTEXT_TOKEN_COUNT,
     );
+    for file in &mut related_files {
+        for excerpt in &mut file.excerpts {
+            excerpt.context_source = zeta_prompt::ContextSource::Lsp;
+        }
+    }
 
-    let prompt_input = zeta_prompt::ZetaPromptInput {
+    let prompt_input = zeta_prompt::Zeta2PromptInput {
         cursor_path: excerpt_path,
         cursor_excerpt,
         cursor_offset_in_excerpt,

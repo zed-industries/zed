@@ -1,5 +1,5 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Entity;
@@ -8,6 +8,7 @@ use language::{Buffer, BufferSnapshot, CharKind};
 use smol::future::yield_now;
 use std::{
     borrow::Cow,
+    collections::BTreeSet,
     io::{BufRead, BufReader, Read},
     ops::Range,
     sync::{Arc, LazyLock},
@@ -45,6 +46,18 @@ pub struct SearchInputs {
     buffers: Option<Vec<Entity<Buffer>>>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum MatchPositionHint {
+    Line(u32),
+    ByteOffset(usize),
+}
+
+impl Default for MatchPositionHint {
+    fn default() -> Self {
+        Self::Line(0)
+    }
+}
+
 impl SearchInputs {
     pub fn as_str(&self) -> &str {
         self.query.as_ref()
@@ -72,7 +85,6 @@ pub enum SearchQuery {
     Regex {
         regex: Regex,
         replacement: Option<String>,
-        multiline: bool,
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
@@ -116,7 +128,7 @@ impl SearchQuery {
                 include_ignored,
                 files_to_include,
                 files_to_exclude,
-                false,
+                match_full_paths,
                 buffers,
             );
         }
@@ -242,18 +254,14 @@ impl SearchQuery {
             pattern = word_pattern
         }
 
-        let multiline = pattern.contains('\n') || pattern.contains("\\n");
-        if multiline {
-            pattern.insert_str(0, "(?m)");
-        }
-
         let regex = RegexBuilder::new(&pattern)
             .case_insensitive(!case_sensitive)
+            .multi_line(true)
+            .crlf(true)
             .build()?;
         Ok(Self::Regex {
             regex,
             replacement: None,
-            multiline,
             whole_word,
             case_sensitive,
             include_ignored,
@@ -387,13 +395,13 @@ impl SearchQuery {
         }
     }
 
-    pub(crate) async fn detect(
+    pub async fn detect(
         &self,
         mut reader: BufReader<Box<dyn Read + Send + Sync>>,
-    ) -> Result<bool> {
+    ) -> Result<Option<MatchPositionHint>> {
         let query_str = self.as_str();
         if query_str.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
 
         // Yield from this function every 20KB scanned.
@@ -405,12 +413,17 @@ impl SearchQuery {
                 if query_str.contains('\n') {
                     reader.read_to_string(&mut text)?;
                     text::LineEnding::normalize(&mut text);
-                    Ok(search.is_match(&text))
+                    if search.is_match(&text) {
+                        Ok(Some(MatchPositionHint::default()))
+                    } else {
+                        Ok(None)
+                    }
                 } else {
                     let mut bytes_read = 0;
+                    let mut line_number = u32::default();
                     while reader.read_line(&mut text)? > 0 {
                         if search.is_match(&text) {
-                            return Ok(true);
+                            return Ok(Some(MatchPositionHint::Line(line_number)));
                         }
                         bytes_read += text.len();
                         if bytes_read >= YIELD_THRESHOLD {
@@ -418,32 +431,20 @@ impl SearchQuery {
                             smol::future::yield_now().await;
                         }
                         text.clear();
+                        line_number += 1;
                     }
-                    Ok(false)
+                    Ok(None)
                 }
             }
-            Self::Regex {
-                regex, multiline, ..
-            } => {
+            Self::Regex { regex, .. } => {
                 let mut text = String::new();
-                if *multiline {
-                    reader.read_to_string(&mut text)?;
-                    text::LineEnding::normalize(&mut text);
-                    Ok(regex.is_match(&text)?)
+
+                reader.read_to_string(&mut text)?;
+                text::LineEnding::normalize(&mut text);
+                if let Some(m) = regex.find(&text)? {
+                    Ok(Some(MatchPositionHint::ByteOffset(m.start())))
                 } else {
-                    let mut bytes_read = 0;
-                    while reader.read_line(&mut text)? > 0 {
-                        if regex.is_match(&text)? {
-                            return Ok(true);
-                        }
-                        bytes_read += text.len();
-                        if bytes_read >= YIELD_THRESHOLD {
-                            bytes_read = 0;
-                            smol::future::yield_now().await;
-                        }
-                        text.clear();
-                    }
-                    Ok(false)
+                    Ok(None)
                 }
             }
         }
@@ -547,42 +548,27 @@ impl SearchQuery {
             }
 
             Self::Regex {
-                regex, multiline, ..
+                regex,
+                one_match_per_line,
+                ..
             } => {
-                if *multiline {
-                    let text = rope.to_string();
-                    for (ix, mat) in regex.find_iter(&text).enumerate() {
-                        if (ix + 1) % YIELD_INTERVAL == 0 {
-                            yield_now().await;
-                        }
-
-                        if let Ok(mat) = mat {
-                            matches.push(mat.start()..mat.end());
-                        }
+                let text = rope.to_string();
+                let mut seen_lines = BTreeSet::default();
+                for (ix, mat) in regex.find_iter(&text).enumerate() {
+                    if (ix + 1) % YIELD_INTERVAL == 0 {
+                        yield_now().await;
                     }
-                } else {
-                    let mut line = String::new();
-                    let mut line_offset = 0;
-                    for (chunk_ix, chunk) in rope.chunks().chain(["\n"]).enumerate() {
-                        if (chunk_ix + 1) % YIELD_INTERVAL == 0 {
-                            yield_now().await;
-                        }
 
-                        for (newline_ix, text) in chunk.split('\n').enumerate() {
-                            if newline_ix > 0 {
-                                for mat in regex.find_iter(&line).flatten() {
-                                    let start = line_offset + mat.start();
-                                    let end = line_offset + mat.end();
-                                    matches.push(start..end);
-                                    if self.one_match_per_line() == Some(true) {
-                                        break;
-                                    }
-                                }
-
-                                line_offset += line.len() + 1;
-                                line.clear();
-                            }
-                            line.push_str(text);
+                    if let std::result::Result::Ok(mat) = mat {
+                        let should_push = if *one_match_per_line {
+                            // ensure that only one match per line is returned.
+                            let pos = buffer.offset_to_point(mat.start());
+                            seen_lines.insert(pos.row)
+                        } else {
+                            true
+                        };
+                        if should_push {
+                            matches.push(mat.start()..mat.end());
                         }
                     }
                 }
@@ -676,19 +662,6 @@ impl SearchQuery {
         }
     }
 
-    /// Whether this search should replace only one match per line, instead of
-    /// all matches.
-    /// Returns `None` for text searches, as only regex searches support this
-    /// option.
-    pub fn one_match_per_line(&self) -> Option<bool> {
-        match self {
-            Self::Regex {
-                one_match_per_line, ..
-            } => Some(*one_match_per_line),
-            Self::Text { .. } => None,
-        }
-    }
-
     pub fn search_str(&self, text: &str) -> Vec<Range<usize>> {
         if self.as_str().is_empty() {
             return Vec::new();
@@ -714,27 +687,9 @@ impl SearchQuery {
                     matches.push(mat.start()..mat.end());
                 }
             }
-            Self::Regex {
-                regex,
-                multiline,
-                one_match_per_line,
-                ..
-            } => {
-                if *multiline {
-                    for mat in regex.find_iter(text).flatten() {
-                        matches.push(mat.start()..mat.end());
-                    }
-                } else {
-                    let mut line_offset = 0;
-                    for line in text.split('\n') {
-                        for mat in regex.find_iter(line).flatten() {
-                            matches.push((line_offset + mat.start())..(line_offset + mat.end()));
-                            if *one_match_per_line {
-                                break;
-                            }
-                        }
-                        line_offset += line.len() + 1;
-                    }
+            Self::Regex { regex, .. } => {
+                for mat in regex.find_iter(text).flatten() {
+                    matches.push(mat.start()..mat.end());
                 }
             }
         }

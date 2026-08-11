@@ -202,7 +202,7 @@ pub fn run_context_coverage_scoring(
 
 fn context_excerpts(
     _example: &Example,
-    prompt_inputs: &zeta_prompt::ZetaPromptInput,
+    prompt_inputs: &zeta_prompt::Zeta2PromptInput,
     retrieved_context_byte_limit: Option<usize>,
     context_source_filter: Option<&[ContextSource]>,
 ) -> Vec<Excerpt> {
@@ -836,7 +836,7 @@ mod tests {
     use edit_prediction::example_spec::ExampleSpec;
     use edit_prediction_metrics::PredictionScore;
     use std::path::Path;
-    use zeta_prompt::{ExcerptRanges, RelatedExcerpt, ZetaPromptInput};
+    use zeta_prompt::{ExcerptRanges, RelatedExcerpt, Zeta2PromptInput};
 
     #[test]
     fn summary_includes_limited_filtered_retrieved_context_bytes_once_per_example() {
@@ -889,7 +889,7 @@ mod tests {
                 human_feedback: Vec::new(),
                 rating: None,
             },
-            prompt_inputs: Some(ZetaPromptInput {
+            prompt_inputs: Some(Zeta2PromptInput {
                 cursor_path: Path::new("project/src/main.rs").into(),
                 cursor_excerpt: "".into(),
                 cursor_offset_in_excerpt: 0,

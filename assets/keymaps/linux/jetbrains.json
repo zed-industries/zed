@@ -191,6 +191,17 @@
   { "context": "Diagnostics > Editor", "bindings": { "alt-6": "pane::CloseActiveItem" } },
   { "context": "OutlinePanel", "bindings": { "alt-7": "workspace::CloseActiveDock" } },
   {
+    // `ctrl-alt-l` is bound to `editor::Format` (jetbrains "Reformat Code") in
+    // the Editor context above, which collides with the default
+    // `agent::OpenRulesLibrary` binding. Mirror the windows keymap and use
+    // `shift-alt-l` instead so the menu hint and the action stay in sync.
+    "context": "AgentPanel",
+    "bindings": {
+      "ctrl-alt-l": null,
+      "shift-alt-l": "agent::OpenRulesLibrary",
+    },
+  },
+  {
     "context": "Dock || Workspace || OutlinePanel || ProjectPanel || CollabPanel",
     "bindings": {
       "escape": "editor::ToggleFocus",

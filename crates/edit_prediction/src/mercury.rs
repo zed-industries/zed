@@ -1,7 +1,9 @@
 use crate::{
     DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, EditPredictionStore, open_ai_response::text_from_response,
-    prediction::EditPredictionResult, zeta::compute_edits,
+    EditPredictionStartedDebugEvent, EditPredictionStore,
+    open_ai_response::text_from_response,
+    prediction::{EditPredictionInputs, EditPredictionResult},
+    zeta::compute_edits,
 };
 use anyhow::{Context as _, Result};
 use cloud_llm_client::EditPredictionRejectReason;
@@ -16,7 +18,7 @@ use language_model::{ApiKeyState, EnvVar, env_var};
 use release_channel::AppVersion;
 use serde::{Deserialize, Serialize};
 use std::{mem, ops::Range, path::Path, sync::Arc};
-use zeta_prompt::ZetaPromptInput;
+use zeta_prompt::Zeta2PromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
 
@@ -103,7 +105,7 @@ impl Mercury {
                 + excerpt_ranges.editable_350.start)
                 ..(excerpt_offset_range.start + excerpt_ranges.editable_350.end);
 
-            let inputs = zeta_prompt::ZetaPromptInput {
+            let inputs = zeta_prompt::Zeta2PromptInput {
                 events,
                 related_files: Some(related_files),
                 cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
@@ -255,7 +257,7 @@ impl Mercury {
                     edits.into(),
                     None,
                     Some(editable_range),
-                    inputs,
+                    EditPredictionInputs::V2(inputs),
                     None,
                     trigger,
                     cx.background_executor().now() - request_start,
@@ -267,7 +269,7 @@ impl Mercury {
     }
 }
 
-fn build_prompt(inputs: &ZetaPromptInput) -> String {
+fn build_prompt(inputs: &Zeta2PromptInput) -> String {
     const RECENTLY_VIEWED_SNIPPETS_START: &str = "<|recently_viewed_code_snippets|>\n";
     const RECENTLY_VIEWED_SNIPPETS_END: &str = "<|/recently_viewed_code_snippets|>\n";
     const RECENTLY_VIEWED_SNIPPET_START: &str = "<|recently_viewed_code_snippet|>\n";

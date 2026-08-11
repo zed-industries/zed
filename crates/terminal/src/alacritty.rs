@@ -17,7 +17,7 @@ use alacritty_terminal::{
     },
     sync::FairMutex,
     term::{
-        Config, Osc52, RenderableCursor, Term, TermMode,
+        Config, Osc52, RenderableCursor, SEMANTIC_ESCAPE_CHARS, Term, TermMode,
         cell::{Cell as AlacCell, Flags, Hyperlink as AlacHyperlink},
         search::{Match, RegexIter, RegexSearch},
     },
@@ -123,6 +123,7 @@ pub(super) fn display_only_term_config(
     Config {
         scrolling_history,
         default_cursor_style: alacritty_cursor_style(cursor_shape),
+        semantic_escape_chars: format!("{SEMANTIC_ESCAPE_CHARS}─"),
         osc52: Osc52::Disabled,
         ..Config::default()
     }
@@ -135,6 +136,7 @@ pub(super) fn pty_term_config(
     Config {
         scrolling_history,
         default_cursor_style: alacritty_cursor_style(cursor_shape),
+        semantic_escape_chars: format!("{SEMANTIC_ESCAPE_CHARS}─"),
         ..Config::default()
     }
 }
@@ -800,6 +802,10 @@ pub(super) fn clear_saved_screen(term: &mut Term<ZedListener>) {
     }
 }
 
+pub(super) fn shrink_to_used(term: &mut Term<ZedListener>) {
+    term.grid_mut().truncate();
+}
+
 pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> Content {
     let content = term.renderable_content();
 
@@ -817,6 +823,14 @@ pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> 
         None
     };
 
+    let bottom_line = term.screen_lines() as i32 - 1 - content.display_offset as i32;
+    let bottom_row_occupied = content.cursor.point.line.0 >= bottom_line
+        || cells
+            .iter()
+            .rev()
+            .take_while(|cell| cell.point.line >= bottom_line)
+            .any(|cell| cell.cell.character() != ' ');
+
     Content {
         cells,
         mode: terminal_modes_from_alacritty(content.mode),
@@ -831,6 +845,7 @@ pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> 
         last_hovered_word: last_content.last_hovered_word.clone(),
         scrolled_to_top: content.display_offset == term.history_size(),
         scrolled_to_bottom: content.display_offset == 0,
+        bottom_row_occupied,
     }
 }
 
@@ -1087,5 +1102,24 @@ mod tests {
                 is_block: true,
             }
         );
+    }
+
+    #[test]
+    fn semantic_selection_stops_at_tree_branch() {
+        let config = pty_term_config(1000, SettingsCursorShape::default());
+        let (events_tx, _events_rx) = futures::channel::mpsc::unbounded();
+        let mut term = Term::new(config, &TerminalBounds::default(), ZedListener(events_tx));
+        for character in "└─zms-demo.target".chars() {
+            term.input(character);
+        }
+
+        let selection = Selection::new(
+            SelectionType::Semantic,
+            Point::new(0, 2),
+            SelectionSide::Left,
+        );
+        set_selection(&mut term, Some(&selection));
+
+        assert_eq!(selection_text(&term).as_deref(), Some("zms-demo.target"));
     }
 }
