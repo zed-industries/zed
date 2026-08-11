@@ -1391,6 +1391,12 @@ impl FrameDurationTracker {
     }
 }
 
+#[derive(Default)]
+struct FramePhaseTiming {
+    paint_started_at: Option<Instant>,
+    paint_finished_at: Option<Instant>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DrawPhase {
     None,
@@ -2988,9 +2994,11 @@ impl Window {
                 self.rendered_frame.input_handlers.push(Some(input_handler));
             }
         }
-        if !cx.mode.skip_drawing() {
-            self.draw_roots(cx);
-        }
+        let frame_phase_timing = if !cx.mode.skip_drawing() {
+            self.draw_roots(cx, draw_started_at.is_some())
+        } else {
+            FramePhaseTiming::default()
+        };
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
@@ -3077,6 +3085,8 @@ impl Window {
                 draw_end,
                 invalidating_task_location: frame_dirty.invalidating_task_location,
                 invalidating_action_name: frame_dirty.invalidating_action_name,
+                paint_started_at: frame_phase_timing.paint_started_at,
+                paint_finished_at: frame_phase_timing.paint_finished_at,
             };
             #[cfg(feature = "frame-duration-histogram")]
             self.frame_duration_tracker
@@ -3153,7 +3163,7 @@ impl Window {
         self.frame_duration_tracker.snapshot()
     }
 
-    fn draw_roots(&mut self, cx: &mut App) {
+    fn draw_roots(&mut self, cx: &mut App, collect_frame_timing: bool) -> FramePhaseTiming {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
@@ -3223,6 +3233,7 @@ impl Window {
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
         // Now actually paint the elements.
+        let paint_started_at = collect_frame_timing.then(Instant::now);
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
 
@@ -3241,6 +3252,7 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
+        let paint_finished_at = collect_frame_timing.then(Instant::now);
 
         // a11y may have been activated/deactivated halfway through the frame
         let a11y_active_start_of_frame = self.a11y.is_active();
@@ -3267,6 +3279,11 @@ impl Window {
                 );
                 self.platform_window.a11y_tree_update(tree_update);
             }
+        }
+
+        FramePhaseTiming {
+            paint_started_at,
+            paint_finished_at,
         }
     }
 
@@ -7674,6 +7691,8 @@ mod tests {
                 draw_end: draw_start + Duration::from_millis(20),
                 invalidating_task_location: Some(task_location),
                 invalidating_action_name: Some("test::SlowAction"),
+                paint_started_at: Some(draw_start + Duration::from_millis(2)),
+                paint_finished_at: Some(draw_start + Duration::from_millis(5)),
             };
 
             tracker.record_frame_timing(&timing);
@@ -7695,6 +7714,12 @@ mod tests {
                     .get("test::SlowAction"),
                 Some(&1)
             );
+            assert_eq!(tracker.snapshot.prepaint_duration_histogram.len(), 1);
+            assert_eq!(tracker.snapshot.paint_duration_histogram.len(), 1);
+            assert_eq!(tracker.snapshot.postpaint_duration_histogram.len(), 1);
+            assert!(tracker.snapshot.prepaint_duration_histogram.max() >= 1_900_000);
+            assert!(tracker.snapshot.paint_duration_histogram.max() >= 2_900_000);
+            assert!(tracker.snapshot.postpaint_duration_histogram.max() >= 14_900_000);
         }
 
         #[test]
@@ -7709,6 +7734,8 @@ mod tests {
                 draw_end: draw_start + Duration::from_millis(15),
                 invalidating_task_location: Some(Location::caller()),
                 invalidating_action_name: Some("test::FastAction"),
+                paint_started_at: None,
+                paint_finished_at: None,
             });
 
             assert!(tracker.snapshot.slow_draws_by_task_location.is_empty());
@@ -7725,6 +7752,8 @@ mod tests {
                 draw_end: draw_start + duration,
                 invalidating_task_location: None,
                 invalidating_action_name: None,
+                paint_started_at: None,
+                paint_finished_at: None,
             });
         }
     }

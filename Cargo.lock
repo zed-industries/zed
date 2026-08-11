@@ -9177,6 +9177,7 @@ dependencies = [
  "collections",
  "gpui",
  "hdrhistogram",
+ "log",
  "serde",
  "telemetry",
 ]

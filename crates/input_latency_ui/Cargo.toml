@@ -19,5 +19,6 @@ gpui = { workspace = true, features = [
     "input-latency-histogram",
 ] }
 hdrhistogram.workspace = true
+log.workspace = true
 serde.workspace = true
 telemetry.workspace = true

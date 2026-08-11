@@ -736,6 +736,11 @@ pub struct FrameTiming {
     /// Name of the action that first invalidated the frame, if one was running
     /// and action profiling was enabled.
     pub invalidating_action_name: Option<&'static str>,
+    /// When element painting started, after layout and prepaint completed.
+    pub paint_started_at: Option<Instant>,
+    /// When element painting finished, before accessibility and frame
+    /// finalization.
+    pub paint_finished_at: Option<Instant>,
 }
 
 impl FrameTiming {
@@ -749,6 +754,27 @@ impl FrameTiming {
     pub fn dirty_to_draw_duration(&self) -> Option<Duration> {
         self.dirty_at
             .map(|dirty_at| self.draw_end.duration_since(dirty_at))
+    }
+
+    /// Time from the start of `Window::draw` through layout and prepaint.
+    pub fn prepaint_duration(&self) -> Option<Duration> {
+        self.paint_started_at
+            .map(|paint_started_at| paint_started_at.duration_since(self.draw_start))
+    }
+
+    /// Time spent painting elements.
+    pub fn paint_duration(&self) -> Option<Duration> {
+        self.paint_started_at.zip(self.paint_finished_at).map(
+            |(paint_started_at, paint_finished_at)| {
+                paint_finished_at.duration_since(paint_started_at)
+            },
+        )
+    }
+
+    /// Time from the end of element painting through the end of `Window::draw`.
+    pub fn postpaint_duration(&self) -> Option<Duration> {
+        self.paint_finished_at
+            .map(|paint_finished_at| self.draw_end.duration_since(paint_finished_at))
     }
 }
 
@@ -770,6 +796,12 @@ pub struct FrameDurationSnapshot {
     pub dirty_to_draw_duration_histogram: Histogram<u64>,
     /// Histogram of `Window::draw` durations, in nanoseconds.
     pub draw_duration_histogram: Histogram<u64>,
+    /// Histogram of layout and prepaint durations, in nanoseconds.
+    pub prepaint_duration_histogram: Histogram<u64>,
+    /// Histogram of element paint durations, in nanoseconds.
+    pub paint_duration_histogram: Histogram<u64>,
+    /// Histogram of postpaint finalization durations, in nanoseconds.
+    pub postpaint_duration_histogram: Histogram<u64>,
     /// Histogram of intervals between consecutively presented frames while the
     /// window was animating, in nanoseconds.
     pub present_interval_histogram: Histogram<u64>,
@@ -793,6 +825,15 @@ impl FrameDurationSnapshot {
             draw_duration_histogram: Histogram::new(3).map_err(|error| {
                 anyhow::anyhow!("Failed to create draw duration histogram: {error}")
             })?,
+            prepaint_duration_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create prepaint duration histogram: {error}")
+            })?,
+            paint_duration_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create paint duration histogram: {error}")
+            })?,
+            postpaint_duration_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create postpaint duration histogram: {error}")
+            })?,
             present_interval_histogram: Histogram::new(3).map_err(|error| {
                 anyhow::anyhow!("Failed to create present interval histogram: {error}")
             })?,
@@ -812,6 +853,21 @@ impl FrameDurationSnapshot {
         if let Some(dirty_to_draw_duration) = timing.dirty_to_draw_duration() {
             self.dirty_to_draw_duration_histogram
                 .record(dirty_to_draw_duration.as_nanos() as u64)
+                .ok();
+        }
+        if let Some(prepaint_duration) = timing.prepaint_duration() {
+            self.prepaint_duration_histogram
+                .record(prepaint_duration.as_nanos() as u64)
+                .ok();
+        }
+        if let Some(paint_duration) = timing.paint_duration() {
+            self.paint_duration_histogram
+                .record(paint_duration.as_nanos() as u64)
+                .ok();
+        }
+        if let Some(postpaint_duration) = timing.postpaint_duration() {
+            self.postpaint_duration_histogram
+                .record(postpaint_duration.as_nanos() as u64)
                 .ok();
         }
         if timing.invalidations > 0 {

@@ -200,10 +200,10 @@ const MIN_DRAWS_TO_REPORT: u64 = 1_000;
 /// Computes and sends a `Frame Duration Report` telemetry event for the given
 /// window if enough frames were drawn since the last report.
 ///
-/// The report contains bucketed draw durations (how long `Window::draw` took)
-/// and bucketed present intervals (the achieved frame-to-frame cadence while
-/// the window was animating), so missed frames are visible in the fleet even
-/// when no input was involved.
+/// The report contains bucketed draw and phase durations, plus bucketed
+/// present intervals (the achieved frame-to-frame cadence while the window was
+/// animating), so missed frames are visible in the fleet even when no input was
+/// involved.
 ///
 /// Call this periodically (e.g. every five minutes) from a spawned task.
 pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
@@ -235,30 +235,29 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         previous.map(|(_, snapshot)| &snapshot.slow_draws_by_action_name),
         |action_name| (*action_name).to_string(),
     );
-
-    let (delta_draws, delta_intervals, report_window_seconds) =
-        if let Some((prev_instant, prev_snapshot)) = previous {
-            let mut delta_draws = current.draw_duration_histogram.clone();
-            delta_draws
-                .subtract(&prev_snapshot.draw_duration_histogram)
-                .ok();
-            let mut delta_intervals = current.present_interval_histogram.clone();
-            delta_intervals
-                .subtract(&prev_snapshot.present_interval_histogram)
-                .ok();
-            let elapsed = now.duration_since(*prev_instant).as_secs();
-            (delta_draws, delta_intervals, elapsed)
-        } else {
-            // First report for this window: the full cumulative histograms are
-            // the delta from the empty starting state. We don't know how long
-            // the window has been open, so record 0 to signal that this is the
-            // initial accumulation period rather than a fixed-width window.
-            (
-                current.draw_duration_histogram.clone(),
-                current.present_interval_histogram.clone(),
-                0u64,
-            )
-        };
+    let delta_draws = histogram_since(
+        &current.draw_duration_histogram,
+        previous.map(|(_, snapshot)| &snapshot.draw_duration_histogram),
+    );
+    let delta_prepaints = histogram_since(
+        &current.prepaint_duration_histogram,
+        previous.map(|(_, snapshot)| &snapshot.prepaint_duration_histogram),
+    );
+    let delta_paints = histogram_since(
+        &current.paint_duration_histogram,
+        previous.map(|(_, snapshot)| &snapshot.paint_duration_histogram),
+    );
+    let delta_postpaints = histogram_since(
+        &current.postpaint_duration_histogram,
+        previous.map(|(_, snapshot)| &snapshot.postpaint_duration_histogram),
+    );
+    let delta_intervals = histogram_since(
+        &current.present_interval_histogram,
+        previous.map(|(_, snapshot)| &snapshot.present_interval_histogram),
+    );
+    let report_window_seconds = previous
+        .map(|(previous_instant, _)| now.duration_since(*previous_instant).as_secs())
+        .unwrap_or_default();
 
     let total_draws = delta_draws.len();
     if total_draws < MIN_DRAWS_TO_REPORT {
@@ -267,11 +266,10 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
 
     state.previous.insert(window_id, (now, current));
 
-    let draws_sub4 = count_frames_in_range(&delta_draws, 0, MS4_NS);
-    let draws_4to8 = count_frames_in_range(&delta_draws, MS4_NS, MS8_NS);
-    let draws_8to16 = count_frames_in_range(&delta_draws, MS8_NS, MS16_NS);
-    let draws_16to33 = count_frames_in_range(&delta_draws, MS16_NS, MS33_NS);
-    // draws > 33ms are implicitly total_draws - (sub4 + 4to8 + 8to16 + 16to33)
+    let draw_buckets = duration_buckets(&delta_draws);
+    let prepaint_buckets = duration_buckets(&delta_prepaints);
+    let paint_buckets = duration_buckets(&delta_paints);
+    let postpaint_buckets = duration_buckets(&delta_postpaints);
 
     let total_intervals = delta_intervals.len();
     let intervals_sub9 = count_frames_in_range(&delta_intervals, 0, MS9_NS);
@@ -282,11 +280,26 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
 
     telemetry::event!(
         "Frame Duration Report",
-        draws_sub4 = draws_sub4,
-        draws_4to8 = draws_4to8,
-        draws_8to16 = draws_8to16,
-        draws_16to33 = draws_16to33,
-        total_draws = total_draws,
+        draws_sub4 = draw_buckets.sub4,
+        draws_4to8 = draw_buckets.from4_to8,
+        draws_8to16 = draw_buckets.from8_to16,
+        draws_16to33 = draw_buckets.from16_to33,
+        total_draws = draw_buckets.total,
+        prepaints_sub4 = prepaint_buckets.sub4,
+        prepaints_4to8 = prepaint_buckets.from4_to8,
+        prepaints_8to16 = prepaint_buckets.from8_to16,
+        prepaints_16to33 = prepaint_buckets.from16_to33,
+        total_prepaints = prepaint_buckets.total,
+        paints_sub4 = paint_buckets.sub4,
+        paints_4to8 = paint_buckets.from4_to8,
+        paints_8to16 = paint_buckets.from8_to16,
+        paints_16to33 = paint_buckets.from16_to33,
+        total_paints = paint_buckets.total,
+        postpaints_sub4 = postpaint_buckets.sub4,
+        postpaints_4to8 = postpaint_buckets.from4_to8,
+        postpaints_8to16 = postpaint_buckets.from8_to16,
+        postpaints_16to33 = postpaint_buckets.from16_to33,
+        total_postpaints = postpaint_buckets.total,
         intervals_sub9 = intervals_sub9,
         intervals_9to18 = intervals_9to18,
         intervals_18to36 = intervals_18to36,
@@ -331,6 +344,34 @@ where
     });
     attributions.truncate(MAX_ATTRIBUTIONS);
     attributions
+}
+
+struct DurationBuckets {
+    sub4: u64,
+    from4_to8: u64,
+    from8_to16: u64,
+    from16_to33: u64,
+    total: u64,
+}
+
+fn duration_buckets(histogram: &Histogram<u64>) -> DurationBuckets {
+    DurationBuckets {
+        sub4: count_frames_in_range(histogram, 0, MS4_NS),
+        from4_to8: count_frames_in_range(histogram, MS4_NS, MS8_NS),
+        from8_to16: count_frames_in_range(histogram, MS8_NS, MS16_NS),
+        from16_to33: count_frames_in_range(histogram, MS16_NS, MS33_NS),
+        total: histogram.len(),
+    }
+}
+
+fn histogram_since(current: &Histogram<u64>, previous: Option<&Histogram<u64>>) -> Histogram<u64> {
+    let mut histogram = current.clone();
+    if let Some(previous) = previous
+        && let Err(error) = histogram.subtract(previous)
+    {
+        log::error!("Failed to subtract frame-duration histogram baseline: {error}");
+    }
+    histogram
 }
 
 fn open_window_ids(cx: &App) -> HashSet<WindowId> {
@@ -564,5 +605,37 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn duration_buckets_group_phase_samples() {
+        let mut histogram = Histogram::new(3).unwrap();
+        for duration in [1_000_000, 5_000_000, 10_000_000, 20_000_000, 40_000_000] {
+            histogram.record(duration).unwrap();
+        }
+
+        let buckets = duration_buckets(&histogram);
+
+        assert_eq!(buckets.sub4, 1);
+        assert_eq!(buckets.from4_to8, 1);
+        assert_eq!(buckets.from8_to16, 1);
+        assert_eq!(buckets.from16_to33, 1);
+        assert_eq!(buckets.total, 5);
+    }
+
+    #[test]
+    fn histogram_since_returns_only_new_samples() {
+        let mut previous = Histogram::new(3).unwrap();
+        previous.record(1_000_000).unwrap();
+        previous.record(2_000_000).unwrap();
+        let mut current = previous.clone();
+        current.record(3_000_000).unwrap();
+        current.record(4_000_000).unwrap();
+
+        let histogram = histogram_since(&current, Some(&previous));
+
+        assert_eq!(histogram.len(), 2);
+        assert!(histogram.min() >= 2_900_000);
+        assert!(histogram.max() >= 3_900_000);
     }
 }
