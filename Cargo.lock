@@ -8152,6 +8152,7 @@ name = "grammars"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "criterion",
  "language_core",
  "rust-embed",
  "toml 0.8.23",
