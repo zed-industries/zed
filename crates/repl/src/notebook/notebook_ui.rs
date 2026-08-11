@@ -2070,12 +2070,18 @@ mod tests {
     }"#;
 
     fn missing_interpreter_spec() -> KernelSpecification {
-        let path = path!("/nonexistent/python3");
+        let missing_interpreter = path!("/nonexistent/python3");
         KernelSpecification::Jupyter(LocalKernelSpecification {
             name: "python3".to_string(),
-            path: path.into(),
+            path: PathBuf::from(missing_interpreter),
             kernelspec: JupyterKernelspec {
-                argv: vec![path.to_string(), "{connection_file}".to_string()],
+                argv: vec![
+                    missing_interpreter.to_string(),
+                    "-m".to_string(),
+                    "ipykernel_launcher".to_string(),
+                    "-f".to_string(),
+                    "{connection_file}".to_string(),
+                ],
                 display_name: "Python 3".to_string(),
                 language: "python".to_string(),
                 interrupt_mode: None,
@@ -2218,10 +2224,18 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/notebooks").as_ref()], cx).await;
         cx.update(|cx| ReplStore::init(fs.clone(), cx));
 
-        let project_path = project.read_with(cx, |project, cx| ProjectPath {
-            worktree_id: project.worktrees(cx).next().unwrap().read(cx).id(),
+        let worktree_id = project
+            .read_with(cx, |project, cx| {
+                project
+                    .worktrees(cx)
+                    .next()
+                    .map(|worktree| worktree.read(cx).id())
+            })
+            .expect("test project should contain a worktree");
+        let project_path = ProjectPath {
+            worktree_id,
             path: rel_path("test.ipynb").into(),
-        });
+        };
         cx.update(|cx| {
             ReplStore::global(cx).update(cx, |store, cx| {
                 store.set_active_kernelspec(
@@ -2244,7 +2258,17 @@ mod tests {
         let editor = cx.update(|window, cx| {
             cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
         });
-        editor.update(cx, |editor, _| editor.cell_order.clear());
+        let cell_editor = editor
+            .read_with(cx, |editor, cx| {
+                editor
+                    .get_selected_cell()
+                    .and_then(|cell| cell.editor(cx))
+                    .cloned()
+            })
+            .expect("notebook should contain an editable cell");
+        cell_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("print('edited')", window, cx);
+        });
         assert!(editor.read_with(cx, |editor, cx| editor.is_dirty(cx)));
 
         fs.pause_events();
