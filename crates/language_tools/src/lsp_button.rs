@@ -931,7 +931,7 @@ impl LspButton {
                 message: proto::update_language_server::Variant::StatusUpdate(status_update),
             } => match &status_update.status {
                 Some(proto::status_update::Status::Binary(binary_status)) => {
-                    let Some(name) = name.as_ref() else {
+                    if name.is_none() {
                         return;
                     };
                     if let Some(binary_status) = proto::ServerBinaryStatus::from_i32(*binary_status)
@@ -1457,6 +1457,14 @@ impl Render for LspButton {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
+    use gpui::TestAppContext;
+    use language::{Buffer, FakeLspAdapter, rust_lang};
+    use project::{FakeFs, Project, lsp_store};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+    use workspace::Workspace;
 
     fn server_id(n: usize) -> LanguageServerId {
         LanguageServerId(n)
@@ -1586,6 +1594,372 @@ mod tests {
         assert!(
             state.health_statuses.contains_key(&server_id(2)),
             "the new server's health entry is present",
+        );
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        cx.executor().allow_parking();
+    }
+
+    async fn start_fake_server(
+        project: &Entity<Project>,
+        abs_path: impl AsRef<Path>,
+        cx: &mut TestAppContext,
+    ) -> (
+        futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer>,
+        Entity<Buffer>,
+        lsp_store::OpenLspBufferHandle,
+    ) {
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "the-rust-language-server",
+                ..Default::default()
+            },
+        );
+        let (buffer, handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(abs_path.as_ref(), cx)
+            })
+            .await
+            .unwrap();
+        (fake_servers, buffer, handle)
+    }
+
+    fn build_lsp_button(project: &Entity<Project>, cx: &mut TestAppContext) -> Entity<LspButton> {
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        workspace_window
+            .update(cx, |workspace, window, cx| {
+                cx.new(|cx| LspButton::new(workspace, PopoverMenuHandle::default(), window, cx))
+            })
+            .unwrap()
+    }
+
+    fn running_server_names(button: &Entity<LspButton>, cx: &TestAppContext) -> Vec<String> {
+        button.read_with(cx, |button, cx| {
+            button
+                .server_state
+                .read(cx)
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    LspMenuItem::WithHealthCheck { health, .. } => Some(health.name.0.to_string()),
+                    LspMenuItem::WithBinaryStatus { server_name, .. } => {
+                        Some(server_name.0.to_string())
+                    }
+                    _ => None,
+                })
+                .collect()
+        })
+    }
+
+    fn stopped_server_names(button: &Entity<LspButton>, cx: &TestAppContext) -> Vec<String> {
+        button.read_with(cx, |button, cx| {
+            button
+                .server_state
+                .read(cx)
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    LspMenuItem::WithStoppedStatus { server_name } => {
+                        Some(server_name.0.to_string())
+                    }
+                    _ => None,
+                })
+                .collect()
+        })
+    }
+
+    fn has_restart_all_button(button: &Entity<LspButton>, cx: &TestAppContext) -> bool {
+        button.read_with(cx, |button, cx| {
+            button
+                .server_state
+                .read(cx)
+                .items
+                .iter()
+                .any(|item| matches!(item, LspMenuItem::ToggleServersButton { restart: true }))
+        })
+    }
+
+    fn has_stop_all_button(button: &Entity<LspButton>, cx: &TestAppContext) -> bool {
+        button.read_with(cx, |button, cx| {
+            button
+                .server_state
+                .read(cx)
+                .items
+                .iter()
+                .any(|item| matches!(item, LspMenuItem::ToggleServersButton { restart: false }))
+        })
+    }
+
+    fn pump_lsp_menu(cx: &mut TestAppContext) {
+        cx.executor().advance_clock(Duration::from_millis(30));
+        cx.run_until_parked();
+    }
+
+    /// Check whether stopped servers are listed in the menu and can be restarted.
+    #[gpui::test]
+    async fn test_lsp_button_keeps_stopped_servers_listed_and_restarts_them(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/the-root"),
+            json!({
+                "main.rs": "fn main() {}",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+        let (mut fake_servers, _buffer, _handle) =
+            start_fake_server(&project, path!("/the-root/main.rs"), cx).await;
+        let _first_server = fake_servers.next().await.unwrap();
+        cx.run_until_parked();
+
+        let lsp_button = build_lsp_button(&project, cx);
+        pump_lsp_menu(cx);
+
+        assert_eq!(
+            running_server_names(&lsp_button, cx),
+            vec!["the-rust-language-server".to_string()],
+            "the running server is listed",
+        );
+        assert!(
+            has_stop_all_button(&lsp_button, cx),
+            "a running server can be stopped",
+        );
+
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        lsp_store.update(cx, |lsp_store, cx| lsp_store.stop_all_language_servers(cx));
+        cx.run_until_parked();
+        pump_lsp_menu(cx);
+
+        assert_eq!(
+            stopped_server_names(&lsp_button, cx),
+            vec!["the-rust-language-server".to_string()],
+            "#61896: the stopped server stays listed",
+        );
+        assert!(
+            has_restart_all_button(&lsp_button, cx),
+            "the stopped server can be restarted",
+        );
+        assert!(
+            !has_stop_all_button(&lsp_button, cx),
+            "with nothing running, the Stop All button is hidden",
+        );
+
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.restart_all_language_servers(cx)
+        });
+        let _restarted_server = fake_servers.next().await.unwrap();
+        cx.run_until_parked();
+        pump_lsp_menu(cx);
+
+        assert_eq!(
+            running_server_names(&lsp_button, cx),
+            vec!["the-rust-language-server".to_string()],
+            "the restarted server is running again",
+        );
+        assert!(
+            stopped_server_names(&lsp_button, cx).is_empty(),
+            "the stopped row is gone after a restart",
+        );
+        assert!(
+            has_stop_all_button(&lsp_button, cx),
+            "the restarted server can be stopped again",
+        );
+    }
+
+    /// A server stopped by name stays listed and can be restarted by name.
+    #[gpui::test]
+    async fn test_lsp_button_restarts_a_stopped_server_by_name(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/the-root"),
+            json!({
+                "main.rs": "fn main() {}",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+        let (mut fake_servers, _buffer, _handle) =
+            start_fake_server(&project, path!("/the-root/main.rs"), cx).await;
+        let _first_server = fake_servers.next().await.unwrap();
+        cx.run_until_parked();
+
+        let lsp_button = build_lsp_button(&project, cx);
+        pump_lsp_menu(cx);
+
+        assert_eq!(
+            running_server_names(&lsp_button, cx),
+            vec!["the-rust-language-server".to_string()],
+            "the running server is listed",
+        );
+        assert!(has_stop_all_button(&lsp_button, cx));
+
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        let stop = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.stop_language_servers_for_buffers(
+                Vec::new(),
+                HashSet::from_iter([LanguageServerSelector::Name(server_name(
+                    "the-rust-language-server",
+                ))]),
+                cx,
+            )
+        });
+        stop.await.unwrap();
+        cx.run_until_parked();
+        pump_lsp_menu(cx);
+
+        assert_eq!(
+            stopped_server_names(&lsp_button, cx),
+            vec!["the-rust-language-server".to_string()],
+            "the stopped server stays listed",
+        );
+        assert!(has_restart_all_button(&lsp_button, cx));
+        assert!(
+            !has_stop_all_button(&lsp_button, cx),
+            "with nothing running, the Stop All button is hidden",
+        );
+
+        let server_state = lsp_button.read_with(cx, |button, _| button.server_state.clone());
+        server_state.update(cx, |state, cx| {
+            state.restart_server_by_name(server_name("the-rust-language-server"), cx)
+        });
+        let _restarted_server = fake_servers.next().await.unwrap();
+        cx.run_until_parked();
+        pump_lsp_menu(cx);
+
+        assert_eq!(
+            running_server_names(&lsp_button, cx),
+            vec!["the-rust-language-server".to_string()],
+            "the restarted server is running again",
+        );
+        assert!(
+            stopped_server_names(&lsp_button, cx).is_empty(),
+            "the stopped row is gone after a restart",
+        );
+        assert!(
+            has_stop_all_button(&lsp_button, cx),
+            "the restarted server can be stopped again",
+        );
+    }
+
+    /// Stopping servers in one workspace must not affect another
+    #[gpui::test]
+    async fn test_lsp_button_stopping_one_workspace_does_not_affect_another(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs_a = FakeFs::new(cx.executor());
+        fs_a.insert_tree(
+            path!("/the-root-a"),
+            json!({
+                "main.rs": "fn main() {}",
+            }),
+        )
+        .await;
+        let project_a = Project::test(fs_a, [path!("/the-root-a").as_ref()], cx).await;
+        let (mut servers_a, _buffer_a, _handle_a) =
+            start_fake_server(&project_a, path!("/the-root-a/main.rs"), cx).await;
+        let _server_a = servers_a.next().await.unwrap();
+        cx.run_until_parked();
+
+        let fs_b = FakeFs::new(cx.executor());
+        fs_b.insert_tree(
+            path!("/the-root-b"),
+            json!({
+                "main.rs": "fn main() {}",
+            }),
+        )
+        .await;
+        let project_b = Project::test(fs_b, [path!("/the-root-b").as_ref()], cx).await;
+        let (mut servers_b, _buffer_b, _handle_b) =
+            start_fake_server(&project_b, path!("/the-root-b/main.rs"), cx).await;
+        let _server_b = servers_b.next().await.unwrap();
+        cx.run_until_parked();
+
+        let button_a = build_lsp_button(&project_a, cx);
+        let button_b = build_lsp_button(&project_b, cx);
+        pump_lsp_menu(cx);
+
+        assert_eq!(
+            running_server_names(&button_a, cx),
+            vec!["the-rust-language-server".to_string()],
+            "workspace A's server is running",
+        );
+        assert_eq!(
+            running_server_names(&button_b, cx),
+            vec!["the-rust-language-server".to_string()],
+            "workspace B's server is running",
+        );
+
+        let lsp_store_a = project_a.read_with(cx, |project, _| project.lsp_store());
+        lsp_store_a.update(cx, |lsp_store, cx| lsp_store.stop_all_language_servers(cx));
+        cx.run_until_parked();
+        pump_lsp_menu(cx);
+
+        assert_eq!(
+            stopped_server_names(&button_a, cx),
+            vec!["the-rust-language-server".to_string()],
+            "#61896: workspace A's stopped server stays listed",
+        );
+        assert!(has_restart_all_button(&button_a, cx));
+        assert!(
+            !has_stop_all_button(&button_a, cx),
+            "workspace A has nothing running, so Stop All is hidden",
+        );
+        assert_eq!(
+            running_server_names(&button_b, cx),
+            vec!["the-rust-language-server".to_string()],
+            "#62121: workspace B's server keeps running",
+        );
+        assert!(
+            stopped_server_names(&button_b, cx).is_empty(),
+            "#62121: workspace B shows no stopped server",
+        );
+        assert!(
+            has_stop_all_button(&button_b, cx),
+            "#62121: workspace B can still be stopped",
+        );
+
+        lsp_store_a.update(cx, |lsp_store, cx| {
+            lsp_store.restart_all_language_servers(cx)
+        });
+        let _restarted_server_a = servers_a.next().await.unwrap();
+        cx.run_until_parked();
+        pump_lsp_menu(cx);
+
+        assert_eq!(
+            running_server_names(&button_a, cx),
+            vec!["the-rust-language-server".to_string()],
+            "workspace A's server is running again",
+        );
+        assert!(stopped_server_names(&button_a, cx).is_empty());
+        assert!(
+            has_stop_all_button(&button_a, cx),
+            "workspace A is running again and can be stopped",
+        );
+        assert_eq!(
+            running_server_names(&button_b, cx),
+            vec!["the-rust-language-server".to_string()],
+            "workspace B's server is still running",
         );
     }
 }
