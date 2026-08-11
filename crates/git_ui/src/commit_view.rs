@@ -984,6 +984,7 @@ async fn build_buffer(
             text,
         );
         let mut buffer = Buffer::build(buffer, Some(blob), Capability::ReadWrite);
+        buffer.set_language_registry(language_registry.clone());
         buffer.set_language_async(language, cx);
         buffer
     });
@@ -1377,4 +1378,60 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
         .get(stash_index)
         .map(|entry| entry.oid.to_string() == sha)
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use settings::SettingsStore;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    // Regression test for https://github.com/zed-industries/zed/issues/62043. The commit view
+    // built its added-side buffer without a language registry, so injected languages (a Rust
+    // block inside Markdown, for example) could not load: the added side rendered as plain text
+    // while the deleted side, which does get the registry via `BufferDiff::new`, stayed
+    // highlighted.
+    #[gpui::test]
+    async fn test_build_buffer_carries_language_registry(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let cx = cx.add_empty_window();
+
+        let blob = Arc::new(GitBlob {
+            path: RepoPath::new("readme.md").unwrap(),
+            worktree_id: WorktreeId::from_usize(0),
+            is_deleted: false,
+            is_binary: false,
+            display_name: "readme.md".into(),
+        }) as Arc<dyn File>;
+
+        let buffer = cx
+            .update(|window, cx| {
+                let registry = registry.clone();
+                window.spawn(cx, async move |cx| {
+                    build_buffer("# title\n".to_string(), blob, &registry, cx).await
+                })
+            })
+            .await
+            .unwrap();
+
+        let buffer_registry = cx.update(|_, cx| buffer.read(cx).language_registry());
+        assert!(
+            buffer_registry
+                .as_ref()
+                .is_some_and(|buffer_registry| Arc::ptr_eq(buffer_registry, &registry)),
+            "commit-view buffer must carry the language registry so injected languages can load",
+        );
+    }
 }
