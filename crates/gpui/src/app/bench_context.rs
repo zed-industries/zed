@@ -142,6 +142,15 @@ impl BenchReport {
             &frame_snapshot.dirty_to_draw_duration_histogram,
         );
         self.print_histogram("window draw", &frame_snapshot.draw_duration_histogram);
+        self.print_histogram(
+            "window prepaint",
+            &frame_snapshot.prepaint_duration_histogram,
+        );
+        self.print_histogram("window paint", &frame_snapshot.paint_duration_histogram);
+        self.print_histogram(
+            "window postpaint",
+            &frame_snapshot.postpaint_duration_histogram,
+        );
         if !frame_snapshot.invalidations_per_frame_histogram.is_empty() {
             eprintln!(
                 "  invalidations per frame: mean {:.2}, max {}",
@@ -893,9 +902,11 @@ mod tests {
             dirty_at: Some(draw_start - Duration::from_millis(3)),
             invalidations: 2,
             draw_start,
-            draw_end: draw_start + Duration::from_millis(2),
+            draw_end: draw_start + Duration::from_millis(4),
             invalidating_task_location: None,
             invalidating_action_name: None,
+            paint_started_at: Some(draw_start + Duration::from_millis(1)),
+            paint_finished_at: Some(draw_start + Duration::from_millis(3)),
         };
 
         report.record_frame_timings([&timing]);
@@ -904,6 +915,9 @@ mod tests {
         assert_eq!(snapshot.draw_duration_histogram.len(), 1);
         assert_eq!(snapshot.dirty_to_draw_duration_histogram.len(), 1);
         assert_eq!(snapshot.invalidations_per_frame_histogram.max(), 2);
+        assert_eq!(snapshot.prepaint_duration_histogram.len(), 1);
+        assert_eq!(snapshot.paint_duration_histogram.len(), 1);
+        assert_eq!(snapshot.postpaint_duration_histogram.len(), 1);
     }
 
     #[test]
