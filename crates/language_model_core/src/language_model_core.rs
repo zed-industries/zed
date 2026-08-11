@@ -106,6 +106,17 @@ impl LanguageModelCompletionEvent {
 pub enum LanguageModelCompletionError {
     #[error("prompt too large for context window")]
     PromptTooLarge { tokens: Option<u64> },
+    /// The request body exceeded a provider or gateway size limit (HTTP 413).
+    /// Distinct from [`Self::PromptTooLarge`]: the request was rejected on
+    /// bytes, not tokens, so neither trimming the context to fewer tokens of
+    /// text nor switching to a larger context window helps — the payload
+    /// itself (typically images or other attachments) has to shrink.
+    ///
+    /// `message` is the provider's response body; providers that state the
+    /// rejected size or their limit do so there. Callers know the request
+    /// they sent, so its size is theirs to report.
+    #[error("request body exceeded the provider's size limit: {message}")]
+    RequestPayloadTooLarge { message: String },
     /// The model requires the user to consent to the upstream provider
     /// retaining inference logs (see `LanguageModel::requires_data_retention`)
     /// and that consent has not been given.
@@ -268,8 +279,14 @@ impl LanguageModelCompletionError {
             StatusCode::UNAUTHORIZED => Self::AuthenticationError { provider, message },
             StatusCode::FORBIDDEN => Self::PermissionError { provider, message },
             StatusCode::NOT_FOUND => Self::ApiEndpointNotFound { provider },
-            StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
-                tokens: parse_prompt_too_long(&message),
+            StatusCode::PAYLOAD_TOO_LARGE => match parse_prompt_too_long(&message) {
+                // Providers occasionally phrase a token overflow as a 413; a
+                // stated token count identifies those as context problems
+                // rather than body-size rejections.
+                Some(tokens) => Self::PromptTooLarge {
+                    tokens: Some(tokens),
+                },
+                None => Self::RequestPayloadTooLarge { message },
             },
             StatusCode::TOO_MANY_REQUESTS => Self::RateLimitExceeded {
                 provider,
@@ -694,6 +711,37 @@ mod tests {
         assert!(matches!(
             error,
             LanguageModelCompletionError::BadRequestFormat { .. }
+        ));
+    }
+
+    #[test]
+    fn test_from_http_status_maps_413_to_request_payload_too_large() {
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("Zed").into(),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "413 Request Entity Too Large".to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::RequestPayloadTooLarge { .. }
+        ));
+
+        // A 413 whose body states a token count is a context-window overflow
+        // wearing a payload status; keep reporting it as one.
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("Anthropic").into(),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "prompt is too long: 207131 tokens > 204798 maximum".to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::PromptTooLarge {
+                tokens: Some(207_131)
+            }
         ));
     }
 
