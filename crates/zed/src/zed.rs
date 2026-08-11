@@ -60,7 +60,10 @@ use paths::{
     local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path,
 };
-use project::{DirectoryLister, DisableAiSettings, ProjectItem};
+use project::{
+    DirectoryLister, DisableAiSettings, ProjectItem,
+    project_settings::{SettingsObserver, SettingsObserverEvent},
+};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use recent_projects::open_remote_project;
@@ -436,6 +439,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     init_cursor_hide_mode(cx);
     init_app_appearance(cx);
     init_reduce_motion(cx);
+    init_global_config_error_notifications(cx);
 
     cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
@@ -476,6 +480,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
                 if cx
                     .update(|window, cx| {
                         input_latency_ui::report_input_latency_telemetry(window, cx);
+                        input_latency_ui::report_frame_duration_telemetry(window, cx);
                     })
                     .is_err()
                 {
@@ -2043,6 +2048,46 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
             }
         }
     };
+}
+
+fn init_global_config_error_notifications(cx: &mut App) {
+    cx.observe_new(|_: &mut SettingsObserver, _, cx| {
+        cx.subscribe_self::<SettingsObserverEvent>(|_, event, cx| {
+            let (result, file_kind, on_click): (_, _, fn(&mut Window, &mut App)) = match event {
+                SettingsObserverEvent::GlobalTasksUpdated(result) => {
+                    (result, "tasks", |window, cx| {
+                        window.dispatch_action(OpenTasks.boxed_clone(), cx)
+                    })
+                }
+                SettingsObserverEvent::GlobalDebugScenariosUpdated(result) => {
+                    (result, "debug scenarios", |window, cx| {
+                        window.dispatch_action(OpenDebugTasks.boxed_clone(), cx)
+                    })
+                }
+                _ => return,
+            };
+            let id = NotificationId::Named(format!("invalid-global-{file_kind}-file").into());
+            match result {
+                Ok(_) => dismiss_app_notification(&id, cx),
+                Err(error) => {
+                    let message = format!("Invalid global {file_kind} file\n{error}");
+                    show_app_notification(id, cx, move |cx| {
+                        cx.new(|cx| {
+                            MessageNotification::new(message.clone(), cx)
+                                .primary_message("Open File")
+                                .primary_icon(IconName::Settings)
+                                .primary_on_click(move |window, cx| {
+                                    on_click(window, cx);
+                                    cx.emit(DismissEvent);
+                                })
+                        })
+                    });
+                }
+            }
+        })
+        .detach();
+    })
+    .detach();
 }
 
 #[derive(Copy, Clone, Debug, settings::RegisterSetting)]
@@ -6255,6 +6300,71 @@ mod tests {
         cx.run_until_parked();
 
         // If this panics, the test has failed
+    }
+
+    #[gpui::test]
+    async fn test_invalid_global_tasks_file_shows_notification_on_startup(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let tasks_file_path = paths::tasks_file().as_path();
+        app_state
+            .fs
+            .create_dir(tasks_file_path.parent().unwrap())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                tasks_file_path,
+                &r#"[{ "label": "first" }] [{ "label": "trailing garbage" }]"#.into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.run_until_parked();
+
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let notification_id = NotificationId::Named("invalid-global-tasks-file".into());
+        let shown_notifications = workspace.read_with(cx, |workspace, _| {
+            workspace
+                .notification_ids()
+                .into_iter()
+                .filter(|id| *id == notification_id)
+                .count()
+        });
+        assert_eq!(
+            shown_notifications, 1,
+            "invalid global tasks file at startup should show an app notification"
+        );
+
+        app_state
+            .fs
+            .save(
+                tasks_file_path,
+                &r#"[{ "label": "first", "command": "echo" }]"#.into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let shown_notifications = workspace.read_with(cx, |workspace, _| {
+            workspace
+                .notification_ids()
+                .into_iter()
+                .filter(|id| *id == notification_id)
+                .count()
+        });
+        assert_eq!(
+            shown_notifications, 0,
+            "fixing the global tasks file should dismiss the notification"
+        );
     }
 
     #[gpui::test]
