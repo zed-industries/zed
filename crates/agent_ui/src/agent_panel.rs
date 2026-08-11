@@ -18,7 +18,7 @@ use agent_settings::UserAgentsMd;
 use collections::HashSet;
 use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
-use project::{AgentId, ProjectItem};
+use project::{AgentId, ProjectItem, agent_server_store::AllAgentServersSettings};
 use serde::{Deserialize, Serialize};
 
 use zed_actions::{
@@ -83,7 +83,7 @@ use language_model::LanguageModelRegistry;
 use notifications::status_toast::StatusToast;
 use project::{Project, ProjectPath, Worktree};
 use settings::TerminalDockPosition;
-use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
+use settings::{NotifyWhenAgentWaiting, Settings, SettingsStore, update_settings_file};
 
 use search::{BufferSearchBar, buffer_search::Deploy as DeployBufferSearch};
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
@@ -985,6 +985,15 @@ pub struct CreateThreadOptions {
     pub work_dirs: Option<PathList>,
 }
 
+/// The outcome of `AgentPanel::create_thread_with_options`.
+pub struct CreatedThread {
+    pub thread_id: ThreadId,
+    /// The agent the thread was actually created with. This differs from the
+    /// requested agent when the request named an agent that is no longer
+    /// available and the panel fell back to the Zed Agent.
+    pub agent: Agent,
+}
+
 pub(crate) struct AgentThread {
     conversation_view: Entity<ConversationView>,
 }
@@ -1658,15 +1667,16 @@ impl AgentPanel {
     fn agent_is_available(&self, agent: &Agent, cx: &App) -> bool {
         match agent {
             Agent::NativeAgent => true,
+            // Availability is keyed off settings rather than the agent server
+            // store: the store is populated asynchronously (registry agents load
+            // from disk/network, remote projects wait on the host), so consulting
+            // it would report a configured agent as missing during startup.
             Agent::Custom { id } => {
                 self.connection_store.read(cx).entry(agent).is_some()
-                    || self
-                        .project
-                        .read(cx)
-                        .agent_server_store()
-                        .read(cx)
-                        .external_agents
-                        .contains_key(id)
+                    || cx
+                        .global::<SettingsStore>()
+                        .get::<AllAgentServersSettings>(None)
+                        .contains_key(id.as_ref())
             }
             #[cfg(any(test, feature = "test-support"))]
             Agent::Stub => true,
@@ -3217,7 +3227,7 @@ impl AgentPanel {
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> ThreadId {
+    ) -> CreatedThread {
         let (agent, override_used) = if self.project.read(cx).is_via_collab() {
             (Agent::NativeAgent, false)
         } else if let Some(override_agent) = options.agent {
@@ -3245,10 +3255,13 @@ impl AgentPanel {
         if let Some(original) = saved_selected_agent {
             self.set_selected_agent_and_persist(original, cx);
         }
-        let thread_id = thread.conversation_view.read(cx).thread_id;
+        let (thread_id, agent) = {
+            let view = thread.conversation_view.read(cx);
+            (view.thread_id, view.agent_key().clone())
+        };
         self.retained_threads
             .insert(thread_id, thread.conversation_view);
-        thread_id
+        CreatedThread { thread_id, agent }
     }
 
     pub fn activate_retained_thread(
@@ -4549,14 +4562,21 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AgentThread {
+        // Only brand-new threads fall back to the Zed Agent. Existing threads
+        // and drafts stay bound to the agent they were created with: the Zed
+        // Agent can't restore another agent's session, and rewriting the
+        // binding would strand the thread even after the user reinstalls the
+        // agent. Those views surface the agent as unavailable instead.
+        let is_new_thread = resume_thread_id.is_none() && resume_session_id.is_none();
         let thread_id = resume_thread_id.unwrap_or_else(ThreadId::new);
         let workspace = self.workspace.clone();
         let project = self.project.clone();
-        let agent = if server_override.is_some() || self.agent_is_available(&agent, cx) {
-            agent
-        } else {
-            Agent::NativeAgent
-        };
+        let agent =
+            if server_override.is_some() || !is_new_thread || self.agent_is_available(&agent, cx) {
+                agent
+            } else {
+                Agent::NativeAgent
+            };
 
         self.set_selected_agent_and_persist(agent.clone(), cx);
 
@@ -4782,7 +4802,7 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
             let options = CreateThreadOptions {
                 title: Some(title.clone()),
                 initial_content: Some(initial_content),
-                agent: agent_choice.clone(),
+                agent: agent_choice,
                 model: request.model.clone(),
                 work_dirs: None,
             };
@@ -4861,18 +4881,20 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
             // become available here: there are currently no agent tools that
             // operate on sibling threads by session ID, so requiring one would
             // just introduce a race for no benefit.
+            // Report the agent the panel actually used: a requested agent that
+            // is no longer installed falls back to the Zed Agent, and the
+            // caller needs to know which one it got.
             let resolved_agent_id = target_window.update(cx, |_root, window, cx| {
                 target_panel.update(cx, |panel, cx| {
-                    panel.create_thread_with_options(
-                        options,
-                        AgentThreadSource::AgentPanel,
-                        window,
-                        cx,
-                    );
-                    let resolved_agent = agent_choice
-                        .clone()
-                        .unwrap_or_else(|| panel.selected_agent.clone());
-                    resolved_agent.id()
+                    panel
+                        .create_thread_with_options(
+                            options,
+                            AgentThreadSource::AgentPanel,
+                            window,
+                            cx,
+                        )
+                        .agent
+                        .id()
                 })
             })??;
 
@@ -7056,18 +7078,10 @@ mod tests {
         }
     }
 
-    fn make_agent_available(
-        panel: &Entity<AgentPanel>,
-        agent: Agent,
-        cx: &mut VisualTestContext,
-    ) {
+    fn make_agent_available(panel: &Entity<AgentPanel>, agent: Agent, cx: &mut VisualTestContext) {
         panel.update(cx, |panel, cx| {
             panel.connection_store.update(cx, |store, cx| {
-                store.request_connection(
-                    agent,
-                    Rc::new(StubAgentServer::default_response()),
-                    cx,
-                );
+                store.request_connection(agent, Rc::new(StubAgentServer::default_response()), cx);
             });
         });
         cx.run_until_parked();
@@ -11437,6 +11451,226 @@ mod tests {
         });
     }
 
+    /// Registry agents reach `external_agents` asynchronously, and remote
+    /// projects only learn about them once the host sends its list. Keying
+    /// availability off that map would read a configured agent as uninstalled
+    /// during the window before it loads, and the fallback would then persist
+    /// the Zed Agent over the user's stored preference for good.
+    #[gpui::test]
+    async fn test_new_thread_keeps_configured_agent_before_agent_store_loads(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+            cx.set_global(db::AppDatabase::test_new());
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.agent_servers.get_or_insert_default().insert(
+                        "registry-agent".to_string(),
+                        settings::CustomAgentServerSettings::Registry {
+                            env: Default::default(),
+                            default_mode: None,
+                            default_config_options: Default::default(),
+                            favorite_config_option_values: Default::default(),
+                        },
+                    );
+                });
+            });
+        });
+
+        let configured_agent = Agent::Custom {
+            id: "registry-agent".into(),
+        };
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        write_global_last_used_agent(kvp, configured_agent.clone()).await;
+
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            assert!(
+                !panel
+                    .project
+                    .read(cx)
+                    .agent_server_store()
+                    .read(cx)
+                    .external_agents
+                    .contains_key(&AgentId::new("registry-agent")),
+                "precondition: the agent server store has not loaded the agent yet"
+            );
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.selected_agent, configured_agent,
+                "a configured agent must survive a new thread created before the \
+                 agent server store has loaded"
+            );
+            let active = panel
+                .active_conversation_view()
+                .expect("new thread should be created");
+            assert_eq!(*active.read(cx).agent_key(), configured_agent);
+        });
+    }
+
+    /// Seeds a persisted thread owned by `agent_id`. A `session_id` marks it as
+    /// a real thread; `None` makes it a draft.
+    fn save_thread_metadata(
+        thread_id: ThreadId,
+        agent_id: &str,
+        session_id: Option<acp::SessionId>,
+        cx: &mut VisualTestContext,
+    ) {
+        use crate::thread_metadata_store::ThreadMetadata;
+        use chrono::Utc;
+        use project::{AgentId as ProjectAgentId, WorktreePaths};
+
+        cx.update(|_window, cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(
+                    ThreadMetadata {
+                        thread_id,
+                        session_id,
+                        agent_id: ProjectAgentId::new(agent_id),
+                        title: Some("Persisted thread".into()),
+                        title_override: None,
+                        updated_at: Utc::now(),
+                        created_at: Some(Utc::now()),
+                        interacted_at: None,
+                        worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
+                        remote_connection: None,
+                        archived: false,
+                    },
+                    cx,
+                );
+            });
+        });
+    }
+
+    /// The fallback is for new threads only: an existing thread's history
+    /// lives in the external agent's session and can't be loaded by the Zed
+    /// Agent, so the thread must stay bound to its agent and resume once the
+    /// user reinstalls it.
+    #[gpui::test]
+    async fn test_restoring_existing_thread_keeps_unregistered_agent(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        let uninstalled_agent = Agent::Custom {
+            id: "uninstalled-agent".into(),
+        };
+        let thread_id = ThreadId::new();
+        save_thread_metadata(
+            thread_id,
+            "uninstalled-agent",
+            Some(acp::SessionId::new("persisted-session")),
+            &mut cx,
+        );
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.load_agent_thread(
+                uninstalled_agent.clone(),
+                thread_id,
+                None,
+                None,
+                true,
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let restored = panel
+                .active_conversation_view()
+                .expect("the thread should still be restored");
+            assert_eq!(restored.read(cx).thread_id, thread_id);
+            assert_eq!(
+                *restored.read(cx).agent_key(),
+                uninstalled_agent,
+                "an existing thread must stay bound to its own agent rather than \
+                 silently switching to the Zed Agent"
+            );
+        });
+    }
+
+    /// Same for a saved draft: switching it to the Zed Agent would leave the
+    /// user's typed text attached to an agent they never chose, and
+    /// reinstalling the original agent wouldn't switch it back.
+    #[gpui::test]
+    async fn test_restoring_draft_keeps_unregistered_agent(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        let uninstalled_agent = Agent::Custom {
+            id: "uninstalled-agent".into(),
+        };
+        let draft_id = ThreadId::new();
+        save_thread_metadata(draft_id, "uninstalled-agent", None, &mut cx);
+        cx.update(|_window, cx| {
+            crate::draft_prompt_store::write(
+                draft_id,
+                &[acp::ContentBlock::Text(acp::TextContent::new(
+                    "unsent draft text".to_string(),
+                ))],
+                cx,
+            )
+        })
+        .await
+        .expect("draft prompt should be persisted");
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.restore_new_draft(draft_id, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let draft = panel
+                .draft_thread
+                .as_ref()
+                .expect("the draft should still be restored");
+            assert_eq!(draft.read(cx).thread_id, draft_id);
+            assert_eq!(
+                *draft.read(cx).agent_key(),
+                uninstalled_agent,
+                "a restored draft must stay bound to its own agent"
+            );
+        });
+
+        let persisted = cx.update(|_window, cx| crate::draft_prompt_store::read(draft_id, cx));
+        assert!(
+            persisted.is_some(),
+            "the draft's text should survive the restore so it's still there once \
+             the agent is reinstalled"
+        );
+    }
+
     #[gpui::test]
     async fn test_select_agent_action_updates_visible_draft(cx: &mut TestAppContext) {
         init_test(cx);
@@ -13121,12 +13355,12 @@ mod tests {
         });
         cx.run_until_parked();
 
+        let stub_server = Rc::new(StubAgentServer::default_response());
+        let stub_agent = Agent::Custom {
+            id: stub_server.agent_id(),
+        };
         panel_a.update_in(cx, |panel, window, cx| {
-            panel.open_external_thread_with_server(
-                Rc::new(StubAgentServer::default_response()),
-                window,
-                cx,
-            );
+            panel.open_external_thread_with_server(stub_server, window, cx);
         });
         cx.run_until_parked();
 
@@ -13144,6 +13378,11 @@ mod tests {
             panel
         });
         cx.run_until_parked();
+
+        // Connection state is per-panel, so panel_b hasn't seen this agent
+        // yet. Register it there too, otherwise the transferred draft is
+        // treated as belonging to an uninstalled agent.
+        make_agent_available(&panel_b, stub_agent, cx);
 
         // Initializing panel_b from workspace_a should transfer the draft,
         // even if panel_b already has an auto-created empty draft thread
@@ -13449,7 +13688,7 @@ mod tests {
 
         // Case 1: no agent override. The new thread should land in
         // `retained_threads` and `selected_agent` should be unchanged.
-        let no_override_id = panel.update_in(&mut cx, |panel, window, cx| {
+        let no_override = panel.update_in(&mut cx, |panel, window, cx| {
             panel.create_thread_with_options(
                 CreateThreadOptions::default(),
                 AgentThreadSource::AgentPanel,
@@ -13457,6 +13696,12 @@ mod tests {
                 cx,
             )
         });
+        let no_override_id = no_override.thread_id;
+        assert_eq!(
+            no_override.agent,
+            Agent::Stub,
+            "with no override, the reported agent should be the panel's selection"
+        );
 
         panel.read_with(&cx, |panel, _cx| {
             assert!(
@@ -13479,7 +13724,7 @@ mod tests {
             id: "override-agent".into(),
         };
         make_agent_available(&panel, override_agent.clone(), &mut cx);
-        let override_id = panel.update_in(&mut cx, |panel, window, cx| {
+        let override_thread = panel.update_in(&mut cx, |panel, window, cx| {
             panel.create_thread_with_options(
                 CreateThreadOptions {
                     agent: Some(override_agent.clone()),
@@ -13490,6 +13735,11 @@ mod tests {
                 cx,
             )
         });
+        let override_id = override_thread.thread_id;
+        assert_eq!(
+            override_thread.agent, override_agent,
+            "an available override agent should be reported back"
+        );
 
         panel.read_with(&cx, |panel, _cx| {
             assert!(
@@ -13505,6 +13755,48 @@ mod tests {
                 Agent::Stub,
                 "selected_agent should be restored to the original after an agent override"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_create_thread_with_options_reports_fallback_agent(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        let _stub_connection =
+            crate::test_support::set_stub_agent_connection(StubAgentConnection::new());
+
+        panel.update(&mut cx, |panel, _cx| {
+            panel.selected_agent = Agent::Stub;
+        });
+
+        // The requested agent was uninstalled, so the thread is created with
+        // the Zed Agent — and the caller must be told that, not the agent it
+        // asked for.
+        let unavailable_agent = Agent::Custom {
+            id: "uninstalled-agent".into(),
+        };
+        let created = panel.update_in(&mut cx, |panel, window, cx| {
+            panel.create_thread_with_options(
+                CreateThreadOptions {
+                    agent: Some(unavailable_agent.clone()),
+                    ..CreateThreadOptions::default()
+                },
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            )
+        });
+
+        assert_eq!(
+            created.agent,
+            Agent::NativeAgent,
+            "a thread that fell back should report the Zed Agent, not the requested agent"
+        );
+        panel.read_with(&cx, |panel, cx| {
+            let conversation_view = panel
+                .retained_threads
+                .get(&created.thread_id)
+                .expect("thread should be retained");
+            assert_eq!(*conversation_view.read(cx).agent_key(), Agent::NativeAgent);
         });
     }
 }
