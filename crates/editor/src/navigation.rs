@@ -59,17 +59,13 @@ impl Editor {
         let first_selection = self.selections.first_anchor();
 
         self.change_selections(Default::default(), window, cx, |s| {
-            s.move_with(&mut |map, selection| {
+            let map = s.display_snapshot();
+            let mut motion = movement::VerticalMotion::new(&map, text_layout_details);
+            s.move_with(&mut |_, selection| {
                 if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::up(
-                    map,
-                    selection.start,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
+                let (cursor, goal) = motion.up(selection.start, selection.goal, false);
                 selection.collapse_to(cursor, goal);
             });
         });
@@ -98,18 +94,14 @@ impl Editor {
         let text_layout_details = &self.text_layout_details(window, cx);
 
         self.change_selections(Default::default(), window, cx, |s| {
-            s.move_with(&mut |map, selection| {
+            let map = s.display_snapshot();
+            let mut motion = movement::VerticalMotion::new(&map, text_layout_details);
+            s.move_with(&mut |_, selection| {
                 if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::up_by_rows(
-                    map,
-                    selection.start,
-                    action.lines,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
+                let (cursor, goal) =
+                    motion.up_by_rows(selection.start, action.lines, selection.goal, false);
                 selection.collapse_to(cursor, goal);
             });
         })
@@ -133,18 +125,14 @@ impl Editor {
         let text_layout_details = &self.text_layout_details(window, cx);
 
         self.change_selections(Default::default(), window, cx, |s| {
-            s.move_with(&mut |map, selection| {
+            let map = s.display_snapshot();
+            let mut motion = movement::VerticalMotion::new(&map, text_layout_details);
+            s.move_with(&mut |_, selection| {
                 if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::down_by_rows(
-                    map,
-                    selection.start,
-                    action.lines,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
+                let (cursor, goal) =
+                    motion.down_by_rows(selection.start, action.lines, selection.goal, false);
                 selection.collapse_to(cursor, goal);
             });
         })
@@ -158,8 +146,10 @@ impl Editor {
     ) {
         let text_layout_details = &self.text_layout_details(window, cx);
         self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, goal| {
-                movement::down_by_rows(map, head, action.lines, goal, false, text_layout_details)
+            let map = s.display_snapshot();
+            let mut motion = movement::VerticalMotion::new(&map, text_layout_details);
+            s.move_heads_with(&mut |_, head, goal| {
+                motion.down_by_rows(head, action.lines, goal, false)
             })
         })
     }
@@ -172,8 +162,10 @@ impl Editor {
     ) {
         let text_layout_details = &self.text_layout_details(window, cx);
         self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, goal| {
-                movement::up_by_rows(map, head, action.lines, goal, false, text_layout_details)
+            let map = s.display_snapshot();
+            let mut motion = movement::VerticalMotion::new(&map, text_layout_details);
+            s.move_heads_with(&mut |_, head, goal| {
+                motion.up_by_rows(head, action.lines, goal, false)
             })
         })
     }
@@ -191,9 +183,9 @@ impl Editor {
         let text_layout_details = &self.text_layout_details(window, cx);
 
         self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, goal| {
-                movement::up_by_rows(map, head, row_count, goal, false, text_layout_details)
-            })
+            let map = s.display_snapshot();
+            let mut motion = movement::VerticalMotion::new(&map, text_layout_details);
+            s.move_heads_with(&mut |_, head, goal| motion.up_by_rows(head, row_count, goal, false))
         })
     }
 
@@ -235,18 +227,14 @@ impl Editor {
         let text_layout_details = &self.text_layout_details(window, cx);
 
         self.change_selections(effects, window, cx, |s| {
-            s.move_with(&mut |map, selection| {
+            let map = s.display_snapshot();
+            let mut motion = movement::VerticalMotion::new(&map, text_layout_details);
+            s.move_with(&mut |_, selection| {
                 if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::up_by_rows(
-                    map,
-                    selection.end,
-                    row_count,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
+                let (cursor, goal) =
+                    motion.up_by_rows(selection.end, row_count, selection.goal, false);
                 selection.collapse_to(cursor, goal);
             });
         });
@@ -255,9 +243,9 @@ impl Editor {
     pub fn select_up(&mut self, _: &SelectUp, window: &mut Window, cx: &mut Context<Self>) {
         let text_layout_details = &self.text_layout_details(window, cx);
         self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, goal| {
-                movement::up(map, head, goal, false, text_layout_details)
-            })
+            let map = s.display_snapshot();
+            let mut motion = movement::VerticalMotion::new(&map, text_layout_details);
+            s.move_heads_with(&mut |_, head, goal| motion.up(head, goal, false))
         })
     }
 
@@ -279,17 +267,13 @@ impl Editor {
         let first_selection = self.selections.first_anchor();
 
         self.change_selections(Default::default(), window, cx, |s| {
-            s.move_with(&mut |map, selection| {
+            let map = s.display_snapshot();
+            let mut motion = movement::VerticalMotion::new(&map, text_layout_details);
+            s.move_with(&mut |_, selection| {
                 if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::down(
-                    map,
-                    selection.end,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
+                let (cursor, goal) = motion.down(selection.end, selection.goal, false);
                 selection.collapse_to(cursor, goal);
             });
         });
@@ -313,8 +297,10 @@ impl Editor {
         let text_layout_details = &self.text_layout_details(window, cx);
 
         self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, goal| {
-                movement::down_by_rows(map, head, row_count, goal, false, text_layout_details)
+            let map = s.display_snapshot();
+            let mut motion = movement::VerticalMotion::new(&map, text_layout_details);
+            s.move_heads_with(&mut |_, head, goal| {
+                motion.down_by_rows(head, row_count, goal, false)
             })
         })
     }
@@ -356,18 +342,14 @@ impl Editor {
 
         let text_layout_details = &self.text_layout_details(window, cx);
         self.change_selections(effects, window, cx, |s| {
-            s.move_with(&mut |map, selection| {
+            let map = s.display_snapshot();
+            let mut motion = movement::VerticalMotion::new(&map, text_layout_details);
+            s.move_with(&mut |_, selection| {
                 if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::down_by_rows(
-                    map,
-                    selection.end,
-                    row_count,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
+                let (cursor, goal) =
+                    motion.down_by_rows(selection.end, row_count, selection.goal, false);
                 selection.collapse_to(cursor, goal);
             });
         });
@@ -376,9 +358,9 @@ impl Editor {
     pub fn select_down(&mut self, _: &SelectDown, window: &mut Window, cx: &mut Context<Self>) {
         let text_layout_details = &self.text_layout_details(window, cx);
         self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, goal| {
-                movement::down(map, head, goal, false, text_layout_details)
-            })
+            let map = s.display_snapshot();
+            let mut motion = movement::VerticalMotion::new(&map, text_layout_details);
+            s.move_heads_with(&mut |_, head, goal| motion.down(head, goal, false))
         });
     }
 
