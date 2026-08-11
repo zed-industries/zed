@@ -727,6 +727,11 @@ impl FoldSnapshot {
         !self.folds.is_empty()
     }
 
+    #[inline(always)]
+    pub fn has_tabs(&self) -> bool {
+        self.transforms.summary().output.tabs > 0
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn text_summary_for_range(&self, range: Range<FoldPoint>) -> MBTextSummary {
         let mut summary = MBTextSummary::default();
@@ -814,6 +819,12 @@ impl FoldSnapshot {
 
     #[ztracing::instrument(skip_all)]
     pub fn line_len(&self, row: u32) -> u32 {
+        if !self.has_folds()
+            && !self.inlay_snapshot.has_inlays()
+            && let Some(buffer) = self.inlay_snapshot.buffer.as_singleton_without_transforms()
+        {
+            return buffer.line_len(row);
+        }
         let line_start = FoldPoint::new(row, 0).to_offset(self).0;
         let line_end = if row >= self.max_point().row() {
             self.len().0

@@ -2209,6 +2209,12 @@ impl BlockSnapshot {
         self.transforms.summary().has_replacement_blocks
     }
 
+    #[inline(always)]
+    pub fn has_row_transforms(&self) -> bool {
+        let summary = self.transforms.summary();
+        summary.has_replacement_blocks || summary.input_rows.0 != summary.output_rows.0
+    }
+
     #[cfg(test)]
     #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {

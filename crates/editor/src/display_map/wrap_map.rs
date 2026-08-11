@@ -703,6 +703,11 @@ impl WrapSnapshot {
         WrapPoint(self.transforms.summary().output.lines)
     }
 
+    #[inline(always)]
+    pub fn has_soft_wraps(&self) -> bool {
+        self.transforms.summary().has_wraps()
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn line_len(&self, row: WrapRow) -> u32 {
         let (start, _, item) = self.transforms.find::<Dimensions<WrapPoint, TabPoint>, _>(

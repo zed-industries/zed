@@ -1032,6 +1032,11 @@ impl InlaySnapshot {
         }
     }
 
+    #[inline(always)]
+    pub fn has_inlays(&self) -> bool {
+        self.transforms.summary().has_inlays()
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn inlay_point_cursor(&self) -> InlayPointCursor<'_> {
         let cursor = self.transforms.cursor::<Dimensions<Point, InlayPoint>>(());

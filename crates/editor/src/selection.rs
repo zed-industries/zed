@@ -129,6 +129,18 @@ impl Editor {
     }
 
     pub fn has_non_empty_selection(&self, snapshot: &DisplaySnapshot) -> bool {
+        if !self.selections.line_mode() && !snapshot.has_collapsed_content() {
+            let buffer = snapshot.buffer_snapshot();
+            return self
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .chain(self.selections.pending_anchor())
+                .filter(|selection| selection.start != selection.end)
+                .any(|selection| {
+                    selection.start.to_point(buffer) != selection.end.to_point(buffer)
+                });
+        }
         self.selections
             .all_adjusted(snapshot)
             .iter()

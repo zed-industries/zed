@@ -1301,6 +1301,7 @@ pub struct TextSummary {
     pub longest_row: u32,
     /// How many `char`s are in the longest row
     pub longest_row_chars: u32,
+    pub tabs: usize,
 }
 
 impl TextSummary {
@@ -1322,6 +1323,7 @@ impl TextSummary {
             lines: Point::new(1, 0),
             longest_row: 0,
             longest_row_chars: 0,
+            tabs: 0,
         }
     }
 
@@ -1344,9 +1346,13 @@ impl<'a> From<&'a str> for TextSummary {
         let mut longest_row = 0;
         let mut longest_row_chars = 0;
         let mut chars = 0;
+        let mut tabs = 0;
         for c in text.chars() {
             chars += 1;
             len_utf16.0 += c.len_utf16();
+            if c == '\t' {
+                tabs += 1;
+            }
 
             if c == '\n' {
                 lines += Point::new(1, 0);
@@ -1378,6 +1384,7 @@ impl<'a> From<&'a str> for TextSummary {
             last_line_len_utf16,
             longest_row,
             longest_row_chars,
+            tabs,
         }
     }
 }
@@ -1429,6 +1436,7 @@ impl<'a> ops::AddAssign<&'a Self> for TextSummary {
         self.len += other.len;
         self.len_utf16 += other.len_utf16;
         self.lines += other.lines;
+        self.tabs += other.tabs;
     }
 }
 

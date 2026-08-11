@@ -1582,6 +1582,15 @@ impl DisplaySnapshot {
         self.fold_snapshot().has_folds() || self.block_snapshot.has_replacement_blocks()
     }
 
+    #[inline(always)]
+    pub fn maps_points_identically(&self) -> bool {
+        !self.block_snapshot.has_row_transforms()
+            && !self.wrap_snapshot().has_soft_wraps()
+            && !self.fold_snapshot().has_tabs()
+            && !self.fold_snapshot().has_folds()
+            && !self.inlay_snapshot().has_inlays()
+    }
+
     pub fn inlay_snapshot(&self) -> &InlaySnapshot {
         &self
             .block_snapshot
@@ -1780,10 +1789,7 @@ impl DisplaySnapshot {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point, bias);
         let tab_point = self.wrap_snapshot().to_tab_point(wrap_point);
-        let fold_point = self
-            .tab_snapshot()
-            .tab_point_to_fold_point(tab_point, bias)
-            .0;
+        let fold_point = self.tab_snapshot().collapse_tab_point(tab_point, bias);
         fold_point.to_inlay_point(self.fold_snapshot())
     }
 
@@ -1792,9 +1798,7 @@ impl DisplaySnapshot {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point, bias);
         let tab_point = self.wrap_snapshot().to_tab_point(wrap_point);
-        self.tab_snapshot()
-            .tab_point_to_fold_point(tab_point, bias)
-            .0
+        self.tab_snapshot().collapse_tab_point(tab_point, bias)
     }
 
     #[instrument(skip_all)]
@@ -2143,6 +2147,18 @@ impl DisplaySnapshot {
     }
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
+        if self.maps_points_identically() {
+            let buffer = self.buffer_snapshot();
+            let mut clipped = buffer.clip_point(Point::new(point.row().0, point.column()), bias);
+            if self.clip_at_line_ends
+                && clipped.column > 0
+                && clipped.column == buffer.line_len(MultiBufferRow(clipped.row))
+            {
+                clipped.column -= 1;
+                clipped = buffer.clip_point(clipped, Bias::Left);
+            }
+            return DisplayPoint::new(DisplayRow(clipped.row), clipped.column);
+        }
         let mut clipped = self.block_snapshot.clip_point(point.0, bias);
         if self.clip_at_line_ends {
             clipped = self.clip_at_line_end(DisplayPoint(clipped)).0
@@ -2157,10 +2173,10 @@ impl DisplaySnapshot {
     pub fn inlay_bias_at(&self, point: DisplayPoint) -> Option<Bias> {
         let wrap_point = self.block_snapshot.to_wrap_point(point.0, Bias::Left);
         let tab_point = self.block_snapshot.to_tab_point(wrap_point);
-        let (fold_point, _, _) = self
+        let fold_point = self
             .block_snapshot
             .tab_snapshot
-            .tab_point_to_fold_point(tab_point, Bias::Left);
+            .collapse_tab_point(tab_point, Bias::Left);
         let inlay_point =
             fold_point.to_inlay_point(&self.block_snapshot.tab_snapshot.fold_snapshot);
         self.block_snapshot
@@ -2252,6 +2268,9 @@ impl DisplaySnapshot {
     }
 
     pub fn line_len(&self, row: DisplayRow) -> u32 {
+        if self.maps_points_identically() {
+            return self.buffer_snapshot().line_len(MultiBufferRow(row.0));
+        }
         self.block_snapshot.line_len(BlockRow(row.0))
     }
 
@@ -2628,10 +2647,7 @@ impl DisplayPoint {
     pub fn to_offset(self, map: &DisplaySnapshot, bias: Bias) -> MultiBufferOffset {
         let wrap_point = map.block_snapshot.to_wrap_point(self.0, bias);
         let tab_point = map.wrap_snapshot().to_tab_point(wrap_point);
-        let fold_point = map
-            .tab_snapshot()
-            .tab_point_to_fold_point(tab_point, bias)
-            .0;
+        let fold_point = map.tab_snapshot().collapse_tab_point(tab_point, bias);
         let inlay_point = fold_point.to_inlay_point(map.fold_snapshot());
         map.inlay_snapshot()
             .to_buffer_offset(map.inlay_snapshot().to_offset(inlay_point))

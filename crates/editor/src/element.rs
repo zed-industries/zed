@@ -138,6 +138,8 @@ impl LineNumberStyle {
     }
 }
 
+const SCROLLBAR_CURSOR_MARKERS_LIMIT: usize = 100;
+
 #[derive(Debug)]
 struct SelectionLayout {
     head: DisplayPoint,
@@ -957,14 +959,12 @@ impl EditorElement {
     fn collect_cursors(
         &self,
         snapshot: &EditorSnapshot,
+        visible_row_range: Range<DisplayRow>,
         cx: &mut App,
-    ) -> Vec<(DisplayPoint, Hsla)> {
+    ) -> (Vec<(DisplayPoint, Hsla)>, bool) {
         let editor = self.editor.read(cx);
         let mut cursors = Vec::new();
         let mut skip_local = false;
-        let mut add_cursor = |anchor: Anchor, color| {
-            cursors.push((anchor.to_display_point(&snapshot.display_snapshot), color));
-        };
         // Remote cursors
         if let Some(collaboration_hub) = &editor.collaboration_hub {
             for remote_selection in snapshot.remote_selections_in_range(
@@ -972,10 +972,13 @@ impl EditorElement {
                 collaboration_hub.deref(),
                 cx,
             ) {
-                add_cursor(
-                    remote_selection.selection.head(),
+                cursors.push((
+                    remote_selection
+                        .selection
+                        .head()
+                        .to_display_point(&snapshot.display_snapshot),
                     remote_selection.color.cursor,
-                );
+                ));
                 if Some(remote_selection.collaborator_id) == editor.leader_id {
                     skip_local = true;
                 }
@@ -984,18 +987,45 @@ impl EditorElement {
         // Local cursors
         if !skip_local {
             let color = cx.theme().players().local().cursor;
-            editor
-                .selections
-                .disjoint_anchors()
-                .iter()
-                .for_each(|selection| {
-                    add_cursor(selection.head(), color);
-                });
-            if let Some(ref selection) = editor.selections.pending_anchor() {
-                add_cursor(selection.head(), color);
+            let disjoint = editor.selections.disjoint_anchors();
+            if cursors.len() + disjoint.len() > SCROLLBAR_CURSOR_MARKERS_LIMIT {
+                let non_visible_cursors = cursors
+                    .iter()
+                    .any(|(cursor, _)| !visible_row_range.contains(&cursor.row()))
+                    || [disjoint.first(), disjoint.last()]
+                        .into_iter()
+                        .flatten()
+                        .chain(editor.selections.pending_anchor())
+                        .any(|selection| {
+                            let row = selection
+                                .head()
+                                .to_display_point(&snapshot.display_snapshot)
+                                .row();
+                            !visible_row_range.contains(&row)
+                        });
+                return (Vec::new(), non_visible_cursors);
+            }
+            for selection in disjoint.iter() {
+                cursors.push((
+                    selection
+                        .head()
+                        .to_display_point(&snapshot.display_snapshot),
+                    color,
+                ));
+            }
+            if let Some(selection) = editor.selections.pending_anchor() {
+                cursors.push((
+                    selection
+                        .head()
+                        .to_display_point(&snapshot.display_snapshot),
+                    color,
+                ));
             }
         }
-        cursors
+        let non_visible_cursors = cursors
+            .iter()
+            .any(|(cursor, _)| !visible_row_range.contains(&cursor.row()));
+        (cursors, non_visible_cursors)
     }
 
     fn layout_visible_cursors(
@@ -5997,8 +6027,9 @@ impl EditorElement {
         scrollbar_layout: &ScrollbarLayout,
         cx: &mut App,
     ) -> Vec<PaintQuad> {
-        const LIMIT: usize = 100;
-        if !EditorSettings::get_global(cx).scrollbar.cursors || layout.cursors.len() > LIMIT {
+        if !EditorSettings::get_global(cx).scrollbar.cursors
+            || layout.cursors.len() > SCROLLBAR_CURSOR_MARKERS_LIMIT
+        {
             return vec![];
         }
         let cursor_ranges = layout
@@ -9009,11 +9040,9 @@ impl Element for EditorElement {
                         );
                     });
 
-                    let cursors = self.collect_cursors(&snapshot, cx);
                     let visible_row_range = start_row..end_row;
-                    let non_visible_cursors = cursors
-                        .iter()
-                        .any(|c| !visible_row_range.contains(&c.0.row()));
+                    let (cursors, non_visible_cursors) =
+                        self.collect_cursors(&snapshot, visible_row_range.clone(), cx);
 
                     let visible_cursors = self.layout_visible_cursors(
                         &snapshot,
