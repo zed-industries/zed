@@ -117,7 +117,7 @@ mod macos_build {
         let shader_source_path = "./src/shaders.metal";
         let shader_path = PathBuf::from(shader_source_path);
         stitch_header(header_path, &shader_path).unwrap();
-        println!("cargo:rerun-if-changed={}", &shader_source_path);
+        println!("cargo:rerun-if-changed={shader_source_path}");
     }
 
     #[cfg(not(feature = "runtime_shaders"))]
