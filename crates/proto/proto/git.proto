@@ -378,8 +378,9 @@ message Stash {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   repeated string paths = 3;
+  optional string message = 4;
   // When set, stash the index only (`git stash push --staged`) and ignore `paths`.
-  optional bool staged = 4;
+  optional bool staged = 5;
 }
 
 message StashPop {

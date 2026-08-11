@@ -934,10 +934,15 @@ pub trait GitRepository: Send + Sync {
     fn stash_paths(
         &self,
         paths: Vec<RepoPath>,
+        message: Option<String>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
-    fn stash_staged(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>>;
+    fn stash_staged(
+        &self,
+        message: Option<String>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
 
     fn stash_pop(
         &self,
@@ -2492,14 +2497,20 @@ impl GitRepository for RealGitRepository {
     fn stash_paths(
         &self,
         paths: Vec<RepoPath>,
+        message: Option<String>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
                 let git = git?;
+                let mut args = vec!["stash", "push", "--quiet", "--include-untracked"];
+                if let Some(message) = message.as_deref() {
+                    args.extend_from_slice(&["--message", message]);
+                }
+                args.push("--");
                 let output = git
-                    .build_command(&["stash", "push", "--quiet", "--include-untracked", "--"])
+                    .build_command(&args)
                     .envs(env.iter())
                     .args(paths.iter().map(|p| p.as_unix_str()))
                     .output()
@@ -2515,18 +2526,22 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn stash_staged(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
+    fn stash_staged(
+        &self,
+        message: Option<String>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
         let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
                 let git = git?;
                 // `--staged` cannot be expressed as a pathspec: a partially staged
                 // file would otherwise have its unstaged hunks stashed too.
-                let output = git
-                    .build_command(&["stash", "push", "--quiet", "--staged"])
-                    .envs(env.iter())
-                    .output()
-                    .await?;
+                let mut args = vec!["stash", "push", "--quiet", "--staged"];
+                if let Some(message) = message.as_deref() {
+                    args.extend_from_slice(&["--message", message]);
+                }
+                let output = git.build_command(&args).envs(env.iter()).output().await?;
 
                 anyhow::ensure!(
                     output.status.success(),

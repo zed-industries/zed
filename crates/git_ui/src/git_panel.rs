@@ -98,7 +98,7 @@ use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
-    Item, Workspace,
+    Item, ModalView, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
 };
@@ -199,6 +199,103 @@ struct GitPanelViewOptionsMenuState {
     sort_by: GitPanelSortBy,
     group_by: GitPanelGroupBy,
     tree_view: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StashKind {
+    All,
+    Tracked,
+    Staged,
+}
+
+impl StashKind {
+    fn title(self) -> &'static str {
+        match self {
+            StashKind::All => "Stash All",
+            StashKind::Tracked => "Stash Tracked",
+            StashKind::Staged => "Stash Staged",
+        }
+    }
+
+    fn error_action(self) -> &'static str {
+        match self {
+            StashKind::All => "stash",
+            StashKind::Tracked => "stash tracked",
+            StashKind::Staged => "stash staged",
+        }
+    }
+}
+
+/// Prompts for an optional stash name. Confirming with an empty editor stashes
+/// without `--message`, letting git generate its usual "WIP on ..." description.
+struct StashMessageModal {
+    editor: Entity<Editor>,
+    panel: WeakEntity<GitPanel>,
+    kind: StashKind,
+}
+
+impl StashMessageModal {
+    fn new(
+        panel: WeakEntity<GitPanel>,
+        kind: StashKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Optionally provide a stash message", window, cx);
+            editor
+        });
+        Self {
+            editor,
+            panel,
+            kind,
+        }
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        let message = self.editor.read(cx).text(cx).trim().to_owned();
+        let message = (!message.is_empty()).then_some(message);
+        let kind = self.kind;
+        self.panel
+            .update(cx, |panel, cx| panel.perform_stash(kind, message, cx))
+            .ok();
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for StashMessageModal {}
+impl ModalView for StashMessageModal {}
+impl Focusable for StashMessageModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for StashMessageModal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("StashMessageModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .w_full()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
+                    .child(Headline::new(self.kind.title()).size(HeadlineSize::XSmall)),
+            )
+            .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
+    }
 }
 
 fn git_panel_context_menu(
@@ -953,6 +1050,7 @@ pub struct GitPanel {
     add_coauthors: bool,
     generate_commit_message_task: Option<Task<Option<()>>>,
     entries: Vec<GitListEntry>,
+    collapsed_sections: HashSet<Section>,
     view_mode: GitPanelViewMode,
     tree_expanded_dirs: HashMap<TreeKey, bool>,
     projected_entries_by_path: HashMap<RepoPath, SmallVec<[ProjectedChangeEntry; 2]>>,
@@ -1255,6 +1353,7 @@ impl GitPanel {
                 add_coauthors: true,
                 generate_commit_message_task: None,
                 entries: Vec::new(),
+                collapsed_sections: HashSet::default(),
                 view_mode: GitPanelViewMode::from_settings(cx),
                 tree_expanded_dirs: HashMap::default(),
                 projected_entries_by_path: HashMap::default(),
@@ -2746,58 +2845,42 @@ impl GitPanel {
         .detach();
     }
 
-    pub fn stash_all(&mut self, _: &StashAll, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(active_repository) = self.active_repository.clone() else {
-            return;
-        };
-
-        cx.spawn({
-            async move |this, cx| {
-                let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_all(cx))
-                    .await;
-                this.update(cx, |this, cx| {
-                    stash_task
-                        .map_err(|e| {
-                            this.show_error_toast("stash", e, cx);
-                        })
-                        .ok();
-                    cx.notify();
-                })
-            }
-        })
-        .detach();
+    pub fn stash_all(&mut self, _: &StashAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_for_stash_message(StashKind::All, window, cx);
     }
 
-    pub fn stash_tracked(
+    pub fn stash_tracked(&mut self, _: &StashTracked, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_for_stash_message(StashKind::Tracked, window, cx);
+    }
+
+    pub fn stash_staged(&mut self, _: &StashStaged, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_for_stash_message(StashKind::Staged, window, cx);
+    }
+
+    fn prompt_for_stash_message(
         &mut self,
-        _: &StashTracked,
-        _window: &mut Window,
+        kind: StashKind,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_repository) = self.active_repository.clone() else {
+        if self.active_repository.is_none() {
             return;
-        };
-
-        cx.spawn({
-            async move |this, cx| {
-                let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_tracked(cx))
-                    .await;
-                this.update(cx, |this, cx| {
-                    stash_task
-                        .map_err(|e| {
-                            this.show_error_toast("stash tracked", e, cx);
-                        })
-                        .ok();
-                    cx.notify();
+        }
+        // `git::StashAll` is also registered on the workspace, which dispatches it while
+        // `Workspace` is leased, so opening the modal inline would re-enter that update.
+        cx.defer_in(window, move |this, window, cx| {
+            let panel = cx.entity().downgrade();
+            this.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        StashMessageModal::new(panel, kind, window, cx)
+                    });
                 })
-            }
-        })
-        .detach();
+                .ok();
+        });
     }
 
-    pub fn stash_staged(&mut self, _: &StashStaged, _window: &mut Window, cx: &mut Context<Self>) {
+    fn perform_stash(&mut self, kind: StashKind, message: Option<String>, cx: &mut Context<Self>) {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
@@ -2805,12 +2888,16 @@ impl GitPanel {
         cx.spawn({
             async move |this, cx| {
                 let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_staged(cx))
+                    .update(cx, |repo, cx| match kind {
+                        StashKind::All => repo.stash_all(message, cx),
+                        StashKind::Tracked => repo.stash_tracked(message, cx),
+                        StashKind::Staged => repo.stash_staged(message, cx),
+                    })
                     .await;
                 this.update(cx, |this, cx| {
                     stash_task
                         .map_err(|e| {
-                            this.show_error_toast("stash staged", e, cx);
+                            this.show_error_toast(kind.error_action(), e, cx);
                         })
                         .ok();
                     cx.notify();
@@ -4913,7 +5000,12 @@ impl GitPanel {
                         continue;
                     }
 
-                    if section != Section::Tracked || group_by != GitPanelGroupBy::None {
+                    let section_has_header =
+                        section != Section::Tracked || group_by != GitPanelGroupBy::None;
+                    let section_is_collapsed =
+                        section_has_header && self.collapsed_sections.contains(&section);
+
+                    if section_has_header {
                         push_entry(
                             self,
                             GitListEntry::Header(GitHeaderEntry { header: section }),
@@ -4928,7 +5020,7 @@ impl GitPanel {
                             self,
                             GitListEntry::EmptySection(section),
                             section,
-                            true,
+                            !section_is_collapsed,
                             Some(&mut tree_state.logical_indices),
                         );
                     }
@@ -4940,7 +5032,7 @@ impl GitPanel {
                             self,
                             entry,
                             section,
-                            is_visible,
+                            is_visible && !section_is_collapsed,
                             Some(&mut tree_state.logical_indices),
                         );
                     }
@@ -5047,6 +5139,38 @@ impl GitPanel {
                 None
             }
         })
+    }
+
+    fn visible_flat_entry_indices(&self) -> Vec<usize> {
+        let mut section = None;
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                if let GitListEntry::Header(header) = entry {
+                    section = Some(header.header);
+                    return Some(index);
+                }
+
+                if section.is_some_and(|section| self.collapsed_sections.contains(&section)) {
+                    None
+                } else {
+                    Some(index)
+                }
+            })
+            .collect()
+    }
+
+    fn toggle_section_collapsed(
+        &mut self,
+        section: Section,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.collapsed_sections.remove(&section) {
+            self.collapsed_sections.insert(section);
+        }
+        self.update_visible_entries(window, cx);
     }
 
     fn stage_intent_for_entry_index(&self, ix: usize) -> StageIntent {
@@ -7113,7 +7237,7 @@ impl GitPanel {
     ) -> impl IntoElement {
         let (is_tree_view, entry_count) = match &self.view_mode {
             GitPanelViewMode::Tree(state) => (true, state.logical_indices.len()),
-            GitPanelViewMode::Flat => (false, self.entries.len()),
+            GitPanelViewMode::Flat => (false, self.visible_flat_entry_indices().len()),
         };
         let repo = repo.downgrade();
 
@@ -7140,9 +7264,17 @@ impl GitPanel {
 
                                 let mut items = Vec::with_capacity(range.end - range.start);
 
-                                for ix in range.into_iter().map(|ix| match &this.view_mode {
-                                    GitPanelViewMode::Tree(state) => state.logical_indices[ix],
-                                    GitPanelViewMode::Flat => ix,
+                                let visible_flat_entry_indices =
+                                    matches!(this.view_mode, GitPanelViewMode::Flat)
+                                        .then(|| this.visible_flat_entry_indices());
+                                for ix in range.into_iter().filter_map(|ix| match &this.view_mode {
+                                    GitPanelViewMode::Tree(state) => {
+                                        state.logical_indices.get(ix).copied()
+                                    }
+                                    GitPanelViewMode::Flat => visible_flat_entry_indices
+                                        .as_ref()
+                                        .and_then(|indices| indices.get(ix))
+                                        .copied(),
                                 }) {
                                     match &this.entries.get(ix) {
                                         Some(GitListEntry::Status(entry)) => {
@@ -7253,8 +7385,10 @@ impl GitPanel {
         let group_name: SharedString = format!("header_{}", ix).into();
         let section = header.header;
         let weak = cx.weak_entity();
+        let checkbox_weak = weak.clone();
         let stage_intent = StageIntent::for_section(section);
         let toggle_state = stage_intent.checkbox_state(|| self.header_state(header.header));
+        let is_collapsed = self.collapsed_sections.contains(&section);
 
         let all_conflicts_resolved = section == Section::Conflict
             && self.conflicted_count > 0
@@ -7274,16 +7408,27 @@ impl GitPanel {
             .pr_1()
             .gap_2()
             .justify_between()
-            .when(!section_is_empty && !all_conflicts_resolved, |this| {
-                this.cursor_pointer()
-                    .hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
-            })
+            .cursor_pointer()
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
             .border_1()
             .border_r_2()
             .child(
-                Label::new(header.title())
-                    .color(Color::Muted)
-                    .size(LabelSize::Small),
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(if is_collapsed {
+                            IconName::ChevronRight
+                        } else {
+                            IconName::ChevronDown
+                        })
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(header.title())
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    ),
             )
             .child(if section_is_empty {
                 gpui::Empty.into_any_element()
@@ -7291,7 +7436,24 @@ impl GitPanel {
                 let checkbox = Checkbox::new(checkbox_id, toggle_state)
                     .disabled(!has_write_access || all_conflicts_resolved)
                     .fill()
-                    .elevation(ElevationIndex::Surface);
+                    .elevation(ElevationIndex::Surface)
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        if !has_write_access || all_conflicts_resolved {
+                            return;
+                        }
+
+                        checkbox_weak
+                            .update(cx, |this, cx| {
+                                this.toggle_staged_for_entry(
+                                    &GitListEntry::Header(GitHeaderEntry { header: section }),
+                                    stage_intent,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    });
                 let tooltip_label = if all_conflicts_resolved {
                     Some("All conflicts marked as resolved")
                 } else {
@@ -7310,18 +7472,8 @@ impl GitPanel {
                 }
             })
             .on_click(move |_, window, cx| {
-                if !has_write_access || section_is_empty || all_conflicts_resolved {
-                    return;
-                }
-
                 weak.update(cx, |this, cx| {
-                    this.toggle_staged_for_entry(
-                        &GitListEntry::Header(GitHeaderEntry { header: section }),
-                        stage_intent,
-                        window,
-                        cx,
-                    );
-                    cx.stop_propagation();
+                    this.toggle_section_collapsed(section, window, cx);
                 })
                 .ok();
             })

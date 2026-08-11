@@ -250,6 +250,8 @@ To stash only tracked changes and leave untracked files in place, use the {#acti
 
 The Git Panel's overflow menu offers whichever of these matches the current **Group By** mode: **Stash Tracked** when grouping by Tracked & Untracked, and **Stash Staged** when grouping by Staged & Unstaged. **Stash All** is always available.
 
+Each of these actions first prompts for an optional stash name. Confirming with an empty prompt lets git generate its usual `WIP on ...` description.
+
 ### Managing Stashes
 
 Zed provides a stash picker accessible via {#action git::ViewStash} or from the Git Panel's overflow menu. From the stash picker, you can:

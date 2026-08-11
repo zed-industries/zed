@@ -3063,10 +3063,12 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
+        let message = envelope.payload.message;
+
         if envelope.payload.staged.unwrap_or(false) {
             repository_handle
                 .update(&mut cx, |repository_handle, cx| {
-                    repository_handle.stash_staged(cx)
+                    repository_handle.stash_staged(message, cx)
                 })
                 .await?;
             return Ok(proto::Ack {});
@@ -3081,7 +3083,7 @@ impl GitStore {
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.stash_entries(entries, cx)
+                repository_handle.stash_entries(entries, message, cx)
             })
             .await?;
 
@@ -7482,13 +7484,21 @@ impl Repository {
         })
     }
 
-    pub fn stash_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+    pub fn stash_all(
+        &mut self,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
         let to_stash = self.cached_status().map(|entry| entry.repo_path).collect();
 
-        self.stash_entries(to_stash, cx)
+        self.stash_entries(to_stash, message, cx)
     }
 
-    pub fn stash_tracked(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+    pub fn stash_tracked(
+        &mut self,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
         // `is_created` rather than `is_untracked`, so that staging a new file does not
         // move it out of the untracked set: `git add` makes it `Tracked { Added }`, but
         // the panel still lists it under "Untracked" and the user expects it left alone.
@@ -7502,12 +7512,13 @@ impl Repository {
         if to_stash.is_empty() {
             return Task::ready(Ok(()));
         }
-        self.stash_entries(to_stash, cx)
+        self.stash_entries(to_stash, message, cx)
     }
 
     pub fn stash_entries(
         &mut self,
         entries: Vec<RepoPath>,
+        message: Option<String>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         let id = self.id;
@@ -7520,7 +7531,7 @@ impl Repository {
                             backend,
                             environment,
                             ..
-                        }) => backend.stash_paths(entries, environment).await,
+                        }) => backend.stash_paths(entries, message, environment).await,
                         RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                             client
                                 .request(proto::Stash {
@@ -7530,6 +7541,7 @@ impl Repository {
                                         .into_iter()
                                         .map(|repo_path| repo_path.as_unix_str().to_owned())
                                         .collect(),
+                                    message,
                                     staged: None,
                                 })
                                 .await?;
@@ -7543,7 +7555,11 @@ impl Repository {
         })
     }
 
-    pub fn stash_staged(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+    pub fn stash_staged(
+        &mut self,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
         let id = self.id;
 
         cx.spawn(async move |this, cx| {
@@ -7554,13 +7570,14 @@ impl Repository {
                             backend,
                             environment,
                             ..
-                        }) => backend.stash_staged(environment).await,
+                        }) => backend.stash_staged(message, environment).await,
                         RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                             client
                                 .request(proto::Stash {
                                     project_id: project_id.0,
                                     repository_id: id.to_proto(),
                                     paths: Vec::new(),
+                                    message,
                                     staged: Some(true),
                                 })
                                 .await?;
