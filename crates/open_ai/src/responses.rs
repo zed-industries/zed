@@ -509,6 +509,7 @@ pub enum StreamEvent {
     ReasoningSummaryTextDelta {
         item_id: String,
         output_index: usize,
+        summary_index: usize,
         delta: String,
     },
     #[serde(rename = "response.reasoning_summary_text.done")]
@@ -876,12 +877,15 @@ pub async fn stream_response(
                             }
                             ResponseOutputItem::Reasoning(reasoning) => {
                                 if let Some(ref item_id) = reasoning.id {
-                                    for part in &reasoning.summary {
+                                    for (summary_index, part) in
+                                        reasoning.summary.iter().enumerate()
+                                    {
                                         if let ReasoningSummaryPart::SummaryText { text } = part {
                                             all_events.push(
                                                 StreamEvent::ReasoningSummaryTextDelta {
                                                     item_id: item_id.clone(),
                                                     output_index,
+                                                    summary_index,
                                                     delta: text.clone(),
                                                 },
                                             );
