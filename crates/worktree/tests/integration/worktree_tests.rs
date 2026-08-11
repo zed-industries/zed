@@ -3802,6 +3802,62 @@ async fn test_repo_exclude_in_worktree(executor: BackgroundExecutor, cx: &mut Te
 }
 
 #[gpui::test]
+async fn test_repo_exclude_naming_a_worktree_ancestor(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+
+    fs.insert_tree(
+        path!("/scratch/proj"),
+        json!({
+            ".git": {
+                "info": { "exclude": "scratch" }
+            },
+            "src": {
+                "main.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        path!("/scratch/proj").as_ref(),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        assert!(
+            !worktree.root_entry().unwrap().is_ignored,
+            "an exclude pattern matching an ancestor must not ignore the worktree"
+        );
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                tracked_paths: &["src/main.rs"],
+                ..Default::default()
+            },
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -6298,4 +6354,26 @@ async fn test_deferred_watch_symlinks_pointing_outside(cx: &mut TestAppContext) 
         })
     })
     .await;
+}
+
+#[test]
+fn test_repo_exclude_does_not_match_outside_its_work_directory() {
+    use ignore::gitignore::GitignoreBuilder;
+    use worktree::{IgnoreKind, IgnoreStack};
+
+    let mut builder = GitignoreBuilder::new("/repo/inner");
+    builder.add_line(None, "build").unwrap();
+    builder.add_line(None, "repo").unwrap();
+    let exclude = Arc::new(builder.build().unwrap());
+
+    let stack = IgnoreStack::none().append(IgnoreKind::RepoExclude, exclude);
+
+    assert!(
+        stack.is_abs_path_ignored(Path::new("/repo/inner/build"), true),
+        "patterns must apply within the repository's work directory"
+    );
+    assert!(
+        !stack.is_abs_path_ignored(Path::new("/repo"), true),
+        "patterns must not apply outside the repository's work directory"
+    );
 }
