@@ -2,8 +2,8 @@
 use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
+    AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
+    Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
@@ -30,7 +30,10 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
-#[cfg(feature = "input-latency-histogram")]
+#[cfg(any(
+    feature = "input-latency-histogram",
+    feature = "frame-duration-histogram"
+))]
 use hdrhistogram::Histogram;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
@@ -120,6 +123,7 @@ struct WindowInvalidatorInner {
     pub dirty_views: FxHashSet<EntityId>,
     pub update_count: usize,
     pub frame_dirty: FrameDirtyAccumulator,
+    pub platform_waker: Option<Rc<dyn Fn()>>,
 }
 
 /// Per-frame invalidation bookkeeping, drained at draw time and emitted to the
@@ -146,6 +150,7 @@ impl WindowInvalidator {
                 dirty_views: FxHashSet::default(),
                 update_count: 0,
                 frame_dirty: FrameDirtyAccumulator::default(),
+                platform_waker: None,
             })),
         }
     }
@@ -156,8 +161,14 @@ impl WindowInvalidator {
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
             Self::record_frame_dirty(&mut inner);
+            let became_dirty = !inner.dirty;
             inner.dirty = true;
+            let waker = became_dirty.then(|| inner.platform_waker.clone()).flatten();
+            drop(inner);
             cx.push_effect(Effect::Notify { emitter: entity });
+            if let Some(waker) = waker {
+                waker();
+            }
             true
         } else {
             false
@@ -170,10 +181,36 @@ impl WindowInvalidator {
 
     pub fn set_dirty(&self, dirty: bool) {
         let mut inner = self.inner.borrow_mut();
+        let became_dirty = dirty && !inner.dirty;
         inner.dirty = dirty;
         if dirty {
             inner.update_count += 1;
             Self::record_frame_dirty(&mut inner);
+        }
+        let waker = became_dirty.then(|| inner.platform_waker.clone()).flatten();
+        drop(inner);
+        if let Some(waker) = waker {
+            waker();
+        }
+    }
+
+    pub fn set_platform_waker(&self, waker: Option<Rc<dyn Fn()>>) {
+        let mut inner = self.inner.borrow_mut();
+        inner.platform_waker = waker;
+        let waker = inner.dirty.then(|| inner.platform_waker.clone()).flatten();
+        drop(inner);
+        if let Some(waker) = waker {
+            waker();
+        }
+    }
+
+    /// Wakes the platform's frame-request source so a frame request is
+    /// delivered even if the platform stops requesting frames for idle
+    /// windows. No-op on platforms without a frame waker.
+    pub fn wake_platform(&self) {
+        let waker = self.inner.borrow().platform_waker.clone();
+        if let Some(waker) = waker {
+            waker();
         }
     }
 
@@ -278,6 +315,20 @@ thread_local! {
     static CURRENT_ELEMENT_ARENA: Cell<Option<*const RefCell<Arena>>> = const { Cell::new(None) };
 }
 
+/// Whether a window draw is currently in progress on this thread.
+///
+/// This holds exactly while an `ElementArenaScope` is active: nested scopes
+/// restore the previous (still set) arena pointer, so `CURRENT_ELEMENT_ARENA`
+/// is `Some` from the outermost draw's start to its end.
+///
+/// The `on_request_frame` callback uses this to defer draw requests that
+/// arrive re-entrantly while a draw is already on the stack (e.g. via nested
+/// message pumping in the Windows window procedure), instead of running a
+/// nested draw or panicking on the already-borrowed App.
+fn draw_in_progress() -> bool {
+    CURRENT_ELEMENT_ARENA.with(|current| current.get().is_some())
+}
+
 /// Allocates an element in the current arena. Uses the app-specific arena if one
 /// is active (during draw), otherwise falls back to the thread-local ELEMENT_ARENA.
 pub(crate) fn with_element_arena<R>(f: impl FnOnce(&mut Arena) -> R) -> R {
@@ -293,52 +344,122 @@ pub(crate) fn with_element_arena<R>(f: impl FnOnce(&mut Arena) -> R) -> R {
     })
 }
 
-/// RAII guard that sets CURRENT_ELEMENT_ARENA for the duration of a draw operation.
-/// When dropped, restores the previous arena (supporting nested draws).
+/// Scope guard that sets CURRENT_ELEMENT_ARENA for the duration of a draw
+/// operation and tracks the arena's scope depth, so that a nested draw's
+/// `ArenaClearNeeded::clear` is deferred rather than freeing memory the outer
+/// draw still references (see `Arena::clear`).
+///
+/// Call [`ElementArenaScope::exit`] with the same arena that was entered to
+/// obtain the [`ArenaClearNeeded`] token the draw now owes; requiring `exit`
+/// makes it impossible to request a clear before the scope has ended. The
+/// scope's teardown — restoring the thread-local and balancing `begin_scope`
+/// with `end_scope` — happens in `Drop`, so the arena's scope depth stays
+/// balanced on every path, including when a panic unwinds a draw before `exit`
+/// is reached. (If teardown lived only in `exit`, such a panic would leave the
+/// scope depth permanently elevated and defer every future clear, leaking
+/// memory unboundedly.)
 pub(crate) struct ElementArenaScope {
+    /// The entered arena: compared against the argument in `exit`, and
+    /// dereferenced in `Drop` to end its scope (see the SAFETY note there).
+    entered: *const RefCell<Arena>,
     previous: Option<*const RefCell<Arena>>,
+    exited: bool,
 }
 
 impl ElementArenaScope {
     /// Enter a scope where element allocations use the given arena.
     pub(crate) fn enter(arena: &RefCell<Arena>) -> Self {
+        arena.borrow_mut().begin_scope();
         let previous = CURRENT_ELEMENT_ARENA.with(|current| {
             let prev = current.get();
             current.set(Some(arena as *const RefCell<Arena>));
             prev
         });
-        Self { previous }
+        Self {
+            entered: arena as *const RefCell<Arena>,
+            previous,
+            exited: false,
+        }
+    }
+
+    /// End the scope: restores the previously-current arena and ends the
+    /// arena's clear-deferral scope. Returns the token for the arena clear the
+    /// draw now owes; producing it here makes it impossible to request a clear
+    /// before the scope has ended (which would be silently deferred forever).
+    ///
+    /// Panics if passed a different arena than was entered: ending the scope
+    /// of the wrong arena would unbalance two arenas' scope depths, allowing
+    /// one of them to clear while a draw still references its memory.
+    pub(crate) fn exit(mut self, arena: &RefCell<Arena>) -> ArenaClearNeeded {
+        assert!(
+            std::ptr::eq(self.entered, arena),
+            "ElementArenaScope::exit called with a different arena than was entered"
+        );
+        self.exited = true;
+        // Teardown (restoring the thread-local and ending the arena's
+        // clear-deferral scope) runs in `Drop`, which fires both here — `self`
+        // is dropped as `exit` returns, before the token reaches the caller —
+        // and when a panic unwinds the draw before `exit` is reached.
+        ArenaClearNeeded::new(arena)
     }
 }
 
 impl Drop for ElementArenaScope {
     fn drop(&mut self) {
+        // Teardown lives here (rather than in `exit`) so it runs exactly once on
+        // every path: `exit` consumes and drops the guard on the normal path,
+        // and unwinding drops it on the panic path. Balancing `begin_scope` here
+        // keeps the arena's scope depth correct even when a draw panics; if this
+        // only happened in `exit`, a panic between `enter` and `exit` would leave
+        // the depth elevated and defer every future clear.
         CURRENT_ELEMENT_ARENA.with(|current| {
             current.set(self.previous);
         });
+        // SAFETY: `entered` came from a `&RefCell<Arena>` in `enter`, and the
+        // arena (owned by the `App` being drawn) outlives this guard on both the
+        // normal and unwinding paths, since the guard is a local of the draw.
+        unsafe { &*self.entered }.borrow_mut().end_scope();
+        if !self.exited && !std::thread::panicking() {
+            debug_assert!(false, "ElementArenaScope dropped without calling exit()");
+            log::error!(
+                "ElementArenaScope dropped without calling exit(); \
+                 the arena clear for this draw was never requested"
+            );
+        }
     }
 }
 
 /// Returned when the element arena has been used and so must be cleared before the next draw.
 #[must_use]
 pub struct ArenaClearNeeded {
+    /// Identity of the arena that was drawn into. Only ever compared against
+    /// another pointer in `clear`; never dereferenced.
     arena: *const RefCell<Arena>,
 }
 
 impl ArenaClearNeeded {
-    /// Create a new ArenaClearNeeded that will clear the given arena.
-    pub(crate) fn new(arena: &RefCell<Arena>) -> Self {
+    /// Create a new ArenaClearNeeded token for the App whose arena was drawn
+    /// into. Private: the only way to obtain one is [`ElementArenaScope::exit`].
+    fn new(arena: &RefCell<Arena>) -> Self {
         Self {
             arena: arena as *const RefCell<Arena>,
         }
     }
 
-    /// Clear the element arena.
-    pub fn clear(self) {
-        // SAFETY: The arena pointer is valid because ArenaClearNeeded is created
-        // at the end of draw() and must be cleared before the next draw.
-        let arena_cell = unsafe { &*self.arena };
-        arena_cell.borrow_mut().clear();
+    /// Clear the element arena of the App the draw ran against. If an enclosing
+    /// draw is still in progress (this draw was nested inside it), the clear is
+    /// deferred to the enclosing draw's own `ArenaClearNeeded` so that its live
+    /// allocations aren't freed.
+    ///
+    /// Panics if passed a different App than the draw ran against, since
+    /// clearing another App's arena could free memory its draws still
+    /// reference.
+    pub fn clear(self, cx: &mut App) {
+        assert!(
+            std::ptr::eq(self.arena, &cx.element_arena),
+            "ArenaClearNeeded::clear called with a different App than the draw ran against"
+        );
+        cx.element_arena.borrow_mut().clear();
     }
 }
 
@@ -982,6 +1103,7 @@ impl Frame {
 enum InputModality {
     Mouse,
     Keyboard,
+    Touch,
 }
 
 /// Holds the state for a specific window.
@@ -991,6 +1113,8 @@ pub struct Window {
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
+    is_resizable: bool,
+    is_minimizable: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
@@ -1038,6 +1162,8 @@ pub struct Window {
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     #[cfg(feature = "input-latency-histogram")]
     input_latency_tracker: InputLatencyTracker,
+    #[cfg(feature = "frame-duration-histogram")]
+    frame_duration_tracker: FrameDurationTracker,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -1062,7 +1188,7 @@ pub struct Window {
 #[derive(Clone, Debug, Default)]
 struct ModifierState {
     modifiers: Modifiers,
-    saw_keystroke: bool,
+    saw_other_input: bool,
 }
 
 /// Tracks input event timestamps to determine if input is arriving at a high rate.
@@ -1113,6 +1239,7 @@ impl InputRateTracker {
 /// A point-in-time snapshot of the input-latency histograms for a window,
 /// suitable for external formatting.
 #[cfg(feature = "input-latency-histogram")]
+#[derive(Clone)]
 pub struct InputLatencySnapshot {
     /// Histogram of input-to-frame latency samples, in nanoseconds.
     pub latency_histogram: Histogram<u64>,
@@ -1188,6 +1315,99 @@ impl InputLatencyTracker {
             latency_histogram: self.latency_histogram.clone(),
             events_per_frame_histogram: self.events_per_frame_histogram.clone(),
             mid_draw_events_dropped: self.mid_draw_events_dropped,
+        }
+    }
+}
+
+/// A point-in-time snapshot of the frame-duration histograms for a window,
+/// suitable for external formatting.
+#[cfg(feature = "frame-duration-histogram")]
+#[derive(Clone)]
+pub struct FrameDurationSnapshot {
+    /// Histogram of `Window::draw` durations, in nanoseconds.
+    pub draw_duration_histogram: Histogram<u64>,
+    /// Histogram of intervals between consecutively presented frames while the
+    /// window was animating, in nanoseconds.
+    pub present_interval_histogram: Histogram<u64>,
+}
+
+/// Records how long the window takes to produce frames: the duration of every
+/// draw, and the interval between consecutive presents while the window is
+/// animating (a next-frame callback was already scheduled when the previous
+/// frame was presented, so frames are being produced back-to-back and a
+/// stretched interval means frames were missed).
+///
+/// Present intervals are only recorded while the window is active: inactive
+/// windows are deliberately throttled to a lower frame rate, which would be
+/// indistinguishable from missed frames.
+#[cfg(feature = "frame-duration-histogram")]
+struct FrameDurationTracker {
+    /// Histogram of `Window::draw` durations, in nanoseconds.
+    draw_duration_histogram: Histogram<u64>,
+    /// Histogram of intervals between consecutively presented frames while the
+    /// window was animating, in nanoseconds.
+    present_interval_histogram: Histogram<u64>,
+    /// When the window last presented a newly drawn frame.
+    last_present_at: Option<Instant>,
+    /// Whether the window was animating (and active) when the last frame was
+    /// presented, making the interval ending at the next present meaningful.
+    animating_at_last_present: bool,
+    /// Whether `Window::draw` ran since the last present. Distinguishes
+    /// presents of new frames from re-presents of an unchanged frame (e.g.
+    /// to sustain the display's refresh rate during high-rate input).
+    drew_since_last_present: bool,
+}
+
+#[cfg(feature = "frame-duration-histogram")]
+impl FrameDurationTracker {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            draw_duration_histogram: Histogram::new(3)
+                .map_err(|e| anyhow!("Failed to create draw duration histogram: {e}"))?,
+            present_interval_histogram: Histogram::new(3)
+                .map_err(|e| anyhow!("Failed to create present interval histogram: {e}"))?,
+            last_present_at: None,
+            animating_at_last_present: false,
+            drew_since_last_present: false,
+        })
+    }
+
+    fn record_draw(&mut self, duration: Duration) {
+        self.draw_duration_histogram
+            .record(duration.as_nanos() as u64)
+            .ok();
+        self.drew_since_last_present = true;
+    }
+
+    /// Record that a frame was presented. `next_frame_scheduled` reports
+    /// whether a next-frame callback is already pending, which is what marks
+    /// the window as animating for the interval ending at the *next* present.
+    fn record_present(
+        &mut self,
+        presented_at: Instant,
+        window_active: bool,
+        next_frame_scheduled: bool,
+    ) {
+        if !mem::take(&mut self.drew_since_last_present) {
+            // Re-presenting an unchanged frame; not a new frame for interval
+            // purposes.
+            return;
+        }
+        if self.animating_at_last_present
+            && window_active
+            && let Some(last_present_at) = self.last_present_at
+        {
+            let interval_nanos = presented_at.duration_since(last_present_at).as_nanos() as u64;
+            self.present_interval_histogram.record(interval_nanos).ok();
+        }
+        self.last_present_at = Some(presented_at);
+        self.animating_at_last_present = next_frame_scheduled && window_active;
+    }
+
+    fn snapshot(&self) -> FrameDurationSnapshot {
+        FrameDurationSnapshot {
+            draw_duration_histogram: self.draw_duration_histogram.clone(),
+            present_interval_histogram: self.present_interval_histogram.clone(),
         }
     }
 }
@@ -1292,6 +1512,7 @@ impl Window {
             show,
             kind,
             is_movable,
+            app_owns_titlebar_drag,
             is_resizable,
             is_minimizable,
             display_id,
@@ -1320,6 +1541,7 @@ impl Window {
                 titlebar,
                 kind,
                 is_movable,
+                app_owns_titlebar_drag,
                 is_resizable,
                 is_minimizable,
                 focus,
@@ -1467,7 +1689,34 @@ impl Window {
             let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
+            let mut deferred_force_render = false;
             move |request_frame_options| {
+                // This must be checked before anything else: if this request
+                // arrived re-entrantly while a draw is on this thread's stack
+                // (e.g. via a nested message pump in the Windows window
+                // procedure), drawing would nest draws, and even touching the
+                // App would panic on its already-mutable borrow. Skip instead;
+                // the platform leaves the window invalidated (or re-invalidates
+                // it), so a fresh request arrives once the in-progress draw
+                // unwinds. Remember force_render so the deferred frame still
+                // bypasses the view cache.
+                //
+                // Returning here skips `complete_frame`, which on Wayland would
+                // stall the window's frame callbacks (no `surface.commit()`) —
+                // but calling it would hit the App borrow panic above, and this
+                // branch is unreachable there in practice: only Windows pumps
+                // platform events (and thus requests frames) mid-draw.
+                if draw_in_progress() {
+                    log::debug!("deferring re-entrant window draw request");
+                    deferred_force_render |= request_frame_options.force_render;
+                    return;
+                }
+                // Take the deferred flag first: `||` short-circuits, and leaving
+                // the flag set when this request already forces a render would
+                // force a second, redundant render on the next frame.
+                let force_render =
+                    mem::take(&mut deferred_force_render) || request_frame_options.force_render;
+
                 let thermal_state = handle
                     .update(&mut cx, |_, _, cx| cx.thermal_state())
                     .log_err();
@@ -1475,12 +1724,12 @@ impl Window {
                 // Throttle frame rate based on conditions:
                 // - Thermal pressure (Serious/Critical): cap to ~60fps
                 // - Inactive window (not focused): cap to ~30fps to save energy
-                let min_frame_interval = if !request_frame_options.force_render
-                    && !request_frame_options.require_presentation
-                    && next_frame_callbacks.borrow().is_empty()
+                let min_frame_interval = if request_frame_options.require_presentation
+                    || (!request_frame_options.force_render
+                        && next_frame_callbacks.borrow().is_empty())
                 {
                     None
-                } else if !active.get() {
+                } else if !active.get() && !input_rate_tracker.borrow_mut().is_high_rate() {
                     Some(Duration::from_micros(33333))
                 } else if let Some(ThermalState::Critical | ThermalState::Serious) = thermal_state {
                     Some(Duration::from_micros(16667))
@@ -1493,6 +1742,8 @@ impl Window {
                     if let Some(last_frame) = last_frame_time.get()
                         && now.duration_since(last_frame) < min_interval
                     {
+                        // Don't lose a pending forced render to throttling.
+                        deferred_force_render |= force_render;
                         // Must still complete the frame on platforms that require it.
                         // On Wayland, `surface.frame()` was already called to request the
                         // next frame callback, so we must call `surface.commit()` (via
@@ -1500,16 +1751,21 @@ impl Window {
                         handle
                             .update(&mut cx, |_, window, _| window.complete_frame())
                             .log_err();
+                        // The demand that entered this branch (a deferred forced
+                        // render or pending next-frame callbacks) is still
+                        // unserved; platforms that stop requesting frames for
+                        // idle windows need a wakeup to deliver the retry.
+                        invalidator.wake_platform();
                         return;
                     }
                 }
                 last_frame_time.set(Some(now));
 
-                let next_frame_callbacks = next_frame_callbacks.take();
-                if !next_frame_callbacks.is_empty() {
+                let pending_next_frame_callbacks = next_frame_callbacks.take();
+                if !pending_next_frame_callbacks.is_empty() {
                     handle
                         .update(&mut cx, |_, window, cx| {
-                            for callback in next_frame_callbacks {
+                            for callback in pending_next_frame_callbacks {
                                 callback(window, cx);
                             }
                         })
@@ -1521,20 +1777,20 @@ impl Window {
                 // to prevent display underclocking during active input.
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
-                    || (active.get() && input_rate_tracker.borrow_mut().is_high_rate());
+                    || input_rate_tracker.borrow_mut().is_high_rate();
 
-                if invalidator.is_dirty() || request_frame_options.force_render {
+                if invalidator.is_dirty() || force_render {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
-                                if request_frame_options.force_render {
+                                if force_render {
                                     // Bypass cached view reuse so we don't replay stale
                                     // atlas tile references after a GPU device recovery.
                                     window.refresh();
                                 }
                                 let arena_clear_needed = window.draw(cx);
                                 window.present();
-                                arena_clear_needed.clear();
+                                arena_clear_needed.clear(cx);
                             })
                             .log_err();
                     })
@@ -1549,8 +1805,18 @@ impl Window {
                         window.complete_frame();
                     })
                     .log_err();
+
+                // Platforms that stop requesting frames for idle windows only
+                // deliver another request after a wakeup. If demand remains
+                // after this frame (the window was re-invalidated mid-draw, or
+                // animations scheduled next-frame callbacks), re-arm the frame
+                // source explicitly.
+                if invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty() {
+                    invalidator.wake_platform();
+                }
             }
         }));
+        invalidator.set_platform_waker(platform_window.frame_waker());
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
             move |_, _| {
@@ -1568,11 +1834,19 @@ impl Window {
             }
         }));
         platform_window.on_appearance_changed(Box::new({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
+            let foreground_executor = cx.foreground_executor().clone();
             move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.appearance_changed(cx))
-                    .log_err();
+                let mut cx = cx.clone();
+                // Defer the update because changing the AppKit appearance may
+                // synchronously invoke this callback while App is already borrowed.
+                foreground_executor
+                    .spawn(async move {
+                        handle
+                            .update(&mut cx, |_, window, cx| window.appearance_changed(cx))
+                            .log_err();
+                    })
+                    .detach();
             }
         }));
         platform_window.on_button_layout_changed(Box::new({
@@ -1704,6 +1978,8 @@ impl Window {
             removed: false,
             platform_window,
             display_id,
+            is_resizable,
+            is_minimizable,
             sprite_atlas,
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
@@ -1744,6 +2020,8 @@ impl Window {
             input_rate_tracker,
             #[cfg(feature = "input-latency-histogram")]
             input_latency_tracker: InputLatencyTracker::new()?,
+            #[cfg(feature = "frame-duration-histogram")]
+            frame_duration_tracker: FrameDurationTracker::new()?,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -1994,9 +2272,39 @@ impl Window {
         self.platform_window.request_decorations(decorations);
     }
 
-    /// Start a window resize operation (Wayland)
+    /// Set the exclusive zone for a layer-shell surface: how much screen space it
+    /// reserves so other surfaces avoid occluding it (e.g. a panel reserving space).
+    /// Positive values reserve that distance from the anchored edge, 0 lets the
+    /// surface be moved out of others' exclusive zones, and -1 ignores reserved
+    /// space and may extend under other surfaces. (Wayland layer-shell windows only)
+    pub fn set_exclusive_zone(&self, zone: Pixels) {
+        self.platform_window.set_exclusive_zone(zone);
+    }
+
+    /// Set which anchored edge a layer-shell surface's exclusive zone applies to.
+    /// This is only needed to disambiguate a corner-anchored surface; otherwise the
+    /// edge is deduced from the anchor. The edge must be a single edge the surface
+    /// is anchored to, or it is ignored. (Wayland layer-shell windows only)
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    pub fn set_exclusive_edge(&self, edge: crate::layer_shell::Anchor) {
+        self.platform_window.set_exclusive_edge(edge);
+    }
+
+    /// Start an interactive window resize operation if this window is resizable.
     pub fn start_window_resize(&self, edge: ResizeEdge) {
-        self.platform_window.start_window_resize(edge);
+        if self.is_resizable {
+            self.platform_window.start_window_resize(edge);
+        }
+    }
+
+    /// Linux (wayland) only: Set the window's input region, the area that receives pointer
+    /// and touch input. Events outside it pass through to whatever is below the window.
+    ///
+    /// - `Some(rects)` restricts input to the union of `rects`, in window coordinates.
+    /// - `Some(&[])` is an empty region, so the window receives no pointer or touch input.
+    /// - `None` resets the region to the default, so the whole window receives input again.
+    pub fn set_input_region(&self, region: Option<&[Bounds<Pixels>]>) {
+        self.platform_window.set_input_region(region);
     }
 
     /// Return the `WindowBounds` to indicate that how a window should be opened
@@ -2181,6 +2489,9 @@ impl Window {
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
+        // Next-frame callbacks create frame demand without dirtying the
+        // window, so the platform's frame source must be woken explicitly.
+        self.invalidator.wake_platform();
     }
 
     /// Schedule a frame to be drawn on the next animation frame.
@@ -2189,9 +2500,29 @@ impl Window {
     /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
     ///
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
+    ///
+    /// Callers driving purely decorative animations (spinners, pulses, and the
+    /// like) should prefer [`AnimationExt::with_animation`](crate::AnimationExt::with_animation),
+    /// which automatically respects [`App::reduce_motion`]. When using this
+    /// method directly for decorative motion, check [`App::reduce_motion`]
+    /// and skip the frame request when it is set.
     pub fn request_animation_frame(&self) {
         let entity = self.current_view();
         self.on_next_frame(move |_, cx| cx.notify(entity));
+    }
+
+    /// Runs all callbacks scheduled via [`Self::on_next_frame`], returning how many ran.
+    ///
+    /// Tests have no platform frame loop, so this simulates the delivery of the
+    /// next frame.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_next_frame(&mut self, cx: &mut App) -> usize {
+        let callbacks = self.next_frame_callbacks.take();
+        let count = callbacks.len();
+        for callback in callbacks {
+            callback(self, cx);
+        }
+        count
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
@@ -2240,6 +2571,7 @@ impl Window {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
         self.display_id = self.platform_window.display().map(|display| display.id());
+        self.mouse_position = self.platform_window.mouse_position();
 
         self.refresh();
 
@@ -2350,7 +2682,17 @@ impl Window {
         self.platform_window.window_decorations()
     }
 
-    /// Returns which window controls are currently visible (Wayland)
+    /// Returns whether this window is resizable.
+    pub fn is_resizable(&self) -> bool {
+        self.is_resizable
+    }
+
+    /// Returns whether this window is minimizable.
+    pub fn is_minimizable(&self) -> bool {
+        self.is_minimizable
+    }
+
+    /// Returns the controls supported by the platform.
     pub fn window_controls(&self) -> WindowControls {
         self.platform_window.window_controls()
     }
@@ -2407,6 +2749,13 @@ impl Window {
     /// be rendered as two pixels on screen.
     pub fn scale_factor(&self) -> f32 {
         self.scale_factor
+    }
+
+    /// Overrides the display scale factor for tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_scale_factor(&mut self, scale_factor: f32) {
+        self.scale_factor = scale_factor;
+        self.refresh();
     }
 
     /// The size of an em for the base font of the application. Adjusting this value allows the
@@ -2628,11 +2977,14 @@ impl Window {
         // Drain unconditionally so a stale first-invalidation timestamp can't
         // leak into a later frame across enable/disable of frame tracing.
         let frame_dirty = self.invalidator.take_frame_dirty();
+        #[cfg(feature = "frame-duration-histogram")]
+        let draw_started_at = Some(Instant::now());
+        #[cfg(not(feature = "frame-duration-histogram"))]
         let draw_started_at = profiler::frame_trace_enabled().then(Instant::now);
 
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
-        let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
+        let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
         self.invalidate_entities();
         cx.entities.clear_accessed();
@@ -2689,6 +3041,7 @@ impl Window {
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
+        let mut focus_before_listeners = self.focus;
 
         if previous_focus_path != current_focus_path
             || previous_window_active != current_window_active
@@ -2697,6 +3050,11 @@ impl Window {
                 self.focus_lost_listeners
                     .clone()
                     .retain(&(), |listener| listener(self, cx));
+                // The focus-lost fallback (e.g. a workspace refocusing itself) may target
+                // an element that isn't part of the element tree, in which case scheduling
+                // a redraw below would dispatch focus-lost again, looping forever. Only
+                // track focus movement caused by the focus listeners.
+                focus_before_listeners = self.focus;
             }
 
             let event = WindowFocusEvent {
@@ -2721,19 +3079,32 @@ impl Window {
         self.reset_cursor_style(cx);
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
+        // Focus listeners may move focus (e.g. a dock forwarding focus to its active
+        // panel). `Window::focus` suppresses `refresh` while a draw is in progress, so
+        // schedule another frame here to render the new focus state and dispatch the
+        // resulting focus events.
+        if self.focus != focus_before_listeners {
+            self.refresh();
+        }
         self.needs_present.set(true);
 
         if let Some(draw_start) = draw_started_at {
+            let draw_end = Instant::now();
+            #[cfg(feature = "frame-duration-histogram")]
+            self.frame_duration_tracker
+                .record_draw(draw_end.duration_since(draw_start));
             profiler::record_frame_timing(profiler::FrameTiming {
                 window_id: self.handle.window_id(),
                 dirty_at: frame_dirty.dirty_at,
                 invalidations: frame_dirty.invalidations,
                 draw_start,
-                draw_end: Instant::now(),
+                draw_end,
             });
         }
 
-        ArenaClearNeeded::new(&cx.element_arena)
+        // Exit the scope to obtain the arena-clear token this draw owes; the
+        // scope's teardown itself happens in `ElementArenaScope::drop`.
+        arena_scope.exit(&cx.element_arena)
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -2763,6 +3134,15 @@ impl Window {
         self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "input-latency-histogram")]
         self.input_latency_tracker.record_frame_presented();
+        #[cfg(feature = "frame-duration-histogram")]
+        {
+            let next_frame_scheduled = !self.next_frame_callbacks.borrow().is_empty();
+            self.frame_duration_tracker.record_present(
+                Instant::now(),
+                self.active.get(),
+                next_frame_scheduled,
+            );
+        }
         self.needs_present.set(false);
         profiling::finish_frame!();
     }
@@ -2783,6 +3163,12 @@ impl Window {
     #[cfg(feature = "input-latency-histogram")]
     pub fn input_latency_snapshot(&self) -> InputLatencySnapshot {
         self.input_latency_tracker.snapshot()
+    }
+
+    /// Returns a snapshot of the current frame-duration histograms.
+    #[cfg(feature = "frame-duration-histogram")]
+    pub fn frame_duration_snapshot(&self) -> FrameDurationSnapshot {
+        self.frame_duration_tracker.snapshot()
     }
 
     fn draw_roots(&mut self, cx: &mut App) {
@@ -2812,8 +3198,16 @@ impl Window {
             }
         };
 
-        // Layout all root elements.
-        let mut root_element = self.root.as_ref().unwrap().clone().into_any();
+        // Layout all root elements. Like the root element on the web, which
+        // stretches to fill the viewport unless explicitly sized, window roots
+        // fill the window when their size is `auto`.
+        let scale_factor = self.scale_factor();
+        let mut root_element = self.root.as_ref().unwrap().clone().into_any_element();
+        let root_layout_id = root_element.request_layout(self, cx);
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .stretch_auto_size_to_fill(root_layout_id, root_size, scale_factor);
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -2825,12 +3219,17 @@ impl Window {
         let mut active_drag_element = None;
         let mut tooltip_element = None;
         if let Some(prompt) = self.prompt.take() {
-            let mut element = prompt.view.any_view().into_any();
+            let mut element = prompt.view.any_view().into_any_element();
+            let prompt_layout_id = element.request_layout(self, cx);
+            self.layout_engine
+                .as_mut()
+                .unwrap()
+                .stretch_auto_size_to_fill(prompt_layout_id, root_size, scale_factor);
             element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
             prompt_element = Some(element);
             self.prompt = Some(prompt);
         } else if let Some(active_drag) = cx.active_drag.take() {
-            let mut element = active_drag.view.clone().into_any();
+            let mut element = active_drag.view.clone().into_any_element();
             let offset = self.mouse_position() - active_drag.cursor_offset;
             element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
             active_drag_element = Some(element);
@@ -2869,8 +3268,15 @@ impl Window {
         let should_send_a11y_update = a11y_active_start_of_frame && a11y_active_end_of_frame;
 
         if a11y_active_start_of_frame {
+            // Harvest frame metadata for the debug dump while the live window
+            // and frame are still in scope.
+            let frame_info = crate::window::a11y::debug::FrameDebugInfo {
+                viewport_size: self.viewport_size,
+                scale_factor: self.scale_factor,
+                tab_stop_count: self.next_frame.tab_stops.tab_stop_count(),
+            };
             // clear the builder state regardless
-            let tree_update = self.a11y.end_frame();
+            let tree_update = self.a11y.end_frame(frame_info);
 
             if should_send_a11y_update {
                 log::debug!(
@@ -2894,7 +3300,7 @@ impl Window {
                 log::error!("Unexpectedly absent TooltipRequest");
                 continue;
             };
-            let mut element = tooltip_request.tooltip.view.clone().into_any();
+            let mut element = tooltip_request.tooltip.view.clone().into_any_element();
             let mouse_position = tooltip_request.tooltip.mouse_position;
             let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self, cx);
 
@@ -2954,62 +3360,71 @@ impl Window {
     fn prepaint_deferred_draws(&mut self, cx: &mut App) {
         assert_eq!(self.element_id_stack.len(), 0);
 
-        let mut completed_draws = Vec::new();
-
         // Process deferred draws in multiple rounds to support nesting.
-        // Each round processes all current deferred draws, which may produce new ones.
+        // Each round processes all current deferred draws, which may push new ones.
+        //
+        // The draws are processed in place rather than being moved out of
+        // `next_frame.deferred_draws`: `prepaint_index` snapshots that vector's
+        // length, so any prepaint range recorded during a round (view caches,
+        // nested deferred draws) must index the same vector `reuse_prepaint`
+        // slices on the next frame. Moving the draws out and re-appending them
+        // shifts the indices of nested draws, causing reused subtrees to graft
+        // the wrong deferred draws and panic in the dispatch tree.
+        let mut round_start = 0;
         let mut depth = 0;
         loop {
+            let round_end = self.next_frame.deferred_draws.len();
+            if round_start == round_end {
+                break;
+            }
             // Limit maximum nesting depth to prevent infinite loops.
             assert!(depth < 10, "Exceeded maximum (10) deferred depth");
             depth += 1;
-            let deferred_count = self.next_frame.deferred_draws.len();
-            if deferred_count == 0 {
-                break;
-            }
 
-            // Sort by priority for this round
-            let traversal_order = self.deferred_draw_traversal_order();
-            let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
+            // Sort this round by priority.
+            let mut traversal_order = (round_start..round_end).collect::<SmallVec<[usize; 8]>>();
+            traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
 
             for deferred_draw_ix in traversal_order {
-                let deferred_draw = &mut deferred_draws[deferred_draw_ix];
-                self.element_id_stack
-                    .clone_from(&deferred_draw.element_id_stack);
-                self.text_style_stack
-                    .clone_from(&deferred_draw.text_style_stack);
-                self.next_frame
-                    .dispatch_tree
-                    .set_active_node(deferred_draw.parent_node);
+                let (element, parent_node, current_view, rem_size, absolute_offset, prepaint_range) = {
+                    let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
+                    self.element_id_stack
+                        .clone_from(&deferred_draw.element_id_stack);
+                    self.text_style_stack
+                        .clone_from(&deferred_draw.text_style_stack);
+                    (
+                        deferred_draw.element.take(),
+                        deferred_draw.parent_node,
+                        deferred_draw.current_view,
+                        deferred_draw.rem_size,
+                        deferred_draw.absolute_offset,
+                        deferred_draw.prepaint_range.clone(),
+                    )
+                };
+                self.next_frame.dispatch_tree.set_active_node(parent_node);
 
                 let prepaint_start = self.prepaint_index();
-                if let Some(element) = deferred_draw.element.as_mut() {
-                    self.with_rendered_view(deferred_draw.current_view, |window| {
-                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                            window.with_absolute_element_offset(
-                                deferred_draw.absolute_offset,
-                                |window| {
-                                    element.prepaint(window, cx);
-                                },
-                            );
+                if let Some(mut element) = element {
+                    self.with_rendered_view(current_view, |window| {
+                        window.with_rem_size(Some(rem_size), |window| {
+                            window.with_absolute_element_offset(absolute_offset, |window| {
+                                element.prepaint(window, cx);
+                            });
                         });
-                    })
+                    });
+                    self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
                 } else {
-                    self.reuse_prepaint(deferred_draw.prepaint_range.clone());
+                    self.reuse_prepaint(prepaint_range);
                 }
                 let prepaint_end = self.prepaint_index();
-                deferred_draw.prepaint_range = prepaint_start..prepaint_end;
+                self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
+                    prepaint_start..prepaint_end;
             }
-
-            // Save completed draws and continue with newly added ones
-            completed_draws.append(&mut deferred_draws);
 
             self.element_id_stack.clear();
             self.text_style_stack.clear();
+            round_start = round_end;
         }
-
-        // Restore all completed draws
-        self.next_frame.deferred_draws = completed_draws;
     }
 
     fn paint_deferred_draws(&mut self, cx: &mut App) {
@@ -3726,6 +4141,45 @@ impl Window {
         }
     }
 
+    fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {
+        let radii = &quad.corner_radii;
+        let widths = &quad.border_widths;
+        let edge_radii = Edges {
+            top: radii.top_left.max(radii.top_right),
+            right: radii.top_right.max(radii.bottom_right),
+            bottom: radii.bottom_left.max(radii.bottom_right),
+            left: radii.top_left.max(radii.bottom_left),
+        };
+
+        let antialias_inset = point(ScaledPixels(1.0), ScaledPixels(1.0));
+        let inset_bounds = |top_left_inset, bottom_right_inset| {
+            Bounds::from_corners(
+                quad.bounds.origin + top_left_inset + antialias_inset,
+                quad.bounds.bottom_right() - bottom_right_inset - antialias_inset,
+            )
+        };
+
+        // Rounded corners need only be excluded on one axis. Either candidate
+        // is empty of border pixels, so use the larger interior.
+        let horizontal_band = inset_bounds(
+            point(widths.left, widths.top.max(edge_radii.top)),
+            point(widths.right, widths.bottom.max(edge_radii.bottom)),
+        );
+        let vertical_band = inset_bounds(
+            point(widths.left.max(edge_radii.left), widths.top),
+            point(widths.right.max(edge_radii.right), widths.bottom),
+        );
+
+        let area = |bounds: &Bounds<ScaledPixels>| {
+            bounds.size.width.0.max(0.) * bounds.size.height.0.max(0.)
+        };
+        if area(&horizontal_band) >= area(&vertical_band) {
+            horizontal_band
+        } else {
+            vertical_band
+        }
+    }
+
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
     /// see [`fill`], [`outline`], and [`quad`] to construct this type.
@@ -3741,7 +4195,7 @@ impl Window {
         let opacity = self.element_opacity();
         let snapped_bounds = self.snap_bounds(quad.bounds);
         let snapped_border_widths = self.snap_border_widths(quad.border_widths);
-        self.next_frame.scene.insert_primitive(Quad {
+        let quad = Quad {
             order: 0,
             bounds: snapped_bounds,
             content_mask: self.snapped_content_mask(),
@@ -3750,7 +4204,57 @@ impl Window {
             corner_radii: quad.corner_radii.scale(self.scale_factor()),
             border_widths: snapped_border_widths,
             border_style: quad.border_style,
-        });
+        };
+
+        if !quad.background.is_transparent() {
+            self.next_frame.scene.insert_primitive(quad);
+            return;
+        }
+
+        // Splitting a border-only quad around its empty interior avoids shading
+        // every transparent pixel inside large outlines.
+        let outer_bounds = quad.bounds;
+        let inner_bounds = Self::largest_border_interior(&quad);
+
+        if inner_bounds.is_empty() {
+            self.next_frame.scene.insert_primitive(quad);
+            return;
+        }
+
+        let strips = [
+            // Top
+            Bounds::from_corners(
+                outer_bounds.origin,
+                point(outer_bounds.right(), inner_bounds.top()),
+            ),
+            // Bottom
+            Bounds::from_corners(
+                point(outer_bounds.left(), inner_bounds.bottom()),
+                outer_bounds.bottom_right(),
+            ),
+            // Left
+            Bounds::from_corners(
+                point(outer_bounds.left(), inner_bounds.top()),
+                inner_bounds.bottom_left(),
+            ),
+            // Right
+            Bounds::from_corners(
+                inner_bounds.top_right(),
+                point(outer_bounds.right(), inner_bounds.bottom()),
+            ),
+        ];
+
+        for strip in strips {
+            let content_mask_bounds = quad.content_mask.bounds.intersect(&strip);
+            if !content_mask_bounds.is_empty() {
+                self.next_frame.scene.insert_primitive(Quad {
+                    content_mask: ContentMask {
+                        bounds: content_mask_bounds,
+                    },
+                    ..quad
+                });
+            }
+        }
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
@@ -3801,7 +4305,7 @@ impl Window {
             content_mask: self.snapped_content_mask(),
             color: style.color.unwrap_or_default().opacity(element_opacity),
             thickness,
-            wavy: if style.wavy { 1 } else { 0 },
+            wavy: style.wavy.into(),
         });
     }
 
@@ -3831,7 +4335,7 @@ impl Window {
             content_mask: self.snapped_content_mask(),
             thickness: self.snap_stroke(style.thickness),
             color: style.color.unwrap_or_default().opacity(opacity),
-            wavy: 0,
+            wavy: false.into(),
         });
     }
 
@@ -3991,7 +4495,7 @@ impl Window {
             self.next_frame.scene.insert_primitive(PolychromeSprite {
                 order: 0,
                 pad: 0,
-                grayscale: false,
+                grayscale: false.into(),
                 bounds,
                 corner_radii: Default::default(),
                 content_mask,
@@ -4071,9 +4575,14 @@ impl Window {
     /// This method will panic if the frame_index is not valid
     ///
     /// This method should only be called as part of the paint phase of element drawing.
+    /// Paint an image into `bounds`, positioning and scaling it according to `image_bounds`.
+    ///
+    /// The visible region rendered is `bounds.intersect(&image_bounds)`, with `corner_radii`
+    /// applied to `bounds`.
     pub fn paint_image(
         &mut self,
         bounds: Bounds<Pixels>,
+        image_bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
         data: Arc<RenderImage>,
         frame_index: usize,
@@ -4081,7 +4590,14 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let bounds = self.snap_bounds(bounds);
+        let visible_bounds = bounds.intersect(&image_bounds);
+        if visible_bounds.size.width <= Pixels::ZERO || visible_bounds.size.height <= Pixels::ZERO {
+            return Ok(());
+        }
+        if image_bounds.size.width <= Pixels::ZERO || image_bounds.size.height <= Pixels::ZERO {
+            return Ok(());
+        }
+
         let params = RenderImageParams {
             image_id: data.id,
             frame_index,
@@ -4099,18 +4615,63 @@ impl Window {
                 )))
             })?
             .expect("Callback above only returns Some");
+
+        let visible_bounds_snapped = self.snap_bounds(visible_bounds);
+
+        let sub_tile = if visible_bounds == image_bounds {
+            tile
+        } else {
+            let x_offset_ratio =
+                (visible_bounds.origin.x - image_bounds.origin.x) / image_bounds.size.width;
+            let y_offset_ratio =
+                (visible_bounds.origin.y - image_bounds.origin.y) / image_bounds.size.height;
+            let width_ratio = visible_bounds.size.width / image_bounds.size.width;
+            let height_ratio = visible_bounds.size.height / image_bounds.size.height;
+
+            let tile_origin_x = tile.bounds.origin.x.0;
+            let tile_origin_y = tile.bounds.origin.y.0;
+            let tile_width = tile.bounds.size.width.0;
+            let tile_height = tile.bounds.size.height.0;
+
+            let sub_origin_x = tile_origin_x + (x_offset_ratio * tile_width as f32).round() as i32;
+            let sub_origin_y = tile_origin_y + (y_offset_ratio * tile_height as f32).round() as i32;
+            let sub_width = (width_ratio * tile_width as f32).round() as i32;
+            let sub_height = (height_ratio * tile_height as f32).round() as i32;
+
+            let max_x = tile_origin_x + tile_width;
+            let max_y = tile_origin_y + tile_height;
+
+            let clamped_origin_x = sub_origin_x.clamp(tile_origin_x, max_x);
+            let clamped_origin_y = sub_origin_y.clamp(tile_origin_y, max_y);
+            let clamped_width = sub_width.min(max_x - clamped_origin_x).max(0);
+            let clamped_height = sub_height.min(max_y - clamped_origin_y).max(0);
+
+            AtlasTile {
+                bounds: Bounds {
+                    origin: point(
+                        DevicePixels(clamped_origin_x),
+                        DevicePixels(clamped_origin_y),
+                    ),
+                    size: size(DevicePixels(clamped_width), DevicePixels(clamped_height)),
+                },
+                ..tile
+            }
+        };
+
         let content_mask = self.snapped_content_mask();
-        let corner_radii = corner_radii.scale(self.scale_factor());
+        let corner_radii = corner_radii
+            .clamp_radii_for_quad_size(visible_bounds.size)
+            .scale(self.scale_factor());
         let opacity = self.element_opacity();
 
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
             pad: 0,
-            grayscale,
-            bounds,
+            grayscale: grayscale.into(),
+            bounds: visible_bounds_snapped,
             content_mask,
             corner_radii,
-            tile,
+            tile: sub_tile,
             opacity,
         });
         Ok(())
@@ -4147,6 +4708,21 @@ impl Window {
         }
 
         Ok(())
+    }
+
+    /// Returns whether every frame of an image is present in the sprite atlas.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_image_atlas_entry(&self, data: &RenderImage) -> bool {
+        data.frame_count() > 0
+            && (0..data.frame_count()).all(|frame_index| {
+                self.sprite_atlas.contains(
+                    &RenderImageParams {
+                        image_id: data.id,
+                        frame_index,
+                    }
+                    .into(),
+                )
+            })
     }
 
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
@@ -4530,6 +5106,7 @@ impl Window {
         self.last_input_modality = match &event {
             PlatformInput::KeyDown(_) => InputModality::Keyboard,
             PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
+            PlatformInput::Touch(_) => InputModality::Touch,
             _ => self.last_input_modality,
         };
         if self.last_input_modality != old_modality {
@@ -4586,12 +5163,14 @@ impl Window {
             PlatformInput::FileDrop(file_drop) => match file_drop {
                 FileDropEvent::Entered { position, paths } => {
                     self.mouse_position = position;
-                    if cx.active_drag.is_none() {
+                    let source_window = self.handle.window_id();
+                    if !cx.restore_platform_drag(source_window) && cx.active_drag.is_none() {
                         cx.active_drag = Some(AnyDrag {
                             value: Arc::new(paths.clone()),
                             view: cx.new(|_| paths).into(),
                             cursor_offset: position,
                             cursor_style: None,
+                            external_payload_source: None,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
@@ -4619,10 +5198,19 @@ impl Window {
                     })
                 }
                 FileDropEvent::Exited => {
-                    cx.active_drag.take();
+                    if !cx.hand_restored_drag_to_platform(self.handle.window_id()) {
+                        cx.active_drag.take();
+                    }
+                    self.refresh();
                     PlatformInput::FileDrop(FileDropEvent::Exited)
                 }
+                FileDropEvent::Ended => {
+                    cx.end_platform_drag(self.handle.window_id());
+                    self.refresh();
+                    PlatformInput::FileDrop(FileDropEvent::Ended)
+                }
             },
+            PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
@@ -4631,6 +5219,10 @@ impl Window {
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
         }
+
+        // Must run after the move is dispatched: the platform owns the gesture afterwards, so this
+        // is the last chance for drag listeners to see the pointer leave and reset their state.
+        self.promote_external_drag_to_platform(&event, cx);
 
         if self.invalidator.update_count() > update_count_before {
             self.input_rate_tracker.borrow_mut().record_input();
@@ -4645,6 +5237,36 @@ impl Window {
         DispatchEventResult {
             propagate: cx.propagate_event,
             default_prevented: self.default_prevented,
+        }
+    }
+
+    fn promote_external_drag_to_platform(&mut self, event: &PlatformInput, cx: &mut App) {
+        let PlatformInput::MouseMove(mouse_move) = event else {
+            return;
+        };
+        if mouse_move.pressed_button != Some(MouseButton::Left) {
+            return;
+        }
+        if Bounds::new(Point::default(), self.viewport_size).contains(&mouse_move.position) {
+            return;
+        }
+        if !self.platform_window.can_start_external_drag() {
+            return;
+        }
+        let Some(payload_source) = cx
+            .active_drag
+            .as_mut()
+            .and_then(|drag| drag.external_payload_source.take())
+        else {
+            return;
+        };
+        let Some(payload) = payload_source(self, cx) else {
+            return;
+        };
+        if self.platform_window.start_external_drag(&payload)
+            && cx.hand_active_drag_to_platform(self.handle.window_id())
+        {
+            self.refresh();
         }
     }
 
@@ -4708,7 +5330,7 @@ impl Window {
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
         if self.invalidator.is_dirty() {
-            self.draw(cx).clear();
+            self.draw(cx).clear(cx);
         }
 
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);
@@ -4719,7 +5341,7 @@ impl Window {
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
             if event.modifiers.number_of_modifiers() == 0
                 && self.pending_modifier.modifiers.number_of_modifiers() == 1
-                && !self.pending_modifier.saw_keystroke
+                && !self.pending_modifier.saw_other_input
             {
                 let key = match self.pending_modifier.modifiers {
                     modifiers if modifiers.shift => Some("shift"),
@@ -4741,11 +5363,13 @@ impl Window {
             if self.pending_modifier.modifiers.number_of_modifiers() == 0
                 && event.modifiers.number_of_modifiers() == 1
             {
-                self.pending_modifier.saw_keystroke = false
+                self.pending_modifier.saw_other_input = false
+            } else if event.modifiers.number_of_modifiers() > 1 {
+                self.pending_modifier.saw_other_input = true
             }
             self.pending_modifier.modifiers = event.modifiers
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-            self.pending_modifier.saw_keystroke = true;
+            self.pending_modifier.saw_other_input = true;
             keystroke = Some(key_down_event.keystroke.clone());
             if key_down_event.keystroke.key_char.is_some()
                 && matches!(
@@ -4951,9 +5575,17 @@ impl Window {
         }
     }
 
+    /// Pending input that can still complete a binding. Input left over from a previous focus can
+    /// never complete one.
+    fn active_pending_input(&self) -> Option<&PendingInput> {
+        self.pending_input
+            .as_ref()
+            .filter(|pending_input| pending_input.focus == self.focus)
+    }
+
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
     pub fn has_pending_keystrokes(&self) -> bool {
-        self.pending_input.is_some()
+        self.active_pending_input().is_some()
     }
 
     pub(crate) fn clear_pending_keystrokes(&mut self) {
@@ -4962,8 +5594,7 @@ impl Window {
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
     pub fn pending_input_keystrokes(&self) -> Option<&[Keystroke]> {
-        self.pending_input
-            .as_ref()
+        self.active_pending_input()
             .map(|pending_input| pending_input.keystrokes.as_slice())
     }
 
@@ -5163,6 +5794,11 @@ impl Window {
         self.platform_window.activate();
     }
 
+    /// Requests that the operating system draw attention to this window.
+    pub fn request_attention(&self) {
+        self.platform_window.request_attention();
+    }
+
     /// Minimize the current window at the platform level.
     pub fn minimize_window(&self) {
         self.platform_window.minimize();
@@ -5240,6 +5876,14 @@ impl Window {
         let handle = (prompt_builder)(level, message, detail, answers, handle, self, cx);
         self.prompt = Some(handle);
         receiver
+    }
+
+    /// Returns whether a prompt rendered by GPUI is currently active in this window.
+    ///
+    /// This is only true for prompts rendered in the window (see
+    /// [`App::set_prompt_builder`]), not for platform-native prompt dialogs.
+    pub fn has_active_prompt(&self) -> bool {
+        self.prompt.is_some()
     }
 
     /// Returns the current context stack.
@@ -5446,7 +6090,8 @@ impl Window {
     /// Perform titlebar double-click action.
     /// This is macOS specific.
     pub fn titlebar_double_click(&self) {
-        self.platform_window.titlebar_double_click();
+        self.platform_window
+            .titlebar_double_click(self.is_resizable, self.is_minimizable);
     }
 
     /// Gets the window's title at the platform level.
@@ -5510,6 +6155,11 @@ impl Window {
     /// See the [accessibility guide](crate::_accessibility) for an overview.
     pub fn is_a11y_active(&self) -> bool {
         self.a11y.is_active()
+    }
+
+    /// Debug representation of the last frame's accessibility information.
+    pub fn debug_a11y_tree_json(&self) -> Option<String> {
+        self.a11y.debug_tree_json()
     }
 
     /// Register a listener for an accessibility action on a specific node.
@@ -6299,5 +6949,731 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cell::{Cell, RefCell},
+        path::PathBuf,
+        rc::Rc,
+    };
+
+    use crate::{
+        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty,
+        ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
+        InputEvent as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+        MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
+        StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
+        WindowOptions, canvas, div, point, px, size,
+    };
+
+    struct EmptyView;
+
+    impl Render for EmptyView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    struct OpensWindowOnPaint {
+        opened: Rc<Cell<bool>>,
+    }
+
+    impl Render for OpensWindowOnPaint {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let opened = self.opened.clone();
+            div()
+                .size_full()
+                .child(canvas(
+                    |_, _, _| {},
+                    move |_, _, _window, cx| {
+                        if !opened.replace(true) {
+                            cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| EmptyView))
+                                .unwrap();
+                        }
+                    },
+                ))
+                // Siblings painted after the canvas: their elements were
+                // allocated in the arena before the nested draw, so they detect
+                // a mid-draw arena clear when painted afterwards.
+                .child(div().child("after"))
+        }
+    }
+
+    /// Opening a window synchronously draws it and requests an element arena
+    /// clear. When that happens from within another window's draw (here: from
+    /// an element's paint), the clear must be deferred until the outer draw
+    /// finishes, or the outer draw's arena-allocated elements would be freed
+    /// out from under it.
+    #[test]
+    fn test_window_opened_during_draw_defers_arena_clear() {
+        let mut cx = TestAppContext::single();
+
+        let opened = Rc::new(Cell::new(false));
+        // add_window draws once, which runs the nested open_window mid-draw.
+        let window = cx.add_window({
+            let opened = opened.clone();
+            move |_, _| OpensWindowOnPaint { opened }
+        });
+
+        assert!(opened.get());
+        assert_eq!(cx.windows().len(), 2);
+
+        // The deferred clear must actually run once the outer draw unwinds:
+        // subsequent draws of both windows work against a fresh arena.
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+    }
+
+    /// Platforms that stop requesting frames for idle windows (currently web)
+    /// rely on the frame waker firing whenever frame demand arises; a demand
+    /// source that skips the waker shows up there as a window that silently
+    /// stops repainting until unrelated activity wakes it.
+    #[gpui::test]
+    fn test_frame_waker_fires_on_frame_demand(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let test_window = cx.test_window(window.into());
+
+        // Windows start dirty, and that can predate waker installation;
+        // installing the waker must deliver the pending wake or the first
+        // frame would never be requested.
+        assert!(
+            test_window.frame_wake_count() >= 1,
+            "opening a window must wake the frame source for the initial frame"
+        );
+
+        // Serve outstanding demand (present the frame drawn by `add_window`).
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+
+        // An idle window must not wake on clean frames or plain updates, or
+        // the frame source could never stop.
+        let baseline = test_window.frame_wake_count();
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+        window.update(cx, |_, _, _| {}).unwrap();
+        assert_eq!(
+            test_window.frame_wake_count(),
+            baseline,
+            "clean frames and non-notifying updates must not wake the frame source"
+        );
+
+        // Notifying a view in an idle window is the core demand signal.
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        assert!(
+            test_window.frame_wake_count() > baseline,
+            "notifying a view in an idle window must wake the frame source"
+        );
+
+        // Serving that demand returns to idle without further wakes.
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+        let baseline = test_window.frame_wake_count();
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+        assert_eq!(
+            test_window.frame_wake_count(),
+            baseline,
+            "serving demand must return the window to idle"
+        );
+
+        // Next-frame callbacks create demand without dirtying the window.
+        window
+            .update(cx, |_, window, _| window.on_next_frame(|_, _| {}))
+            .unwrap();
+        assert!(
+            test_window.frame_wake_count() > baseline,
+            "scheduling a next-frame callback in an idle window must wake the frame source"
+        );
+    }
+
+    /// A frame request that arrives while next-frame callbacks are pending
+    /// must never strand them: either the frame runs them, or (when the
+    /// inactive-window frame-rate throttle defers the frame) the waker fires
+    /// so another request is delivered.
+    #[gpui::test]
+    fn test_pending_next_frame_callbacks_are_not_stranded(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let test_window = cx.test_window(window.into());
+        // Establish a recent last-frame time so the inactive-window throttle
+        // can engage on the next request.
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+
+        let callback_ran = Rc::new(Cell::new(false));
+        window
+            .update(cx, {
+                let callback_ran = callback_ran.clone();
+                move |_, window, _| {
+                    window.on_next_frame(move |_, _| callback_ran.set(true));
+                }
+            })
+            .unwrap();
+
+        let baseline = test_window.frame_wake_count();
+        test_window.simulate_frame_request(RequestFrameOptions::default());
+        // The test window is inactive, so this request throttles to ~30fps
+        // when it lands within the throttle interval of the previous frame
+        // (the common case here, but timing-dependent): the callback is
+        // deferred and the waker must re-arm the frame source. On a slow run
+        // the request instead lands outside the interval and runs the
+        // callback directly.
+        assert!(
+            test_window.frame_wake_count() > baseline || callback_ran.get(),
+            "a frame request with pending next-frame callbacks must either run them or re-arm the frame source"
+        );
+    }
+
+    #[gpui::test]
+    fn test_appearance_change_runs_after_app_update(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let observed_appearance = Rc::new(Cell::new(None));
+        let _subscription = window
+            .update(cx, {
+                let observed_appearance = observed_appearance.clone();
+                move |_, window, _| {
+                    window.observe_window_appearance(move |window, _| {
+                        observed_appearance.set(Some(window.appearance()));
+                    })
+                }
+            })
+            .unwrap();
+        let test_window = cx.test_window(window.into());
+
+        cx.update(|_| {
+            test_window.simulate_appearance_change(WindowAppearance::Dark);
+            assert_eq!(observed_appearance.get(), None);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(observed_appearance.get(), Some(WindowAppearance::Dark));
+    }
+
+    struct RootView {
+        explicit_size: bool,
+        child_bounds: Rc<Cell<Bounds<Pixels>>>,
+    }
+
+    impl Render for RootView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let child_bounds = self.child_bounds.clone();
+            let root = div().flex().flex_col().child(
+                canvas(
+                    move |bounds, _, _| child_bounds.set(bounds),
+                    |_, _, _, _| {},
+                )
+                .size_full(),
+            );
+            if self.explicit_size {
+                root.w(px(300.)).h(px(200.))
+            } else {
+                root
+            }
+        }
+    }
+
+    #[test]
+    fn auto_sized_window_root_fills_the_window() {
+        let mut cx = TestAppContext::single();
+        let child_bounds = Rc::new(Cell::new(Bounds::default()));
+        let window = cx.add_window({
+            let child_bounds = child_bounds.clone();
+            move |_, _| RootView {
+                explicit_size: false,
+                child_bounds,
+            }
+        });
+
+        let viewport_size = cx
+            .update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.viewport_size()
+            })
+            .unwrap();
+
+        assert_eq!(child_bounds.get().size, viewport_size);
+    }
+
+    #[test]
+    fn explicitly_sized_window_root_keeps_its_size() {
+        let mut cx = TestAppContext::single();
+        let child_bounds = Rc::new(Cell::new(Bounds::default()));
+        let window = cx.add_window({
+            let child_bounds = child_bounds.clone();
+            move |_, _| RootView {
+                explicit_size: true,
+                child_bounds,
+            }
+        });
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+
+        assert_eq!(child_bounds.get().size, size(px(300.), px(200.)));
+    }
+
+    struct FileDragView {
+        path: PathBuf,
+        observed_drag_moves: Rc<RefCell<Vec<Point<Pixels>>>>,
+        observed_drops: Rc<RefCell<Vec<PathBuf>>>,
+    }
+
+    impl Render for FileDragView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("file-drag")
+                .size_full()
+                .on_drag(self.path.clone(), |_, _, _, cx| cx.new(|_| Empty))
+                .external_drag_payload(|path: &PathBuf, _, _| {
+                    Some(ExternalDragPayload::Files(FileDragPaths::new([(
+                        path.clone(),
+                        true,
+                    )])))
+                })
+                .on_drag_move({
+                    let observed_drag_moves = self.observed_drag_moves.clone();
+                    move |event: &DragMoveEvent<PathBuf>, _, _| {
+                        observed_drag_moves.borrow_mut().push(event.event.position);
+                    }
+                })
+                .on_drop({
+                    let observed_drops = self.observed_drops.clone();
+                    move |path: &PathBuf, _, _| observed_drops.borrow_mut().push(path.clone())
+                })
+        }
+    }
+
+    #[gpui::test]
+    fn file_drag_is_promoted_once_and_restored_in_source_window(cx: &mut TestAppContext) {
+        struct Drag {
+            window: AnyWindowHandle,
+            observed_drag_moves: Rc<RefCell<Vec<Point<Pixels>>>>,
+            observed_drops: Rc<RefCell<Vec<PathBuf>>>,
+        }
+
+        fn start_drag(cx: &mut TestAppContext, path: PathBuf, platform_result: bool) -> Drag {
+            let observed_drag_moves = Rc::new(RefCell::new(Vec::new()));
+            let observed_drops = Rc::new(RefCell::new(Vec::new()));
+            let window: AnyWindowHandle = cx
+                .add_window({
+                    let observed_drag_moves = observed_drag_moves.clone();
+                    let observed_drops = observed_drops.clone();
+                    move |_, _| FileDragView {
+                        path,
+                        observed_drag_moves,
+                        observed_drops,
+                    }
+                })
+                .into();
+            cx.test_window(window)
+                .set_start_external_drag_result(platform_result);
+
+            let update_result = cx.update_window(window, |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.dispatch_event(
+                    MouseDownEvent {
+                        position: point(px(10.), px(10.)),
+                        button: MouseButton::Left,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(20.), px(20.)),
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                assert!(cx.active_drag.is_some());
+            });
+            assert!(
+                update_result.is_ok(),
+                "failed to start drag: {update_result:?}"
+            );
+
+            assert!(cx.test_window(window).external_drag_files().is_empty());
+            Drag {
+                window,
+                observed_drag_moves,
+                observed_drops,
+            }
+        }
+
+        let successful_path = PathBuf::from("/tmp/successful-drag");
+        let successful = start_drag(cx, successful_path.clone(), true);
+        let outside_position = point(px(-1.), px(20.));
+        let update_result = cx.update_window(successful.window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: outside_position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_none());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to promote drag: {update_result:?}"
+        );
+        assert_eq!(
+            cx.test_window(successful.window).external_drag_files(),
+            [(successful_path.clone(), true)]
+        );
+        // Views must still see the move that leaves the window, otherwise they never learn to tear
+        // down the drag state they built up while the pointer was inside.
+        assert_eq!(
+            successful.observed_drag_moves.borrow().last(),
+            Some(&outside_position)
+        );
+
+        let destination: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        let reentry_position = point(px(30.), px(30.));
+        let external_paths = || ExternalPaths([successful_path.clone()].into_iter().collect());
+        let update_result = cx.update_window(destination, |_, window, cx| {
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<ExternalPaths>().is_some())
+            );
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to handle drag in destination window: {update_result:?}"
+        );
+
+        let update_result = cx.update_window(successful.window, |_, window, cx| {
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
+            );
+            assert_eq!(
+                successful.observed_drag_moves.borrow().last(),
+                Some(&reentry_position)
+            );
+
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
+            );
+
+            window.dispatch_event(
+                FileDropEvent::Submit {
+                    position: reentry_position,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert_eq!(
+                successful.observed_drops.borrow().as_slice(),
+                std::slice::from_ref(&successful_path)
+            );
+            assert!(cx.active_drag.is_none());
+
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+            window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<ExternalPaths>().is_some())
+            );
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to restore drag in source window: {update_result:?}"
+        );
+
+        let cancelled_path = PathBuf::from("/tmp/cancelled-drag");
+        let cancelled = start_drag(cx, cancelled_path.clone(), true);
+        let update_result = cx.update_window(cancelled.window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: outside_position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_none());
+
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: ExternalPaths([cancelled_path].into_iter().collect()),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
+            );
+            assert!(cx.stop_active_drag(window));
+            assert!(cx.active_drag.is_none());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to cancel restored drag: {update_result:?}"
+        );
+        assert!(!cx.update(|cx| cx.end_platform_drag(cancelled.window.window_id())));
+
+        let removed_path = PathBuf::from("/tmp/removed-window-drag");
+        let removed = start_drag(cx, removed_path, true);
+        let removed_window_id = removed.window.window_id();
+        let update_result = cx.update_window(removed.window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: outside_position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_none());
+            window.remove_window();
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to remove drag source window: {update_result:?}"
+        );
+        assert!(!cx.update(|cx| cx.end_platform_drag(removed_window_id)));
+
+        let failed_path = PathBuf::from("/tmp/failed-drag");
+        let failed = start_drag(cx, failed_path.clone(), false);
+        let update_result = cx.update_window(failed.window, |_, window, cx| {
+            for x_position in [-1., -2.] {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(x_position), px(20.)),
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            }
+            assert!(cx.active_drag.is_some());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to retain drag after platform failure: {update_result:?}"
+        );
+        assert_eq!(
+            cx.test_window(failed.window).external_drag_files(),
+            [(failed_path, true)]
+        );
+    }
+
+    struct FocusForwarder {
+        a: FocusHandle,
+        b: FocusHandle,
+    }
+
+    impl Render for FocusForwarder {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(div().w(px(50.)).h(px(50.)).track_focus(&self.a))
+                .child(div().w(px(50.)).h(px(50.)).track_focus(&self.b))
+        }
+    }
+
+    /// When a focus listener moves focus again (e.g. a dock forwarding focus to its
+    /// active panel), the resulting focus events must be dispatched without waiting
+    /// for an unrelated redraw of the window.
+    #[gpui::test]
+    fn test_focus_moved_by_focus_listener_is_dispatched(cx: &mut TestAppContext) {
+        let b_focus_count = Rc::new(Cell::new(0));
+        let window = cx.add_window({
+            let b_focus_count = b_focus_count.clone();
+            move |window, cx| {
+                let a = cx.focus_handle();
+                let b = cx.focus_handle();
+                cx.on_focus(&a, window, |this: &mut FocusForwarder, window, cx| {
+                    let b = this.b.clone();
+                    window.focus(&b, cx);
+                })
+                .detach();
+                cx.on_focus(&b, window, move |_, _, _| {
+                    b_focus_count.set(b_focus_count.get() + 1);
+                })
+                .detach();
+                FocusForwarder { a, b }
+            }
+        });
+
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        window
+            .update(cx, |this, window, cx| {
+                let a = this.a.clone();
+                window.focus(&a, cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        window
+            .update(cx, |this, window, _| {
+                assert!(this.b.is_focused(window));
+            })
+            .unwrap();
+        assert_eq!(b_focus_count.get(), 1);
+    }
+
+    #[cfg(feature = "frame-duration-histogram")]
+    mod frame_duration_tracker {
+        use crate::window::FrameDurationTracker;
+        use scheduler::Instant;
+        use std::time::Duration;
+
+        const FRAME: Duration = Duration::from_millis(16);
+
+        fn draw_and_present(
+            tracker: &mut FrameDurationTracker,
+            presented_at: Instant,
+            window_active: bool,
+            next_frame_scheduled: bool,
+        ) {
+            tracker.record_draw(Duration::from_millis(2));
+            tracker.record_present(presented_at, window_active, next_frame_scheduled);
+        }
+
+        #[test]
+        fn records_intervals_only_between_animation_frames() {
+            let mut tracker = FrameDurationTracker::new().unwrap();
+            let start = Instant::now();
+
+            // The first frame has nothing to measure an interval against.
+            draw_and_present(&mut tracker, start, true, true);
+            assert_eq!(tracker.present_interval_histogram.len(), 0);
+
+            draw_and_present(&mut tracker, start + FRAME, true, true);
+            assert_eq!(tracker.present_interval_histogram.len(), 1);
+
+            // The animation ends here: no next frame was scheduled when this
+            // frame was presented.
+            draw_and_present(&mut tracker, start + FRAME * 2, true, false);
+            assert_eq!(tracker.present_interval_histogram.len(), 2);
+
+            // The window sat idle before an input-driven frame; the gap is not
+            // an animation interval.
+            draw_and_present(&mut tracker, start + FRAME * 100, true, true);
+            assert_eq!(tracker.present_interval_histogram.len(), 2);
+        }
+
+        #[test]
+        fn missed_frames_stretch_the_recorded_interval() {
+            let mut tracker = FrameDurationTracker::new().unwrap();
+            let start = Instant::now();
+
+            draw_and_present(&mut tracker, start, true, true);
+            draw_and_present(&mut tracker, start + FRAME * 5, true, true);
+
+            let recorded = tracker.present_interval_histogram.max();
+            assert!(recorded >= (FRAME * 4).as_nanos() as u64);
+        }
+
+        #[test]
+        fn ignores_re_presents_of_unchanged_frames() {
+            let mut tracker = FrameDurationTracker::new().unwrap();
+            let start = Instant::now();
+
+            draw_and_present(&mut tracker, start, true, true);
+            // A present without a draw (e.g. sustaining the display's refresh
+            // rate) must neither count as a frame nor shift the interval
+            // baseline.
+            tracker.record_present(start + FRAME / 2, true, true);
+            draw_and_present(&mut tracker, start + FRAME, true, true);
+
+            assert_eq!(tracker.present_interval_histogram.len(), 1);
+            // The interval spans from the drawn frame, not the re-present.
+            assert!(tracker.present_interval_histogram.max() >= (FRAME * 3 / 4).as_nanos() as u64);
+        }
+
+        #[test]
+        fn skips_intervals_for_inactive_windows() {
+            let mut tracker = FrameDurationTracker::new().unwrap();
+            let start = Instant::now();
+
+            draw_and_present(&mut tracker, start, false, true);
+            draw_and_present(&mut tracker, start + FRAME, false, true);
+            assert_eq!(tracker.present_interval_histogram.len(), 0);
+
+            // The first interval after reactivation began while the window was
+            // inactive (and possibly throttled), so it is also skipped.
+            draw_and_present(&mut tracker, start + FRAME * 2, true, true);
+            assert_eq!(tracker.present_interval_histogram.len(), 0);
+
+            draw_and_present(&mut tracker, start + FRAME * 3, true, true);
+            assert_eq!(tracker.present_interval_histogram.len(), 1);
+        }
+
+        #[test]
+        fn records_every_draw_duration() {
+            let mut tracker = FrameDurationTracker::new().unwrap();
+
+            tracker.record_draw(Duration::from_millis(2));
+            tracker.record_draw(Duration::from_millis(40));
+
+            let snapshot = tracker.snapshot();
+            assert_eq!(snapshot.draw_duration_histogram.len(), 2);
+            assert!(snapshot.draw_duration_histogram.max() >= 39_000_000);
+        }
     }
 }

@@ -611,7 +611,7 @@ impl LanguageServerState {
                                     .id("metadata-container")
                                     .gap_1()
                                     .when_some(server_message.as_ref(), |this, _| {
-                                        this.w(rems_from_px(240.))
+                                        this.w(rems_from_px(240_f32))
                                     })
                                     .child(
                                         h_flex()
@@ -1415,6 +1415,8 @@ impl Render for LspButton {
                     IconButton::new("zed-lsp-tool-button", IconName::BoltOutlined)
                         .when_some(indicator, IconButton::indicator)
                         .icon_size(IconSize::Small)
+                        .tab_index(0isize)
+                        .aria_label("Language Servers")
                         .when(is_restricted, |s| s.icon_color(Color::Warning))
                         .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
                     move |_window, cx| {

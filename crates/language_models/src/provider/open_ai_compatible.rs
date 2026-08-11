@@ -424,7 +424,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 
         if self.model.capabilities.chat_completions {
             let reasoning_effort = chat_completion_reasoning_effort(&request, &self.model);
-            let request = into_open_ai(
+            let request = match into_open_ai(
                 request,
                 &self.model.name,
                 self.model.capabilities.parallel_tool_calls,
@@ -433,7 +433,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 chat_completion_max_tokens_parameter(&self.model),
                 reasoning_effort,
                 self.model.capabilities.interleaved_reasoning,
-            );
+            ) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
             let completions = self.stream_completion(request, cx);
             async move {
                 let mapper = OpenAiEventMapper::new();
@@ -442,7 +445,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             .boxed()
         } else {
             disable_response_thinking_for_none_effort(&mut request, &self.model);
-            let request = into_open_ai_response(
+            let request = match into_open_ai_response(
                 request,
                 &self.model.name,
                 self.model.capabilities.parallel_tool_calls,
@@ -450,10 +453,15 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.max_output_tokens(),
                 default_thinking_reasoning_effort(&self.model),
                 supports_none_reasoning_effort(&self.model),
-            );
+                &self.provider_id,
+            ) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
             let completions = self.stream_response(request, cx);
+            let compaction_state_owner = self.provider_id.clone();
             async move {
-                let mapper = OpenAiResponseEventMapper::new();
+                let mapper = OpenAiResponseEventMapper::new(compaction_state_owner);
                 Ok(mapper.map_stream(completions.await?).boxed())
             }
             .boxed()
@@ -632,7 +640,9 @@ mod tests {
             model.max_output_tokens,
             default_thinking_reasoning_effort(&model),
             supports_none_reasoning_effort(&model),
-        );
+            &LanguageModelProviderId::new("test-compatible-provider"),
+        )
+        .unwrap();
         let serialized = serde_json::to_value(request).unwrap();
 
         assert_eq!(
@@ -661,7 +671,9 @@ mod tests {
             model.max_output_tokens,
             default_thinking_reasoning_effort(&model),
             supports_none_reasoning_effort(&model),
-        );
+            &LanguageModelProviderId::new("test-compatible-provider"),
+        )
+        .unwrap();
         let serialized = serde_json::to_value(request).unwrap();
 
         assert_eq!(serialized.get("reasoning"), None);
@@ -688,7 +700,8 @@ mod tests {
             chat_completion_max_tokens_parameter(&model),
             reasoning_effort,
             model.capabilities.interleaved_reasoning,
-        );
+        )
+        .unwrap();
         let serialized = serde_json::to_value(request).unwrap();
 
         assert_eq!(serialized["reasoning_effort"], json!("high"));
