@@ -52,7 +52,11 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(create_language_model(ChatGptModel::Gpt55, &self.state, cx))
+        Some(create_language_model(
+            ChatGptModel::Gpt56Sol,
+            &self.state,
+            cx,
+        ))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
