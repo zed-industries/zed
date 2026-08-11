@@ -2588,9 +2588,49 @@ impl AcpThread {
                 message_id,
                 ..
             }) => {
-                self.push_assistant_content_block_with_message_id(
-                    message_id, content, false, false, cx,
-                );
+                // Some ACP agents (e.g. csgdaa-code, Claude Code) stream responses
+                // in two phases:
+                //   1. Incremental text deltas with no message_id.
+                //   2. One final consolidated block WITH a message_id, containing
+                //      the full accumulated text.
+                // can_merge_message_chunks(None, Some(_)) returns true, so without a
+                // guard the consolidated block gets appended on top of the already-
+                // streamed content, rendering the entire response twice. (#53201)
+                //
+                // Guard: when the incoming chunk carries a message_id but the last
+                // assistant message chunk was streamed without one, treat this as a
+                // consolidation marker. Bind the message_id to the existing chunk,
+                // flush any buffered streaming text so the markdown entity is up to
+                // date, and skip appending the (duplicate) content.
+                let is_consolidation = if let Some(ref incoming_id) = message_id {
+                    let consolidated = self
+                        .entries
+                        .last_mut()
+                        .and_then(|entry| match entry {
+                            AgentThreadEntry::AssistantMessage(msg) => {
+                                msg.chunks.last_mut()
+                            }
+                            _ => None,
+                        })
+                        .is_some_and(|chunk| match chunk {
+                            AssistantMessageChunk::Message { id, .. } if id.is_none() => {
+                                *id = Some(incoming_id.clone());
+                                true
+                            }
+                            _ => false,
+                        });
+                    if consolidated {
+                        Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
+                    }
+                    consolidated
+                } else {
+                    false
+                };
+                if !is_consolidation {
+                    self.push_assistant_content_block_with_message_id(
+                        message_id, content, false, false, cx,
+                    );
+                }
             }
             acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk {
                 content,
@@ -10193,5 +10233,90 @@ mod tests {
             ThreadStatus::Idle,
             "running_turn must be cleared even when tx was dropped without send"
         );
+    }
+
+    /// Regression test for issue #53201 (assistant-side).
+    ///
+    /// Some ACP agents stream responses in two phases:
+    ///   1. Incremental text deltas sent without a message_id.
+    ///   2. One final consolidated block WITH a message_id containing the full text.
+    ///
+    /// Without the guard in `handle_session_update`, `can_merge_message_chunks(None,
+    /// Some(_))` returns `true`, causing the consolidated block to be appended on
+    /// top of the already-streamed content and rendering the response twice.
+    #[gpui::test]
+    async fn test_agent_consolidated_chunk_does_not_duplicate_streamed_content(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            // Phase 1: stream incremental deltas — no message_id on any chunk.
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                        "Hello, ".into(),
+                    )),
+                    cx,
+                )
+                .unwrap();
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                        "I will help.".into(),
+                    )),
+                    cx,
+                )
+                .unwrap();
+
+            // Phase 2: consolidated chunk with message_id containing the full text.
+            // This must NOT be appended on top of the already-streamed content.
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentMessageChunk(
+                        acp::ContentChunk::new("Hello, I will help.".into())
+                            .message_id("msg_consolidate"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        thread.update(cx, |thread, cx| {
+            assert_eq!(thread.entries.len(), 1, "should be exactly one assistant entry");
+
+            let AgentThreadEntry::AssistantMessage(message) = &thread.entries[0] else {
+                panic!("expected AssistantMessage entry");
+            };
+            assert_eq!(message.chunks.len(), 1, "should be exactly one message chunk");
+
+            let AssistantMessageChunk::Message { id, block } = &message.chunks[0] else {
+                panic!("expected Message chunk");
+            };
+
+            // The message_id should have been bound from the consolidation chunk.
+            assert_eq!(
+                id.as_ref().map(ToString::to_string).as_deref(),
+                Some("msg_consolidate"),
+                "message_id should be bound from consolidation chunk"
+            );
+
+            // Content must appear exactly once — not doubled.
+            let content = block.to_markdown(cx);
+            assert_eq!(
+                content, "Hello, I will help.",
+                "response content should appear exactly once, not doubled"
+            );
+        });
     }
 }
