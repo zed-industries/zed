@@ -2485,7 +2485,7 @@ impl BufferSnapshot {
             .map(|d| d.0)
     }
 
-    pub fn summaries_for_anchors_with_payload<'a, D, A, T>(
+    pub fn summaries_for_anchors_with_payload<'a, D, A, T: 'a>(
         &'a self,
         anchors: A,
     ) -> impl 'a + Iterator<Item = (D, T)>
@@ -2493,21 +2493,26 @@ impl BufferSnapshot {
         D: 'a + TextDimension,
         A: 'a + IntoIterator<Item = (Anchor, T)>,
     {
-        let anchors = anchors.into_iter();
+        let anchors = anchors.into_iter().collect::<Vec<_>>();
+        let insertions =
+            self.find_fragments_batched(anchors.len(), anchors.iter().map(|(anchor, _)| anchor));
         let mut fragment_cursor = self
             .fragments
             .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
         let mut text_cursor = self.visible_text.cursor(0);
         let mut position = D::zero(());
 
-        anchors.map(move |(anchor, payload)| {
+        anchors
+            .into_iter()
+            .zip(insertions)
+            .map(move |((anchor, payload), insertion)| {
             if anchor.is_min() {
                 return (D::zero(()), payload);
             } else if anchor.is_max() {
                 return (D::from_text_summary(&self.visible_text.summary()), payload);
             }
 
-            let Some(insertion) = self.try_find_fragment(&anchor) else {
+            let Some(insertion) = insertion else {
                 panic!(
                     "invalid insertion for buffer {}@{:?} with anchor {:?}",
                     self.remote_id(),
@@ -2543,6 +2548,54 @@ impl BufferSnapshot {
             position.add_assign(&text_cursor.summary(fragment_offset));
             (position, payload)
         })
+    }
+
+    fn find_fragments_batched<'a, 'b>(
+        &'a self,
+        count: usize,
+        anchors: impl Iterator<Item = &'b Anchor>,
+    ) -> Vec<Option<&'a InsertionFragment>> {
+        let mut lookups = anchors
+            .enumerate()
+            .filter(|(_, anchor)| !anchor.is_min() && !anchor.is_max())
+            .map(|(ix, anchor)| {
+                (
+                    InsertionFragmentKey {
+                        timestamp: anchor.timestamp(),
+                        split_offset: anchor.offset,
+                    },
+                    anchor.bias,
+                    ix,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut results = vec![None; count];
+        lookups.sort_unstable_by_key(|(key, bias, _)| (*key, *bias));
+
+        let mut cursor = self.insertions.cursor::<InsertionFragmentKey>(());
+        for (anchor_key, bias, ix) in lookups {
+            if cursor.did_seek() {
+                cursor.seek_forward(&anchor_key, bias);
+            } else {
+                cursor.seek(&anchor_key, bias);
+            }
+            results[ix] = match cursor.item() {
+                Some(insertion) => {
+                    let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
+                    if comparison == Ordering::Greater
+                        || (bias == Bias::Left
+                            && comparison == Ordering::Equal
+                            && anchor_key.split_offset > 0)
+                    {
+                        cursor.prev_item()
+                    } else {
+                        Some(insertion)
+                    }
+                }
+                None => self.insertions.last(),
+            };
+        }
+        results
     }
 
     pub fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
