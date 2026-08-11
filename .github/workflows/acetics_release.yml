@@ -83,6 +83,11 @@ jobs:
           path: target/zed-remote-server-linux-x86_64.gz
           if-no-files-found: error
   publish_release:
+    # Only the development branch owns `acetics-latest`. Dispatching this workflow on a branch
+    # is how a change gets tried before it is merged, and that has to produce artifacts to
+    # download rather than deleting the rolling release and putting an unmerged build in its
+    # place — which every install that follows that tag would then pick up.
+    if: github.ref == 'refs/heads/acetics-dev' || github.ref == 'refs/heads/main'
     needs:
       - bundle_windows_x86_64
       - bundle_linux_remote_server_x86_64

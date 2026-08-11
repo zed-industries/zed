@@ -15,8 +15,8 @@ use std::{
 };
 use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
-    TaskState, TaskStatus, Terminal, TerminalBuilder, insert_zed_terminal_env,
-    terminal_settings::TerminalSettings,
+    REMOTE_TERMINAL_ID_VAR, TaskState, TaskStatus, Terminal, TerminalBuilder,
+    insert_zed_terminal_env, new_terminal_id, terminal_settings::TerminalSettings,
 };
 use util::{
     command::new_std_command, get_default_system_shell, get_system_shell, maybe, rel_path::RelPath,
@@ -619,7 +619,16 @@ fn create_remote_shell(
     remote_client: Entity<RemoteClient>,
     cx: &mut App,
 ) -> Result<(Shell, HashMap<String, String>)> {
-    insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
+    // Settled here rather than in the builder, because the name has to be baked into the command
+    // that reaches the far side — `build_command` reads it out of `env` below. The builder is
+    // handed the same name back through `REMOTE_TERMINAL_ID_VAR` so that the terminal Zed holds
+    // and the shell that is actually running answer to one name rather than two.
+    let terminal_id = new_terminal_id();
+    insert_zed_terminal_env(
+        &mut env,
+        &release_channel::AppVersion::global(cx),
+        &terminal_id,
+    );
 
     let (program, args) = match spawn_command {
         Some((program, args)) => (Some(program.clone()), args),
@@ -638,13 +647,19 @@ fn create_remote_shell(
     log::debug!("Connecting to a remote server: {:?}", command.program);
     let host = remote_client.read(cx).connection_options().display_name();
 
+    // `command.env` is the wrapper process's environment, not the one built above for the far
+    // side, so the name is carried over explicitly. The builder removes this key before anything
+    // is spawned.
+    let mut wrapper_env = command.env;
+    wrapper_env.insert(REMOTE_TERMINAL_ID_VAR.to_string(), terminal_id);
+
     Ok((
         Shell::WithArguments {
             program: command.program,
             args: command.args,
             title_override: Some(format!("{} — Terminal", host)),
         },
-        command.env,
+        wrapper_env,
     ))
 }
 
