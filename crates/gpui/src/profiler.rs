@@ -16,7 +16,7 @@ use std::{
 
 mod actions;
 pub use actions::{ActionStatistics, ActionTiming, take_action_stats};
-pub(crate) use actions::{save_action_timing, update_running_action};
+pub(crate) use actions::{current_action_name, save_action_timing, update_running_action};
 
 use serde::{Deserialize, Serialize};
 
@@ -657,6 +657,16 @@ impl Drop for ThreadTimings {
     }
 }
 
+#[cfg(feature = "profiler")]
+pub(crate) fn current_task_location() -> Option<&'static std::panic::Location<'static>> {
+    THREAD_TIMINGS.with(|timings| timings.lock().running.map(|timing| timing.location))
+}
+
+#[cfg(not(feature = "profiler"))]
+pub(crate) fn current_task_location() -> Option<&'static std::panic::Location<'static>> {
+    None
+}
+
 #[doc(hidden)]
 pub fn update_running_task(spawned: SpawnTime, location: &'static std::panic::Location<'_>) {
     THREAD_TIMINGS.with(|timings| {
@@ -720,6 +730,12 @@ pub struct FrameTiming {
     pub draw_start: Instant,
     /// When `Window::draw` finished.
     pub draw_end: Instant,
+    /// Spawn location of the task that first invalidated the frame, if one was
+    /// running and task profiling was enabled.
+    pub invalidating_task_location: Option<&'static std::panic::Location<'static>>,
+    /// Name of the action that first invalidated the frame, if one was running
+    /// and action profiling was enabled.
+    pub invalidating_action_name: Option<&'static str>,
 }
 
 impl FrameTiming {
@@ -735,6 +751,11 @@ impl FrameTiming {
             .map(|dirty_at| self.draw_end.duration_since(dirty_at))
     }
 }
+
+#[cfg(any(feature = "bench", feature = "frame-duration-histogram"))]
+const SLOW_FRAME_ATTRIBUTION_THRESHOLD: Duration = Duration::from_millis(16);
+#[cfg(any(feature = "bench", feature = "frame-duration-histogram"))]
+const MAX_SLOW_FRAME_ATTRIBUTIONS: usize = 1_000;
 
 /// A point-in-time snapshot of frame timing histograms.
 ///
@@ -754,6 +775,12 @@ pub struct FrameDurationSnapshot {
     pub present_interval_histogram: Histogram<u64>,
     /// Histogram of invalidations coalesced into each frame.
     pub invalidations_per_frame_histogram: Histogram<u64>,
+    /// Counts of slow draws grouped by the task that first invalidated the
+    /// frame.
+    pub slow_draws_by_task_location: HashMap<&'static std::panic::Location<'static>, u64>,
+    /// Counts of slow draws grouped by the action that first invalidated the
+    /// frame.
+    pub slow_draws_by_action_name: HashMap<&'static str, u64>,
 }
 
 #[cfg(any(feature = "bench", feature = "frame-duration-histogram"))]
@@ -772,6 +799,8 @@ impl FrameDurationSnapshot {
             invalidations_per_frame_histogram: Histogram::new(3).map_err(|error| {
                 anyhow::anyhow!("Failed to create invalidations-per-frame histogram: {error}")
             })?,
+            slow_draws_by_task_location: HashMap::default(),
+            slow_draws_by_action_name: HashMap::default(),
         })
     }
 
@@ -790,6 +819,16 @@ impl FrameDurationSnapshot {
                 .record(timing.invalidations)
                 .ok();
         }
+
+        if timing.draw_duration() >= SLOW_FRAME_ATTRIBUTION_THRESHOLD {
+            std::hint::cold_path();
+            if let Some(location) = timing.invalidating_task_location {
+                increment_slow_draw_count(&mut self.slow_draws_by_task_location, location);
+            }
+            if let Some(action_name) = timing.invalidating_action_name {
+                increment_slow_draw_count(&mut self.slow_draws_by_action_name, action_name);
+            }
+        }
     }
 
     #[cfg(feature = "frame-duration-histogram")]
@@ -805,6 +844,18 @@ impl FrameDurationSnapshot {
         self.dirty_to_draw_duration_histogram.is_empty()
             && self.draw_duration_histogram.is_empty()
             && self.present_interval_histogram.is_empty()
+    }
+}
+
+#[cfg(any(feature = "bench", feature = "frame-duration-histogram"))]
+fn increment_slow_draw_count<K>(counts: &mut HashMap<K, u64>, key: K)
+where
+    K: Eq + Hash,
+{
+    if let Some(count) = counts.get_mut(&key) {
+        *count = count.saturating_add(1);
+    } else if counts.len() < MAX_SLOW_FRAME_ATTRIBUTIONS {
+        counts.insert(key, 1);
     }
 }
 

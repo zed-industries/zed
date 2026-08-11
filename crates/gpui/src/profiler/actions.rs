@@ -181,6 +181,16 @@ impl ActionTiming {
 static ACTION_STATISTICS: spin::Mutex<ActionStatistics> =
     const { spin::Mutex::new(ActionStatistics::new()) };
 
+#[cfg(feature = "profiler")]
+pub(crate) fn current_action_name() -> Option<&'static str> {
+    ACTION_STATISTICS.lock().running.map(|(name, _)| name)
+}
+
+#[cfg(not(feature = "profiler"))]
+pub(crate) fn current_action_name() -> Option<&'static str> {
+    None
+}
+
 #[doc(hidden)]
 #[cfg(feature = "profiler")]
 pub(crate) fn update_running_action(action: &(dyn Action + 'static), cx: &mut crate::App) {

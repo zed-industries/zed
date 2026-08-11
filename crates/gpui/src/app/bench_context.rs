@@ -894,6 +894,8 @@ mod tests {
             invalidations: 2,
             draw_start,
             draw_end: draw_start + Duration::from_millis(2),
+            invalidating_task_location: None,
+            invalidating_action_name: None,
         };
 
         report.record_frame_timings([&timing]);
