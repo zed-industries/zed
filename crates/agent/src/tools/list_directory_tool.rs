@@ -270,21 +270,21 @@ impl AgentTool for ListDirectoryTool {
                 let worktree = project
                     .worktree_for_id(project_path.worktree_id, cx)
                     .with_context(|| {
-                        format!("{} is not in a known worktree", &input.path)
+                        format!("{} is not in a known worktree", input.path)
                     })?;
 
                 let global_settings = WorktreeSettings::get_global(cx);
                 if global_settings.is_path_excluded(&project_path.path) {
                     anyhow::bail!(
                         "Cannot list directory because its path matches the user's global `file_scan_exclusions` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
                 if global_settings.is_path_private(&project_path.path) {
                     anyhow::bail!(
                         "Cannot list directory because its path matches the user's global `private_files` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
@@ -292,14 +292,14 @@ impl AgentTool for ListDirectoryTool {
                 if worktree_settings.is_path_excluded(&project_path.path) {
                     anyhow::bail!(
                         "Cannot list directory because its path matches the user's worktree `file_scan_exclusions` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
                 if worktree_settings.is_path_private(&project_path.path) {
                     anyhow::bail!(
                         "Cannot list directory because its path matches the user's worktree `private_paths` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
