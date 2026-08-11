@@ -15,7 +15,7 @@ use crate::{
     PlatformTextSystem, Render, Reservation, Task, TestPlatform, ThreadedDispatcher, VisualContext,
     Window, WindowBounds, WindowHandle, WindowOptions,
     app::GpuiBorrow,
-    profiler::{self, FrameTiming, FrameTimingCollector},
+    profiler::{self, FrameDurationSnapshot, FrameTiming, FrameTimingCollector},
 };
 
 /// Returns a benchmark platform backed by this thread's shared dispatcher.
@@ -66,7 +66,7 @@ const NANOS_PER_SECOND: u128 = 1_000_000_000;
 /// A small report produced by GPUI benchmarks.
 #[derive(Clone)]
 pub struct BenchReport {
-    frame_snapshot: Rc<RefCell<WindowFrameSnapshot>>,
+    frame_snapshot: Rc<RefCell<FrameDurationSnapshot>>,
     frame_budget_nanos: u128,
 }
 
@@ -88,31 +88,18 @@ impl BenchReport {
     /// when counting frame budget overruns.
     pub fn with_frame_budget_nanos(frame_budget_nanos: u128) -> Self {
         Self {
-            frame_snapshot: Rc::new(RefCell::new(WindowFrameSnapshot::new())),
+            frame_snapshot: Rc::new(RefCell::new(
+                FrameDurationSnapshot::new()
+                    .expect("three significant digits should create valid histograms"),
+            )),
             frame_budget_nanos,
         }
     }
 
     fn record_frame_timings<'i>(&self, timings: impl IntoIterator<Item = &'i FrameTiming>) {
         let mut snapshot = self.frame_snapshot.borrow_mut();
-        // `.ok()` on `record`: this operation is infallible (the histograms auto-resize).
         for timing in timings {
-            snapshot
-                .draw
-                .record(timing.draw_duration().as_nanos() as u64)
-                .ok();
-            if let Some(dirty_to_draw) = timing.dirty_to_draw_duration() {
-                snapshot
-                    .dirty_to_draw
-                    .record(dirty_to_draw.as_nanos() as u64)
-                    .ok();
-            }
-            if timing.invalidations > 0 {
-                snapshot
-                    .invalidations_per_frame
-                    .record(timing.invalidations)
-                    .ok();
-            }
+            snapshot.record_frame_timing(timing);
         }
     }
 
@@ -150,13 +137,16 @@ impl BenchReport {
         let benchmark_name = benchmark_name.unwrap_or("unknown benchmark");
         eprintln!("GPUI bench report (all observed iterations): {benchmark_name}");
         eprintln!("  note: includes Criterion warmup/calibration");
-        self.print_histogram("window dirty-to-draw", &frame_snapshot.dirty_to_draw);
-        self.print_histogram("window draw", &frame_snapshot.draw);
-        if !frame_snapshot.invalidations_per_frame.is_empty() {
+        self.print_histogram(
+            "window dirty-to-draw",
+            &frame_snapshot.dirty_to_draw_duration_histogram,
+        );
+        self.print_histogram("window draw", &frame_snapshot.draw_duration_histogram);
+        if !frame_snapshot.invalidations_per_frame_histogram.is_empty() {
             eprintln!(
                 "  invalidations per frame: mean {:.2}, max {}",
-                frame_snapshot.invalidations_per_frame.mean(),
-                frame_snapshot.invalidations_per_frame.max()
+                frame_snapshot.invalidations_per_frame_histogram.mean(),
+                frame_snapshot.invalidations_per_frame_histogram.max()
             );
         }
     }
@@ -198,26 +188,6 @@ impl BenchReport {
             "    frame budget overruns max: {}",
             self.budget_overruns(max_foreground_time)
         );
-    }
-}
-
-struct WindowFrameSnapshot {
-    dirty_to_draw: Histogram<u64>,
-    draw: Histogram<u64>,
-    invalidations_per_frame: Histogram<u64>,
-}
-
-impl WindowFrameSnapshot {
-    fn new() -> Self {
-        Self {
-            dirty_to_draw: Histogram::new(3).expect("3 significant digits is valid"),
-            draw: Histogram::new(3).expect("3 significant digits is valid"),
-            invalidations_per_frame: Histogram::new(3).expect("3 significant digits is valid"),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.dirty_to_draw.is_empty() && self.draw.is_empty()
     }
 }
 
@@ -913,6 +883,26 @@ mod tests {
     use std::{rc::Rc, sync::Arc};
 
     use super::*;
+
+    #[test]
+    fn frame_timings_use_shared_snapshot() {
+        let report = BenchReport::default();
+        let draw_start = scheduler::Instant::now();
+        let timing = FrameTiming {
+            window_id: crate::WindowId::from(0),
+            dirty_at: Some(draw_start - Duration::from_millis(3)),
+            invalidations: 2,
+            draw_start,
+            draw_end: draw_start + Duration::from_millis(2),
+        };
+
+        report.record_frame_timings([&timing]);
+
+        let snapshot = report.frame_snapshot.borrow();
+        assert_eq!(snapshot.draw_duration_histogram.len(), 1);
+        assert_eq!(snapshot.dirty_to_draw_duration_histogram.len(), 1);
+        assert_eq!(snapshot.invalidations_per_frame_histogram.max(), 2);
+    }
 
     #[test]
     fn task_completion_supports_non_send_foreground_output() {

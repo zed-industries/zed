@@ -1,3 +1,5 @@
+#[cfg(any(feature = "bench", feature = "frame-duration-histogram"))]
+use hdrhistogram::Histogram;
 use itertools::Itertools;
 use scheduler::{Instant, SpawnTime};
 use std::{
@@ -731,6 +733,78 @@ impl FrameTiming {
     pub fn dirty_to_draw_duration(&self) -> Option<Duration> {
         self.dirty_at
             .map(|dirty_at| self.draw_end.duration_since(dirty_at))
+    }
+}
+
+/// A point-in-time snapshot of frame timing histograms.
+///
+/// The snapshot can be populated from profiler timings or maintained by a live
+/// window. Live windows additionally record presentation intervals while
+/// continuously animating.
+#[cfg(any(feature = "bench", feature = "frame-duration-histogram"))]
+#[derive(Clone)]
+pub struct FrameDurationSnapshot {
+    /// Histogram of durations from the first invalidation through the end of
+    /// `Window::draw`, in nanoseconds.
+    pub dirty_to_draw_duration_histogram: Histogram<u64>,
+    /// Histogram of `Window::draw` durations, in nanoseconds.
+    pub draw_duration_histogram: Histogram<u64>,
+    /// Histogram of intervals between consecutively presented frames while the
+    /// window was animating, in nanoseconds.
+    pub present_interval_histogram: Histogram<u64>,
+    /// Histogram of invalidations coalesced into each frame.
+    pub invalidations_per_frame_histogram: Histogram<u64>,
+}
+
+#[cfg(any(feature = "bench", feature = "frame-duration-histogram"))]
+impl FrameDurationSnapshot {
+    pub(crate) fn new() -> anyhow::Result<Self> {
+        Ok(Self {
+            dirty_to_draw_duration_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create dirty-to-draw duration histogram: {error}")
+            })?,
+            draw_duration_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create draw duration histogram: {error}")
+            })?,
+            present_interval_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create present interval histogram: {error}")
+            })?,
+            invalidations_per_frame_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create invalidations-per-frame histogram: {error}")
+            })?,
+        })
+    }
+
+    pub(crate) fn record_frame_timing(&mut self, timing: &FrameTiming) {
+        // These histograms auto-resize, so recording cannot fail after construction.
+        self.draw_duration_histogram
+            .record(timing.draw_duration().as_nanos() as u64)
+            .ok();
+        if let Some(dirty_to_draw_duration) = timing.dirty_to_draw_duration() {
+            self.dirty_to_draw_duration_histogram
+                .record(dirty_to_draw_duration.as_nanos() as u64)
+                .ok();
+        }
+        if timing.invalidations > 0 {
+            self.invalidations_per_frame_histogram
+                .record(timing.invalidations)
+                .ok();
+        }
+    }
+
+    #[cfg(feature = "frame-duration-histogram")]
+    pub(crate) fn record_present_interval(&mut self, duration: Duration) {
+        // This histogram auto-resizes, so recording cannot fail after construction.
+        self.present_interval_histogram
+            .record(duration.as_nanos() as u64)
+            .ok();
+    }
+
+    #[cfg(feature = "bench")]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.dirty_to_draw_duration_histogram.is_empty()
+            && self.draw_duration_histogram.is_empty()
+            && self.present_interval_histogram.is_empty()
     }
 }
 
