@@ -343,12 +343,14 @@ impl<'a> RowShaper<'a> {
         }
         self.chunks
             .set_range(start_offset..start_offset + line_len as usize);
+        self.line.clear();
         let mut printable_ascii = true;
         for chunk in self.chunks.by_ref() {
             if !chunk.bytes().all(|byte| (0x20..0x7f).contains(&byte)) {
                 printable_ascii = false;
                 break;
             }
+            self.line.push_str(chunk);
         }
         if let Some(last) = &mut self.last
             && last.row == row
@@ -398,7 +400,10 @@ impl<'a> RowShaper<'a> {
             && self.printable_ascii(row)
         {
             let (_, line_len) = self.line_range(row);
-            return advance * cmp::min(point.column(), line_len) as f32;
+            let column = cmp::min(point.column(), line_len);
+            if !self.may_split_ligature(column, line_len) {
+                return advance * column as f32;
+            }
         }
         self.shaped(row, details)
             .x_for_index(point.column() as usize)
@@ -412,9 +417,27 @@ impl<'a> RowShaper<'a> {
         if let Some(advance) = self.uniform_advance
             && self.printable_ascii(row)
         {
-            return column_for_uniform_x(x, advance, line_len);
+            let column = column_for_uniform_x(x, advance, line_len);
+            if !self.may_split_ligature(column, line_len) {
+                return column;
+            }
         }
         self.shaped(row, details).closest_index_for_x(x) as u32
+    }
+
+    fn may_split_ligature(&self, column: u32, line_len: u32) -> bool {
+        if column == 0 || column >= line_len {
+            return false;
+        }
+        let bytes = self.line.as_bytes();
+        let Some(pair) = bytes
+            .get(column as usize - 1)
+            .zip(bytes.get(column as usize))
+        else {
+            return true;
+        };
+        let ligatable = |byte: u8| byte.is_ascii_graphic() && !byte.is_ascii_alphanumeric();
+        ligatable(*pair.0) && ligatable(*pair.1)
     }
 }
 
@@ -1994,6 +2017,145 @@ mod tests {
             DisplayPoint::new(DisplayRow(0), 15),
             "line_end should go to actual end of line, not fold start"
         );
+    }
+
+    #[test]
+    fn test_column_for_uniform_x_matches_closest_index_for_x() {
+        let advance = 8.;
+        for line_len in [1_u32, 2, 3, 17] {
+            let layout = uniform_layout(line_len as usize, advance);
+            let mut x = -advance;
+            while x <= (line_len + 1) as f32 * advance {
+                assert_eq!(
+                    column_for_uniform_x(px(x), px(advance), line_len) as usize,
+                    layout.closest_index_for_x(px(x)),
+                    "line_len {line_len}, x {x}"
+                );
+                x += advance / 4.;
+            }
+        }
+    }
+
+    #[test]
+    fn test_uniform_x_for_index_parity() {
+        let advance = 8.;
+        let line_len = 9_u32;
+        let layout = uniform_layout(line_len as usize, advance);
+        for column in 0..=line_len + 1 {
+            assert_eq!(
+                px(advance * cmp::min(column, line_len) as f32),
+                layout.x_for_index(column as usize),
+                "column {column}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ligature_guard_covers_every_shaping_divergence() {
+        let advance = 8.;
+        let text = "a => b != c";
+        let layout = ligature_layout(text, advance, &[2, 7]);
+        let line_len = text.len() as u32;
+        let rope = Rope::from(text);
+        let mut shaper = RowShaper::new(&rope, Some(px(advance)));
+        assert!(shaper.printable_ascii(0));
+
+        let mut divergences = 0;
+        let mut x = 0.;
+        while x <= (line_len + 1) as f32 * advance {
+            let arithmetic = column_for_uniform_x(px(x), px(advance), line_len);
+            let shaped = layout.closest_index_for_x(px(x)) as u32;
+            if arithmetic != shaped {
+                divergences += 1;
+                assert!(
+                    shaper.may_split_ligature(arithmetic, line_len),
+                    "guard must fire where arithmetic {arithmetic} != shaped {shaped} at x {x}"
+                );
+            }
+            x += advance / 4.;
+        }
+        assert!(divergences > 0, "test must exercise real divergence");
+
+        for column in 0..=line_len {
+            let x_parity = px(advance * column as f32) == layout.x_for_index(column as usize);
+            if !x_parity {
+                assert!(
+                    shaper.may_split_ligature(column, line_len),
+                    "guard must fire where x_for_index diverges at column {column}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_ligature_guard_keeps_fast_path_on_alphanumerics() {
+        let text = "2026-08-10T12:00:00Z INFO node-1 line 000001: request handled @ /api/v1/items";
+        let rope = Rope::from(text);
+        let mut shaper = RowShaper::new(&rope, Some(px(8.)));
+        assert!(shaper.printable_ascii(0));
+        let bytes = text.as_bytes();
+        for column in 0..=text.len() as u32 {
+            let expected = column > 0
+                && (column as usize) < text.len()
+                && [bytes[column as usize - 1], bytes[column as usize]]
+                    .iter()
+                    .all(|byte| byte.is_ascii_graphic() && !byte.is_ascii_alphanumeric());
+            assert_eq!(
+                shaper.may_split_ligature(column, text.len() as u32),
+                expected,
+                "column {column}"
+            );
+        }
+    }
+
+    fn uniform_layout(len: usize, advance: f32) -> LineLayout {
+        LineLayout {
+            font_size: px(14.),
+            width: px(advance * len as f32),
+            ascent: px(10.),
+            descent: px(4.),
+            runs: vec![gpui::ShapedRun {
+                font_id: gpui::FontId(0),
+                glyphs: (0..len)
+                    .map(|ix| gpui::ShapedGlyph {
+                        id: gpui::GlyphId(ix as u32),
+                        position: gpui::point(px(advance * ix as f32), px(0.)),
+                        index: ix,
+                        is_emoji: false,
+                    })
+                    .collect(),
+            }],
+            len,
+        }
+    }
+
+    fn ligature_layout(text: &str, advance: f32, two_byte_cluster_starts: &[usize]) -> LineLayout {
+        let mut glyphs = Vec::new();
+        let mut ix = 0;
+        while ix < text.len() {
+            glyphs.push(gpui::ShapedGlyph {
+                id: gpui::GlyphId(ix as u32),
+                position: gpui::point(px(advance * ix as f32), px(0.)),
+                index: ix,
+                is_emoji: false,
+            });
+            ix += if two_byte_cluster_starts.contains(&ix) {
+                2
+            } else {
+                1
+            };
+        }
+        LineLayout {
+            font_size: px(14.),
+            width: px(advance * text.len() as f32),
+            ascent: px(10.),
+            descent: px(4.),
+            runs: vec![gpui::ShapedRun {
+                font_id: gpui::FontId(0),
+                glyphs,
+            }],
+            len: text.len(),
+        }
     }
 
     fn init_test(cx: &mut gpui::App) {
