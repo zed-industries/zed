@@ -2194,6 +2194,10 @@ impl DisplaySnapshot {
         DisplayPoint(clipped)
     }
 
+    pub fn clips_at_line_ends(&self) -> bool {
+        self.clip_at_line_ends
+    }
+
     pub fn clip_ignoring_line_ends(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
         DisplayPoint(self.block_snapshot.clip_point(point.0, bias))
     }

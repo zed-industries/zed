@@ -6,13 +6,14 @@ use crate::{
     DisplayRow, EditorStyle, ToOffset, ToPoint,
     scroll::{ScrollOffset, SharedScrollAnchor},
 };
-use gpui::{Pixels, WindowTextSystem};
+use gpui::{LineLayout, Pixels, WindowTextSystem};
 use language::{CharClassifier, Point};
 use multi_buffer::{MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot};
+use rope::{Chunks, PointToOffsetConverter, Rope};
 use serde::Deserialize;
 use workspace::searchable::Direction;
 
-use std::{ops::Range, sync::Arc};
+use std::{cmp, ops::Range, sync::Arc};
 
 /// Defines search strategy for items in `movement` module.
 /// `FindRange::SingeLine` only looks for a match on a single line at a time, whereas
@@ -88,13 +89,11 @@ pub fn up(
     preserve_column_at_start: bool,
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
-    up_by_rows(
-        map,
+    VerticalMotion::new(map, text_layout_details).up_by_rows(
         start,
         1,
         goal,
         preserve_column_at_start,
-        text_layout_details,
     )
 }
 
@@ -106,17 +105,365 @@ pub fn down(
     preserve_column_at_end: bool,
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
-    down_by_rows(
-        map,
+    VerticalMotion::new(map, text_layout_details).down_by_rows(
         start,
         1,
         goal,
         preserve_column_at_end,
-        text_layout_details,
     )
 }
 
 pub(crate) fn up_by_rows(
+    map: &DisplaySnapshot,
+    start: DisplayPoint,
+    row_count: u32,
+    goal: SelectionGoal,
+    preserve_column_at_start: bool,
+    text_layout_details: &TextLayoutDetails,
+) -> (DisplayPoint, SelectionGoal) {
+    VerticalMotion::new(map, text_layout_details).up_by_rows(
+        start,
+        row_count,
+        goal,
+        preserve_column_at_start,
+    )
+}
+
+pub(crate) fn down_by_rows(
+    map: &DisplaySnapshot,
+    start: DisplayPoint,
+    row_count: u32,
+    goal: SelectionGoal,
+    preserve_column_at_end: bool,
+    text_layout_details: &TextLayoutDetails,
+) -> (DisplayPoint, SelectionGoal) {
+    VerticalMotion::new(map, text_layout_details).down_by_rows(
+        start,
+        row_count,
+        goal,
+        preserve_column_at_end,
+    )
+}
+
+pub struct VerticalMotion<'a> {
+    map: &'a DisplaySnapshot,
+    details: &'a TextLayoutDetails,
+    identity: Option<IdentityRows<'a>>,
+}
+
+struct IdentityRows<'a> {
+    source: RowShaper<'a>,
+    target: RowShaper<'a>,
+}
+
+struct RowShaper<'a> {
+    rope: &'a Rope,
+    point_to_offset: PointToOffsetConverter<'a>,
+    chunks: Chunks<'a>,
+    line: String,
+    uniform_advance: Option<Pixels>,
+    last: Option<ShapedRow>,
+}
+
+struct ShapedRow {
+    row: u32,
+    start_offset: usize,
+    line_len: u32,
+    printable_ascii: Option<bool>,
+    layout: Option<Arc<LineLayout>>,
+}
+
+impl<'a> VerticalMotion<'a> {
+    pub fn new(map: &'a DisplaySnapshot, details: &'a TextLayoutDetails) -> Self {
+        let identity = if map.maps_points_identically() {
+            map.buffer_snapshot()
+                .as_singleton_without_transforms()
+                .map(|buffer| {
+                    let rope = buffer.as_rope();
+                    let uniform_advance = uniform_ascii_advance(details);
+                    IdentityRows {
+                        source: RowShaper::new(rope, uniform_advance),
+                        target: RowShaper::new(rope, uniform_advance),
+                    }
+                })
+        } else {
+            None
+        };
+        Self {
+            map,
+            details,
+            identity,
+        }
+    }
+
+    pub fn up(
+        &mut self,
+        start: DisplayPoint,
+        goal: SelectionGoal,
+        preserve_column_at_start: bool,
+    ) -> (DisplayPoint, SelectionGoal) {
+        self.up_by_rows(start, 1, goal, preserve_column_at_start)
+    }
+
+    pub fn down(
+        &mut self,
+        start: DisplayPoint,
+        goal: SelectionGoal,
+        preserve_column_at_end: bool,
+    ) -> (DisplayPoint, SelectionGoal) {
+        self.down_by_rows(start, 1, goal, preserve_column_at_end)
+    }
+
+    pub fn up_by_rows(
+        &mut self,
+        start: DisplayPoint,
+        row_count: u32,
+        goal: SelectionGoal,
+        preserve_column_at_start: bool,
+    ) -> (DisplayPoint, SelectionGoal) {
+        let Some(identity) = self.identity.as_mut() else {
+            return unbatched_up_by_rows(
+                self.map,
+                start,
+                row_count,
+                goal,
+                preserve_column_at_start,
+                self.details,
+            );
+        };
+        let goal_x = match goal {
+            SelectionGoal::HorizontalPosition(x) => x.into(),
+            SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
+            SelectionGoal::HorizontalRange { end, .. } => end.into(),
+            _ => identity.source.x_for_point(start, self.details),
+        };
+
+        let target_row = start.row().0.saturating_sub(row_count);
+        let mut point = if target_row < start.row().0 {
+            let column = identity
+                .target
+                .column_for_x(target_row, goal_x, self.details);
+            DisplayPoint::new(DisplayRow(target_row), column)
+        } else if preserve_column_at_start {
+            return (start, goal);
+        } else {
+            DisplayPoint::new(DisplayRow(0), 0)
+        };
+        if self.map.clips_at_line_ends() {
+            point = self.map.clip_point(point, Bias::Left);
+        }
+        (point, SelectionGoal::HorizontalPosition(goal_x.into()))
+    }
+
+    pub fn down_by_rows(
+        &mut self,
+        start: DisplayPoint,
+        row_count: u32,
+        goal: SelectionGoal,
+        preserve_column_at_end: bool,
+    ) -> (DisplayPoint, SelectionGoal) {
+        let Some(identity) = self.identity.as_mut() else {
+            return unbatched_down_by_rows(
+                self.map,
+                start,
+                row_count,
+                goal,
+                preserve_column_at_end,
+                self.details,
+            );
+        };
+        let goal_x = match goal {
+            SelectionGoal::HorizontalPosition(x) => x.into(),
+            SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
+            SelectionGoal::HorizontalRange { end, .. } => end.into(),
+            _ => identity.source.x_for_point(start, self.details),
+        };
+
+        let max_row = self.map.max_point().row().0;
+        let target_row = cmp::min(start.row().0 + row_count, max_row);
+        let mut point = if target_row > start.row().0 {
+            let column = identity
+                .target
+                .column_for_x(target_row, goal_x, self.details);
+            DisplayPoint::new(DisplayRow(target_row), column)
+        } else if preserve_column_at_end {
+            return (start, goal);
+        } else {
+            self.map.max_point()
+        };
+        if self.map.clips_at_line_ends() {
+            point = self.map.clip_point(point, Bias::Left);
+        }
+        (point, SelectionGoal::HorizontalPosition(goal_x.into()))
+    }
+}
+
+impl<'a> RowShaper<'a> {
+    fn new(rope: &'a Rope, uniform_advance: Option<Pixels>) -> Self {
+        Self {
+            rope,
+            point_to_offset: rope.point_to_offset_converter(),
+            chunks: rope.chunks_in_range(0..0),
+            line: String::new(),
+            uniform_advance,
+            last: None,
+        }
+    }
+
+    fn line_range(&mut self, row: u32) -> (usize, u32) {
+        if let Some(last) = &self.last
+            && last.row == row
+        {
+            return (last.start_offset, last.line_len);
+        }
+        let start_offset = self.point_to_offset.map(Point::new(row, 0));
+        let end_offset = if row >= self.rope.max_point().row {
+            self.rope.len()
+        } else {
+            self.point_to_offset.map(Point::new(row + 1, 0)) - 1
+        };
+        let line_len = (end_offset - start_offset) as u32;
+        self.last = Some(ShapedRow {
+            row,
+            start_offset,
+            line_len,
+            printable_ascii: None,
+            layout: None,
+        });
+        (start_offset, line_len)
+    }
+
+    fn printable_ascii(&mut self, row: u32) -> bool {
+        let (start_offset, line_len) = self.line_range(row);
+        if let Some(last) = &self.last
+            && last.row == row
+            && let Some(printable_ascii) = last.printable_ascii
+        {
+            return printable_ascii;
+        }
+        self.chunks
+            .set_range(start_offset..start_offset + line_len as usize);
+        let mut printable_ascii = true;
+        for chunk in self.chunks.by_ref() {
+            if !chunk.bytes().all(|byte| (0x20..0x7f).contains(&byte)) {
+                printable_ascii = false;
+                break;
+            }
+        }
+        if let Some(last) = &mut self.last
+            && last.row == row
+        {
+            last.printable_ascii = Some(printable_ascii);
+        }
+        printable_ascii
+    }
+
+    fn shaped(&mut self, row: u32, details: &TextLayoutDetails) -> Arc<LineLayout> {
+        let (start_offset, line_len) = self.line_range(row);
+        if let Some(last) = &self.last
+            && last.row == row
+            && let Some(layout) = &last.layout
+        {
+            return layout.clone();
+        }
+        let printable_ascii = self.last.as_ref().and_then(|last| last.printable_ascii);
+        self.line.clear();
+        self.chunks
+            .set_range(start_offset..start_offset + line_len as usize);
+        for chunk in self.chunks.by_ref() {
+            self.line.push_str(chunk);
+        }
+        let font_size = details
+            .editor_style
+            .text
+            .font_size
+            .to_pixels(details.rem_size);
+        let runs = [details.editor_style.text.to_run(self.line.len())];
+        let layout = details
+            .text_system
+            .layout_line(&self.line, font_size, &runs, None);
+        self.last = Some(ShapedRow {
+            row,
+            start_offset,
+            line_len,
+            printable_ascii,
+            layout: Some(layout.clone()),
+        });
+        layout
+    }
+
+    fn x_for_point(&mut self, point: DisplayPoint, details: &TextLayoutDetails) -> Pixels {
+        let row = point.row().0;
+        if let Some(advance) = self.uniform_advance
+            && self.printable_ascii(row)
+        {
+            let (_, line_len) = self.line_range(row);
+            return advance * cmp::min(point.column(), line_len) as f32;
+        }
+        self.shaped(row, details)
+            .x_for_index(point.column() as usize)
+    }
+
+    fn column_for_x(&mut self, row: u32, x: Pixels, details: &TextLayoutDetails) -> u32 {
+        let (_, line_len) = self.line_range(row);
+        if line_len == 0 {
+            return 0;
+        }
+        if let Some(advance) = self.uniform_advance
+            && self.printable_ascii(row)
+        {
+            return column_for_uniform_x(x, advance, line_len);
+        }
+        self.shaped(row, details).closest_index_for_x(x) as u32
+    }
+}
+
+fn column_for_uniform_x(x: Pixels, advance: Pixels, line_len: u32) -> u32 {
+    let x = f32::from(x).max(0.);
+    let advance = f32::from(advance);
+    if line_len == 1 {
+        return u32::from(x * 2. > advance);
+    }
+    if x > advance * (line_len - 1) as f32 {
+        return line_len;
+    }
+    let column = (x / advance).floor();
+    let frac = x - column * advance;
+    column as u32 + u32::from(frac * 2. > advance)
+}
+
+fn uniform_ascii_advance(details: &TextLayoutDetails) -> Option<Pixels> {
+    let mut probe = String::with_capacity(188);
+    for byte in 0x21..0x7f_u8 {
+        probe.push(byte as char);
+        probe.push(' ');
+    }
+    let font_size = details
+        .editor_style
+        .text
+        .font_size
+        .to_pixels(details.rem_size);
+    let runs = [details.editor_style.text.to_run(probe.len())];
+    let layout = details
+        .text_system
+        .layout_line(&probe, font_size, &runs, None);
+    let advance = f32::from(layout.x_for_index(1));
+    if advance <= 0. {
+        return None;
+    }
+    for ix in 0..probe.len() {
+        let expected = advance * ix as f32;
+        if (f32::from(layout.x_for_index(ix)) - expected).abs() > 0.05 {
+            return None;
+        }
+    }
+    if (f32::from(layout.width) - advance * probe.len() as f32).abs() > 0.05 {
+        return None;
+    }
+    Some(gpui::px(advance))
+}
+
+fn unbatched_up_by_rows(
     map: &DisplaySnapshot,
     start: DisplayPoint,
     row_count: u32,
@@ -154,7 +501,7 @@ pub(crate) fn up_by_rows(
     )
 }
 
-pub(crate) fn down_by_rows(
+fn unbatched_down_by_rows(
     map: &DisplaySnapshot,
     start: DisplayPoint,
     row_count: u32,
