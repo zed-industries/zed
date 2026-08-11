@@ -23,7 +23,7 @@ use crate::{
     },
     docker::{
         Docker, DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
-        DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
+        DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs, EngineHost,
     },
     features::{DevContainerFeatureJson, FeatureManifest, parse_oci_feature_ref},
     get_oci_token,
@@ -1606,7 +1606,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             }
         };
 
-        let mut command = self.create_docker_build()?;
+        let mut command = self.docker_client.deploy(self.create_docker_build()?)?;
 
         let output = self
             .command_runner
@@ -1760,6 +1760,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         command.args(["--build-arg", &format!("NEW_GID={}", host_gid)]);
         command.args(["--build-arg", &format!("IMAGE_USER={}", image_user)]);
         command.arg(features_build_info.empty_context_dir.display().to_string());
+        let mut command = self.docker_client.deploy(command)?;
 
         let output = self
             .command_runner
@@ -1868,6 +1869,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             &dockerfile_path.display().to_string(),
             &features_content_dir.display().to_string(),
         ]);
+        let mut command = self.docker_client.deploy(command)?;
 
         let output = self
             .command_runner
@@ -2040,6 +2042,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         if let Some(services) = compose_services.as_ref() {
             command.args(services);
         }
+        let mut command = self.docker_client.deploy(command)?;
 
         let output = self
             .command_runner
@@ -2065,7 +2068,9 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         &self,
         build_resources: DockerBuildResources,
     ) -> Result<DockerInspect, DevContainerError> {
-        let mut docker_run_command = self.create_docker_run_command(build_resources)?;
+        let mut docker_run_command = self
+            .docker_client
+            .deploy(self.create_docker_run_command(build_resources)?)?;
 
         let output = self
             .command_runner
@@ -2708,16 +2713,16 @@ async fn load_devcontainer_contents(
 /// invoked, so every client the manifest uses is obtained here rather than
 /// constructed at the point of use.
 async fn container_client_for(context: &DevContainerContext) -> Arc<dyn DockerClient> {
-    match context.host {
-        DevContainerHost::Local => {
-            let engine = if context.use_podman {
-                "podman"
-            } else {
-                "docker"
-            };
-            Arc::new(Docker::new(engine, context.use_buildkit).await)
-        }
-    }
+    let engine = if context.use_podman {
+        "podman"
+    } else {
+        "docker"
+    };
+    let host = match &context.host {
+        DevContainerHost::Local => EngineHost::Local,
+        DevContainerHost::Remote(connection) => EngineHost::Remote(connection.clone()),
+    };
+    Arc::new(Docker::new(host, engine, context.use_buildkit).await)
 }
 
 pub(crate) async fn read_devcontainer_configuration(
@@ -7721,6 +7726,9 @@ RUN echo $RUBY_VERSION2
         }
         fn new_command(&self) -> Command {
             Command::new(self.docker_cli())
+        }
+        fn deploy(&self, command: Command) -> Result<Command, DevContainerError> {
+            Ok(command)
         }
         fn is_podman(&self) -> bool {
             self.podman

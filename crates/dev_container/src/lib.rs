@@ -9,6 +9,7 @@ use http_client::anyhow;
 use picker::Picker;
 use picker::PickerDelegate;
 use project::ProjectEnvironment;
+use remote::RemoteConnection;
 use settings::RegisterSetting;
 use settings::Settings;
 use std::collections::HashMap;
@@ -101,11 +102,14 @@ fn get_safe_id(input: &str) -> String {
 /// These are deliberately the same choice: the engine has to be able to bind
 /// mount the project directory, so a container cannot be built by one machine
 /// for a project that lives on another.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default)]
 pub enum DevContainerHost {
     /// The machine running Zed.
     #[default]
     Local,
+    /// A machine already reached by an open remote project, whose connection
+    /// carries the engine invocations.
+    Remote(Arc<dyn RemoteConnection>),
 }
 
 pub struct DevContainerContext {
