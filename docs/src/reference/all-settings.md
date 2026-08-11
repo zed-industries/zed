@@ -5512,6 +5512,34 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 }
 ```
 
+### Sort Direction
+
+- Description: Whether sibling entries in the project panel sort ascending or descending. This composes with `sort_mode` (grouping) and `sort_order` (name comparison): `descending` reverses name order among siblings — for example to show date-prefixed entries newest first — while directories still appear above their own contents.
+- Setting: `sort_direction`
+- Default: `ascending`
+
+**Options**
+
+1. Names in increasing order:
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_direction": "ascending"
+  }
+}
+```
+
+2. Names in decreasing order:
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_direction": "descending"
+  }
+}
+```
+
 ### Auto Open
 
 - Description: Control whether files are opened automatically after different creation flows in the project panel.

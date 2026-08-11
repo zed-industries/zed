@@ -11597,3 +11597,92 @@ async fn test_restore_file_prompt_escapes_markdown_in_file_name(cx: &mut gpui::T
 
     assert_eq!(message, "Discard changes to `__init__.py`?");
 }
+
+#[gpui::test]
+async fn test_sort_direction_descending(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "2023-01-10-old-post": { "inner.md": "" },
+            "2024-06-01-newer-post": {},
+            "2026-02-14-newest-post": {},
+            "notes.txt": "",
+            "archive.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // Ascending by default.
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    > 2023-01-10-old-post",
+            "    > 2024-06-01-newer-post",
+            "    > 2026-02-14-newest-post",
+            "      archive.txt",
+            "      notes.txt",
+        ]
+    );
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .sort_direction = Some(settings::ProjectPanelSortDirection::Descending);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    let direction = cx.update(|_, cx| ProjectPanelSettings::get_global(cx).sort_direction);
+    assert_eq!(
+        direction,
+        settings::ProjectPanelSortDirection::Descending,
+        "setting should propagate"
+    );
+
+    // Descending reverses sibling names (newest-first) but keeps the
+    // directories-first grouping.
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    > 2026-02-14-newest-post",
+            "    > 2024-06-01-newer-post",
+            "    > 2023-01-10-old-post",
+            "      notes.txt",
+            "      archive.txt",
+        ]
+    );
+
+    // Children stay under their parents when a directory is expanded.
+    toggle_expand_dir(&panel, "root/2023-01-10-old-post", cx);
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    > 2026-02-14-newest-post",
+            "    > 2024-06-01-newer-post",
+            "    v 2023-01-10-old-post  <== selected",
+            "          inner.md",
+            "      notes.txt",
+            "      archive.txt",
+        ]
+    );
+}

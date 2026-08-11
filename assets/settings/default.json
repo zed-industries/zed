@@ -905,6 +905,16 @@
     //    No case folding, no natural number sorting:
     //    "unicode"
     "sort_order": "default",
+    // Whether sibling entries sort ascending or descending in the project panel.
+    // Composes with "sort_mode" and "sort_order"; "descending" reverses name
+    // order (e.g. date-prefixed entries newest first) without reordering
+    // parents and children:
+    //
+    // 1. Names in increasing order (default):
+    //    "ascending"
+    // 2. Names in decreasing order:
+    //    "descending"
+    "sort_direction": "ascending",
     // Whether to show error and warning count badges next to file names in the project panel.
     "diagnostic_badges": false,
     // Whether to show the git status indicator next to file names in the project panel.

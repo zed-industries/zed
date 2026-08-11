@@ -827,6 +827,9 @@ impl ProjectPanel {
                     if project_panel_settings.sort_order != new_settings.sort_order {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
+                    if project_panel_settings.sort_direction != new_settings.sort_direction {
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
                         this.sticky_items_count = 0;
                     }
@@ -2848,7 +2851,8 @@ impl ProjectPanel {
 
         let sort_mode = ProjectPanelSettings::get_global(cx).sort_mode;
         let sort_order = ProjectPanelSettings::get_global(cx).sort_order;
-        sort_worktree_entries(&mut siblings, sort_mode, sort_order);
+        let sort_direction = ProjectPanelSettings::get_global(cx).sort_direction;
+        sort_worktree_entries(&mut siblings, sort_mode, sort_order, sort_direction);
         let sibling_entry_index = siblings
             .iter()
             .position(|sibling| sibling.id == latest_entry.id)?;
@@ -4269,6 +4273,7 @@ impl ProjectPanel {
         let hide_gitignore = settings.hide_gitignore;
         let sort_mode = settings.sort_mode;
         let sort_order = settings.sort_order;
+        let sort_direction = settings.sort_direction;
         let project = self.project.read(cx);
         let repo_snapshots = project.git_store().read(cx).display_repo_snapshots(cx);
 
@@ -4506,6 +4511,7 @@ impl ProjectPanel {
                             &mut visible_worktree_entries,
                             sort_mode,
                             sort_order,
+                            sort_direction,
                         );
                         new_state.visible_entries.push(VisibleEntriesForWorktree {
                             worktree_id,
@@ -7761,26 +7767,31 @@ fn cmp_worktree_entries(
     b: &Entry,
     mode: &settings::ProjectPanelSortMode,
     order: &settings::ProjectPanelSortOrder,
+    direction: &settings::ProjectPanelSortDirection,
 ) -> cmp::Ordering {
     let a = (&*a.path, a.is_file());
     let b = (&*b.path, b.is_file());
-    util::paths::compare_rel_paths_by(a, b, (*mode).into(), (*order).into())
+    util::paths::compare_rel_paths_by(a, b, (*mode).into(), (*order).into(), (*direction).into())
 }
 
 pub fn sort_worktree_entries(
     entries: &mut [impl AsRef<Entry>],
     mode: settings::ProjectPanelSortMode,
     order: settings::ProjectPanelSortOrder,
+    direction: settings::ProjectPanelSortDirection,
 ) {
-    entries.sort_by(|lhs, rhs| cmp_worktree_entries(lhs.as_ref(), rhs.as_ref(), &mode, &order));
+    entries.sort_by(|lhs, rhs| {
+        cmp_worktree_entries(lhs.as_ref(), rhs.as_ref(), &mode, &order, &direction)
+    });
 }
 
 pub fn par_sort_worktree_entries(
     entries: &mut Vec<GitEntry>,
     mode: settings::ProjectPanelSortMode,
     order: settings::ProjectPanelSortOrder,
+    direction: settings::ProjectPanelSortDirection,
 ) {
-    entries.par_sort_by(|lhs, rhs| cmp_worktree_entries(lhs, rhs, &mode, &order));
+    entries.par_sort_by(|lhs, rhs| cmp_worktree_entries(lhs, rhs, &mode, &order, &direction));
 }
 
 fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)> {

@@ -175,6 +175,14 @@ The `project_panel.sort_order` setting controls name comparison:
 - `"lower"` — lowercase names grouped first, then uppercase.
 - `"unicode"` — raw Unicode codepoint order with no case folding.
 
+The `project_panel.sort_direction` setting controls whether sibling names sort
+ascending or descending:
+
+- `"ascending"` (default) — names in increasing order.
+- `"descending"` — names in decreasing order, e.g. to show date-prefixed
+  entries newest first. Grouping from `sort_mode` is unaffected, and parents
+  still appear above their children.
+
 ## Other Actions
 
 - {#action project_panel::RevealInFileManager} ({#kb

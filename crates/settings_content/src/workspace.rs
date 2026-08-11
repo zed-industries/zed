@@ -820,6 +820,12 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: default
     pub sort_order: Option<ProjectPanelSortOrder>,
+    /// Whether sibling entries sort ascending or descending. This composes
+    /// with `sort_mode` (grouping) and `sort_order` (name comparison);
+    /// descending reverses name order without reordering parents and children.
+    ///
+    /// Default: ascending
+    pub sort_direction: Option<ProjectPanelSortDirection>,
     /// Whether to show error and warning count badges next to file names in the project panel.
     ///
     /// Default: false
@@ -907,6 +913,40 @@ pub enum ProjectPanelSortOrder {
     /// Pure Unicode codepoint comparison. No case folding, no natural number sorting.
     /// Uppercase ASCII sorts before lowercase. Accented characters sort after ASCII.
     Unicode,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPanelSortDirection {
+    /// Sort names in increasing order (the default).
+    #[default]
+    Ascending,
+    /// Sort names in decreasing order, e.g. to show date-prefixed entries
+    /// newest first. Directories still contain their children, and
+    /// `sort_mode` grouping is unaffected.
+    Descending,
+}
+
+impl From<ProjectPanelSortDirection> for util::paths::SortDirection {
+    fn from(direction: ProjectPanelSortDirection) -> Self {
+        match direction {
+            ProjectPanelSortDirection::Ascending => Self::Ascending,
+            ProjectPanelSortDirection::Descending => Self::Descending,
+        }
+    }
 }
 
 impl From<ProjectPanelSortMode> for util::paths::SortMode {

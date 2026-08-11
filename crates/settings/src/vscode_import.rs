@@ -843,6 +843,7 @@ impl VsCodeSettings {
                 "filesFirst" => Some(ProjectPanelSortMode::FilesFirst),
                 _ => None,
             }),
+            sort_direction: None,
             sort_order: self.read_enum("explorer.sortOrderLexicographicOptions", |s| match s {
                 "default" => Some(ProjectPanelSortOrder::Default),
                 "upper" => Some(ProjectPanelSortOrder::Upper),
