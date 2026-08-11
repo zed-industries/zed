@@ -232,10 +232,6 @@ impl Docker {
         }
     }
 
-    fn is_podman(&self) -> bool {
-        self.docker_cli == "podman"
-    }
-
     async fn pull_image(&self, image: &String) -> Result<(), DevContainerError> {
         let mut command = Command::new(&self.docker_cli);
         command.args(&["pull", "--", image]);
@@ -448,6 +444,14 @@ impl DockerClient for Docker {
         })
     }
 
+    fn new_command(&self) -> Command {
+        Command::new(&self.docker_cli)
+    }
+
+    fn is_podman(&self) -> bool {
+        self.docker_cli == "podman"
+    }
+
     fn docker_cli(&self) -> String {
         self.docker_cli.clone()
     }
@@ -511,8 +515,14 @@ pub(crate) trait DockerClient {
         filters: Vec<String>,
     ) -> Result<Option<DockerPs>, DevContainerError>;
     fn supports_compose_buildkit(&self) -> bool;
-    /// This operates as an escape hatch for more custom uses of the docker API.
-    /// See DevContainerManifest::create_docker_build as an example
+    /// Creates a command targeting this client's container engine, for callers
+    /// that build an invocation the trait does not model. Going through the
+    /// client rather than naming the engine directly keeps the decision of
+    /// *where* a command runs with the implementation.
+    fn new_command(&self) -> Command;
+    fn is_podman(&self) -> bool;
+    /// The engine's program name, for diagnostics. Prefer [`Self::new_command`]
+    /// when building an invocation.
     fn docker_cli(&self) -> String;
 }
 

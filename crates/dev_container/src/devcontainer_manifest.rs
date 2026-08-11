@@ -64,20 +64,17 @@ struct DevContainerManifest {
 }
 const DEFAULT_REMOTE_PROJECT_DIR: &str = "/workspaces";
 impl DevContainerManifest {
-    async fn new(
+    fn new(
         context: &DevContainerContext,
         environment: HashMap<String, String>,
         docker_client: Arc<dyn DockerClient>,
         command_runner: Arc<dyn CommandRunner>,
         local_config: DevContainerConfig,
         local_project_path: &Path,
+        devcontainer_contents: String,
     ) -> Result<Self, DevContainerError> {
-        let config_path = local_project_path.join(local_config.config_path.clone());
+        let config_path = config_path_for(local_project_path, &local_config);
         log::debug!("parsing devcontainer json found in {config_path:?}");
-        let devcontainer_contents = context.fs.load(&config_path).await.map_err(|e| {
-            log::error!("Unable to read devcontainer contents: {e}");
-            DevContainerError::DevContainerParseFailed
-        })?;
 
         let devcontainer = deserialize_devcontainer_json(&devcontainer_contents)?;
 
@@ -1747,13 +1744,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
         let updated_image_tag = features_build_info.image_tag.clone();
 
-        let mut command = Command::new(self.docker_client.docker_cli());
+        let mut command = self.docker_client.new_command();
         // Without a usable BuildKit, force the classic builder: the build's
         // `FROM $BASE_IMAGE` references the locally-built features image, which
         // only resolves from the daemon's image store under the classic builder.
-        if !self.docker_client.supports_compose_buildkit()
-            && self.docker_client.docker_cli() != "podman"
-        {
+        if !self.docker_client.supports_compose_buildkit() && !self.docker_client.is_podman() {
             command.env("DOCKER_BUILDKIT", "0");
         }
         command.args(["build"]);
@@ -1858,11 +1853,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 DevContainerError::FilesystemError
             })?;
 
-        let mut command = Command::new(self.docker_client.docker_cli());
+        let mut command = self.docker_client.new_command();
         // This path runs only when BuildKit is unavailable, so force the classic
         // builder: the feature content image is consumed by a later multi-stage
         // `FROM`, which requires it to live in the daemon's image store.
-        if self.docker_client.docker_cli() != "podman" {
+        if !self.docker_client.is_podman() {
             command.env("DOCKER_BUILDKIT", "0");
         }
         command.args([
@@ -1911,7 +1906,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             );
             return Err(DevContainerError::DevContainerParseFailed);
         };
-        let mut command = Command::new(self.docker_client.docker_cli());
+        let mut command = self.docker_client.new_command();
 
         command.args(["buildx", "build"]);
 
@@ -2025,7 +2020,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         resources: &DockerComposeResources,
         behavior: ComposeUpBehavior,
     ) -> Result<(), DevContainerError> {
-        let mut command = Command::new(self.docker_client.docker_cli());
+        let mut command = self.docker_client.new_command();
         let project_name = self.project_name().await?;
         let compose_services = match self.dev_container().run_services.as_ref() {
             Some(run_services) => {
@@ -2162,8 +2157,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
     ) -> Result<Command, DevContainerError> {
         let remote_workspace_mount = self.remote_workspace_mount()?;
 
-        let docker_cli = self.docker_client.docker_cli();
-        let mut command = Command::new(&docker_cli);
+        let mut command = self.docker_client.new_command();
 
         command.arg("run");
 
@@ -2194,7 +2188,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             }
         };
 
-        if &docker_cli == "podman" {
+        if self.docker_client.is_podman() {
             run_if_missing(
                 "--security-opt",
                 "--security-opt=label=disable",
@@ -2686,6 +2680,28 @@ pub(crate) struct FeaturesBuildInfo {
     pub image_tag: String,
 }
 
+/// The absolute path of a discovered configuration, given the project it was
+/// discovered in. [`DevContainerConfig::config_path`] is relative to the
+/// project root.
+fn config_path_for(local_project_path: &Path, config: &DevContainerConfig) -> PathBuf {
+    local_project_path.join(&config.config_path)
+}
+
+/// Reads the raw contents of a devcontainer configuration.
+///
+/// Kept out of [`DevContainerManifest::new`] so that constructing a manifest
+/// performs no I/O of its own: a project on a remote host has to have its
+/// configuration read through that host rather than the local [`Fs`].
+async fn load_devcontainer_contents(
+    context: &DevContainerContext,
+    config_path: &Path,
+) -> Result<String, DevContainerError> {
+    context.fs.load(config_path).await.map_err(|e| {
+        log::error!("Unable to read devcontainer contents: {e}");
+        DevContainerError::DevContainerParseFailed
+    })
+}
+
 pub(crate) async fn read_devcontainer_configuration(
     config: DevContainerConfig,
     context: &DevContainerContext,
@@ -2696,15 +2712,18 @@ pub(crate) async fn read_devcontainer_configuration(
     } else {
         Docker::new("docker", context.use_buildkit).await
     };
+    let project_path = context.project_directory.as_ref();
+    let config_path = config_path_for(project_path, &config);
+    let devcontainer_contents = load_devcontainer_contents(context, &config_path).await?;
     let mut dev_container = DevContainerManifest::new(
         context,
         environment,
         Arc::new(docker),
         Arc::new(DefaultCommandRunner::new()),
         config,
-        &context.project_directory.as_ref(),
-    )
-    .await?;
+        project_path,
+        devcontainer_contents,
+    )?;
     dev_container.parse_nonremote_vars()?;
     Ok(dev_container.dev_container().clone())
 }
@@ -2720,6 +2739,8 @@ pub(crate) async fn spawn_dev_container(
     } else {
         Docker::new("docker", context.use_buildkit).await
     };
+    let config_path = config_path_for(local_project_path, &config);
+    let devcontainer_contents = load_devcontainer_contents(context, &config_path).await?;
     let mut devcontainer_manifest = DevContainerManifest::new(
         context,
         environment,
@@ -2727,8 +2748,8 @@ pub(crate) async fn spawn_dev_container(
         Arc::new(DefaultCommandRunner::new()),
         config,
         local_project_path,
-    )
-    .await?;
+        devcontainer_contents,
+    )?;
 
     devcontainer_manifest.parse_nonremote_vars()?;
 
@@ -3496,9 +3517,10 @@ mod test {
         devcontainer_json::MountDefinition,
         devcontainer_manifest::{
             ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
-            DockerInspect, dockerfile_inject_alias, escape_compose_interpolation,
+            DockerInspect, config_path_for, dockerfile_inject_alias, escape_compose_interpolation,
             extract_feature_id, find_primary_service, get_remote_user_from_config,
-            image_from_dockerfile, is_local_feature_ref, resolve_compose_dockerfile,
+            image_from_dockerfile, is_local_feature_ref, load_devcontainer_contents,
+            resolve_compose_dockerfile,
         },
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -3624,15 +3646,18 @@ mod test {
             docker: docker_client.clone(),
             command_runner: command_runner.clone(),
         };
+        let project_path = PathBuf::from(TEST_PROJECT_PATH);
+        let config_path = config_path_for(&project_path, &local_config);
+        let contents = load_devcontainer_contents(&context, &config_path).await?;
         let manifest = DevContainerManifest::new(
             &context,
             environment,
             docker_client,
             command_runner,
             local_config,
-            &PathBuf::from(TEST_PROJECT_PATH),
-        )
-        .await?;
+            &project_path,
+            contents,
+        )?;
 
         Ok((test_dependencies, manifest))
     }
@@ -7682,6 +7707,12 @@ RUN echo $RUBY_VERSION2
         }
         fn supports_compose_buildkit(&self) -> bool {
             !self.podman && self.has_buildx
+        }
+        fn new_command(&self) -> Command {
+            Command::new(self.docker_cli())
+        }
+        fn is_podman(&self) -> bool {
+            self.podman
         }
         fn docker_cli(&self) -> String {
             if self.podman {
