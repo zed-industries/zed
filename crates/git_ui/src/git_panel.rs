@@ -1,4 +1,6 @@
-use crate::askpass_modal::AskPassModal;
+use git_ui_core::askpass_modal::AskPassModal;
+pub(crate) use git_ui_core::notifications::{open_output, show_error_toast};
+
 use crate::commit_context_menu::{
     CommitContextMenuData, CommitContextMenuSource, commit_context_menu,
 };
@@ -46,9 +48,10 @@ use git::{
 };
 use gpui::{
     AbsoluteLength, Action, Anchor, AnyElement, AsyncApp, AsyncWindowContext, ClickEvent,
-    DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton,
-    MouseDownEvent, Pixels, Point, PromptLevel, ScrollStrategy, Subscription, Task, TaskExt,
-    TextStyle, UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
+    ClipboardItem, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
+    MouseButton, MouseDownEvent, Pixels, Point, PromptLevel, ScrollStrategy, Subscription, Task,
+    TaskExt, TextStyle, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferEvent, File};
@@ -69,7 +72,7 @@ use project::{
     project_settings::{GitPathStyle, ProjectSettings},
 };
 use prompt_store::RULES_FILE_NAMES;
-use proto::RpcError;
+
 use serde::{Deserialize, Serialize};
 use settings::{
     GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore, StatusStyle,
@@ -100,7 +103,9 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
 };
 use zed_actions::{
-    DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize, git_panel::ToggleFocus,
+    DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
+    git_panel::ToggleFocus,
+    workspace::{CopyPath, CopyRelativePath},
 };
 
 const GIT_PANEL_KEY: &str = "GitPanel";
@@ -202,6 +207,7 @@ fn git_panel_context_menu(
     has_unstaged_changes: bool,
     has_new_changes: bool,
     has_stash_items: bool,
+    include_copy_paths: bool,
     focus_handle: FocusHandle,
     window: &mut Window,
     cx: &mut App,
@@ -224,6 +230,12 @@ fn git_panel_context_menu(
             )
             .action_disabled_when(!has_stash_items, "Stash Pop", StashPop.boxed_clone())
             .action("View Stash", zed_actions::git::ViewStash.boxed_clone())
+            .when(include_copy_paths, |context_menu| {
+                context_menu
+                    .separator()
+                    .action("Copy Path", CopyPath.boxed_clone())
+                    .action("Copy Relative Path", CopyRelativePath.boxed_clone())
+            })
             .separator()
             .action_disabled_when(
                 !has_tracked_changes,
@@ -613,6 +625,15 @@ impl GitListEntry {
             self,
             GitListEntry::Status(_) | GitListEntry::TreeStatus(_) | GitListEntry::Directory(_)
         )
+    }
+
+    fn repo_path(&self) -> Option<&RepoPath> {
+        match self {
+            GitListEntry::Status(entry) => Some(&entry.repo_path),
+            GitListEntry::TreeStatus(entry) => Some(&entry.entry.repo_path),
+            GitListEntry::Directory(entry) => Some(&entry.key.path),
+            GitListEntry::Header(_) | GitListEntry::EmptySection(_) => None,
+        }
     }
 }
 
@@ -1220,7 +1241,7 @@ impl GitPanel {
                 view_mode: GitPanelViewMode::from_settings(cx),
                 tree_expanded_dirs: HashMap::default(),
                 projected_entries_by_path: HashMap::default(),
-                focus_handle: cx.focus_handle(),
+                focus_handle,
                 fs,
                 new_count: 0,
                 new_staged_count: 0,
@@ -1971,6 +1992,32 @@ impl GitPanel {
 
             Some(())
         });
+    }
+
+    fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some((repo_path, repo)) = self
+            .get_selected_entry()
+            .and_then(GitListEntry::repo_path)
+            .zip(self.active_repository.as_ref())
+        {
+            let path = repo.read(cx).repo_path_to_abs_path(repo_path);
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                path.to_string_lossy().into_owned(),
+            ));
+        } else {
+            cx.propagate();
+        }
+    }
+
+    fn copy_relative_path(&mut self, _: &CopyRelativePath, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(repo_path) = self.get_selected_entry().and_then(GitListEntry::repo_path) {
+            let path_style = self.project.read(cx).path_style(cx);
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                repo_path.display(path_style).into_owned(),
+            ));
+        } else {
+            cx.propagate();
+        }
     }
 
     fn open_selected_entry_on_click(
@@ -5558,6 +5605,7 @@ impl GitPanel {
                     has_unstaged_changes,
                     has_new_changes,
                     has_stash_items,
+                    false,
                     focus_handle.clone(),
                     window,
                     cx,
@@ -6304,13 +6352,12 @@ impl GitPanel {
             return;
         }
         self.active_tab = tab;
+        self.activation_focus_handle(cx).focus(window, cx);
         match tab {
             GitPanelTab::History => {
-                self.focus_handle.focus(window, cx);
                 self.load_commit_history(cx);
             }
             GitPanelTab::Changes => {
-                self.focus_handle.focus(window, cx);
                 self.set_commit_history(CommitHistory::Loading, cx);
                 self._repo_subscriptions.clear();
             }
@@ -7061,7 +7108,7 @@ impl GitPanel {
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            this.deploy_panel_context_menu(event.position, window, cx)
+                            this.deploy_panel_context_menu(event.position, false, window, cx)
                         }),
                     )
                     .custom_scrollbars(
@@ -7214,6 +7261,12 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if matches!(self.entries.get(ix), Some(GitListEntry::Directory(_))) {
+            self.selected_entry = Some(ix);
+            self.deploy_panel_context_menu(position, true, window, cx);
+            return;
+        }
+
         let stage_intent = self.stage_intent_for_entry_index(ix);
         let Some(entry) = self.entries.get(ix).and_then(|e| e.status_entry()) else {
             return;
@@ -7246,6 +7299,9 @@ impl GitPanel {
                 .action("Unstaged Changes", ViewUnstagedChanges.boxed_clone())
                 .action("Staged Changes", ViewStagedChanges.boxed_clone())
                 .separator()
+                .action("Copy Path", CopyPath.boxed_clone())
+                .action("Copy Relative Path", CopyRelativePath.boxed_clone())
+                .separator()
                 .action_disabled_when(
                     !is_created,
                     "Add to .gitignore",
@@ -7273,6 +7329,7 @@ impl GitPanel {
     fn deploy_panel_context_menu(
         &mut self,
         position: Point<Pixels>,
+        include_copy_paths: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -7288,6 +7345,7 @@ impl GitPanel {
             has_unstaged_changes,
             has_new_changes,
             has_stash_items,
+            include_copy_paths,
             self.focus_handle.clone(),
             window,
             cx,
@@ -7748,6 +7806,13 @@ impl GitPanel {
                     this.toggle_directory(&key, window, cx);
                 })
             })
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.deploy_entry_context_menu(event.position, ix, window, cx);
+                }),
+            )
             .into_any_element()
     }
 
@@ -8092,6 +8157,8 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::open_diff))
             .on_action(cx.listener(Self::open_solo_diff))
             .on_action(cx.listener(Self::view_file))
+            .on_action(cx.listener(Self::copy_path))
+            .on_action(cx.listener(Self::copy_relative_path))
             .on_action(cx.listener(Self::view_unstaged_changes))
             .on_action(cx.listener(Self::view_staged_changes))
             .on_action(cx.listener(Self::focus_changes_list))
@@ -8199,7 +8266,9 @@ impl editor::Addon for GitPanelAddon {
 
 impl Panel for GitPanel {
     fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
-        if self.entries.is_empty() || self.commit_editor_expanded {
+        if self.active_tab == GitPanelTab::Changes
+            && (self.entries.is_empty() || self.commit_editor_expanded)
+        {
             self.commit_editor.focus_handle(cx)
         } else {
             self.focus_handle.clone()
@@ -8233,7 +8302,9 @@ impl Panel for GitPanel {
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<ui::IconName> {
-        Some(ui::IconName::GitBranch).filter(|_| GitPanelSettings::get_global(cx).button)
+        GitPanelSettings::get_global(cx)
+            .button
+            .then_some(ui::IconName::GitBranch)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -8785,86 +8856,6 @@ impl Component for PanelRepoFooter {
     }
 }
 
-pub(crate) fn open_output(
-    operation: impl Into<SharedString>,
-    workspace: &mut Workspace,
-    output: &str,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    let operation = operation.into();
-
-    let plain_text = terminal::strip_ansi_text(output.as_bytes());
-
-    let buffer = cx.new(|cx| Buffer::local(plain_text.as_str(), cx));
-    buffer.update(cx, |buffer, cx| {
-        buffer.set_capability(language::Capability::ReadOnly, cx);
-    });
-    let editor = cx.new(|cx| {
-        let mut editor = Editor::for_buffer(buffer, None, window, cx);
-        editor.buffer().update(cx, |buffer, cx| {
-            buffer.set_title(format!("Output from git {operation}"), cx);
-        });
-        editor.set_read_only(true);
-        editor
-    });
-
-    workspace.add_item_to_center(Box::new(editor), window, cx);
-}
-
-pub(crate) fn show_error_toast(
-    workspace: Entity<Workspace>,
-    action: impl Into<SharedString>,
-    e: anyhow::Error,
-    cx: &mut App,
-) {
-    let action = action.into();
-    let message = format_git_error_toast_message(&e);
-    if message
-        .matches(git::repository::REMOTE_CANCELLED_BY_USER)
-        .next()
-        .is_some()
-    { // Hide the cancelled by user message
-    } else {
-        cx.defer(move |cx| {
-            workspace.update(cx, |workspace, cx| {
-                let workspace_weak = cx.weak_entity();
-                let toast = StatusToast::new(format!("git {} failed", action), cx, |this, _cx| {
-                    this.icon(
-                        Icon::new(IconName::XCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Error),
-                    )
-                    .action("View Log", move |window, cx| {
-                        let message = message.clone();
-                        let action = action.clone();
-                        workspace_weak
-                            .update(cx, move |workspace, cx| {
-                                open_output(action, workspace, &message, window, cx)
-                            })
-                            .ok();
-                    })
-                });
-                workspace.toggle_status_toast(toast, cx)
-            });
-        });
-    }
-}
-
-fn rpc_error_raw_message_from_chain(error: &anyhow::Error) -> Option<&str> {
-    error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<RpcError>().map(RpcError::raw_message))
-}
-
-fn format_git_error_toast_message(error: &anyhow::Error) -> String {
-    if let Some(message) = rpc_error_raw_message_from_chain(error) {
-        message.trim().to_string()
-    } else {
-        error.to_string().trim().to_string()
-    }
-}
-
 pub(crate) fn commit_title_exceeds_limit(title: &str, max_length: usize) -> bool {
     max_length > 0 && title.chars().count() > max_length
 }
@@ -8887,7 +8878,10 @@ mod tests {
     use util::path;
     use util::rel_path::rel_path;
 
-    use workspace::{MultiWorkspace, ToolbarItemEvent, ToolbarItemLocation};
+    use workspace::{
+        ActivatePaneLeft, ActivatePaneRight, MultiWorkspace, ToolbarItemEvent, ToolbarItemLocation,
+        item::test::TestItem,
+    };
 
     use super::*;
 
@@ -9338,6 +9332,77 @@ mod tests {
         assert_editor_opened_with_path(&workspace, Path::new("src/a/foo.rs"), &mut cx);
     }
 
+    #[gpui::test]
+    async fn test_copy_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().tree_view = Some(true);
+                })
+            });
+        });
+
+        let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+            }),
+            &[("src/main.rs", StatusCode::Modified)],
+        )
+        .await;
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<GitPanel>(window, cx);
+        });
+        panel.update_in(&mut cx, |panel, window, cx| {
+            let entry_index = entry_index_for_repo_path(panel, &repo_path("src/main.rs"))
+                .expect("main.rs should exist in the changes list");
+            panel.selected_entry = Some(entry_index);
+            panel.focus_handle.focus(window, cx);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        cx.dispatch_action(CopyRelativePath);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(path!("src/main.rs").to_owned())
+        );
+
+        cx.dispatch_action(CopyPath);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(path!("/project/src/main.rs").to_owned())
+        );
+
+        panel.update(&mut cx, |panel, _| {
+            let entry_index = panel
+                .entries
+                .iter()
+                .position(|entry| {
+                    matches!(entry, GitListEntry::Directory(dir) if dir.key.path == repo_path("src"))
+                })
+                .expect("src directory should exist in the changes list");
+            panel.selected_entry = Some(entry_index);
+        });
+
+        cx.dispatch_action(CopyRelativePath);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(path!("src").to_owned())
+        );
+
+        cx.dispatch_action(CopyPath);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(path!("/project/src").to_owned())
+        );
+    }
+
     async fn history_panel_for_project(
         fs: Arc<FakeFs>,
         cx: &mut TestAppContext,
@@ -9377,47 +9442,6 @@ mod tests {
             !matches!(panel.commit_history, CommitHistory::Loading)
         })
         .await;
-    }
-
-    #[test]
-    fn test_format_git_error_toast_message_prefers_raw_rpc_message() {
-        let rpc_error = RpcError::from_proto(
-            &proto::Error {
-                message:
-                    "Your local changes to the following files would be overwritten by merge\n"
-                        .to_string(),
-                code: proto::ErrorCode::Internal as i32,
-                tags: Default::default(),
-            },
-            "Pull",
-        );
-
-        let message = format_git_error_toast_message(&rpc_error);
-        assert_eq!(
-            message,
-            "Your local changes to the following files would be overwritten by merge"
-        );
-    }
-
-    #[test]
-    fn test_format_git_error_toast_message_prefers_raw_rpc_message_when_wrapped() {
-        let rpc_error = RpcError::from_proto(
-            &proto::Error {
-                message:
-                    "Your local changes to the following files would be overwritten by merge\n"
-                        .to_string(),
-                code: proto::ErrorCode::Internal as i32,
-                tags: Default::default(),
-            },
-            "Pull",
-        );
-        let wrapped = rpc_error.context("sending pull request");
-
-        let message = format_git_error_toast_message(&wrapped);
-        assert_eq!(
-            message,
-            "Your local changes to the following files would be overwritten by merge"
-        );
     }
 
     #[gpui::test]
@@ -12568,6 +12592,54 @@ mod tests {
         panel.update_in(&mut cx, |panel, window, cx| {
             assert!(panel.commit_editor.focus_handle(cx).is_focused(window));
         });
+    }
+
+    #[gpui::test]
+    async fn test_history_tab_pane_navigation_focuses_rendered_panel(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_, _project, workspace, panel, mut cx) =
+            setup_git_panel_with_changes(cx, json!({ ".git": {} }), &[]).await;
+
+        let center_item = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let center_item = cx.new(TestItem::new);
+            workspace.add_item_to_active_pane(
+                Box::new(center_item.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<GitPanel>(window, cx);
+            center_item
+        });
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.entries.is_empty());
+            panel.activate_history_tab(&ActivateHistoryTab, window, cx);
+        });
+        center_item.update_in(&mut cx, |center_item, window, cx| {
+            center_item.focus_handle(cx).focus(window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.dispatch_action(ActivatePaneRight);
+        cx.run_until_parked();
+
+        let history_panel_was_focused = panel.update_in(&mut cx, |panel, window, cx| {
+            panel.focus_handle.contains_focused(window, cx)
+        });
+
+        cx.dispatch_action(ActivatePaneLeft);
+        cx.run_until_parked();
+
+        let center_item_is_focused = center_item.update_in(&mut cx, |center_item, window, cx| {
+            center_item.focus_handle(cx).is_focused(window)
+        });
+        assert!(
+            history_panel_was_focused && center_item_is_focused,
+            "pane navigation should focus the History panel after moving right and restore the center item after moving left; History panel focused after moving right: {history_panel_was_focused}, center item focused after moving left: {center_item_is_focused}"
+        );
     }
 
     #[gpui::test]

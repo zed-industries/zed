@@ -466,6 +466,10 @@ fn check_dependencies() -> NamedJob {
         named::bash("cargo update --locked --workspace")
     }
 
+    fn check_crate_graph() -> Step<Run> {
+        named::bash("cargo test --package xtask -- workspace::")
+    }
+
     fn check_vulnerable_dependencies() -> Step<Use> {
         named::uses(
             "actions",
@@ -485,6 +489,7 @@ fn check_dependencies() -> NamedJob {
             .add_step(install_cargo_machete())
             .add_step(run_cargo_machete())
             .add_step(check_cargo_lock())
+            .add_step(check_crate_graph())
             .add_step(check_vulnerable_dependencies()),
     ))
 }

@@ -5614,7 +5614,7 @@ impl RepositorySnapshot {
         Self::abs_path_to_repo_path_inner(&self.work_directory_abs_path, abs_path, self.path_style)
     }
 
-    fn repo_path_to_abs_path(&self, repo_path: &RepoPath) -> PathBuf {
+    pub fn repo_path_to_abs_path(&self, repo_path: &RepoPath) -> PathBuf {
         let repo_path = repo_path.display(self.path_style);
         PathBuf::from(
             self.path_style
@@ -8798,8 +8798,10 @@ impl Repository {
                 RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
                     let (is_merge, includes_worktree, base, head) = match diff_type {
                         DiffTreeType::MergeBase { base, head } => (true, false, base, head),
+                        // Older servers ignore `includes_worktree` and use the existing fields,
+                        // so HEAD keeps this request valid as a committed-only fallback.
                         DiffTreeType::MergeBaseWithWorktree { base } => {
-                            (true, true, base, SharedString::default())
+                            (true, true, base, "HEAD".into())
                         }
                         DiffTreeType::Since { base, head } => (false, false, base, head),
                     };
