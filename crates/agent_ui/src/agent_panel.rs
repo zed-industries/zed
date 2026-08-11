@@ -1435,22 +1435,30 @@ impl AgentPanel {
                     // backend; otherwise fall back to the serialized
                     // selection, then the global last-used agent.
                     //
-                    // Only the restored thread keeps an agent that is no
-                    // longer installed, so that it stays resumable if the
-                    // user reinstalls it. A *preference* naming a removed
-                    // agent is dropped instead: the global one outlives the
-                    // workspace it was set in, so every project opened after
-                    // an uninstall would otherwise keep selecting an agent
-                    // that can no longer be launched.
-                    let initial_agent = match &thread_to_restore {
-                        Some((info, _)) => Some(clamp(info.agent_type.clone())),
-                        None => serialized_panel
+                    // Only a restored thread with a session keeps an agent that
+                    // is no longer installed, so that it stays resumable if the
+                    // user reinstalls it. A draft has no session to resume, so
+                    // the binding protects nothing and would only make every
+                    // reopen of this workspace fail to launch the agent — the
+                    // panel opens a draft on its own, so that would be most
+                    // workspaces after an uninstall. A *preference* naming a
+                    // removed agent is dropped for the same reason: the global
+                    // one outlives the workspace it was set in, so every
+                    // project opened after an uninstall would otherwise keep
+                    // selecting an agent that can no longer be launched.
+                    let restored_thread_agent = thread_to_restore.as_ref().and_then(|(info, _)| {
+                        let agent = clamp(info.agent_type.clone());
+                        (info.session_id.is_some() || panel.is_agent_available(&agent, cx))
+                            .then_some(agent)
+                    });
+                    let initial_agent = restored_thread_agent.or_else(|| {
+                        serialized_panel
                             .as_ref()
                             .and_then(|p| p.selected_agent.clone())
                             .map(clamp)
                             .or(global_fallback)
-                            .filter(|agent| panel.is_agent_available(agent, cx)),
-                    };
+                            .filter(|agent| panel.is_agent_available(agent, cx))
+                    });
                     if let Some(agent) = initial_agent {
                         panel.selected_agent = agent;
                     }
@@ -1931,7 +1939,16 @@ impl AgentPanel {
         let agent = if self.project.read(cx).is_via_collab() {
             Agent::NativeAgent
         } else {
-            Agent::from(metadata.agent_id.clone())
+            // The draft's own binding, unless that agent was uninstalled. A
+            // draft has no session to resume, so keeping a dead binding here
+            // would only fail to open the draft; the typed text is restored
+            // either way.
+            let agent = Agent::from(metadata.agent_id.clone());
+            if self.is_agent_available(&agent, cx) {
+                agent
+            } else {
+                self.available_agent_selection(cx)
+            }
         };
         let initial_content = crate::draft_prompt_store::read(thread_id, cx).map(|blocks| {
             AgentInitialContent::ContentBlock {
@@ -11835,14 +11852,17 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_restored_draft_keeps_uninstalled_agent_and_text(cx: &mut TestAppContext) {
+    async fn test_restored_draft_drops_uninstalled_agent_but_keeps_text(cx: &mut TestAppContext) {
         init_test(cx);
+        let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
+            // The draft falls back to the Zed Agent once its own agent is
+            // gone, and building that server needs a global `Fs`.
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
         });
 
-        let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/project", json!({ "file.txt": "" })).await;
         let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
         let multi_workspace =
@@ -11881,8 +11901,10 @@ mod tests {
             .expect("panel load should succeed");
         cx.run_until_parked();
 
-        // A draft keeps both its text and its agent, so reinstalling the agent
-        // lets the user pick the draft back up where they left off.
+        // A draft keeps its text, but not a binding to an agent that is gone:
+        // it has no session to resume, and the panel opens a draft on its own,
+        // so keeping the binding would make this workspace fail to open an
+        // agent for good.
         reloaded_panel.read_with(cx, |panel, cx| {
             let draft = panel
                 .draft_thread
@@ -11895,10 +11917,12 @@ mod tests {
             );
             assert_eq!(
                 *draft.read(cx).agent_key(),
-                Agent::Custom {
-                    id: external_agent_id.clone()
-                },
-                "a restored draft should keep its original agent"
+                Agent::NativeAgent,
+                "a restored draft should drop an uninstalled agent"
+            );
+            assert_eq!(
+                panel.selected_agent, Agent::NativeAgent,
+                "the panel should not stay selected on the uninstalled agent"
             );
         });
 
