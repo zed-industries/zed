@@ -102,12 +102,19 @@ pub struct SvgRenderer {
 /// scales should retain this value to avoid re-paying the parse cost.
 pub struct ParsedSvg(usvg::Tree);
 
-/// The size in which to render the SVG.
+/// The size in which to rasterize the SVG.
+#[derive(Clone, Copy)]
 pub enum SvgSize {
     /// An absolute size in device pixels.
     Size(Size<DevicePixels>),
-    /// A scaling factor to apply to the size provided by the SVG.
+    /// A logical scaling factor to apply to the size provided by the SVG.
     ScaleFactor(f32),
+}
+
+impl From<f32> for SvgSize {
+    fn from(scale_factor: f32) -> Self {
+        Self::ScaleFactor(scale_factor)
+    }
 }
 
 impl SvgRenderer {
@@ -184,19 +191,20 @@ impl SvgRenderer {
     }
 
     /// Rasterizes a previously parsed SVG into an image buffer.
-    ///
-    /// `scale_factor` is multiplied by [`SMOOTH_SVG_SCALE_FACTOR`], matching
-    /// [`SvgRenderer::render_single_frame`].
     #[ztracing::instrument(skip_all)]
     pub fn render_parsed(
         &self,
         svg: &ParsedSvg,
-        scale_factor: f32,
+        size: impl Into<SvgSize>,
     ) -> Result<Arc<RenderImage>, usvg::Error> {
-        let pixmap = rasterize_tree(
-            &svg.0,
-            SvgSize::ScaleFactor(scale_factor * SMOOTH_SVG_SCALE_FACTOR),
-        )?;
+        let (size, image_scale_factor) = match size.into() {
+            SvgSize::Size(size) => (SvgSize::Size(size), 1.0),
+            SvgSize::ScaleFactor(scale_factor) => (
+                SvgSize::ScaleFactor(scale_factor * SMOOTH_SVG_SCALE_FACTOR),
+                SMOOTH_SVG_SCALE_FACTOR,
+            ),
+        };
+        let pixmap = rasterize_tree(&svg.0, size)?;
         let mut buffer =
             image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
 
@@ -205,7 +213,7 @@ impl SvgRenderer {
         }
 
         let mut image = RenderImage::new(SmallVec::from_const([Frame::new(buffer)]));
-        image.scale_factor = SMOOTH_SVG_SCALE_FACTOR;
+        image.scale_factor = image_scale_factor;
         Ok(Arc::new(image))
     }
 
@@ -265,7 +273,31 @@ fn rasterize_tree(tree: &usvg::Tree, size: SvgSize) -> Result<Pixmap, usvg::Erro
 
     let svg_size = tree.size();
     let mut scale = match size {
-        SvgSize::Size(size) => size.width.0 as f32 / svg_size.width(),
+        SvgSize::Size(size) => {
+            let mut width = i32::from(size.width) as f32;
+            let mut height = i32::from(size.height) as f32;
+            if width > MAX_SIZE {
+                log::warn!(
+                    "Attempted to render pixmap where width ({width}) > MAX_SIZE ({MAX_SIZE})"
+                );
+            }
+            if height > MAX_SIZE {
+                log::warn!(
+                    "Attempted to render pixmap where height ({height}) > MAX_SIZE ({MAX_SIZE})"
+                );
+            }
+            let scale = (MAX_SIZE / width).min(MAX_SIZE / height).min(1.0);
+            width *= scale;
+            height *= scale;
+            let mut pixmap = resvg::tiny_skia::Pixmap::new(width as u32, height as u32)
+                .ok_or(usvg::Error::InvalidSize)?;
+            let transform = resvg::tiny_skia::Transform::from_scale(
+                width / svg_size.width(),
+                height / svg_size.height(),
+            );
+            resvg::render(tree, transform, &mut pixmap.as_mut());
+            return Ok(pixmap);
+        }
         SvgSize::ScaleFactor(scale) => scale,
     };
 
@@ -288,7 +320,6 @@ fn rasterize_tree(tree: &usvg::Tree, size: SvgSize) -> Result<Pixmap, usvg::Erro
     .ok_or(usvg::Error::InvalidSize)?;
 
     let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
-
     resvg::render(tree, transform, &mut pixmap.as_mut());
 
     Ok(pixmap)
@@ -349,6 +380,22 @@ mod tests {
     const IBM_PLEX_REGULAR: &[u8] =
         include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
     const LILEX_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
+
+    #[test]
+    fn renders_parsed_svg_at_requested_size() {
+        let renderer = SvgRenderer::new(Arc::new(()));
+        let svg = renderer
+            .parse_svg(
+                br#"<svg xmlns="http://www.w3.org/2000/svg" width="24pt" height="12pt"></svg>"#,
+            )
+            .unwrap();
+        let requested_size = Size::new(DevicePixels(24), DevicePixels(12));
+        let image = renderer
+            .render_parsed(&svg, SvgSize::Size(requested_size))
+            .unwrap();
+
+        assert_eq!(image.size(0), requested_size);
+    }
 
     fn db_with_bundled_fonts() -> Database {
         let mut db = Database::new();
