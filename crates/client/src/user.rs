@@ -902,29 +902,28 @@ impl UserStore {
     }
 
     fn handle_message_to_client(this: WeakEntity<Self>, message: &MessageToClient, cx: &App) {
+        match message {
+            MessageToClient::UserUpdated => {}
+            MessageToClient::SyncedSettingsChanged { .. } => return,
+        }
         cx.spawn(async move |cx| {
-            match message {
-                MessageToClient::UserUpdated => {
-                    let (cloud_client, system_id) = cx
-                        .update(|cx| {
-                            this.read_with(cx, |this, _cx| {
-                                this.client.upgrade().map(|client| {
-                                    let system_id =
-                                        client.telemetry().system_id().map(|id| id.to_string());
-                                    (client.cloud_client(), system_id)
-                                })
-                            })
-                        })?
-                        .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
-
-                    let response = cloud_client.get_authenticated_user(system_id).await?;
-                    cx.update(|cx| {
-                        this.update(cx, |this, cx| {
-                            this.update_authenticated_user(response, cx);
+            let (cloud_client, system_id) = cx
+                .update(|cx| {
+                    this.read_with(cx, |this, _cx| {
+                        this.client.upgrade().map(|client| {
+                            let system_id = client.telemetry().system_id().map(|id| id.to_string());
+                            (client.cloud_client(), system_id)
                         })
-                    })?;
-                }
-            }
+                    })
+                })?
+                .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
+
+            let response = cloud_client.get_authenticated_user(system_id).await?;
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.update_authenticated_user(response, cx);
+                })
+            })?;
 
             anyhow::Ok(())
         })

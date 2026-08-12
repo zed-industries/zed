@@ -296,6 +296,20 @@ pub struct SettingsContent {
     /// Settings for developer-oriented instrumentation tools (profilers,
     /// tracers, etc.) that can be toggled at runtime.
     pub instrumentation: Option<InstrumentationSettingsContent>,
+
+    pub settings_sync: Option<SettingsSyncContent>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct SettingsSyncContent {
+    /// Whether settings sync is enabled on this device. Device-local:
+    /// `/settings_sync/enabled` ships in the built-in exclusion set, so
+    /// enabling on one machine can never flip it on another — consent
+    /// stays per-device by construction.
+    pub enabled: Option<bool>,
+    /// JSON paths (subtrees) to never upload. Merged with built-in defaults.
+    pub exclude: Option<Vec<String>>,
 }
 
 /// Configuration for developer-oriented instrumentation tools that collect

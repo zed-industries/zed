@@ -132,6 +132,7 @@ impl RefreshLlmTokenListener {
             MessageToClient::UserUpdated => {
                 this.update(cx, |this, cx| this.refresh(TokenRefreshMode::Refresh, cx));
             }
+            MessageToClient::SyncedSettingsChanged { .. } => {}
         }
     }
 }
