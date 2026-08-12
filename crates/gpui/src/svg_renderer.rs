@@ -272,54 +272,36 @@ fn rasterize_tree(tree: &usvg::Tree, size: SvgSize) -> Result<Pixmap, usvg::Erro
     const MAX_SIZE: f32 = 8192.0;
 
     let svg_size = tree.size();
-    let mut scale = match size {
-        SvgSize::Size(size) => {
-            let mut width = i32::from(size.width) as f32;
-            let mut height = i32::from(size.height) as f32;
-            if width > MAX_SIZE {
-                log::warn!(
-                    "Attempted to render pixmap where width ({width}) > MAX_SIZE ({MAX_SIZE})"
-                );
-            }
-            if height > MAX_SIZE {
-                log::warn!(
-                    "Attempted to render pixmap where height ({height}) > MAX_SIZE ({MAX_SIZE})"
-                );
-            }
-            let scale = (MAX_SIZE / width).min(MAX_SIZE / height).min(1.0);
-            width *= scale;
-            height *= scale;
-            let mut pixmap = resvg::tiny_skia::Pixmap::new(width as u32, height as u32)
-                .ok_or(usvg::Error::InvalidSize)?;
-            let transform = resvg::tiny_skia::Transform::from_scale(
-                width / svg_size.width(),
-                height / svg_size.height(),
-            );
-            resvg::render(tree, transform, &mut pixmap.as_mut());
-            return Ok(pixmap);
-        }
-        SvgSize::ScaleFactor(scale) => scale,
+    let (mut width, mut height) = match size {
+        SvgSize::Size(size) => (
+            i32::from(size.width) as f32,
+            i32::from(size.height) as f32,
+        ),
+        SvgSize::ScaleFactor(scale) => (
+            svg_size.width() * scale,
+            svg_size.height() * scale,
+        ),
     };
 
-    let width = svg_size.width() * scale;
     if width > MAX_SIZE {
         log::warn!("Attempted to render pixmap where width ({width}) > MAX_SIZE ({MAX_SIZE})");
-        scale *= MAX_SIZE / width;
     }
-    let height = svg_size.height() * scale;
     if height > MAX_SIZE {
         log::warn!("Attempted to render pixmap where height ({height}) > MAX_SIZE ({MAX_SIZE})");
-        scale *= MAX_SIZE / height;
     }
+    let scale = (MAX_SIZE / width).min(MAX_SIZE / height).min(1.0);
+    width *= scale;
+    height *= scale;
 
     // Render the SVG to a pixmap with the specified width and height.
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(
-        (svg_size.width() * scale) as u32,
-        (svg_size.height() * scale) as u32,
-    )
-    .ok_or(usvg::Error::InvalidSize)?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(width as u32, height as u32)
+        .ok_or(usvg::Error::InvalidSize)?;
 
-    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
+    let transform = resvg::tiny_skia::Transform::from_scale(
+        width / svg_size.width(),
+        height / svg_size.height(),
+    );
+
     resvg::render(tree, transform, &mut pixmap.as_mut());
 
     Ok(pixmap)
