@@ -2867,9 +2867,38 @@ fn config_path_for(
 async fn load_devcontainer_contents(
     context: &DevContainerContext,
     config_path: &Path,
+    command_runner: &Arc<dyn CommandRunner>,
 ) -> Result<String, DevContainerError> {
-    context.fs.load(config_path).await.map_err(|e| {
-        log::error!("Unable to read devcontainer contents: {e}");
+    let DevContainerHost::Remote(_) = &context.host else {
+        return context.fs.load(config_path).await.map_err(|e| {
+            log::error!("Unable to read devcontainer contents: {e}");
+            DevContainerError::DevContainerParseFailed
+        });
+    };
+
+    // The configuration lives on the host, and Zed's client-side `Fs` only
+    // reaches this machine. Reading it through the host's own transport keeps
+    // the read on the same connection as everything else the host does.
+    let mut command = context.host.command(
+        "cat",
+        &[config_path.display().to_string()],
+        &HashMap::new(),
+        None,
+    )?;
+    let output = command_runner
+        .run_command(&mut command)
+        .await
+        .map_err(|e| {
+            log::error!("Unable to read devcontainer contents from the host: {e}");
+            DevContainerError::DevContainerParseFailed
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!("Unable to read devcontainer contents from the host: {stderr}");
+        return Err(DevContainerError::DevContainerParseFailed);
+    }
+    String::from_utf8(output.stdout).map_err(|e| {
+        log::error!("The devcontainer configuration on the host is not valid UTF-8: {e}");
         DevContainerError::DevContainerParseFailed
     })
 }
@@ -2896,12 +2925,14 @@ pub(crate) async fn read_devcontainer_configuration(
     let docker_client = container_client_for(context).await;
     let project_path = context.project_directory.as_ref();
     let config_path = config_path_for(&context.host, project_path, &config);
-    let devcontainer_contents = load_devcontainer_contents(context, &config_path).await?;
+    let command_runner: Arc<dyn CommandRunner> = Arc::new(DefaultCommandRunner::new());
+    let devcontainer_contents =
+        load_devcontainer_contents(context, &config_path, &command_runner).await?;
     let mut dev_container = DevContainerManifest::new(
         context,
         environment,
         docker_client,
-        Arc::new(DefaultCommandRunner::new()),
+        command_runner,
         config,
         project_path,
         devcontainer_contents,
@@ -2919,12 +2950,14 @@ pub(crate) async fn spawn_dev_container(
 ) -> Result<DevContainerUp, DevContainerError> {
     let docker_client = container_client_for(context).await;
     let config_path = config_path_for(&context.host, local_project_path, &config);
-    let devcontainer_contents = load_devcontainer_contents(context, &config_path).await?;
+    let command_runner: Arc<dyn CommandRunner> = Arc::new(DefaultCommandRunner::new());
+    let devcontainer_contents =
+        load_devcontainer_contents(context, &config_path, &command_runner).await?;
     let mut devcontainer_manifest = DevContainerManifest::new(
         context,
         environment,
         docker_client,
-        Arc::new(DefaultCommandRunner::new()),
+        command_runner,
         config,
         local_project_path,
         devcontainer_contents,
@@ -3800,6 +3833,58 @@ mod test {
         .await
     }
 
+    /// A remote project's configuration is not on this machine, and Zed's
+    /// client-side `Fs` only reaches this machine, so the read has to travel
+    /// the host connection like every other host operation.
+    #[gpui::test]
+    async fn devcontainer_configuration_is_read_from_the_host(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let command_runner = Arc::new(TestCommandRunner::new());
+        let worktree_store =
+            cx.new(|_cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::default()));
+        let project_environment =
+            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx));
+
+        let context = DevContainerContext {
+            project_directory: SanitizedPath::cast_arc(SanitizedPath::new_arc(&PathBuf::from(
+                "/home/dev/app",
+            ))),
+            host: DevContainerHost::Remote(Arc::new(crate::FakeRemoteConnection::default())),
+            use_podman: false,
+            use_buildkit: None,
+            fs: fs.clone(),
+            http_client: fake_http_client(),
+            environment: project_environment.downgrade(),
+        };
+
+        let config_path = config_path_for(
+            &context.host,
+            context.project_directory.as_ref(),
+            &DevContainerConfig::default_config(),
+        );
+        let runner: Arc<dyn CommandRunner> = command_runner.clone();
+        load_devcontainer_contents(&context, &config_path, &runner)
+            .await
+            .expect("the host read is what produces the contents");
+
+        // The fake filesystem is empty, so a read that fell back to it would
+        // have failed rather than returning contents.
+        assert!(fs.files().is_empty());
+
+        let recorded = command_runner.commands_by_program("ssh");
+        assert_eq!(recorded.len(), 1, "the read is a single host command");
+        assert_eq!(
+            recorded[0].args,
+            vec![
+                "host".to_string(),
+                "--".to_string(),
+                "'cat'".to_string(),
+                "'/home/dev/app/.devcontainer/devcontainer.json'".to_string(),
+            ],
+            "the configuration path must be sent to the host, quoted by the transport"
+        );
+    }
+
     /// Labels and mounts describe the engine host's filesystem. Rendering them
     /// in the client's style is the classic cross-platform break: a POSIX
     /// remote opened from Windows would get backslashed labels, so Zed would
@@ -4065,7 +4150,13 @@ mod test {
         };
         let project_path = PathBuf::from(TEST_PROJECT_PATH);
         let config_path = config_path_for(&context.host, &project_path, &local_config);
-        let contents = load_devcontainer_contents(&context, &config_path).await?;
+        // The fake filesystem stands in for the host's filesystem here, so
+        // tests with a remote host read from it directly rather than issuing a
+        // command no fake process would answer.
+        let contents = fs.load(&config_path).await.map_err(|e| {
+            log::error!("Unable to read devcontainer contents: {e}");
+            DevContainerError::DevContainerParseFailed
+        })?;
         let manifest = DevContainerManifest::new(
             &context,
             environment,
