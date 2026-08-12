@@ -145,6 +145,74 @@ pub(crate) fn down_by_rows(
     )
 }
 
+pub struct HorizontalMotion<'a> {
+    map: &'a DisplaySnapshot,
+    identity: Option<IdentityClips<'a>>,
+}
+
+struct IdentityClips<'a> {
+    line_len_clip: rope::ClipPointConverter<'a>,
+    final_clip: rope::ClipPointConverter<'a>,
+    max_point: Point,
+}
+
+impl<'a> HorizontalMotion<'a> {
+    pub fn new(map: &'a DisplaySnapshot) -> Self {
+        let identity = if map.maps_points_identically() && !map.clips_at_line_ends() {
+            map.buffer_snapshot()
+                .as_singleton_without_transforms()
+                .map(|buffer| {
+                    let rope = buffer.as_rope();
+                    IdentityClips {
+                        line_len_clip: rope.clip_point_converter(),
+                        final_clip: rope.clip_point_converter(),
+                        max_point: rope.max_point(),
+                    }
+                })
+        } else {
+            None
+        };
+        Self { map, identity }
+    }
+
+    pub fn left(&mut self, point: DisplayPoint) -> DisplayPoint {
+        let Some(identity) = self.identity.as_mut() else {
+            return left(self.map, point);
+        };
+        let mut point = Point::new(point.row().0, point.column());
+        if point.column > 0 {
+            point.column -= 1;
+        } else if point.row > 0 {
+            point.row -= 1;
+            point.column = identity
+                .line_len_clip
+                .map(Point::new(point.row, u32::MAX), Bias::Left)
+                .column;
+        }
+        let clipped = identity.final_clip.map(point, Bias::Left);
+        DisplayPoint::new(DisplayRow(clipped.row), clipped.column)
+    }
+
+    pub fn right(&mut self, point: DisplayPoint) -> DisplayPoint {
+        let Some(identity) = self.identity.as_mut() else {
+            return right(self.map, point);
+        };
+        let mut point = Point::new(point.row().0, point.column());
+        let line_len = identity
+            .line_len_clip
+            .map(Point::new(point.row, u32::MAX), Bias::Left)
+            .column;
+        if point.column < line_len {
+            point.column += 1;
+        } else if point.row < identity.max_point.row {
+            point.row += 1;
+            point.column = 0;
+        }
+        let clipped = identity.final_clip.map(point, Bias::Right);
+        DisplayPoint::new(DisplayRow(clipped.row), clipped.column)
+    }
+}
+
 pub struct VerticalMotion<'a> {
     map: &'a DisplaySnapshot,
     details: &'a TextLayoutDetails,
