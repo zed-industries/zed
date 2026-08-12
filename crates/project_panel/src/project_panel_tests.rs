@@ -4564,6 +4564,263 @@ async fn test_drag_including_worktree_root_only_reorders(cx: &mut gpui::TestAppC
 }
 
 #[gpui::test]
+async fn test_rename_survives_window_deactivation(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({ "file1.txt": "content" }))
+        .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/file1.txt", cx);
+    panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    assert!(
+        panel.read_with(cx, |panel, _| panel.state.edit_state.is_some()),
+        "Rename should have started"
+    );
+
+    cx.deactivate_window();
+
+    assert!(
+        panel.read_with(cx, |panel, _| panel.state.edit_state.is_some()),
+        "Rename should not be cancelled when the window is deactivated, e.g. by a keyboard layout switcher grabbing keyboard focus"
+    );
+}
+
+#[gpui::test]
+async fn test_file_drag_paths_use_worktree_snapshot(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root_path = temp_dir.path();
+    let existing_a = root_path.join("existing_a.txt");
+    let existing_b = root_path.join("existing_b.txt");
+    let deleted_directory = root_path.join("deleted_dir");
+    std::fs::write(&existing_a, "a").unwrap();
+    std::fs::write(&existing_b, "b").unwrap();
+    std::fs::create_dir(&deleted_directory).unwrap();
+    std::fs::write(deleted_directory.join("nested.txt"), "nested").unwrap();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree_from_real_fs(root_path, root_path).await;
+    std::fs::remove_dir_all(&deleted_directory).unwrap();
+
+    let project = Project::test(fs.clone(), [root_path], cx).await;
+    let (worktree_id, existing_a_id, existing_b_id, deleted_directory_id) = cx.update(|cx| {
+        let project = project.read(cx);
+        let worktree = project.worktrees(cx).next().unwrap();
+        let worktree = worktree.read(cx);
+        (
+            worktree.id(),
+            worktree
+                .entry_for_path(rel_path("existing_a.txt"))
+                .unwrap()
+                .id,
+            worktree
+                .entry_for_path(rel_path("existing_b.txt"))
+                .unwrap()
+                .id,
+            worktree.entry_for_path(rel_path("deleted_dir")).unwrap().id,
+        )
+    });
+
+    let dragged_selection = DraggedSelection {
+        active_selection: SelectedEntry {
+            worktree_id,
+            entry_id: existing_a_id,
+        },
+        marked_selections: Arc::from(vec![
+            SelectedEntry {
+                worktree_id,
+                entry_id: existing_a_id,
+            },
+            SelectedEntry {
+                worktree_id,
+                entry_id: existing_b_id,
+            },
+            SelectedEntry {
+                worktree_id,
+                entry_id: deleted_directory_id,
+            },
+        ]),
+    };
+
+    let paths = cx
+        .update(|cx| {
+            ProjectPanel::file_drag_paths_for_selections(
+                &project,
+                dragged_selection.items().copied(),
+                cx,
+            )
+        })
+        .unwrap();
+
+    assert_eq!(
+        paths.entries(),
+        &[
+            (existing_a, false),
+            (existing_b, false),
+            (deleted_directory, true),
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_external_paths_for_dragged_selection_uses_active_selection_unless_marked(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root_path = temp_dir.path();
+    let active_path = root_path.join("active.txt");
+    let marked_path = root_path.join("marked.txt");
+    std::fs::write(&active_path, "active").unwrap();
+    std::fs::write(&marked_path, "marked").unwrap();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree_from_real_fs(root_path, root_path).await;
+
+    let project = Project::test(fs.clone(), [root_path], cx).await;
+    let (worktree_id, active_id, marked_id) = cx.update(|cx| {
+        let project = project.read(cx);
+        let worktree = project.worktrees(cx).next().unwrap();
+        let worktree = worktree.read(cx);
+        (
+            worktree.id(),
+            worktree.entry_for_path(rel_path("active.txt")).unwrap().id,
+            worktree.entry_for_path(rel_path("marked.txt")).unwrap().id,
+        )
+    });
+
+    let dragged_selection = DraggedSelection {
+        active_selection: SelectedEntry {
+            worktree_id,
+            entry_id: active_id,
+        },
+        marked_selections: Arc::from(vec![SelectedEntry {
+            worktree_id,
+            entry_id: marked_id,
+        }]),
+    };
+
+    let paths = cx
+        .update(|cx| {
+            ProjectPanel::file_drag_paths_for_selections(
+                &project,
+                dragged_selection.items().copied(),
+                cx,
+            )
+        })
+        .unwrap();
+
+    assert_eq!(paths.entries(), &[(active_path, false)]);
+}
+
+#[gpui::test]
+async fn test_external_paths_for_dragged_selection_resolves_folded_directory(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {
+                "b": {
+                    "c": {
+                        "d": {}
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+    select_folded_path_with_mark(&panel, "root/a/b/c/d", "root/a/b", cx);
+
+    let dragged_selection = panel.read_with(cx, |panel, _| DraggedSelection {
+        active_selection: panel.selection.unwrap(),
+        marked_selections: Arc::from(panel.marked_entries.clone()),
+    });
+    let paths = cx
+        .update(|_, cx| {
+            panel.read_with(cx, |panel, cx| {
+                panel.external_paths_for_dragged_selection(&dragged_selection, cx)
+            })
+        })
+        .unwrap();
+
+    assert_eq!(paths.entries(), &[(PathBuf::from("/root/a/b"), true)]);
+}
+
+#[gpui::test]
+async fn test_external_paths_for_dragged_selection_skips_remote_worktrees(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/local", json!({})).await;
+    let project = Project::test(fs.clone(), ["/local".as_ref()], cx).await;
+
+    let remote_worktree = project.update(cx, |project, cx| {
+        project.add_test_remote_worktree("/remote/project", cx)
+    });
+    let remote_worktree_id = remote_worktree.read_with(cx, |worktree, _| worktree.id());
+
+    let dragged_selection = DraggedSelection {
+        active_selection: SelectedEntry {
+            worktree_id: remote_worktree_id,
+            entry_id: ProjectEntryId::from_usize(1),
+        },
+        marked_selections: Arc::from(vec![SelectedEntry {
+            worktree_id: remote_worktree_id,
+            entry_id: ProjectEntryId::from_usize(1),
+        }]),
+    };
+
+    let paths = cx.update(|cx| {
+        ProjectPanel::file_drag_paths_for_selections(
+            &project,
+            dragged_selection.items().copied(),
+            cx,
+        )
+    });
+
+    assert!(paths.is_none());
+}
+
+#[gpui::test]
 async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
     let fs = FakeFs::new(cx.executor());
@@ -10979,6 +11236,71 @@ async fn run_create_file_in_folded_path_case(
     }
 }
 
+#[gpui::test]
+async fn test_focus_follows_mouse_into_blank_area(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.focus_follows_mouse = Some(settings::FocusFollowsMouse {
+                    enabled: Some(true),
+                    debounce_ms: Some(100),
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "a.txt": "" })).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<ProjectPanel>(window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            let worktree_id = workspace.worktrees(cx).next().unwrap().read(cx).id();
+            let project_path = ProjectPath {
+                worktree_id,
+                path: rel_path("a.txt").into(),
+            };
+            workspace.open_path(project_path, None, true, window, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            !panel.focus_handle(cx).is_focused(window),
+            "Editor should be focused after opening a file"
+        );
+    });
+
+    // Hover over the blank space below the last entry in the project panel,
+    // which lives in the right dock by default.
+    cx.simulate_mouse_move(point(px(1800.), px(600.)), None, Modifiers::none());
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.focus_handle(cx).is_focused(window),
+            "Project panel should be focused after hovering the blank area below the entries"
+        );
+    });
+}
+
 pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
@@ -11128,12 +11450,12 @@ fn ensure_no_open_items_and_panes(workspace: &Entity<Workspace>, cx: &mut Visual
     });
 }
 
-struct TestProjectItemView {
+pub(crate) struct TestProjectItemView {
     focus_handle: FocusHandle,
     path: ProjectPath,
 }
 
-struct TestProjectItem {
+pub(crate) struct TestProjectItem {
     path: ProjectPath,
 }
 

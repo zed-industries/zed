@@ -773,7 +773,12 @@ async fn test_edit_prediction_preview_does_not_hide_code_actions_on_modifier_pre
 
     let provider = cx.new(|_| FakeEditPredictionDelegate::default());
     cx.update_editor(|editor, window, cx| {
-        editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
+        editor.set_edit_prediction_provider(
+            Some(provider.clone()),
+            EditPredictionRequestTrigger::EditorCreated,
+            window,
+            cx,
+        );
     });
 
     let snapshot = cx.buffer_snapshot();
@@ -1634,7 +1639,12 @@ fn assign_editor_completion_provider(
     cx: &mut EditorTestContext,
 ) {
     cx.update_editor(|editor, window, cx| {
-        editor.set_edit_prediction_provider(Some(provider), window, cx);
+        editor.set_edit_prediction_provider(
+            Some(provider),
+            EditPredictionRequestTrigger::EditorCreated,
+            window,
+            cx,
+        );
     })
 }
 
@@ -1672,7 +1682,12 @@ fn assign_editor_completion_provider_non_zed(
     cx: &mut EditorTestContext,
 ) {
     cx.update_editor(|editor, window, cx| {
-        editor.set_edit_prediction_provider(Some(provider), window, cx);
+        editor.set_edit_prediction_provider(
+            Some(provider),
+            EditPredictionRequestTrigger::EditorCreated,
+            window,
+            cx,
+        );
     })
 }
 

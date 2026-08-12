@@ -625,7 +625,9 @@ impl TypeScriptLspAdapter {
 
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
-            .read_text_file(RelPath::unix(".yarn/sdks/typescript/lib/typescript.js").unwrap())
+            .read_text_file(
+                RelPath::from_unix_str(".yarn/sdks/typescript/lib/typescript.js").unwrap(),
+            )
             .await
             .is_ok();
 
@@ -635,6 +637,8 @@ impl TypeScriptLspAdapter {
             "node_modules/typescript/lib"
         };
 
+        // typescript-language-server doesn't support TypeScript 7+, which no longer
+        // ships `tsserver.js`.
         if self
             .fs
             .is_file(
@@ -904,16 +908,46 @@ async fn get_cached_ts_server_binary(
 mod tests {
     use std::path::Path;
 
-    use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
+    use gpui::{AppContext as _, BackgroundExecutor, Hsla, TestAppContext};
     use project::FakeFs;
+    use rope::Rope;
     use serde_json::json;
     use task::TaskTemplates;
+    use theme::SyntaxTheme;
     use unindent::Unindent;
     use util::{path, rel_path::rel_path};
 
     use crate::typescript::{
         PackageJsonData, TypeScriptContextProvider, replace_test_name_parameters,
     };
+
+    #[test]
+    fn test_class_instantiation_highlighting() {
+        let source = Rope::from("class Dog {}\nconst dog = new Dog();");
+        let theme = SyntaxTheme::new_test([("type", Hsla::blue()), ("type.class", Hsla::green())]);
+
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+            crate::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            language.set_theme(&theme);
+            let class_highlight = language
+                .grammar()
+                .and_then(|grammar| grammar.highlight_id_for_name("type.class"))
+                .expect("type.class highlight should be defined");
+
+            assert_eq!(
+                language.highlight_text(&source, 0..source.len()),
+                vec![(6..9, class_highlight), (29..32, class_highlight)],
+                "{} class instantiations should use the type.class highlight",
+                language.name()
+            );
+        }
+    }
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {

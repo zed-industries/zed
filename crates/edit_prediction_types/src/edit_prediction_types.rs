@@ -17,6 +17,11 @@ pub enum EditPredictionRequestTrigger {
     LSPCompletionAccepted,
     PredictionAccepted,
     PredictionPartiallyAccepted,
+    EditorCreated,
+    ProviderChanged,
+    UserInfoChanged,
+    VimModeChanged,
+    SettingsChanged,
     #[default]
     Other,
 }

@@ -59,7 +59,21 @@ pub enum LanguageModelCompletionEvent {
     },
     ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
-    Compaction(CompactionContent),
+    Compaction(CompactionUpdate),
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum CompactionUpdate {
+    /// A streamed response has started producing replacement context.
+    Started,
+    /// A chunk of a natural-language summary, suitable for incremental display.
+    SummaryDelta(Arc<str>),
+    /// The complete context to persist and use in subsequent requests.
+    Finished(CompactedContext),
+    /// The provider abandoned the compaction without producing replacement
+    /// context. This is a documented outcome, not a protocol error: the
+    /// conversation simply continues on the uncompacted transcript.
+    Failed,
 }
 
 impl LanguageModelCompletionEvent {
@@ -131,6 +145,11 @@ pub enum LanguageModelCompletionError {
     },
     #[error("invalid request format to {provider}'s API: {message}")]
     BadRequestFormat {
+        provider: LanguageModelProviderName,
+        message: String,
+    },
+    #[error("invalid encrypted content from {provider}'s API: {message}")]
+    InvalidEncryptedContent {
         provider: LanguageModelProviderName,
         message: String,
     },
@@ -245,7 +264,9 @@ impl LanguageModelCompletionError {
     ) -> Self {
         match status_code {
             StatusCode::BAD_REQUEST => {
-                if is_context_window_exceeded_message(&message) {
+                if is_invalid_encrypted_content_message(&message) {
+                    Self::InvalidEncryptedContent { provider, message }
+                } else if is_context_window_exceeded_message(&message) {
                     Self::PromptTooLarge { tokens: None }
                 } else {
                     Self::BadRequestFormat { provider, message }
@@ -277,6 +298,18 @@ impl LanguageModelCompletionError {
             },
         }
     }
+}
+
+fn is_invalid_encrypted_content_message(message: &str) -> bool {
+    let Ok(response) = serde_json::from_str::<serde_json::Value>(message) else {
+        return false;
+    };
+    response
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .or_else(|| response.get("code"))
+        .and_then(serde_json::Value::as_str)
+        == Some("invalid_encrypted_content")
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
@@ -557,6 +590,7 @@ pub enum ModelMode {
     Thinking {
         budget_tokens: Option<u32>,
     },
+    Adaptive,
 }
 
 /// Settings-layer–free reasoning-effort enum.
@@ -679,6 +713,25 @@ mod tests {
         assert!(matches!(
             error,
             LanguageModelCompletionError::BadRequestFormat { .. }
+        ));
+    }
+
+    #[test]
+    fn test_from_http_status_maps_invalid_encrypted_content() {
+        let message = r#"{"error":{"type":"invalid_request_error","code":"invalid_encrypted_content","message":"The encrypted content is invalid.","param":"input"}}"#;
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("OpenAI").into(),
+            StatusCode::BAD_REQUEST,
+            message.to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::InvalidEncryptedContent {
+                provider,
+                message: error_message,
+            } if provider.0 == "OpenAI" && error_message == message
         ));
     }
 

@@ -116,6 +116,7 @@ impl Render for RunningState {
             self.panes
                 .render(
                     None,
+                    None,
                     &ActivePaneDecorator::new(active, &self.workspace),
                     window,
                     cx,
@@ -1106,7 +1107,7 @@ impl RunningState {
 
             let request_type = match dap_registry
                 .adapter(&adapter)
-                .with_context(|| format!("{}: is not a valid adapter name", &adapter)) {
+                .with_context(|| format!("{adapter}: is not a valid adapter name")) {
                     Ok(adapter) => adapter.request_kind(&config).await,
                     Err(e) => Err(e)
                 };
@@ -1256,7 +1257,7 @@ impl RunningState {
 
                 let scenario = dap_registry
                     .adapter(&adapter)
-                    .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))?.config_from_zed_format(zed_config)
+                    .with_context(|| anyhow!("{adapter}: is not a valid adapter name"))?.config_from_zed_format(zed_config)
                     .await?;
                 config = scenario.config;
                 util::merge_non_null_json_value_into(extra_config, &mut config);

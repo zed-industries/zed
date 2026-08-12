@@ -3,13 +3,11 @@
 use std::sync::Arc;
 
 use gpui::{
-    Action, AnyElement, App, AppContext as _, Context, Entity, IntoElement, Pixels, StyledText,
-    Task, Window, px,
+    AnyElement, App, AppContext as _, Context, Entity, IntoElement, Pixels, StyledText, Task,
+    Window, px,
 };
 use language::{Bias, Buffer, HighlightedText, HighlightedTextBuilder, ToPoint};
-use picker::{
-    MatchLocation, PreviewBackend, PreviewLayout, PreviewSource, PreviewUpdate, ToMultiBuffer,
-};
+use picker::{MatchLocation, PreviewBackend, PreviewLayout, PreviewSource, PreviewUpdate};
 use project::{Project, Symbol};
 use rope::Point;
 use settings::Settings;
@@ -335,7 +333,7 @@ impl EditorPreview {
             div()
                 .flex_1()
                 .overflow_hidden()
-                .child(self.editor_as_giant_button())
+                .child(self.occluded_editor())
                 .into_any_element()
         }
     }
@@ -357,7 +355,7 @@ impl EditorPreview {
             .child(content)
     }
 
-    fn editor_as_giant_button(&self) -> impl IntoElement {
+    fn occluded_editor(&self) -> impl IntoElement {
         div()
             .relative()
             .size_full()
@@ -367,10 +365,7 @@ impl EditorPreview {
                     .id("picker-preview-editor")
                     .absolute()
                     .inset_0()
-                    .occlude()
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(ToMultiBuffer.boxed_clone(), cx);
-                    }),
+                    .occlude(),
             )
     }
 }
