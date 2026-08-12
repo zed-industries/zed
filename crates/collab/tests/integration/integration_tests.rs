@@ -5736,7 +5736,7 @@ async fn test_lsp_hover(
         let new_server = language_servers[i].next().await.unwrap_or_else(|| {
             panic!(
                 "Failed to get language server #{i} with name {}",
-                &language_server_names[i]
+                language_server_names[i]
             )
         });
         let new_server_name = new_server.server.name();
@@ -5951,6 +5951,7 @@ async fn test_project_symbols(
         .unwrap();
     assert_eq!(symbols.len(), 1);
     assert_eq!(symbols[0].name, "TWO");
+    assert_eq!(symbols[0].kind, language::SymbolKind::Constant);
 
     // Open one of the returned symbols.
     let buffer_b_2 = project_b
