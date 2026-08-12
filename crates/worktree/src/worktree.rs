@@ -288,11 +288,43 @@ struct BackgroundScannerState {
 /// inode-based rename heuristics in that case.
 #[derive(Default)]
 struct RemovedEntries {
+    current: RemovedEntriesGeneration,
+    previous: RemovedEntriesGeneration,
+}
+
+#[derive(Default)]
+struct RemovedEntriesGeneration {
     by_inode: HashMap<u64, Entry>,
     by_path: HashMap<Arc<RelPath>, Entry>,
 }
 
 impl RemovedEntries {
+    fn insert(&mut self, entry: &Entry) {
+        self.current.insert(entry);
+    }
+
+    fn take_by_path(&mut self, path: &RelPath, inode: u64) -> Option<Entry> {
+        self.current
+            .take_by_path(path, inode)
+            .or_else(|| self.previous.take_by_path(path, inode))
+    }
+
+    fn take_by_inode(&mut self, inode: u64) -> Option<Entry> {
+        self.current
+            .take_by_inode(inode)
+            .or_else(|| self.previous.take_by_inode(inode))
+    }
+
+    fn rotate(&mut self) -> impl Iterator<Item = Entry> {
+        let dropped = mem::replace(&mut self.previous, mem::take(&mut self.current));
+        dropped
+            .by_inode
+            .into_values()
+            .chain(dropped.by_path.into_values())
+    }
+}
+
+impl RemovedEntriesGeneration {
     fn insert(&mut self, entry: &Entry) {
         self.by_path.insert(entry.path.clone(), entry.clone());
         match self.by_inode.entry(entry.inode) {
@@ -4577,7 +4609,28 @@ impl BackgroundScanner {
     async fn process_scan_request(&self, mut request: ScanRequest, scanning: bool) -> bool {
         log::debug!("rescanning paths {:?}", request.relative_paths);
 
+        {
+            let state = self.state.lock().await;
+            let mut missing_ancestors = Vec::new();
+            for path in &request.relative_paths {
+                let mut candidates = Vec::new();
+                let mut covered_by_existing_ancestor = false;
+                for ancestor in path.ancestors().skip(1) {
+                    if let Some(entry) = state.snapshot.entry_for_path(ancestor) {
+                        covered_by_existing_ancestor =
+                            entry.kind == EntryKind::UnloadedDir || entry.kind == EntryKind::File;
+                        break;
+                    }
+                    candidates.push(ancestor.into_arc());
+                }
+                if !covered_by_existing_ancestor {
+                    missing_ancestors.extend(candidates);
+                }
+            }
+            request.relative_paths.extend(missing_ancestors);
+        }
         request.relative_paths.sort_unstable();
+        request.relative_paths.dedup();
         self.forcibly_load_paths(&request.relative_paths).await;
 
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
@@ -5099,8 +5152,8 @@ impl BackgroundScanner {
         {
             let mut state = self.state.lock().await;
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
-            let RemovedEntries { by_inode, by_path } = mem::take(&mut state.removed_entries);
-            for entry in by_inode.into_values().chain(by_path.into_values()) {
+            let dropped_entries = state.removed_entries.rotate().collect::<Vec<_>>();
+            for entry in dropped_entries {
                 state.scanned_dirs.remove(&entry.id);
             }
         }
