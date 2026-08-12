@@ -51,9 +51,15 @@ impl GitHubAuthentication {
     ) -> Result<Self> {
         let client_id = GITHUB_APP_CLIENT_ID
             .filter(|client_id| !client_id.is_empty())
+            .map(str::to_owned)
+            .or_else(|| {
+                std::env::var("ZED_GITHUB_APP_CLIENT_ID")
+                    .ok()
+                    .filter(|client_id| !client_id.is_empty())
+            })
             .ok_or_else(|| {
                 anyhow!(
-                    "GitHub pull request sign-in is not configured; set ZED_GITHUB_APP_CLIENT_ID when building Zed"
+                    "GitHub pull request sign-in is not configured; set ZED_GITHUB_APP_CLIENT_ID when building or launching Zed"
                 )
             })?;
         Ok(Self::with_client_id(
@@ -224,5 +230,110 @@ impl TokenResponse {
                 .refresh_token_expires_in
                 .map(|seconds| now + seconds),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_client::{FakeHttpClient, Response, StatusCode};
+    use pretty_assertions::assert_eq;
+    use std::{future::Future, pin::Pin};
+
+    struct FakeCredentialsProvider;
+
+    impl CredentialsProvider for FakeCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[gpui::test]
+    async fn device_flow_serializes_requests_and_handles_poll_responses() {
+        let http_client = FakeHttpClient::create(|request| async move {
+            assert_eq!(request.method(), Method::POST);
+            let path = request.uri().path().to_string();
+            let mut request_body = request.into_body();
+            let mut request_body_text = String::new();
+            request_body.read_to_string(&mut request_body_text).await?;
+            let form = form_urlencoded::parse(request_body_text.as_bytes())
+                .into_owned()
+                .collect::<std::collections::HashMap<_, _>>();
+            assert_eq!(form.get("client_id").map(String::as_str), Some("client-id"));
+
+            let body = match path.as_str() {
+                "/login/device/code" => {
+                    assert_eq!(form.len(), 1);
+                    r#"{
+                        "device_code":"device-code",
+                        "user_code":"ABCD-EFGH",
+                        "verification_uri":"https://github.com/login/device",
+                        "expires_in":900,
+                        "interval":5
+                    }"#
+                }
+                "/login/oauth/access_token" => {
+                    assert_eq!(
+                        form.get("grant_type").map(String::as_str),
+                        Some("urn:ietf:params:oauth:grant-type:device_code")
+                    );
+                    match form.get("device_code").map(String::as_str) {
+                        Some("slow") => r#"{"error":"slow_down"}"#,
+                        Some("complete") => r#"{"access_token":"token"}"#,
+                        device_code => panic!("unexpected device code: {device_code:?}"),
+                    }
+                }
+                path => panic!("unexpected authentication path: {path}"),
+            };
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(AsyncBody::from(body))?)
+        });
+        let authentication = GitHubAuthentication::with_client_id(
+            http_client,
+            Arc::new(FakeCredentialsProvider),
+            "client-id",
+        );
+
+        let authorization = authentication.request_device_authorization().await.unwrap();
+        assert_eq!(authorization.device_code, "device-code");
+        assert_eq!(authorization.user_code, "ABCD-EFGH");
+        assert_eq!(authorization.expires_in, Duration::from_secs(900));
+        assert_eq!(authorization.interval, Duration::from_secs(5));
+
+        assert!(matches!(
+            authentication.poll_device_authorization("slow").await.unwrap(),
+            DeviceFlowPoll::SlowDown(delay) if delay == Duration::from_secs(5)
+        ));
+        let DeviceFlowPoll::Complete(credentials) = authentication
+            .poll_device_authorization("complete")
+            .await
+            .unwrap()
+        else {
+            panic!("expected completed device flow");
+        };
+        assert_eq!(credentials.access_token, "token");
     }
 }

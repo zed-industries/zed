@@ -1,23 +1,24 @@
-use crate::{
-    askpass_modal::AskPassModal, branch_diff::BranchDiff, review_comment_modal::ReviewCommentModal,
-};
+use crate::{branch_diff::BranchDiff, review_comment_modal::ReviewCommentModal};
 use anyhow::{Context as _, Result, anyhow};
 use askpass::AskPassDelegate;
+use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use git::{
     GitHostingProviderRegistry, parse_git_remote_url,
-    repository::{FetchOptions, Remote},
+    repository::{FetchOptions, Remote, RepoPath},
 };
+use git_ui_core::askpass_modal::AskPassModal;
 use github_pull_requests::{
     DeviceAuthorization, DeviceFlowPoll, GitHubAuthentication, GitHubClient, PullRequestDetails,
     PullRequestList, PullRequestSummary, ReviewEvent, ReviewThread,
 };
 use gpui::{
-    Action, App, AppContext as _, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, PromptLevel, Render, SharedString, Task, WeakEntity, Window,
-    actions, px,
+    Action, App, AppContext as _, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement, PromptLevel, Render, SharedString, Subscription,
+    Task, WeakEntity, Window, actions, px,
 };
 use http_client::HttpClient;
-use project::Project;
+use language::Point;
+use project::{Project, git_store::GitStoreEvent};
 use std::{sync::Arc, time::Instant};
 use ui::{Button, ButtonStyle, IconButton, IconName, Label, prelude::*};
 use workspace::{
@@ -45,6 +46,21 @@ pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
         workspace.toggle_panel_focus::<PullRequestsPanel>(window, cx);
     });
+    workspace.register_action(|workspace, _: &Refresh, _window, cx| {
+        if let Some(panel) = workspace.panel::<PullRequestsPanel>(cx) {
+            panel.update(cx, |panel, cx| panel.refresh(cx));
+        }
+    });
+    workspace.register_action(|workspace, _: &SignIn, _window, cx| {
+        if let Some(panel) = workspace.panel::<PullRequestsPanel>(cx) {
+            panel.update(cx, |panel, cx| panel.sign_in(cx));
+        }
+    });
+    workspace.register_action(|workspace, _: &SignOut, _window, cx| {
+        if let Some(panel) = workspace.panel::<PullRequestsPanel>(cx) {
+            panel.update(cx, |panel, cx| panel.sign_out(cx));
+        }
+    });
 }
 
 enum PanelState {
@@ -64,9 +80,11 @@ pub struct PullRequestsPanel {
     authentication: Option<Arc<GitHubAuthentication>>,
     http_client: Arc<dyn HttpClient>,
     client: Option<Arc<GitHubClient>>,
+    listed_repository_id: Option<EntityId>,
     state: PanelState,
     position: DockPosition,
     active_task: Option<Task<Result<()>>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl PullRequestsPanel {
@@ -76,6 +94,7 @@ impl PullRequestsPanel {
     ) -> Result<Entity<Self>> {
         workspace.update_in(&mut cx, |workspace, _window, cx| {
             let project = workspace.project().clone();
+            let git_store = project.read(cx).git_store().clone();
             let http_client = cx.http_client();
             let authentication = GitHubAuthentication::new(
                 http_client.clone(),
@@ -83,6 +102,16 @@ impl PullRequestsPanel {
             )
             .map(Arc::new);
             cx.new(|cx| {
+                let repository_subscription = cx.subscribe(
+                    &git_store,
+                    |this: &mut Self, _, event: &GitStoreEvent, cx| {
+                        if matches!(event, GitStoreEvent::ActiveRepositoryChanged(_))
+                            && this.client.is_some()
+                        {
+                            this.refresh(cx);
+                        }
+                    },
+                );
                 let mut panel = Self {
                     workspace: workspace.weak_handle(),
                     project,
@@ -90,9 +119,11 @@ impl PullRequestsPanel {
                     authentication: authentication.as_ref().ok().cloned(),
                     http_client,
                     client: None,
+                    listed_repository_id: None,
                     state: PanelState::LoadingCredentials,
                     position: DockPosition::Left,
                     active_task: None,
+                    _subscriptions: vec![repository_subscription],
                 };
                 match authentication {
                     Ok(_) => panel.load_credentials(cx),
@@ -120,12 +151,14 @@ impl PullRequestsPanel {
                 }
                 Ok(None) => {
                     this.update(cx, |this, cx| {
+                        this.active_task = None;
                         this.state = PanelState::SignedOut;
                         cx.notify();
                     })?;
                 }
                 Err(error) => {
                     this.update(cx, |this, cx| {
+                        this.active_task = None;
                         this.state = PanelState::Error(error.to_string().into());
                         cx.notify();
                     })?;
@@ -136,7 +169,7 @@ impl PullRequestsPanel {
         self.active_task = Some(task);
     }
 
-    fn repository_coordinates(&self, cx: &App) -> Result<(Arc<str>, Arc<str>)> {
+    fn repository_coordinates(&self, cx: &App) -> Result<(EntityId, Arc<str>, Arc<str>)> {
         let repository = self
             .project
             .read(cx)
@@ -154,7 +187,7 @@ impl PullRequestsPanel {
                 "GitHub.com is the only supported pull request host"
             ));
         }
-        Ok((remote.owner, remote.repo))
+        Ok((repository.entity_id(), remote.owner, remote.repo))
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -164,16 +197,23 @@ impl PullRequestsPanel {
             return;
         };
         let coordinates = self.repository_coordinates(cx);
+        self.listed_repository_id = None;
         self.state = PanelState::Loading;
         cx.notify();
         let task = cx.spawn(async move |this, cx| {
             let result = match coordinates {
-                Ok((owner, repository)) => client.list_pull_requests(&owner, &repository).await,
+                Ok((repository_id, owner, repository)) => client
+                    .list_pull_requests(&owner, &repository)
+                    .await
+                    .map(|pull_requests| (repository_id, pull_requests)),
                 Err(error) => Err(error),
             };
             this.update(cx, |this, cx| {
                 this.state = match result {
-                    Ok(pull_requests) => PanelState::Ready(pull_requests),
+                    Ok((repository_id, pull_requests)) => {
+                        this.listed_repository_id = Some(repository_id);
+                        PanelState::Ready(pull_requests)
+                    }
                     Err(error) => PanelState::Error(error.to_string().into()),
                 };
                 this.active_task = None;
@@ -192,6 +232,7 @@ impl PullRequestsPanel {
         };
         let http_client = self.http_client.clone();
         self.state = PanelState::Loading;
+        cx.notify();
         let task = cx.spawn(async move |this, cx| {
             let authorization = authentication.request_device_authorization().await?;
             cx.update(|cx| cx.open_url(&authorization.verification_uri));
@@ -253,6 +294,7 @@ impl PullRequestsPanel {
             authentication.clear(&*cx).await?;
             this.update(cx, |this, cx| {
                 this.client = None;
+                this.listed_repository_id = None;
                 this.state = PanelState::SignedOut;
                 this.active_task = None;
                 cx.notify();
@@ -309,6 +351,14 @@ impl PullRequestsPanel {
             cx.notify();
             return;
         };
+        if self.listed_repository_id != Some(repository.entity_id()) {
+            self.state = PanelState::Error(
+                "The active repository changed; refresh pull requests before checking one out"
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
         let has_git_changes = repository.read(cx).status_summary().count > 0;
         let has_unsaved_edits = self
             .project
@@ -551,6 +601,7 @@ impl PullRequestsPanel {
         let body = self.review_body_prompt("Request changes".into(), window, cx);
         let task = cx.spawn(async move |this, cx| {
             let Ok(body) = body.await else {
+                this.update(cx, |this, _| this.active_task = None)?;
                 return Ok(());
             };
             let review_id = match &details.pending_review {
@@ -589,6 +640,235 @@ impl PullRequestsPanel {
         }));
     }
 
+    fn comment(
+        &mut self,
+        details: PullRequestDetails,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        let body = self.review_body_prompt("Comment on pull request".into(), window, cx);
+        let task = cx.spawn(async move |this, cx| {
+            let Ok(body) = body.await else {
+                this.update(cx, |this, _| this.active_task = None)?;
+                return Ok(());
+            };
+            let review_id = match &details.pending_review {
+                Some(review) => review.id.clone(),
+                None => {
+                    client
+                        .create_pending_review(&details.summary.id, &details.summary.head_sha)
+                        .await?
+                }
+            };
+            client
+                .submit_review(&details.summary.id, &review_id, ReviewEvent::Comment, &body)
+                .await?;
+            let details = client.pull_request_details(&details.summary.id).await?;
+            this.update(cx, |this, cx| {
+                this.active_task = None;
+                this.state = PanelState::Review(details);
+                cx.notify();
+            })?;
+            anyhow::Ok(())
+        });
+        self.active_task = Some(cx.spawn(async move |this, cx| {
+            if let Err(error) = task.await {
+                this.update(cx, |this, cx| {
+                    this.active_task = None;
+                    this.state = PanelState::Error(error.to_string().into());
+                    cx.notify();
+                })?;
+            }
+            anyhow::Ok(())
+        }));
+    }
+
+    fn add_inline_comment(
+        &mut self,
+        details: PullRequestDetails,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        let anchor = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_item_as::<BranchDiff>(cx)
+                    .context("Open the pull request diff before adding an inline comment")?
+                    .read(cx)
+                    .selected_review_anchor(details.summary.head_sha.clone().into(), cx)
+            })
+            .and_then(|anchor| anchor);
+        let anchor = match anchor {
+            Ok(anchor) => anchor,
+            Err(error) => {
+                self.state = PanelState::Error(error.to_string().into());
+                cx.notify();
+                return;
+            }
+        };
+        let body = self.review_body_prompt("Add inline review comment".into(), window, cx);
+        let task = cx.spawn(async move |this, cx| {
+            let Ok(body) = body.await else {
+                this.update(cx, |this, _| this.active_task = None)?;
+                return Ok(());
+            };
+            let review_id = match &details.pending_review {
+                Some(review) => review.id.clone(),
+                None => {
+                    client
+                        .create_pending_review(&details.summary.id, &details.summary.head_sha)
+                        .await?
+                }
+            };
+            client
+                .add_pending_comment(&details.summary.id, &review_id, &anchor, &body)
+                .await?;
+            let details = client.pull_request_details(&details.summary.id).await?;
+            this.update(cx, |this, cx| {
+                this.active_task = None;
+                this.state = PanelState::Review(details);
+                cx.notify();
+            })?;
+            anyhow::Ok(())
+        });
+        self.active_task = Some(cx.spawn(async move |this, cx| {
+            if let Err(error) = task.await {
+                this.update(cx, |this, cx| {
+                    this.active_task = None;
+                    this.state = PanelState::Error(error.to_string().into());
+                    cx.notify();
+                })?;
+            }
+            anyhow::Ok(())
+        }));
+    }
+
+    fn discard_review(
+        &mut self,
+        details: PullRequestDetails,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        let Some(review) = details.pending_review.clone() else {
+            return;
+        };
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Discard pending pull request review?",
+            Some("All pending inline comments in this review will be deleted."),
+            &["Discard", "Cancel"],
+            cx,
+        );
+        let task = cx.spawn(async move |this, cx| {
+            if answer.await != Ok(0) {
+                this.update(cx, |this, _| this.active_task = None)?;
+                return Ok(());
+            }
+            client
+                .discard_review(&details.summary.id, &review.id)
+                .await?;
+            let details = client.pull_request_details(&details.summary.id).await?;
+            this.update(cx, |this, cx| {
+                this.active_task = None;
+                this.state = PanelState::Review(details);
+                cx.notify();
+            })?;
+            anyhow::Ok(())
+        });
+        self.active_task = Some(cx.spawn(async move |this, cx| {
+            if let Err(error) = task.await {
+                this.update(cx, |this, cx| {
+                    this.active_task = None;
+                    this.state = PanelState::Error(error.to_string().into());
+                    cx.notify();
+                })?;
+            }
+            anyhow::Ok(())
+        }));
+    }
+
+    fn open_thread_location(
+        &mut self,
+        thread: ReviewThread,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(anchor) = thread.anchor else {
+            return;
+        };
+        let Some(repository) = self.project.read(cx).active_repository(cx) else {
+            self.state = PanelState::Error("No active Git repository".into());
+            cx.notify();
+            return;
+        };
+        let repo_path = match RepoPath::new(&anchor.path) {
+            Ok(path) => path,
+            Err(error) => {
+                self.state = PanelState::Error(error.to_string().into());
+                cx.notify();
+                return;
+            }
+        };
+        let project_path = repository
+            .read(cx)
+            .repo_path_to_project_path(&repo_path, cx);
+        let Some(project_path) = project_path else {
+            self.state = PanelState::Error(
+                format!("Could not locate {} in the active repository", anchor.path).into(),
+            );
+            cx.notify();
+            return;
+        };
+        let open_task = self.workspace.update(cx, |workspace, cx| {
+            workspace.open_path(project_path, None, true, window, cx)
+        });
+        let open_task = match open_task {
+            Ok(open_task) => open_task,
+            Err(error) => {
+                self.state = PanelState::Error(error.to_string().into());
+                cx.notify();
+                return;
+            }
+        };
+        let row = anchor.line.saturating_sub(1);
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let editor = open_task
+                .await?
+                .downcast::<Editor>()
+                .context("The review thread path did not open in an editor")?;
+            editor.update_in(cx, |editor, window, cx| {
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::focused()),
+                    window,
+                    cx,
+                    |selections| selections.select_ranges([Point::new(row, 0)..Point::new(row, 0)]),
+                );
+            })?;
+            this.update(cx, |this, _| this.active_task = None)?;
+            anyhow::Ok(())
+        });
+        self.active_task = Some(cx.spawn_in(window, async move |this, cx| {
+            if let Err(error) = task.await {
+                this.update(cx, |this, cx| {
+                    this.active_task = None;
+                    this.state = PanelState::Error(error.to_string().into());
+                    cx.notify();
+                })?;
+            }
+            anyhow::Ok(())
+        }));
+    }
+
     fn reply_to_thread(
         &mut self,
         details: PullRequestDetails,
@@ -605,6 +885,7 @@ impl PullRequestsPanel {
         let body = self.review_body_prompt("Reply to review thread".into(), window, cx);
         let task = cx.spawn(async move |this, cx| {
             let Ok(body) = body.await else {
+                this.update(cx, |this, _| this.active_task = None)?;
                 return Ok(());
             };
             client
@@ -654,24 +935,52 @@ impl PullRequestsPanel {
             .child(
                 h_flex()
                     .gap_1()
+                    .flex_wrap()
+                    .when(details.viewer_can_approve, |this| {
+                        this.child(
+                            Button::new("approve-pull-request", "Approve")
+                                .style(ButtonStyle::Filled)
+                                .on_click({
+                                    let details = details.clone();
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.approve(details.clone(), window, cx)
+                                    })
+                                }),
+                        )
+                        .child(
+                            Button::new("request-pull-request-changes", "Request Changes")
+                                .on_click({
+                                    let details = details.clone();
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.request_changes(details.clone(), window, cx)
+                                    })
+                                }),
+                        )
+                    })
+                    .child(Button::new("comment-on-pull-request", "Comment").on_click({
+                        let details = details.clone();
+                        cx.listener(move |this, _, window, cx| {
+                            this.comment(details.clone(), window, cx)
+                        })
+                    }))
                     .child(
-                        Button::new("approve-pull-request", "Approve")
-                            .style(ButtonStyle::Filled)
-                            .on_click({
-                                let details = details.clone();
-                                cx.listener(move |this, _, window, cx| {
-                                    this.approve(details.clone(), window, cx)
-                                })
-                            }),
-                    )
-                    .child(
-                        Button::new("request-pull-request-changes", "Request Changes").on_click({
+                        Button::new("add-inline-review-comment", "Add at Cursor").on_click({
                             let details = details.clone();
                             cx.listener(move |this, _, window, cx| {
-                                this.request_changes(details.clone(), window, cx)
+                                this.add_inline_comment(details.clone(), window, cx)
                             })
                         }),
                     )
+                    .when_some(details.pending_review.as_ref(), |this, _| {
+                        this.child(
+                            Button::new("discard-pending-review", "Discard Draft").on_click({
+                                let details = details.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    this.discard_review(details.clone(), window, cx)
+                                })
+                            }),
+                        )
+                    })
                     .child(
                         Button::new("open-pull-request-on-github", "Open on GitHub").on_click({
                             let url = details.summary.html_url.clone();
@@ -680,22 +989,36 @@ impl PullRequestsPanel {
                     ),
             )
             .child(Label::new(format!("Checks ({})", details.checks.len())))
-            .children(details.checks.iter().map(|check| {
-                Label::new(format!(
-                    "{} · {:?}",
-                    check.name,
-                    check.conclusion.unwrap_or_else(|| match check.state {
-                        github_pull_requests::CheckState::Queued
-                        | github_pull_requests::CheckState::InProgress => {
-                            github_pull_requests::CheckConclusion::Unknown
+            .children(
+                details
+                    .checks
+                    .iter()
+                    .enumerate()
+                    .map(|(check_index, check)| {
+                        let label = format!(
+                            "{} · {:?}",
+                            check.name,
+                            check.conclusion.unwrap_or_else(|| match check.state {
+                                github_pull_requests::CheckState::Queued
+                                | github_pull_requests::CheckState::InProgress => {
+                                    github_pull_requests::CheckConclusion::Unknown
+                                }
+                                github_pull_requests::CheckState::Completed => {
+                                    github_pull_requests::CheckConclusion::Unknown
+                                }
+                            })
+                        );
+                        match &check.details_url {
+                            Some(url) => Button::new(("pull-request-check", check_index), label)
+                                .on_click({
+                                    let url = url.clone();
+                                    move |_, _, cx| cx.open_url(&url)
+                                })
+                                .into_any_element(),
+                            None => Label::new(label).size(LabelSize::Small).into_any_element(),
                         }
-                        github_pull_requests::CheckState::Completed => {
-                            github_pull_requests::CheckConclusion::Unknown
-                        }
-                    })
-                ))
-                .size(LabelSize::Small)
-            }))
+                    }),
+            )
             .child(Label::new(format!(
                 "Review threads ({})",
                 details.threads.len()
@@ -709,6 +1032,17 @@ impl PullRequestsPanel {
                 "Resolve"
             };
             let mut thread_content = v_flex().p_2().gap_1().border_1().rounded_sm();
+            if let Some(anchor) = &thread.anchor {
+                let location = format!("{}:{}", anchor.path, anchor.line);
+                let thread_for_location = thread.clone();
+                thread_content = thread_content.child(
+                    Button::new(("open-review-thread-location", thread_index), location).on_click(
+                        cx.listener(move |this, _, window, cx| {
+                            this.open_thread_location(thread_for_location.clone(), window, cx)
+                        }),
+                    ),
+                );
+            }
             for comment in &thread.comments {
                 thread_content = thread_content.child(
                     v_flex()

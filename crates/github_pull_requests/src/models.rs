@@ -81,6 +81,7 @@ pub struct PullRequestDetails {
     pub threads: Vec<ReviewThread>,
     pub checks: Vec<CheckSummary>,
     pub pending_review: Option<PullRequestReview>,
+    pub viewer_can_approve: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

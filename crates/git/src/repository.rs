@@ -4189,6 +4189,46 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn fetch_refspec_updates_custom_destination(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_, clone_directory) = clone_remote_repository_with_main_and_feature(temp_dir.path());
+        let repository = RealGitRepository::new(
+            &clone_directory.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repository
+            .fetch(
+                FetchOptions::Refspec {
+                    remote: Remote {
+                        name: "origin".into(),
+                    },
+                    source: "refs/heads/feature".into(),
+                    destination: "refs/zed/pull-requests/test/head".into(),
+                },
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(HashMap::default()),
+                cx.to_async(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            git_command_output(
+                &clone_directory,
+                ["rev-parse", "refs/zed/pull-requests/test/head"]
+            ),
+            git_command_output(&clone_directory, ["rev-parse", "origin/feature"])
+        );
+    }
+
     fn disable_git_global_config() {
         unsafe {
             std::env::set_var("GIT_CONFIG_GLOBAL", "");

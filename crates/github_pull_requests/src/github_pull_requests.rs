@@ -1,3 +1,10 @@
+//! GitHub pull request API and device-flow authentication.
+//!
+//! The GitHub App client ID is read from `ZED_GITHUB_APP_CLIENT_ID` at build time, with a runtime
+//! environment-variable fallback for local development. The GitHub App must have Device Flow
+//! enabled and request read access to Checks plus write access to Pull requests. Users must install
+//! the app for private repositories before its user access token can access them.
+
 mod authentication;
 mod client;
 mod models;

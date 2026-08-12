@@ -8,7 +8,8 @@ use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
 use http_client::{AsyncBody, HttpClient, Method, Request, StatusCode};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::{fmt, sync::Arc};
+use std::{collections::HashSet, fmt, sync::Arc};
+use url::form_urlencoded;
 
 const API_BASE_URL: &str = "https://api.github.com";
 
@@ -59,6 +60,9 @@ impl GitHubClient {
         repository: &str,
     ) -> Result<PullRequestList> {
         let viewer = self.viewer().await?;
+        let requested_review_numbers = self
+            .requested_review_numbers(owner, repository, &viewer.login)
+            .await?;
         let mut pulls = Vec::new();
         for page in 1.. {
             let page_items: Vec<ApiPullRequest> = self
@@ -79,11 +83,7 @@ impl GitHubClient {
             if summary.author.login == viewer.login {
                 authored_by_viewer.push(summary.clone());
             }
-            if summary
-                .requested_reviewers
-                .iter()
-                .any(|reviewer| reviewer.login == viewer.login)
-            {
+            if requested_review_numbers.contains(&summary.id.number) {
                 waiting_for_review.push(summary);
             }
         }
@@ -91,6 +91,30 @@ impl GitHubClient {
             waiting_for_review,
             authored_by_viewer,
         })
+    }
+
+    async fn requested_review_numbers(
+        &self,
+        owner: &str,
+        repository: &str,
+        viewer: &str,
+    ) -> Result<HashSet<u32>> {
+        let query = format!("repo:{owner}/{repository} is:pr is:open review-requested:{viewer}");
+        let query = form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
+        let mut numbers = HashSet::default();
+        for page in 1.. {
+            let response: ApiSearchIssues = self
+                .get(&format!(
+                    "/search/issues?q={query}&per_page=100&page={page}"
+                ))
+                .await?;
+            let is_last_page = response.items.len() < 100;
+            numbers.extend(response.items.into_iter().map(|item| item.number));
+            if is_last_page {
+                break;
+            }
+        }
+        Ok(numbers)
     }
 
     pub async fn pull_request_details(
@@ -102,12 +126,14 @@ impl GitHubClient {
             pull_request.owner, pull_request.repository, pull_request.number
         );
         let details: ApiPullRequestDetails = self.get(&path).await?;
+        let viewer = self.viewer().await?;
         let summary = details
             .pull
             .into_summary(&pull_request.owner, &pull_request.repository)?;
         let files = self.pull_request_files(pull_request).await?;
         let checks = self.checks(pull_request, &summary.head_sha).await?;
         let review_data = self.review_data(pull_request).await?;
+        let viewer_can_approve = summary.author.login != viewer.login;
         Ok(PullRequestDetails {
             summary,
             body: details.body.unwrap_or_default().into(),
@@ -124,6 +150,7 @@ impl GitHubClient {
             threads: review_data.threads,
             checks,
             pending_review: review_data.pending_review,
+            viewer_can_approve,
         })
     }
 
@@ -156,7 +183,18 @@ impl GitHubClient {
                 pull_request.owner, pull_request.repository
             ))
             .await?;
-        Ok(response.check_runs.into_iter().map(Into::into).collect())
+        let statuses: ApiCombinedStatus = self
+            .get(&format!(
+                "/repos/{}/{}/commits/{head_sha}/status?per_page=100",
+                pull_request.owner, pull_request.repository
+            ))
+            .await?;
+        Ok(response
+            .check_runs
+            .into_iter()
+            .map(Into::into)
+            .chain(statuses.statuses.into_iter().map(Into::into))
+            .collect())
     }
 
     async fn review_data(&self, pull_request: &PullRequestId) -> Result<ReviewData> {
@@ -464,6 +502,16 @@ struct ApiPullRequest {
     requested_reviewers: Vec<ApiUser>,
 }
 
+#[derive(Deserialize)]
+struct ApiSearchIssues {
+    items: Vec<ApiSearchIssue>,
+}
+
+#[derive(Deserialize)]
+struct ApiSearchIssue {
+    number: u32,
+}
+
 impl ApiPullRequest {
     fn into_summary(self, owner: &str, repository: &str) -> Result<PullRequestSummary> {
         if self.head.sha.is_empty() {
@@ -533,6 +581,35 @@ impl From<ApiChangedFile> for ChangedFile {
 #[derive(Deserialize)]
 struct ApiCheckRuns {
     check_runs: Vec<ApiCheckRun>,
+}
+
+#[derive(Deserialize)]
+struct ApiCombinedStatus {
+    statuses: Vec<ApiCommitStatus>,
+}
+
+#[derive(Deserialize)]
+struct ApiCommitStatus {
+    context: String,
+    state: String,
+    target_url: Option<String>,
+}
+
+impl From<ApiCommitStatus> for CheckSummary {
+    fn from(status: ApiCommitStatus) -> Self {
+        let (state, conclusion) = match status.state.as_str() {
+            "pending" => (CheckState::InProgress, None),
+            "success" => (CheckState::Completed, Some(CheckConclusion::Success)),
+            "failure" | "error" => (CheckState::Completed, Some(CheckConclusion::Failure)),
+            _ => (CheckState::Completed, Some(CheckConclusion::Unknown)),
+        };
+        Self {
+            name: status.context.into(),
+            state,
+            conclusion,
+            details_url: status.target_url.map(Into::into),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -762,6 +839,7 @@ mod tests {
     use crate::DiffSide;
     use http_client::{FakeHttpClient, Response};
     use pretty_assertions::assert_eq;
+    use serde_json::json;
 
     #[test]
     fn serializes_review_anchor_with_current_line_api() {
@@ -790,6 +868,167 @@ mod tests {
             .expect_err("request should fail");
         assert!(error.to_string().contains("Resource not accessible"));
         assert!(!error.to_string().contains("test-token"));
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn list_pull_requests_uses_review_requested_search(cx: &mut gpui::TestAppContext) {
+        let client = FakeHttpClient::create(|request| async move {
+            let response = match request.uri().path() {
+                "/user" => json!({
+                    "login": "viewer",
+                    "avatar_url": null,
+                    "html_url": null,
+                }),
+                "/search/issues" => {
+                    let query = request.uri().query().expect("search query");
+                    let query = form_urlencoded::parse(query.as_bytes())
+                        .find_map(|(key, value)| (key == "q").then_some(value.into_owned()))
+                        .expect("q parameter");
+                    assert_eq!(
+                        query,
+                        "repo:owner/repository is:pr is:open review-requested:viewer"
+                    );
+                    json!({ "items": [{ "number": 1 }] })
+                }
+                "/repos/owner/repository/pulls" => json!([
+                    {
+                        "number": 1,
+                        "title": "Team review",
+                        "user": {
+                            "login": "author",
+                            "avatar_url": null,
+                            "html_url": null,
+                        },
+                        "state": "open",
+                        "draft": false,
+                        "head": { "ref": "feature", "sha": "head-1" },
+                        "base": { "ref": "main", "sha": "base-1" },
+                        "updated_at": "2026-08-12T00:00:00Z",
+                        "html_url": "https://github.com/owner/repository/pull/1",
+                        "requested_reviewers": [],
+                    },
+                    {
+                        "number": 2,
+                        "title": "Authored by viewer",
+                        "user": {
+                            "login": "viewer",
+                            "avatar_url": null,
+                            "html_url": null,
+                        },
+                        "state": "open",
+                        "draft": false,
+                        "head": { "ref": "viewer-feature", "sha": "head-2" },
+                        "base": { "ref": "main", "sha": "base-2" },
+                        "updated_at": "2026-08-12T00:00:00Z",
+                        "html_url": "https://github.com/owner/repository/pull/2",
+                        "requested_reviewers": [],
+                    }
+                ]),
+                path => panic!("unexpected GitHub API path: {path}"),
+            };
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(AsyncBody::from(response.to_string()))?)
+        });
+        let client = GitHubClient::new(client, "test-token");
+
+        let pulls = client
+            .list_pull_requests("owner", "repository")
+            .await
+            .unwrap();
+
+        assert_eq!(pulls.waiting_for_review.len(), 1);
+        assert_eq!(pulls.waiting_for_review[0].id.number, 1);
+        assert_eq!(pulls.authored_by_viewer.len(), 1);
+        assert_eq!(pulls.authored_by_viewer[0].id.number, 2);
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn checks_include_check_runs_and_commit_statuses(cx: &mut gpui::TestAppContext) {
+        let client = FakeHttpClient::create(|request| async move {
+            let response = match request.uri().path() {
+                "/repos/owner/repository/commits/head/check-runs" => json!({
+                    "check_runs": [{
+                        "name": "build",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "details_url": "https://example.com/build",
+                    }]
+                }),
+                "/repos/owner/repository/commits/head/status" => json!({
+                    "statuses": [{
+                        "context": "cla",
+                        "state": "failure",
+                        "target_url": "https://example.com/cla",
+                    }]
+                }),
+                path => panic!("unexpected GitHub API path: {path}"),
+            };
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(AsyncBody::from(response.to_string()))?)
+        });
+        let client = GitHubClient::new(client, "test-token");
+
+        let checks = client
+            .checks(&PullRequestId::new("owner", "repository", 1), "head")
+            .await
+            .unwrap();
+
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].name.as_ref(), "build");
+        assert_eq!(checks[0].conclusion, Some(CheckConclusion::Success));
+        assert_eq!(checks[1].name.as_ref(), "cla");
+        assert_eq!(checks[1].conclusion, Some(CheckConclusion::Failure));
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn add_pending_comment_serializes_line_range(cx: &mut gpui::TestAppContext) {
+        let client = FakeHttpClient::create(|request| async move {
+            assert_eq!(request.method(), Method::POST);
+            assert_eq!(
+                request.uri().path(),
+                "/repos/owner/repository/pulls/1/reviews/42/comments"
+            );
+            let mut body = request.into_body();
+            let mut body_text = String::new();
+            body.read_to_string(&mut body_text).await?;
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&body_text)?,
+                json!({
+                    "body": "Please change this",
+                    "path": "src/main.rs",
+                    "line": 12,
+                    "side": "RIGHT",
+                    "start_line": 10,
+                    "start_side": "RIGHT",
+                })
+            );
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(AsyncBody::from(r#"{"id":99}"#))?)
+        });
+        let client = GitHubClient::new(client, "test-token");
+        let comment_id = client
+            .add_pending_comment(
+                &PullRequestId::new("owner", "repository", 1),
+                &ReviewId("42".into()),
+                &ReviewAnchor {
+                    path: "src/main.rs".into(),
+                    commit_sha: "head".into(),
+                    side: DiffSide::Right,
+                    start_line: Some(10),
+                    line: 12,
+                },
+                "Please change this",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(comment_id, CommentId(99));
         cx.run_until_parked();
     }
 }

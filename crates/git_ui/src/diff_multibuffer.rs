@@ -3,7 +3,7 @@ use crate::{
     git_panel::{GitPanel, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result, ensure};
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -12,11 +12,12 @@ use editor::{
 };
 use futures_lite::future::yield_now;
 use git::{repository::RepoPath, status::FileStatus};
+use github_pull_requests::{DiffSide, ReviewAnchor};
 use gpui::{
     App, AppContext as _, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
+use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt, ToPoint as _};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     ConflictSet, Project, ProjectPath,
@@ -730,6 +731,74 @@ impl DiffMultibuffer {
         Some(ProjectPath {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
+        })
+    }
+
+    pub(crate) fn selected_review_anchor(
+        &self,
+        commit_sha: SharedString,
+        cx: &App,
+    ) -> Result<ReviewAnchor> {
+        let split_editor = self.editor.read(cx);
+        let focused_editor = split_editor.focused_editor();
+        let side = if split_editor
+            .lhs_editor()
+            .is_some_and(|editor| editor.entity_id() == focused_editor.entity_id())
+        {
+            DiffSide::Left
+        } else {
+            DiffSide::Right
+        };
+        let editor = focused_editor.read(cx);
+        let multibuffer = editor.buffer().read(cx);
+        let snapshot = multibuffer.snapshot(cx);
+        let selection = editor.selections.newest_anchor();
+        let (start_anchor, _) = snapshot
+            .anchor_to_buffer_anchor(selection.start)
+            .context("The selection is not on a pull request file")?;
+        let (end_anchor, _) = snapshot
+            .anchor_to_buffer_anchor(selection.end)
+            .context("The selection is not on a pull request file")?;
+        ensure!(
+            start_anchor.buffer_id == end_anchor.buffer_id,
+            "Select lines from a single file before adding a review comment"
+        );
+        let buffer = multibuffer
+            .buffer(start_anchor.buffer_id)
+            .context("The selected pull request buffer is no longer available")?;
+        let buffer = buffer.read(cx);
+        let file = buffer
+            .file()
+            .context("The selected pull request buffer has no file")?;
+        let project_path = ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        };
+        let repository = self
+            .branch_diff
+            .read(cx)
+            .repo()
+            .context("The pull request diff has no repository")?;
+        let repo_path = repository
+            .read(cx)
+            .project_path_to_repo_path(&project_path, cx)
+            .context("The selected file is outside the pull request repository")?;
+        let buffer_snapshot = buffer.snapshot();
+        let start = start_anchor.to_point(&buffer_snapshot);
+        let mut end = end_anchor.to_point(&buffer_snapshot);
+        if end.column == 0 && end.row > start.row {
+            end.row -= 1;
+        }
+        ensure!(
+            end.row >= start.row,
+            "Select a valid line range before adding a review comment"
+        );
+        Ok(ReviewAnchor {
+            path: repo_path.as_unix_str().to_string().into(),
+            commit_sha: commit_sha.into(),
+            side,
+            start_line: (start.row != end.row).then_some(start.row + 1),
+            line: end.row + 1,
         })
     }
 

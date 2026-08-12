@@ -13,6 +13,7 @@ use editor::{
     actions::SendReviewToAgent,
 };
 use git::{repository::DiffType, status::FileStatus};
+use github_pull_requests::ReviewAnchor;
 use gpui::{
     Action, AnyElement, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Subscription, Task, WeakEntity,
@@ -391,6 +392,14 @@ impl BranchDiff {
 
     pub(crate) fn repo(&self, cx: &App) -> Option<Entity<Repository>> {
         self.diff.read(cx).repo(cx)
+    }
+
+    pub(crate) fn selected_review_anchor(
+        &self,
+        commit_sha: SharedString,
+        cx: &App,
+    ) -> Result<ReviewAnchor> {
+        self.diff.read(cx).selected_review_anchor(commit_sha, cx)
     }
 
     fn set_merge_base(&mut self, base_ref: SharedString, cx: &mut Context<Self>) {
