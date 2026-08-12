@@ -2504,6 +2504,10 @@ impl Buffer {
         self.text.subscribe()
     }
 
+    pub fn subscribe_batches(&mut self) -> text::BatchSubscription {
+        self.text.subscribe_batches()
+    }
+
     /// Registers a set that receives this buffer's id whenever the buffer changes.
     ///
     /// This allows downstream code to check if the buffer's text has changed without
