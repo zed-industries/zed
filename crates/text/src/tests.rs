@@ -410,6 +410,46 @@ fn test_chars_at() {
     assert_eq!(chars.collect::<String>(), "    \"xray_wasm\",\n]\n");
 }
 
+#[gpui::test(iterations = 100)]
+fn test_offset_seeking_matches_to_offset(mut rng: StdRng) {
+    let text = RandomCharIter::new(&mut rng).take(200).collect::<String>();
+    let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text.clone());
+
+    let mut offsets = (0..32)
+        .map(|_| {
+            let offset = rng.random_range(0..=text.len());
+            buffer.as_rope().floor_char_boundary(offset)
+        })
+        .collect::<Vec<_>>();
+    offsets.sort_unstable();
+    let mut seeker = OffsetSeeker::new(&buffer);
+    for offset in offsets {
+        assert_eq!(
+            offset.to_offset_seeking(&buffer, &mut seeker),
+            offset.to_offset(&buffer),
+            "offset {offset}"
+        );
+    }
+
+    let max_point = buffer.max_point();
+    let mut points = (0..32)
+        .map(|_| {
+            let row = rng.random_range(0..=max_point.row);
+            let point = Point::new(row, rng.random_range(0..=buffer.line_len(row)));
+            buffer.as_rope().clip_point(point, Bias::Left)
+        })
+        .collect::<Vec<_>>();
+    points.sort_unstable();
+    let mut seeker = OffsetSeeker::new(&buffer);
+    for point in points {
+        assert_eq!(
+            point.to_offset_seeking(&buffer, &mut seeker),
+            point.to_offset(&buffer),
+            "point {point:?}"
+        );
+    }
+}
+
 #[test]
 fn test_anchors() {
     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
