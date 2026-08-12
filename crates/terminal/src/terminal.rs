@@ -3928,7 +3928,7 @@ mod tests {
     #[gpui::test]
     async fn test_terminal_shift_drag_selects_while_mouse_tracking(cx: &mut TestAppContext) {
         // `?1002h` enables button-event mouse tracking, `?1006h` selects SGR encoding.
-        let terminal = init_ctrl_click_hyperlink_test(cx, b"\x1b[?1002h\x1b[?1006hhello world\r\n");
+        let terminal = init_terminal_test(cx, b"\x1b[?1002h\x1b[?1006hhello world\r\n");
 
         terminal.update(cx, |terminal, cx| {
             assert!(
@@ -3988,7 +3988,7 @@ mod tests {
     /// (the behavior added in #25143), not re-anchor a fresh one.
     #[gpui::test]
     async fn test_terminal_shift_click_extends_existing_selection(cx: &mut TestAppContext) {
-        let terminal = init_ctrl_click_hyperlink_test(cx, b"hello world\r\n");
+        let terminal = init_terminal_test(cx, b"hello world\r\n");
 
         terminal.update(cx, |terminal, cx| {
             // A visible selection, as a sync would have populated in production.
