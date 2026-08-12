@@ -2258,27 +2258,92 @@ impl DisplaySnapshot {
             .is_some_and(|next_line_indent| next_line_indent.raw_len() > line_indent.raw_len())
     }
 
-    /// Returns the indent length of `row` if it starts with a closing bracket.
-    fn closing_bracket_indent_len(&self, row: u32) -> Option<u32> {
+    /// Returns the indent length of `row` if it starts with a delimiter that closes a bracket
+    /// pair opened on `open_row`.
+    fn closing_bracket_indent_len(&self, row: u32, open_row: u32) -> Option<u32> {
         let snapshot = self.buffer_snapshot();
         let indent_len = self
             .line_indent_for_buffer_row(MultiBufferRow(row))
             .raw_len();
         let content_start = Point::new(row, indent_len);
-        let line_text: String = snapshot
-            .chars_at(content_start)
-            .take_while(|ch| *ch != '\n')
-            .collect();
+        let scope = snapshot.language_scope_at(Point::new(open_row, 0))?;
 
-        let scope = snapshot.language_scope_at(Point::new(row, 0))?;
-        if scope
-            .brackets()
-            .any(|(pair, _)| line_text.starts_with(&pair.end))
-        {
-            return Some(indent_len);
+        if scope.has_brackets_query() {
+            return snapshot
+                .all_bracket_ranges(Point::new(open_row, 0)..content_start)
+                .is_some_and(|mut ranges| {
+                    ranges.any(|(open, close)| {
+                        open.start < open.end
+                            && close.start < close.end
+                            && open.start.to_point(snapshot).row == open_row
+                            && close.start.to_point(snapshot) == content_start
+                    })
+                })
+                .then_some(indent_len);
         }
 
-        None
+        let pairs = scope
+            .brackets()
+            .filter_map(|(pair, enabled)| {
+                (enabled && !pair.start.is_empty() && !pair.end.is_empty()).then_some(pair)
+            })
+            .collect::<Vec<_>>();
+        let text = snapshot
+            .chars_at(Point::new(open_row, 0))
+            .take_while(|ch| *ch != '\n')
+            .collect::<String>();
+        let mut stack: Vec<&language::BracketPair> = Vec::new();
+        let mut offset = 0;
+        while let Some(text) = text.get(offset..) {
+            if text.is_empty() {
+                break;
+            }
+            let start = pairs
+                .iter()
+                .filter(|pair| text.starts_with(&pair.start))
+                .max_by_key(|pair| pair.start.len());
+            let end_len = pairs
+                .iter()
+                .filter(|pair| text.starts_with(&pair.end))
+                .map(|pair| pair.end.len())
+                .max()
+                .unwrap_or_default();
+            let delimiter_len = start.map_or(0, |pair| pair.start.len()).max(end_len);
+            if stack
+                .last()
+                .is_some_and(|pair| pair.end.len() == delimiter_len && text.starts_with(&pair.end))
+            {
+                stack.pop();
+                offset += delimiter_len;
+            } else if let Some(pair) = start
+                && pair.start.len() == delimiter_len
+            {
+                stack.push(*pair);
+                offset += delimiter_len;
+            } else if delimiter_len > 0 {
+                offset += delimiter_len;
+            } else {
+                offset += text.chars().next()?.len_utf8();
+            }
+        }
+
+        let line_text = snapshot
+            .chars_at(content_start)
+            .take_while(|ch| *ch != '\n')
+            .collect::<String>();
+        let longest_delimiter_len = pairs
+            .iter()
+            .flat_map(|pair| [&pair.start, &pair.end])
+            .filter(|delimiter| line_text.starts_with(delimiter.as_str()))
+            .map(|delimiter| delimiter.len())
+            .max()
+            .unwrap_or_default();
+        stack
+            .last()
+            .is_some_and(|pair| {
+                pair.end.len() == longest_delimiter_len && line_text.starts_with(&pair.end)
+            })
+            .then_some(indent_len)
     }
 
     #[instrument(skip_all)]
@@ -2374,7 +2439,7 @@ impl DisplaySnapshot {
             };
 
             let end = if let Some(row) = closing_row {
-                if let Some(indent_len) = self.closing_bracket_indent_len(row) {
+                if let Some(indent_len) = self.closing_bracket_indent_len(row, buffer_row.0) {
                     // Include newline and whitespace before closing delimiter,
                     // so it appears on the same display line as the fold placeholder
                     Point::new(row, indent_len)

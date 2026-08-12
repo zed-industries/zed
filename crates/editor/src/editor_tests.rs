@@ -1820,6 +1820,195 @@ async fn test_fold_with_unindented_multiline_block_comment_includes_closing_brac
 }
 
 #[gpui::test]
+async fn test_fold_excludes_ambiguous_closing_delimiter(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+    cx.set_state(indoc! {"
+        ˇ# *Emphasis*
+          content
+        **bold**
+
+        # Heading
+          content
+        > quote
+
+        # See <link>
+          content
+        > quote
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at(MultiBufferRow(0), window, cx);
+        editor.fold_at(MultiBufferRow(4), window, cx);
+        editor.fold_at(MultiBufferRow(8), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                # *Emphasis*⋯
+                **bold**
+
+                # Heading⋯
+                > quote
+
+                # See <link>⋯
+                > quote
+            "},
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_matches_plain_text_closing_delimiter(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(PLAIN_TEXT.clone()), cx));
+    cx.set_state(indoc! {"
+        ˇsection {
+          content
+        }
+
+        section {closed}
+          content
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at(MultiBufferRow(0), window, cx);
+        editor.fold_at(MultiBufferRow(4), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                section {⋯}
+
+                section {closed}⋯
+                }
+            "},
+        );
+    });
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "*".into(),
+                        end: "*".into(),
+                        ..Default::default()
+                    },
+                    BracketPair {
+                        start: "**".into(),
+                        end: "**".into(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        None,
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.set_state(indoc! {"
+        ˇ# *emphasis*
+          content
+        **bold**
+
+        # *
+          content
+        **bold**
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at(MultiBufferRow(0), window, cx);
+        editor.fold_at(MultiBufferRow(4), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                # *emphasis*⋯
+                **bold**
+
+                # *⋯
+                **bold**
+            "},
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_matches_configured_delimiter_without_bracket_query(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair::default(),
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.set_state(indoc! {"
+        ˇsection {
+          content
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at(MultiBufferRow(0), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                section {⋯}
+            "},
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_includes_bash_closing_delimiter(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = languages::language("bash", tree_sitter_bash::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.set_state(indoc! {"
+        ˇif true; then
+          echo yes
+        fi
+
+        for value in values; do
+          echo $value
+        done
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at(MultiBufferRow(0), window, cx);
+        editor.fold_at(MultiBufferRow(4), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                if true; then⋯fi
+
+                for value in values; do⋯done
+            "},
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_fold_preserves_top_level_comments_between_python_classes(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

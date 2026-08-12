@@ -5749,11 +5749,35 @@ impl MultiBufferSnapshot {
         &self,
         range: Range<T>,
     ) -> Option<impl Iterator<Item = (Range<MultiBufferOffset>, Range<MultiBufferOffset>)>> {
+        self.bracket_ranges_internal(range, false)
+    }
+
+    pub fn all_bracket_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<impl Iterator<Item = (Range<MultiBufferOffset>, Range<MultiBufferOffset>)>> {
+        self.bracket_ranges_internal(range, true)
+    }
+
+    fn bracket_ranges_internal<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        include_newline_only: bool,
+    ) -> Option<impl Iterator<Item = (Range<MultiBufferOffset>, Range<MultiBufferOffset>)>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let results =
             self.map_excerpt_ranges(range, |buffer, excerpt_range, input_buffer_range| {
-                buffer
-                    .bracket_ranges(input_buffer_range)
+                let pairs = if include_newline_only {
+                    buffer
+                        .all_bracket_ranges(input_buffer_range.start.0..input_buffer_range.end.0)
+                        .collect::<Vec<_>>()
+                } else {
+                    buffer
+                        .bracket_ranges(input_buffer_range)
+                        .collect::<Vec<_>>()
+                };
+                pairs
+                    .into_iter()
                     .filter(|pair| {
                         excerpt_range.context.start.0 <= pair.open_range.start
                             && pair.close_range.end <= excerpt_range.context.end.0
