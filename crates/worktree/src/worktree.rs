@@ -31,7 +31,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
     Task,
 };
-use ignore::IgnoreStack;
+pub use ignore::{IgnoreKind, IgnoreStack};
 use language::{ByteContent, DiskState, FILE_ANALYSIS_BYTES, analyze_byte_content};
 
 use async_channel::{self, Sender};
@@ -76,8 +76,6 @@ use util::{
     rel_path::RelPath,
 };
 pub use worktree_settings::WorktreeSettings;
-
-use crate::ignore::IgnoreKind;
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
@@ -2895,13 +2893,7 @@ impl Snapshot {
 
     pub fn entry_for_path(&self, path: &RelPath) -> Option<&Entry> {
         let entry = self.traverse_from_path(true, true, true, path).entry();
-        entry.and_then(|entry| {
-            if entry.path.as_ref() == path {
-                Some(entry)
-            } else {
-                None
-            }
-        })
+        entry.filter(|&entry| entry.path.as_ref() == path)
     }
 
     /// Whether `path` is gitignored, or lies inside a gitignored directory.
@@ -3017,7 +3009,7 @@ impl LocalSnapshot {
                 Err(error) => {
                     log::error!(
                         "error loading .gitignore file {:?} - {:?}",
-                        &entry.path,
+                        entry.path,
                         error
                     );
                 }
@@ -3085,10 +3077,19 @@ impl LocalSnapshot {
                 repo_excludes.push(repo_exclude.clone());
             }
 
-            if repo_root.is_none() {
-                let metadata = fs.metadata(&ancestor.join(DOT_GIT)).await.ok().flatten();
-                if metadata.is_some() {
+            let is_repo_root = fs
+                .metadata(&ancestor.join(DOT_GIT))
+                .await
+                .is_ok_and(|metadata| metadata.is_some());
+            if is_repo_root {
+                if repo_root.is_none() {
                     repo_root = Some(Arc::from(ancestor));
+                }
+
+                // Stop at the repository containing the worktree root, but not at
+                // ones nested below it, where its rules still apply.
+                if self.abs_path.as_path().starts_with(ancestor) {
+                    break;
                 }
             }
         }
@@ -7299,6 +7300,38 @@ mod tests {
         );
     }
 
+    // Mimics binary formats that interleave short ASCII fragments with small
+    // length/type fields (as seen in some game/asset binary formats, e.g.
+    // Tibia-style OTBM maps): most high bytes are zero, matching UTF-16LE's
+    // null-byte pattern for ASCII, but the low bytes are mostly non-word
+    // "tag" values rather than real letters/digits/spaces.
+    fn build_tag_interleaved_binary_bytes() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let tags: [u8; 6] = [0xFE, 0xFF, 0x25, 0x2B, 0xA3, 0xC5];
+        let mut i = 0;
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            bytes.push(tags[i % tags.len()]);
+            bytes.push(0x00);
+            i += 1;
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+        bytes
+    }
+
+    #[test]
+    fn test_tag_interleaved_binary_not_misdetected_as_utf16le() {
+        let bytes = build_tag_interleaved_binary_bytes();
+        assert_eq!(bytes.len(), FILE_ANALYSIS_BYTES);
+
+        let result = analyze_byte_content(&bytes);
+        assert_eq!(
+            result,
+            ByteContent::Binary,
+            "binary data with sparse non-word low bytes and null high bytes \
+             should not be misdetected as UTF-16LE text"
+        );
+    }
+
     #[test]
     fn test_utf16le_text_detected_as_utf16le() {
         let text = "Hello, world! This is a UTF-16 test string. ";
@@ -7314,6 +7347,30 @@ mod tests {
     #[test]
     fn test_utf16be_text_detected_as_utf16be() {
         let text = "Hello, world! This is a UTF-16 test string. ";
+        let mut bytes = Vec::new();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            bytes.extend(text.encode_utf16().flat_map(|u| u.to_be_bytes()));
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Be);
+    }
+
+    #[test]
+    fn test_utf16le_cyrillic_text_detected_as_utf16le() {
+        let text = "Привет, мир! Это тестовая строка в UTF-16. ";
+        let mut bytes = Vec::new();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Le);
+    }
+
+    #[test]
+    fn test_utf16be_greek_text_detected_as_utf16be() {
+        let text = "Γεια σου κόσμε! Αυτή είναι μια δοκιμαστική συμβολοσειρά. ";
         let mut bytes = Vec::new();
         while bytes.len() < FILE_ANALYSIS_BYTES {
             bytes.extend(text.encode_utf16().flat_map(|u| u.to_be_bytes()));
