@@ -1827,6 +1827,84 @@ mod tests {
         text
     }
 
+    #[gpui::test(iterations = 100)]
+    async fn spliced_editor_reads_match_anchor_resolution(
+        cx: &mut gpui::TestAppContext,
+        mut rng: StdRng,
+    ) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            crate::init(cx);
+        });
+        let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
+        let text = random_text(&mut rng);
+        cx.set_state(&("ˇ".to_string() + &text));
+
+        for _ in 0..rng.random_range(2..8) {
+            cx.update_editor(|editor, window, cx| match rng.random_range(0..5) {
+                0 => {
+                    let snapshot = editor.display_snapshot(cx);
+                    let max_offset = snapshot.buffer_snapshot().len().0;
+                    let mut ranges = Vec::new();
+                    let mut offset = 0;
+                    for _ in 0..rng.random_range(1..10) {
+                        if offset > max_offset {
+                            break;
+                        }
+                        let start = snapshot.buffer_snapshot().clip_offset(
+                            MultiBufferOffset(rng.random_range(offset..=max_offset)),
+                            Bias::Left,
+                        );
+                        let end = snapshot.buffer_snapshot().clip_offset(
+                            MultiBufferOffset(rng.random_range(start.0..=max_offset)),
+                            Bias::Left,
+                        );
+                        ranges.push(start..end);
+                        offset = end.0 + 2;
+                    }
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.select_ranges(ranges);
+                    });
+                }
+                1 => editor.handle_input("xy", window, cx),
+                2 => editor.backspace(&crate::actions::Backspace, window, cx),
+                3 => editor.move_right(&crate::actions::MoveRight, window, cx),
+                _ => editor.move_down(&zed_actions::editor::MoveDown, window, cx),
+            });
+
+            cx.update_editor(|editor, _, cx| {
+                let snapshot = editor.display_snapshot(cx);
+                assert!(
+                    editor
+                        .selections
+                        .spliced_for_buffer(snapshot.buffer_snapshot())
+                        .is_some(),
+                    "fast path must be engaged in this scenario"
+                );
+                let fast = editor.selections.all::<MultiBufferOffset>(&snapshot);
+                let slow = resolve_selections_wrapping_blocks::<MultiBufferOffset, _>(
+                    editor.selections.disjoint_anchors().iter(),
+                    &snapshot,
+                )
+                .collect::<Vec<_>>();
+                assert_eq!(fast, slow, "spliced reads diverged from anchor resolution");
+
+                let fast_points = editor.selections.all::<Point>(&snapshot);
+                let slow_points = resolve_selections_wrapping_blocks::<Point, _>(
+                    editor.selections.disjoint_anchors().iter(),
+                    &snapshot,
+                )
+                .collect::<Vec<_>>();
+                assert_eq!(
+                    fast_points, slow_points,
+                    "spliced point reads diverged from anchor resolution"
+                );
+            });
+        }
+    }
+
     #[gpui::test(iterations = 200)]
     fn spliced_selections_match_anchor_resolution(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
         let text = random_text(&mut rng);
