@@ -94,7 +94,7 @@ pub fn init(cx: &mut App) {
                     cx,
                 )
             });
-            cx.new(|cx| git_ui_core::GitPickerPopover::new(picker, cx))
+            git_ui_core::GitPickerPopover::new(picker, cx)
         },
         cx,
     );

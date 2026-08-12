@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use collections::HashSet;
 use fuzzy::StringMatchCandidate;
-use git::repository::Worktree as GitWorktree;
+use git::repository::{Branch, Worktree as GitWorktree};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptLevel,
@@ -273,6 +273,7 @@ enum WorktreeEntry {
     CreateFromDefaultBranch {
         default_branch: RemoteBranchName,
     },
+    ChooseBaseBranch,
     Separator,
     SectionHeader(SharedString),
     Worktree {
@@ -303,6 +304,29 @@ struct WorktreePickerDelegate {
     modifiers: Modifiers,
     hovered_delete_index: Option<usize>,
     deleting_worktree_paths: HashSet<PathBuf>,
+}
+
+fn create_worktree_action(branch: &Branch, worktree_name: Option<String>) -> CreateWorktree {
+    let branch_target = if let Some(remote_name) = branch.remote_name() {
+        let branch_name = branch
+            .name()
+            .strip_prefix(remote_name)
+            .and_then(|name| name.strip_prefix('/'))
+            .unwrap_or(branch.name());
+        NewWorktreeBranchTarget::RemoteBranch {
+            remote_name: remote_name.to_string(),
+            branch_name: branch_name.to_string(),
+        }
+    } else {
+        NewWorktreeBranchTarget::ExistingBranch {
+            name: branch.name().to_string(),
+        }
+    };
+
+    CreateWorktree {
+        worktree_name,
+        branch_target,
+    }
 }
 
 fn remove_worktree_command(path: &Path, force: bool) -> String {
@@ -408,7 +432,7 @@ impl Render for DeleteWorktreeTooltip {
 
 impl WorktreePickerDelegate {
     fn build_fixed_entries(&self) -> Vec<WorktreeEntry> {
-        worktree_create_targets(
+        let mut entries: Vec<_> = worktree_create_targets(
             self.has_multiple_repositories,
             self.default_branch.clone(),
             self.current_branch_name.as_deref(),
@@ -420,7 +444,56 @@ impl WorktreePickerDelegate {
                 WorktreeEntry::CreateFromDefaultBranch { default_branch }
             }
         })
-        .collect()
+        .collect();
+
+        if !self.has_multiple_repositories {
+            entries.push(WorktreeEntry::ChooseBaseBranch);
+        }
+
+        entries
+    }
+
+    fn open_branch_selector(
+        &self,
+        worktree_name: Option<String>,
+        selected_branch: Option<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let repository = self.project.read(cx).active_repository(cx);
+        let selector_workspace = self.workspace.clone();
+        let callback_workspace = self.workspace.clone();
+        let focused_dock = self.focused_dock;
+        let on_select = Arc::new(move |branch: Branch, window: &mut Window, cx: &mut App| {
+            let action = create_worktree_action(&branch, worktree_name.clone());
+            if let Some(workspace) = callback_workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    crate::worktree_service::handle_create_worktree(
+                        workspace,
+                        &action,
+                        window,
+                        focused_dock,
+                        cx,
+                    );
+                });
+            }
+        });
+
+        if let Some(workspace) = selector_workspace.upgrade() {
+            let picker_workspace = selector_workspace.clone();
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, move |window, cx| {
+                    crate::build_branch_selector(
+                        picker_workspace,
+                        repository,
+                        selected_branch,
+                        on_select,
+                        window,
+                        cx,
+                    )
+                });
+            });
+        }
     }
 
     fn all_repo_worktrees(&self) -> &[GitWorktree] {
@@ -792,9 +865,7 @@ impl PickerDelegate for WorktreePickerDelegate {
         let has_named_worktree = self.all_worktrees.iter().any(|worktree| {
             worktree.directory_name(main_worktree_path.as_deref()) == normalized_query
         });
-        let create_named_disabled_reason: Option<String> = if self.has_multiple_repositories {
-            Some("Cannot create a named worktree in a project with multiple repositories".into())
-        } else if has_named_worktree {
+        let create_named_disabled_reason: Option<String> = if has_named_worktree {
             Some("A worktree with this name already exists".into())
         } else {
             None
@@ -942,6 +1013,12 @@ impl PickerDelegate for WorktreePickerDelegate {
 
         match entry {
             WorktreeEntry::Separator | WorktreeEntry::SectionHeader(_) => return,
+            WorktreeEntry::ChooseBaseBranch => {
+                if self.creation_blocked_reason(cx).is_some() {
+                    return;
+                }
+                self.open_branch_selector(None, None, window, cx);
+            }
             WorktreeEntry::CreateFromCurrentBranch => {
                 if self.creation_blocked_reason(cx).is_some() {
                     return;
@@ -1026,26 +1103,30 @@ impl PickerDelegate for WorktreePickerDelegate {
                 from_branch,
                 disabled_reason: None,
             } => {
-                let branch_target = match from_branch {
-                    Some(branch) => NewWorktreeBranchTarget::RemoteBranch {
-                        remote_name: branch.remote_name.clone(),
-                        branch_name: branch.branch_name.clone(),
-                    },
-                    None => NewWorktreeBranchTarget::CurrentBranch,
-                };
-                if let Some(workspace) = self.workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        crate::worktree_service::handle_create_worktree(
-                            workspace,
-                            &CreateWorktree {
-                                worktree_name: Some(name.clone()),
-                                branch_target,
-                            },
-                            window,
-                            self.focused_dock,
-                            cx,
-                        );
-                    });
+                if self.has_multiple_repositories {
+                    if let Some(workspace) = self.workspace.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            crate::worktree_service::handle_create_worktree(
+                                workspace,
+                                &CreateWorktree {
+                                    worktree_name: Some(name.clone()),
+                                    branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                                },
+                                window,
+                                self.focused_dock,
+                                cx,
+                            );
+                        });
+                    }
+                } else {
+                    self.open_branch_selector(
+                        Some(name.clone()),
+                        from_branch
+                            .as_ref()
+                            .map(|branch| branch.display_name().into()),
+                        window,
+                        cx,
+                    );
                 }
             }
             WorktreeEntry::CreateNamed {
@@ -1116,6 +1197,15 @@ impl PickerDelegate for WorktreePickerDelegate {
 
                 Some(item.into_any_element())
             }
+            WorktreeEntry::ChooseBaseBranch => Some(
+                create_new_list_item(
+                    "choose-base-branch".into(),
+                    "Choose Base Branch…".into(),
+                    self.creation_blocked_reason(cx),
+                    selected,
+                )
+                .into_any_element(),
+            ),
             WorktreeEntry::Worktree {
                 worktree,
                 positions,
@@ -1399,6 +1489,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 e,
                 WorktreeEntry::CreateFromCurrentBranch
                     | WorktreeEntry::CreateFromDefaultBranch { .. }
+                    | WorktreeEntry::ChooseBaseBranch
                     | WorktreeEntry::CreateNamed { .. }
             )
         });
@@ -1664,6 +1755,7 @@ pub async fn open_remote_worktree(
 mod tests {
     use super::*;
     use fs::FakeFs;
+
     use gpui::{AppContext, TestAppContext, VisualTestContext};
     use project::project_settings::ProjectSettings;
     use project::{Project, WorktreeSettings};
@@ -1682,6 +1774,48 @@ mod tests {
             ProjectSettings::register(cx);
             WorktreeSettings::register(cx);
         });
+    }
+
+    fn test_branch(ref_name: &str) -> Branch {
+        Branch {
+            is_head: false,
+            ref_name: ref_name.into(),
+            upstream: None,
+            most_recent_commit: None,
+        }
+    }
+
+    #[test]
+    fn test_create_worktree_action_converts_local_branch_and_preserves_normalized_name() {
+        assert_eq!(
+            create_worktree_action(
+                &test_branch("refs/heads/feature"),
+                Some("feature-name".to_string()),
+            ),
+            CreateWorktree {
+                worktree_name: Some("feature-name".to_string()),
+                branch_target: NewWorktreeBranchTarget::ExistingBranch {
+                    name: "feature".to_string(),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn test_create_worktree_action_converts_remote_branch_and_preserves_normalized_name() {
+        assert_eq!(
+            create_worktree_action(
+                &test_branch("refs/remotes/upstream/team/feature"),
+                Some("feature-name".to_string()),
+            ),
+            CreateWorktree {
+                worktree_name: Some("feature-name".to_string()),
+                branch_target: NewWorktreeBranchTarget::RemoteBranch {
+                    remote_name: "upstream".to_string(),
+                    branch_name: "team/feature".to_string(),
+                },
+            }
+        );
     }
 
     async fn init_worktree_picker_test(
@@ -1930,6 +2064,47 @@ mod tests {
                         entry,
                         WorktreeEntry::CreateFromDefaultBranch { .. }
                     ))
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_choose_base_branch_is_available_only_for_single_repository(
+        cx: &mut TestAppContext,
+    ) {
+        let (_fs, worktree_picker, _repository, _worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                assert!(
+                    picker
+                        .delegate
+                        .matches
+                        .iter()
+                        .any(|entry| matches!(entry, WorktreeEntry::ChooseBaseBranch)),
+                    "single-repository picker should offer custom base selection"
+                );
+            });
+        });
+
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.has_multiple_repositories = true;
+                picker.refresh(window, cx);
+            });
+        });
+
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                assert!(
+                    !picker
+                        .delegate
+                        .matches
+                        .iter()
+                        .any(|entry| matches!(entry, WorktreeEntry::ChooseBaseBranch)),
+                    "multi-repository picker should not offer custom base selection"
                 );
             });
         });

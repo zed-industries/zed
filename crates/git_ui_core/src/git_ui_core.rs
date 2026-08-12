@@ -6,7 +6,7 @@ use gpui::{
 };
 use git::repository::Branch;
 use project::{ProjectPath, git_store::Repository};
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
 
 pub mod askpass_modal;
 pub mod created_worktrees;
@@ -52,6 +52,8 @@ impl Render for GitPickerPopover {
     }
 }
 
+impl ModalView for GitPickerPopover {}
+
 type BranchPickerBuilder = dyn Fn(
     WeakEntity<Workspace>,
     Option<Entity<Repository>>,
@@ -94,8 +96,8 @@ type BranchSelectorBuilder = dyn Fn(
     Option<SharedString>,
     SelectBranchCallback,
     &mut Window,
-    &mut App,
-) -> Entity<GitPickerPopover>;
+    &mut Context<GitPickerPopover>,
+) -> GitPickerPopover;
 
 struct BranchSelectorBuilderGlobal(Rc<BranchSelectorBuilder>);
 
@@ -108,8 +110,8 @@ pub fn set_branch_selector_builder(
         Option<SharedString>,
         SelectBranchCallback,
         &mut Window,
-        &mut App,
-    ) -> Entity<GitPickerPopover>
+        &mut Context<GitPickerPopover>,
+    ) -> GitPickerPopover
     + 'static,
     cx: &mut App,
 ) {
@@ -122,8 +124,8 @@ pub fn build_branch_selector(
     selected_branch: Option<SharedString>,
     on_select: SelectBranchCallback,
     window: &mut Window,
-    cx: &mut App,
-) -> Entity<GitPickerPopover> {
+    cx: &mut Context<GitPickerPopover>,
+) -> GitPickerPopover {
     let builder = cx.global::<BranchSelectorBuilderGlobal>().0.clone();
     builder(
         workspace,
