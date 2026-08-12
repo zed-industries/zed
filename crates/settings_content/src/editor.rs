@@ -188,6 +188,14 @@ pub struct EditorSettingsContent {
     /// Default: FindAllReferences
     pub go_to_definition_fallback: Option<GoToDefinitionFallback>,
 
+    /// Where to show LSP results that can contain multiple locations
+    /// (Go to Definition, Go to Implementation, Find All References). A single
+    /// result always opens directly. Individual actions can override this with
+    /// their `open_results_in` argument.
+    ///
+    /// Default: multi_buffer
+    pub lsp_results_location: Option<OpenResultsIn>,
+
     /// How to scroll the target into view when navigating to a definition or reference
     /// (e.g. Go to Definition, Go to Type Definition, Find All References).
     ///
@@ -475,7 +483,7 @@ pub struct ScrollbarAxesContent {
 
 /// Gutter related settings
 #[with_fallible_options]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///
@@ -501,6 +509,11 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub folds: Option<bool>,
+    /// The width, in pixels, of the git diff hunk indicators in the gutter.
+    /// When unset, the width scales with the buffer font size.
+    ///
+    /// Default: null
+    pub git_gutter_width: Option<f32>,
 }
 
 /// Whether to display code lenses from language servers above code elements.
@@ -834,6 +847,30 @@ pub enum GoToDefinitionFallback {
     /// Looks up references of the same symbol instead.
     #[default]
     FindAllReferences,
+}
+
+/// Where to show LSP results that can contain multiple locations.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenResultsIn {
+    /// Open the results in a multibuffer.
+    #[default]
+    MultiBuffer,
+    /// Open the results in a filterable picker.
+    Picker,
 }
 
 /// How to scroll the target into view when navigating to a definition or reference.

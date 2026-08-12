@@ -330,7 +330,7 @@ impl PickerDelegate for DevContainerPickerDelegate {
                     Button::new("run-action", "Start Dev Container")
                         .key_binding(
                             KeyBinding::for_action(&menu::Confirm, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(12_f32))),
                         )
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::Confirm.boxed_clone(), cx)
@@ -340,7 +340,7 @@ impl PickerDelegate for DevContainerPickerDelegate {
                     Button::new("run-action-secondary", "Open devcontainer.json")
                         .key_binding(
                             KeyBinding::for_action(&menu::SecondaryConfirm, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(12_f32))),
                         )
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
@@ -506,7 +506,8 @@ impl ProjectPicker {
                         connection, project, paths, app_state, window, None, None, cx,
                     )
                     .await
-                    .log_err();
+                    .log_err()
+                    .map(|(_workspace, items)| items);
 
                     if let Some(items) = items {
                         for (item, path) in items.into_iter().zip(paths_with_positions) {
@@ -1845,7 +1846,7 @@ impl RemoteServerProjects {
                         .and_then(|path| path.into_abs_path())
                         .map(|path| RemotePathBuf::new(path, path_style))
                         .unwrap_or_else(|| match path_style {
-                            PathStyle::Posix => RemotePathBuf::from_str("/", PathStyle::Posix),
+                            PathStyle::Unix => RemotePathBuf::from_str("/", PathStyle::Unix),
                             PathStyle::Windows => {
                                 RemotePathBuf::from_str("C:\\", PathStyle::Windows)
                             }
@@ -2164,7 +2165,7 @@ impl RemoteServerProjects {
             if let Some(worktree) = worktree {
                 let tree_id = worktree.read(cx).id();
                 let devcontainer_path =
-                    match RelPath::new(&config_path, util::paths::PathStyle::Posix) {
+                    match RelPath::new(&config_path, util::paths::PathStyle::Unix) {
                         Ok(path) => path.into_owned(),
                         Err(error) => {
                             log::error!(

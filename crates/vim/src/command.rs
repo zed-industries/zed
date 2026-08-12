@@ -771,7 +771,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let keystrokes = action
             .command
             .chars()
-            .map(|c| Keystroke::parse(&c.to_string()).unwrap())
+            .filter_map(|c| Keystroke::parse(&c.to_string()).ok())
             .collect();
         vim.switch_mode(Mode::Normal, true, window, cx);
         if let Some(override_rows) = &action.override_rows {
@@ -1949,7 +1949,7 @@ pub fn command_interceptor(
                 + if parsed_query.has_bang { "!" } else { "" };
             let space = if parsed_query.has_space { " " } else { "" };
 
-            let string = format!("{}{}{}", &display_string, &space, &parsed_query.args);
+            let string = format!("{}{}{}", display_string, space, parsed_query.args);
             let positions = generate_positions(&string, &(range_prefix.clone() + query));
 
             let results = vec![CommandInterceptItem {

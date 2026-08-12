@@ -15,6 +15,7 @@ use futures::{
     channel::mpsc::{UnboundedReceiver, unbounded},
 };
 
+use alacritty_terminal::grid::Dimensions as _;
 use itertools::Itertools as _;
 use mappings::mouse::{
     alt_scroll, grid_point, grid_point_and_side, mouse_button_report, mouse_moved_report,
@@ -69,7 +70,8 @@ use crate::alacritty::{
     scroll_display, scroll_to_point, search_matches, selection_text, set_default_cursor_style,
     set_selection as set_term_selection, shrink_to_used, spawn_event_loop,
     toggle_vi_mode as toggle_term_vi_mode, total_lines, update_selection as update_term_selection,
-    update_selection_to_vi_cursor, update_vi_cursor_for_scroll, vi_goto_point, vi_motion,
+    update_selection_to_vi_cursor, update_vi_cursor_for_scroll, used_lines, vi_goto_point,
+    vi_motion,
 };
 use crate::mappings::colors::to_vte_rgb;
 use crate::mappings::keys::to_esc_str;
@@ -667,7 +669,7 @@ pub struct PathLikeTarget {
     /// Might have line and column number(s) attached as `file.rs:1:23`
     pub maybe_path: String,
     /// Current working directory of the terminal
-    pub terminal_dir: Option<PathBuf>,
+    pub working_directory: Option<PathBuf>,
 }
 
 /// A string inside terminal, potentially useful as a URI that can be opened.
@@ -1004,6 +1006,8 @@ impl TerminalBuilder {
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
+            cwd_history: Vec::new(),
+            pending_cwd_boundary: None,
             #[cfg(any(test, feature = "test-support"))]
             input_log: Vec::new(),
             #[cfg(any(test, feature = "test-support"))]
@@ -1277,6 +1281,20 @@ impl TerminalBuilder {
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
+                cwd_history: if is_remote_terminal {
+                    Vec::new()
+                } else {
+                    working_directory
+                        .as_ref()
+                        .map(|working_directory| {
+                            vec![CwdHistoryEntry {
+                                scrollback_position: i32::MIN,
+                                working_directory: working_directory.clone(),
+                            }]
+                        })
+                        .unwrap_or_default()
+                },
+                pending_cwd_boundary: None,
                 #[cfg(any(test, feature = "test-support"))]
                 input_log: Vec::new(),
                 #[cfg(any(test, feature = "test-support"))]
@@ -1446,10 +1464,19 @@ pub struct Terminal {
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
+    cwd_history: Vec<CwdHistoryEntry>,
+    pending_cwd_boundary: Option<i32>,
     #[cfg(any(test, feature = "test-support"))]
     input_log: Vec<Vec<u8>>,
     #[cfg(any(test, feature = "test-support"))]
     pty_write_log: std::cell::RefCell<Vec<Vec<u8>>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CwdHistoryEntry {
+    /// Line offset in the retained scrollback buffer.
+    scrollback_position: i32,
+    working_directory: PathBuf,
 }
 
 struct CopyTemplate {
@@ -1606,6 +1633,8 @@ impl Terminal {
                 let new_bounds = normalize_terminal_bounds(new_bounds);
                 trace!("Resizing: new_bounds={new_bounds:?}");
 
+                let columns_changed =
+                    self.last_content.terminal_bounds.num_columns() != new_bounds.num_columns();
                 self.last_content.terminal_bounds = new_bounds;
 
                 if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
@@ -1613,6 +1642,9 @@ impl Terminal {
                 }
 
                 resize(term, new_bounds);
+                if columns_changed {
+                    self.reset_cwd_history();
+                }
                 // If there are matches we need to emit a wake up event to
                 // invalidate the matches and recalculate their locations
                 // in the new terminal layout
@@ -1623,6 +1655,7 @@ impl Terminal {
             InternalEvent::Clear => {
                 trace!("Clearing");
                 clear_saved_screen(term);
+                self.reset_cwd_history();
                 cx.emit(Event::Wakeup);
             }
             InternalEvent::Scroll(scroll) => {
@@ -1723,7 +1756,8 @@ impl Terminal {
                     self.path_style,
                 ) {
                     Some(hyperlink) => {
-                        self.process_hyperlink(hyperlink, *open, cx);
+                        let history_size = term.history_size();
+                        self.process_hyperlink(hyperlink, *open, history_size, cx);
                     }
                     None => {
                         self.last_content.last_hovered_word = None;
@@ -1732,18 +1766,29 @@ impl Terminal {
                 }
             }
             InternalEvent::ProcessHyperlink(hyperlink, open) => {
-                self.process_hyperlink(hyperlink.clone(), *open, cx);
+                // history_size must be read here since process_hyperlink cannot lock term
+                // (sync() already holds the lock when dispatching events)
+                let history_size = term.history_size();
+                self.process_hyperlink(hyperlink.clone(), *open, history_size, cx);
             }
         }
     }
 
-    fn process_hyperlink(&mut self, hyperlink: HyperlinkMatch, open: bool, cx: &mut Context<Self>) {
+    fn process_hyperlink(
+        &mut self,
+        hyperlink: HyperlinkMatch,
+        open: bool,
+        history_size: usize,
+        cx: &mut Context<Self>,
+    ) {
         let HyperlinkMatch {
             text: maybe_url_or_path,
             is_url,
             range,
         } = hyperlink;
         let prev_hovered_word = self.last_content.last_hovered_word.take();
+        let match_line = range.start().line;
+        let working_directory = self.cwd_at_line(match_line, history_size);
 
         let target = if is_url {
             if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
@@ -1753,7 +1798,7 @@ impl Terminal {
 
                 MaybeNavigationTarget::PathLike(PathLikeTarget {
                     maybe_path: decoded_path,
-                    terminal_dir: self.working_directory(),
+                    working_directory,
                 })
             } else {
                 MaybeNavigationTarget::Url(maybe_url_or_path.clone())
@@ -1761,7 +1806,7 @@ impl Terminal {
         } else {
             MaybeNavigationTarget::PathLike(PathLikeTarget {
                 maybe_path: maybe_url_or_path.clone(),
-                terminal_dir: self.working_directory(),
+                working_directory,
             })
         };
 
@@ -1845,6 +1890,10 @@ impl Terminal {
 
     pub fn viewport_lines(&self) -> usize {
         screen_lines(&self.term.lock_unfair())
+    }
+
+    pub fn used_lines(&self) -> usize {
+        used_lines(&self.term.lock_unfair())
     }
 
     //To test:
@@ -2088,14 +2137,23 @@ impl Terminal {
         let mut term = self.term.lock_unfair();
         clear_saved_screen(&mut term);
         self.last_content = make_content(&term, &self.last_content);
+        drop(term);
+        self.reset_cwd_history();
         cx.emit(Event::Wakeup);
     }
 
     fn write_input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
+        let input = input.into();
+        if !self.is_remote_terminal && input.contains(&b'\r') {
+            let term = self.term.lock_unfair();
+            self.pending_cwd_boundary = Some(Self::scrollback_position(
+                term.grid().cursor.point.line.0,
+                term.history_size(),
+            ));
+        }
+
         self.events.push_back(InternalEvent::Scroll(Scroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
-
-        let input = input.into();
         #[cfg(any(test, feature = "test-support"))]
         self.input_log.push(input.to_vec());
 
@@ -2513,8 +2571,18 @@ impl Terminal {
                     };
 
                     if selection_type == Some(SelectionType::Simple) && e.modifiers.shift {
-                        self.events
-                            .push_back(InternalEvent::UpdateSelection(position));
+                        if self.last_content.selection.is_some() {
+                            // Shift+click extends the existing selection to this point.
+                            self.events
+                                .push_back(InternalEvent::UpdateSelection(position));
+                        } else {
+                            // With no selection yet, Shift is the escape hatch for
+                            // selecting text while an app has mouse tracking enabled,
+                            // so anchor a selection here for the drag to extend.
+                            self.events.push_back(InternalEvent::SetSelection(Some(
+                                Selection::new(SelectionType::Simple, point, side),
+                            )));
+                        }
                         return;
                     }
 
@@ -2726,6 +2794,57 @@ impl Terminal {
                 .map(|process| process.cwd.clone()),
             TerminalType::DisplayOnly => None,
         }
+    }
+
+    pub(crate) fn record_cwd_change(&mut self, new_working_directory: PathBuf) {
+        if self.is_remote_terminal {
+            return;
+        }
+
+        let scrollback_position = self.pending_cwd_boundary.take().unwrap_or_else(|| {
+            let term = self.term.lock_unfair();
+            Self::scrollback_position(term.grid().cursor.point.line.0, term.history_size())
+        });
+        self.cwd_history.push(CwdHistoryEntry {
+            scrollback_position,
+            working_directory: new_working_directory,
+        });
+    }
+
+    fn reset_cwd_history(&mut self) {
+        self.pending_cwd_boundary = None;
+        self.cwd_history = self
+            .working_directory()
+            .map(|working_directory| {
+                vec![CwdHistoryEntry {
+                    scrollback_position: i32::MIN,
+                    working_directory,
+                }]
+            })
+            .unwrap_or_default();
+    }
+
+    fn cwd_at_line(&self, line: i32, history_size: usize) -> Option<PathBuf> {
+        // Once the scrollback cap is reached, evictions move retained lines without changing
+        // `history_size`, so stored row offsets no longer identify their original lines.
+        if self.is_remote_terminal
+            || self.cwd_history.is_empty()
+            || history_size >= self.term_config.scrolling_history
+        {
+            return self.working_directory();
+        }
+        let scrollback_position = Self::scrollback_position(line, history_size);
+        self.cwd_history
+            .iter()
+            .rev()
+            .find(|entry| entry.scrollback_position <= scrollback_position)
+            .map(|entry| entry.working_directory.clone())
+            .or_else(|| self.working_directory())
+    }
+
+    fn scrollback_position(line: i32, history_size: usize) -> i32 {
+        let history_size = i32::try_from(history_size).unwrap_or(i32::MAX);
+        history_size.saturating_add(line)
     }
 
     pub fn title(&self, truncate: bool) -> String {
@@ -3760,6 +3879,114 @@ mod tests {
         });
     }
 
+    /// With mouse tracking active (e.g. htop), Shift is the escape hatch to
+    /// select terminal text. Shift+drag must start a selection rather than being
+    /// swallowed as a "extend existing selection" no-op. Regression test for #60254.
+    #[gpui::test]
+    async fn test_terminal_shift_drag_selects_while_mouse_tracking(cx: &mut TestAppContext) {
+        // `?1002h` enables button-event mouse tracking, `?1006h` selects SGR encoding.
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"\x1b[?1002h\x1b[?1006hhello world\r\n");
+
+        terminal.update(cx, |terminal, cx| {
+            assert!(
+                terminal.last_content.mode.intersects(Modes::MOUSE_MODE),
+                "mouse tracking should be active"
+            );
+
+            let shift = Modifiers {
+                shift: true,
+                ..Modifiers::none()
+            };
+            terminal.mouse_down(
+                &MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: point(px(50.0), px(10.0)),
+                    modifiers: shift,
+                    click_count: 1,
+                    first_mouse: true,
+                },
+                cx,
+            );
+
+            // With no selection yet, the shift press must anchor a new selection
+            // so the following drag has something to extend.
+            assert!(
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::SetSelection(Some(_)))),
+                "shift+click with no existing selection should anchor a selection"
+            );
+            terminal.events.clear();
+
+            let region = terminal.last_content.terminal_bounds.bounds;
+            terminal.mouse_drag(
+                &MouseMoveEvent {
+                    position: point(px(90.0), px(10.0)),
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: shift,
+                },
+                region,
+                cx,
+            );
+
+            assert!(
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::UpdateSelection(_))),
+                "shift+drag should extend the selection while mouse tracking is active"
+            );
+            assert!(terminal.selection_phase == SelectionPhase::Selecting);
+        });
+    }
+
+    /// Shift+click with a selection already on screen must keep extending it
+    /// (the behavior added in #25143), not re-anchor a fresh one.
+    #[gpui::test]
+    async fn test_terminal_shift_click_extends_existing_selection(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"hello world\r\n");
+
+        terminal.update(cx, |terminal, cx| {
+            // A visible selection, as a sync would have populated in production.
+            terminal.last_content.selection = Some(SelectionRange {
+                start: Point::new(0, 0),
+                end: Point::new(0, 5),
+                is_block: false,
+            });
+            terminal.events.clear();
+
+            terminal.mouse_down(
+                &MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: point(px(90.0), px(10.0)),
+                    modifiers: Modifiers {
+                        shift: true,
+                        ..Modifiers::none()
+                    },
+                    click_count: 1,
+                    first_mouse: true,
+                },
+                cx,
+            );
+
+            assert!(
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::UpdateSelection(_))),
+                "shift+click with an existing selection should extend it"
+            );
+            assert!(
+                !terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::SetSelection(Some(_)))),
+                "shift+click should extend, not re-anchor, an existing selection"
+            );
+        });
+    }
+
     #[gpui::test]
     async fn test_basic_terminal(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -4196,10 +4423,17 @@ mod tests {
         });
 
         let wrote = terminal.update(cx, |terminal, cx| {
+            terminal.cwd_history.push(CwdHistoryEntry {
+                scrollback_position: 42,
+                working_directory: PathBuf::from("/stale/cwd"),
+            });
             terminal.write_init_command_after_startup(b"agent\r".to_vec(), cx)
         });
         assert!(wrote);
-        let content = terminal.update(cx, |terminal, _| terminal.get_content());
+        let (content, cwd_history) = terminal.update(cx, |terminal, _| {
+            (terminal.get_content(), terminal.cwd_history.clone())
+        });
+        assert!(cwd_history.is_empty());
         assert!(
             !content.contains("startup output"),
             "startup output should be cleared internally before writing the init command"
@@ -4943,5 +5177,152 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn make_display_only_terminal() -> Terminal {
+        let dispatcher = gpui::TestDispatcher::new(rand::random());
+        let executor = gpui::BackgroundExecutor::new(std::sync::Arc::new(dispatcher));
+        TerminalBuilder::new_display_only(
+            SettingsCursorShape::default(),
+            AlternateScroll::On,
+            None,
+            0,
+            &executor,
+            PathStyle::local(),
+        )
+        .terminal
+    }
+
+    #[test]
+    fn test_cwd_at_line_empty_history_returns_none() {
+        let terminal = make_display_only_terminal();
+        assert_eq!(terminal.cwd_at_line(0, 0), None);
+    }
+
+    #[test]
+    fn test_cwd_at_line_returns_cwd_for_line_at_or_after_recorded_position() {
+        let mut terminal = make_display_only_terminal();
+        let working_directory_a = PathBuf::from("/home/user/project_a");
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 5,
+            working_directory: working_directory_a.clone(),
+        });
+
+        // click_pos = history_size(5) + line(3) = 8 >= 5
+        assert_eq!(
+            terminal.cwd_at_line(3, 5),
+            Some(working_directory_a.clone())
+        );
+        // click_pos = history_size(5) + line(0) = 5 == 5 (exact match)
+        assert_eq!(terminal.cwd_at_line(0, 5), Some(working_directory_a));
+    }
+
+    #[test]
+    fn test_cwd_at_line_ignores_history_at_scrollback_cap() {
+        let mut terminal = make_display_only_terminal();
+        terminal.term_config.scrolling_history = 10;
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 0,
+            working_directory: PathBuf::from("/stale/cwd"),
+        });
+
+        assert_eq!(terminal.cwd_at_line(-5, 10), None);
+    }
+
+    #[test]
+    fn test_cwd_at_line_returns_none_when_line_is_before_any_recorded_cwd() {
+        let mut terminal = make_display_only_terminal();
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 10,
+            working_directory: PathBuf::from("/home/user/project_a"),
+        });
+
+        // click_pos = 0 + 3 = 3 < 10, no match, falls back to working_directory (None)
+        assert_eq!(terminal.cwd_at_line(3, 0), None);
+    }
+
+    #[test]
+    fn test_cwd_at_line_selects_most_recent_cwd_before_click() {
+        let mut terminal = make_display_only_terminal();
+        let working_directory_a = PathBuf::from("/home/user/project_a");
+        let working_directory_b = PathBuf::from("/home/user/project_b");
+        let working_directory_c = PathBuf::from("/home/user/project_c");
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 0,
+            working_directory: working_directory_a.clone(),
+        });
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 10,
+            working_directory: working_directory_b.clone(),
+        });
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 20,
+            working_directory: working_directory_c.clone(),
+        });
+
+        // click_pos=5: between 0 and 10, working_directory_a
+        assert_eq!(terminal.cwd_at_line(5, 0), Some(working_directory_a));
+        // click_pos=15: between 10 and 20, working_directory_b
+        assert_eq!(terminal.cwd_at_line(15, 0), Some(working_directory_b));
+        // click_pos=25: after 20, working_directory_c
+        assert_eq!(terminal.cwd_at_line(25, 0), Some(working_directory_c));
+    }
+
+    #[test]
+    fn test_record_cwd_change_stores_entry_at_current_cursor_position() {
+        let mut terminal = make_display_only_terminal();
+        let working_directory = PathBuf::from("/tmp/test");
+        terminal.record_cwd_change(working_directory.clone());
+
+        assert_eq!(terminal.cwd_history.len(), 1);
+        let entry = &terminal.cwd_history[0];
+        assert_eq!(entry.scrollback_position, 0);
+        assert_eq!(entry.working_directory, working_directory);
+    }
+
+    #[test]
+    fn test_record_cwd_change_uses_command_boundary() {
+        let mut terminal = make_display_only_terminal();
+        terminal.write_input(b"\r".to_vec());
+        assert_eq!(terminal.pending_cwd_boundary, Some(0));
+
+        let working_directory = PathBuf::from("/tmp/test");
+        terminal.record_cwd_change(working_directory.clone());
+
+        assert_eq!(terminal.pending_cwd_boundary, None);
+        assert_eq!(
+            terminal.cwd_history,
+            vec![CwdHistoryEntry {
+                scrollback_position: 0,
+                working_directory,
+            }]
+        );
+    }
+
+    #[test]
+    fn test_remote_terminal_does_not_record_local_cwd() {
+        let mut terminal = make_display_only_terminal();
+        terminal.is_remote_terminal = true;
+        terminal.write_input(b"\r".to_vec());
+        terminal.record_cwd_change(PathBuf::from("/local/ssh/cwd"));
+
+        assert_eq!(terminal.pending_cwd_boundary, None);
+        assert!(terminal.cwd_history.is_empty());
+        assert_eq!(terminal.cwd_at_line(0, 0), None);
+    }
+
+    #[test]
+    fn test_reset_cwd_history_discards_stale_coordinates() {
+        let mut terminal = make_display_only_terminal();
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 42,
+            working_directory: PathBuf::from("/tmp/test"),
+        });
+        terminal.pending_cwd_boundary = Some(43);
+
+        terminal.reset_cwd_history();
+
+        assert!(terminal.cwd_history.is_empty());
+        assert_eq!(terminal.pending_cwd_boundary, None);
     }
 }
