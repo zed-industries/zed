@@ -1347,7 +1347,6 @@ fn snippet_completions(
                                     replace: lsp_range,
                                 },
                             )),
-                            filter_text: Some(snippet.body.clone()),
                             sort_text: Some(char::MAX.to_string()),
                             ..lsp::CompletionItem::default()
                         }),

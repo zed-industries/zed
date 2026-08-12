@@ -20309,6 +20309,68 @@ async fn test_completion_in_multibuffer_with_newest_selection_in_other_buffer(
 }
 
 #[gpui::test]
+async fn test_completion_filter_text_need_not_be_label_substring(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            ..Default::default()
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions::default()),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.lsp
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "rendered value".to_string(),
+                    filter_text: Some("typed_prefix".to_string()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "typed_prefix fallback".to_string(),
+                    ..Default::default()
+                },
+            ])))
+        });
+
+    cx.set_state("fn main() { typed_prefixˇ }");
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions, window, cx);
+    });
+
+    cx.run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+
+    cx.update_editor(|editor, _, _| {
+        let context_menu = editor.context_menu.borrow();
+        let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref() else {
+            panic!("expected completion menu to be open");
+        };
+
+        let completions = menu.completions.borrow();
+        let entries = menu.entries.borrow();
+        let completion = entries
+            .iter()
+            .filter_map(|entry| entry.as_match())
+            .map(|string_match| &completions[string_match.candidate_id])
+            .find(|completion| completion.label.text() == "rendered value")
+            .expect("completion should be matched using its non-substring filterText");
+
+        assert_eq!(completion.label.filter_text(), "rendered value");
+        assert_eq!(completion.filter_text(), "typed_prefix");
+    });
+}
+
+#[gpui::test]
 async fn test_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
