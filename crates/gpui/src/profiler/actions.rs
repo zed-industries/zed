@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use itertools::Itertools;
 
+#[cfg(feature = "profiler")]
 use crate::action::Action;
 
 #[doc(hidden)]
@@ -191,18 +192,10 @@ pub(crate) fn update_running_action(action: &(dyn Action + 'static), cx: &mut cr
 }
 
 #[doc(hidden)]
-#[cfg(not(feature = "profiler"))]
-pub(crate) fn update_running_action(_: &(dyn Action + 'static), _: &mut crate::App) {}
-
-#[doc(hidden)]
 #[cfg(feature = "profiler")]
 pub(crate) fn save_action_timing() {
     ACTION_STATISTICS.lock().save_action_timing();
 }
-
-#[doc(hidden)]
-#[cfg(not(feature = "profiler"))]
-pub(crate) fn save_action_timing() {}
 
 #[doc(hidden)]
 #[cfg(feature = "profiler")]

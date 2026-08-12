@@ -247,29 +247,20 @@ fn format_duration(duration: Duration) -> String {
 /// in the same process.
 struct TraceScope {
     collector: FrameTimingCollector,
-    was_already_enabled: bool,
+    _trace_guard: profiler::TraceGuard,
 }
 
 impl TraceScope {
     fn start() -> Self {
-        let was_already_enabled = !profiler::set_trace_enabled(true);
+        let trace_guard = profiler::trace_scope();
         Self {
             collector: FrameTimingCollector::new(),
-            was_already_enabled,
+            _trace_guard: trace_guard,
         }
     }
 
     fn finish(mut self) -> Vec<FrameEvent> {
         self.collector.collect_unseen()
-        // Dropping `self` restores the previous tracing state.
-    }
-}
-
-impl Drop for TraceScope {
-    fn drop(&mut self) {
-        if !self.was_already_enabled {
-            profiler::set_trace_enabled(false);
-        }
     }
 }
 
