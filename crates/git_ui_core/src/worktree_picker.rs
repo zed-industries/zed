@@ -855,15 +855,14 @@ impl PickerDelegate for WorktreePickerDelegate {
         let has_named_worktree = self.all_worktrees.iter().any(|worktree| {
             worktree.directory_name(main_worktree_path.as_deref()) == normalized_query
         });
-        let create_named_disabled_reason: Option<String> = if !self.custom_selection_available
-            && !self.has_multiple_repositories
-        {
-            Some("Requires a Git repository in the project".into())
-        } else if has_named_worktree {
-            Some("A worktree with this name already exists".into())
-        } else {
-            None
-        };
+        let create_named_disabled_reason: Option<String> =
+            if !self.custom_selection_available && !self.has_multiple_repositories {
+                Some("Requires a Git repository in the project".into())
+            } else if has_named_worktree {
+                Some("A worktree with this name already exists".into())
+            } else {
+                None
+            };
 
         let show_default_branch_create =
             self.custom_selection_available && self.default_branch.is_some();
@@ -2212,9 +2211,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_zero_repository_disables_custom_base_worktree_creation(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_zero_repository_disables_custom_base_worktree_creation(cx: &mut TestAppContext) {
         let (worktree_picker, mut cx) = init_worktree_picker_without_repository(cx).await;
         let has_choose_base = worktree_picker.update(&mut cx, |worktree_picker, cx| {
             worktree_picker.picker.update(cx, |picker, _| {
@@ -2229,18 +2226,17 @@ mod tests {
 
         select_named_worktree_entry(&worktree_picker, "feature name", "feature-name", &mut cx)
             .await;
-        let named_entry_is_disabled =
-            worktree_picker.update(&mut cx, |worktree_picker, cx| {
-                worktree_picker.picker.update(cx, |picker, _| {
-                    matches!(
-                        picker.delegate.matches.get(picker.delegate.selected_index),
-                        Some(WorktreeEntry::CreateNamed {
-                            disabled_reason: Some(_),
-                            ..
-                        })
-                    )
-                })
-            });
+        let named_entry_is_disabled = worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                matches!(
+                    picker.delegate.matches.get(picker.delegate.selected_index),
+                    Some(WorktreeEntry::CreateNamed {
+                        disabled_reason: Some(_),
+                        ..
+                    })
+                )
+            })
+        });
         worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
             worktree_picker.picker.update(cx, |picker, cx| {
                 picker.delegate.confirm(false, window, cx);
@@ -2319,10 +2315,9 @@ mod tests {
         cx.run_until_parked();
 
         assert!(
-            workspace
-                .read_with(&cx, |workspace, cx| workspace
-                    .active_modal::<crate::GitPickerPopover>(cx)
-                    .is_none()),
+            workspace.read_with(&cx, |workspace, cx| workspace
+                .active_modal::<crate::GitPickerPopover>(cx)
+                .is_none()),
             "cancelling should dismiss the branch selector"
         );
         assert_eq!(

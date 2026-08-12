@@ -1,10 +1,10 @@
 use std::{rc::Rc, sync::Arc};
 
+use git::repository::Branch;
 use gpui::{
     AnyView, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global,
     IntoElement, ManagedView, Render, SharedString, Subscription, WeakEntity, Window,
 };
-use git::repository::Branch;
 use project::{ProjectPath, git_store::Repository};
 use workspace::{ModalView, Workspace};
 

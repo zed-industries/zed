@@ -2372,10 +2372,9 @@ mod tests {
 
         let selected_branch = Rc::new(RefCell::new(None));
         let selected_branch_for_callback = selected_branch.clone();
-        let on_select: git_ui_core::SelectBranchCallback =
-            Arc::new(move |branch, _, _| {
-                *selected_branch_for_callback.borrow_mut() = Some(branch);
-            });
+        let on_select: git_ui_core::SelectBranchCallback = Arc::new(move |branch, _, _| {
+            *selected_branch_for_callback.borrow_mut() = Some(branch);
+        });
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {

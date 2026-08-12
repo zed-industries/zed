@@ -764,12 +764,7 @@ fn choose_worktree_base_in_workspace(
     let callback_workspace = workspace.downgrade();
     let on_select = Arc::new(move |branch, window: &mut Window, cx: &mut App| {
         if let Some(workspace) = callback_workspace.upgrade() {
-            create_worktree_in_workspace(
-                &workspace,
-                worktree_branch_target(&branch),
-                window,
-                cx,
-            );
+            create_worktree_in_workspace(&workspace, worktree_branch_target(&branch), window, cx);
         }
     });
 
