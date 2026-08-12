@@ -105,8 +105,10 @@ pub struct ParsedSvg(usvg::Tree);
 /// The size in which to rasterize the SVG.
 #[derive(Clone, Copy)]
 pub enum SvgSize {
-    /// An absolute size in device pixels.
+    /// A width in device pixels. The SVG retains its aspect ratio.
     Size(Size<DevicePixels>),
+    /// An exact width and height in device pixels.
+    ExactSize(Size<DevicePixels>),
     /// A logical scaling factor to apply to the size provided by the SVG.
     ScaleFactor(f32),
 }
@@ -199,6 +201,7 @@ impl SvgRenderer {
     ) -> Result<Arc<RenderImage>, usvg::Error> {
         let (size, image_scale_factor) = match size.into() {
             SvgSize::Size(size) => (SvgSize::Size(size), 1.0),
+            SvgSize::ExactSize(size) => (SvgSize::ExactSize(size), 1.0),
             SvgSize::ScaleFactor(scale_factor) => (
                 SvgSize::ScaleFactor(scale_factor * SMOOTH_SVG_SCALE_FACTOR),
                 SMOOTH_SVG_SCALE_FACTOR,
@@ -273,14 +276,12 @@ fn rasterize_tree(tree: &usvg::Tree, size: SvgSize) -> Result<Pixmap, usvg::Erro
 
     let svg_size = tree.size();
     let (mut width, mut height) = match size {
-        SvgSize::Size(size) => (
-            i32::from(size.width) as f32,
-            i32::from(size.height) as f32,
-        ),
-        SvgSize::ScaleFactor(scale) => (
-            svg_size.width() * scale,
-            svg_size.height() * scale,
-        ),
+        SvgSize::Size(size) => {
+            let scale = i32::from(size.width) as f32 / svg_size.width();
+            (svg_size.width() * scale, svg_size.height() * scale)
+        }
+        SvgSize::ExactSize(size) => (i32::from(size.width) as f32, i32::from(size.height) as f32),
+        SvgSize::ScaleFactor(scale) => (svg_size.width() * scale, svg_size.height() * scale),
     };
 
     if width > MAX_SIZE {
@@ -364,19 +365,31 @@ mod tests {
     const LILEX_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
 
     #[test]
-    fn renders_parsed_svg_at_requested_size() {
+    fn renders_parsed_svg_at_requested_size() -> Result<()> {
         let renderer = SvgRenderer::new(Arc::new(()));
-        let svg = renderer
-            .parse_svg(
-                br#"<svg xmlns="http://www.w3.org/2000/svg" width="24pt" height="12pt"></svg>"#,
-            )
-            .unwrap();
+        let svg = renderer.parse_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="24pt" height="12pt"></svg>"#,
+        )?;
         let requested_size = Size::new(DevicePixels(24), DevicePixels(12));
-        let image = renderer
-            .render_parsed(&svg, SvgSize::Size(requested_size))
-            .unwrap();
+        let image = renderer.render_parsed(&svg, SvgSize::ExactSize(requested_size))?;
 
         assert_eq!(image.size(0), requested_size);
+        Ok(())
+    }
+
+    #[test]
+    fn preserves_aspect_ratio_for_width_constrained_size() -> Result<()> {
+        let renderer = SvgRenderer::new(Arc::new(()));
+        let svg = renderer.parse_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="24pt" height="12pt"></svg>"#,
+        )?;
+        let image = renderer.render_parsed(
+            &svg,
+            SvgSize::Size(Size::new(DevicePixels(24), DevicePixels(24))),
+        )?;
+
+        assert_eq!(image.size(0), Size::new(DevicePixels(24), DevicePixels(12)));
+        Ok(())
     }
 
     fn db_with_bundled_fonts() -> Database {
