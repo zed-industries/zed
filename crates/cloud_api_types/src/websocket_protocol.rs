@@ -16,6 +16,13 @@ pub enum MessageToClient {
     NotificationsUpdated,
     /// The user's settings were updated and should be refreshed.
     SettingsUpdated,
+    // TODO kb cloud: Cloud does not send this yet; broadcast to all of the
+    // user's sockets, clients filter by group and dedupe by version.
+    SyncedSettingsChanged {
+        group_id: String,
+        kind: String,
+        version: u64,
+    },
 }
 
 impl MessageToClient {

@@ -65,6 +65,12 @@ pub struct CloudApiClient {
     authentication: Authentication,
 }
 
+#[derive(Debug)]
+pub enum UpdateSyncedSettingsResult {
+    Written(UpdateSyncedSettingsResponse),
+    Conflict(GetSyncedSettingsResponse),
+}
+
 impl CloudApiClient {
     pub fn new(http_client: Arc<HttpClientWithUrl>) -> Self {
         Self {
@@ -267,6 +273,182 @@ impl CloudApiClient {
                 ))
             }
         }
+    }
+
+    // TODO kb cloud: the `/client/synced_settings` endpoints are not
+    // implemented server-side yet.
+    pub async fn get_synced_settings(
+        &self,
+        system_id: Option<String>,
+        kind: &str,
+    ) -> Result<GetSyncedSettingsResponse, ClientApiError> {
+        let request_builder = Request::builder()
+            .method(Method::GET)
+            .uri(
+                self.http_client
+                    .build_zed_cloud_url_with_query("/client/synced_settings", [("kind", kind)])
+                    .map_err(ClientApiError::RequestBuildFailed)?
+                    .as_ref(),
+            )
+            .when_some(system_id, |builder, system_id| {
+                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
+            });
+
+        self.send_authenticated_json_request(request_builder, AsyncBody::default())
+            .await
+    }
+
+    pub async fn update_synced_settings(
+        &self,
+        system_id: Option<String>,
+        body: UpdateSyncedSettingsBody,
+    ) -> Result<UpdateSyncedSettingsResult, ClientApiError> {
+        let request_builder = Request::builder()
+            .method(Method::PUT)
+            .uri(
+                self.http_client
+                    .build_zed_cloud_url("/client/synced_settings")
+                    .map_err(ClientApiError::RequestBuildFailed)?
+                    .as_ref(),
+            )
+            .when_some(system_id, |builder, system_id| {
+                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
+            });
+
+        match self
+            .send_authenticated_json_request::<UpdateSyncedSettingsResponse>(
+                request_builder,
+                Json(body),
+            )
+            .await
+        {
+            Ok(response) => Ok(UpdateSyncedSettingsResult::Written(response)),
+            Err(ClientApiError::ServerError { status, body, .. })
+                if status == StatusCode::CONFLICT =>
+            {
+                let current = serde_json::from_str::<GetSyncedSettingsResponse>(&body)
+                    .map_err(|error| ClientApiError::InvalidResponse(error.into()))?;
+                Ok(UpdateSyncedSettingsResult::Conflict(current))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn get_synced_settings_hosts(
+        &self,
+        system_id: Option<String>,
+    ) -> Result<GetSyncedSettingsHostsResponse, ClientApiError> {
+        let request_builder = Request::builder()
+            .method(Method::GET)
+            .uri(
+                self.http_client
+                    .build_zed_cloud_url("/client/synced_settings/hosts")
+                    .map_err(ClientApiError::RequestBuildFailed)?
+                    .as_ref(),
+            )
+            .when_some(system_id, |builder, system_id| {
+                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
+            });
+
+        self.send_authenticated_json_request(request_builder, AsyncBody::default())
+            .await
+    }
+
+    pub async fn update_synced_settings_host(
+        &self,
+        system_id: Option<String>,
+        host_system_id: &str,
+        body: UpdateSyncedSettingsHostBody,
+    ) -> Result<SyncedSettingsHost, ClientApiError> {
+        let request_builder = Request::builder()
+            .method(Method::PATCH)
+            .uri(
+                self.http_client
+                    .build_zed_cloud_url(&format!("/client/synced_settings/hosts/{host_system_id}"))
+                    .map_err(ClientApiError::RequestBuildFailed)?
+                    .as_ref(),
+            )
+            .when_some(system_id, |builder, system_id| {
+                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
+            });
+
+        self.send_authenticated_json_request(request_builder, Json(body))
+            .await
+    }
+
+    pub async fn delete_synced_settings_host(
+        &self,
+        system_id: Option<String>,
+        host_system_id: &str,
+    ) -> Result<(), ClientApiError> {
+        let request_builder = Request::builder()
+            .method(Method::DELETE)
+            .uri(
+                self.http_client
+                    .build_zed_cloud_url(&format!("/client/synced_settings/hosts/{host_system_id}"))
+                    .map_err(ClientApiError::RequestBuildFailed)?
+                    .as_ref(),
+            )
+            .when_some(system_id, |builder, system_id| {
+                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
+            });
+
+        self.send_authenticated_request(request_builder, AsyncBody::default())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_synced_settings_history(
+        &self,
+        system_id: Option<String>,
+        kind: &str,
+    ) -> Result<GetSyncedSettingsHistoryResponse, ClientApiError> {
+        let request_builder = Request::builder()
+            .method(Method::GET)
+            .uri(
+                self.http_client
+                    .build_zed_cloud_url_with_query(
+                        "/client/synced_settings/history",
+                        [("kind", kind)],
+                    )
+                    .map_err(ClientApiError::RequestBuildFailed)?
+                    .as_ref(),
+            )
+            .when_some(system_id, |builder, system_id| {
+                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
+            });
+
+        self.send_authenticated_json_request(request_builder, AsyncBody::default())
+            .await
+    }
+
+    // TODO kb cloud: erase is resurrection-prone — any still-enabled device in
+    // the group re-pushes its local settings on its next change; needs a server
+    // tombstone, or the docs must state that erase implies disabling the
+    // group's hosts first.
+    pub async fn delete_synced_settings(
+        &self,
+        system_id: Option<String>,
+        all_groups: bool,
+    ) -> Result<(), ClientApiError> {
+        let url = if all_groups {
+            self.http_client
+                .build_zed_cloud_url_with_query("/client/synced_settings", [("all", "true")])
+        } else {
+            self.http_client
+                .build_zed_cloud_url("/client/synced_settings")
+        }
+        .map_err(ClientApiError::RequestBuildFailed)?;
+        let request_builder = Request::builder()
+            .method(Method::DELETE)
+            .uri(url.as_ref())
+            .when_some(system_id, |builder, system_id| {
+                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
+            });
+
+        self.send_authenticated_request(request_builder, AsyncBody::default())
+            .await?;
+        Ok(())
     }
 
     pub async fn submit_agent_feedback(&self, body: SubmitAgentThreadFeedbackBody) -> Result<()> {
