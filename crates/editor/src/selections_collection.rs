@@ -1152,6 +1152,75 @@ fn selection_to_anchor_selection(
     }
 }
 
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub(crate) struct SplicedEndpoints {
+    pub start_entombed: bool,
+    pub end_entombed: bool,
+}
+
+pub(crate) fn splice_offset_selections(
+    edits: &[text::Edit<MultiBufferOffset>],
+    selections: &mut [Selection<MultiBufferOffset>],
+    endpoints: &mut [SplicedEndpoints],
+) {
+    splice_offset_selections_with_policy(edits, selections, endpoints, Bias::Left)
+}
+
+fn splice_offset_selections_with_policy(
+    edits: &[text::Edit<MultiBufferOffset>],
+    selections: &mut [Selection<MultiBufferOffset>],
+    endpoints: &mut [SplicedEndpoints],
+    entombed_policy: Bias,
+) {
+    let mut delta = 0isize;
+    let mut edits = edits.iter().peekable();
+    let mut splice =
+        |offset: MultiBufferOffset, bias: Bias, entombed: &mut bool, delta: &mut isize| {
+            let shifted = |offset: MultiBufferOffset, delta: isize| {
+                MultiBufferOffset((offset.0 as isize + delta) as usize)
+            };
+            loop {
+                let Some(edit) = edits.peek() else {
+                    return shifted(offset, *delta);
+                };
+                let effective_bias = if *entombed { entombed_policy } else { bias };
+                if offset < edit.old.start
+                    || (offset == edit.old.start && effective_bias == Bias::Left)
+                {
+                    return shifted(offset, *delta);
+                }
+                if offset <= edit.old.end {
+                    let deletion = edit.old.start < edit.old.end;
+                    if deletion && (offset < edit.old.end || bias == Bias::Left || *entombed) {
+                        *entombed = true;
+                    }
+                    return edit.new.end;
+                }
+                *delta = edit.new.end.0 as isize - edit.old.end.0 as isize;
+                edits.next();
+            }
+        };
+    for (selection, endpoint) in selections.iter_mut().zip(endpoints) {
+        let empty = selection.start == selection.end;
+        let end_bias = if empty { Bias::Right } else { Bias::Left };
+        selection.start = splice(
+            selection.start,
+            Bias::Right,
+            &mut endpoint.start_entombed,
+            &mut delta,
+        );
+        selection.end = splice(
+            selection.end,
+            end_bias,
+            &mut endpoint.end_entombed,
+            &mut delta,
+        );
+        if selection.end < selection.start {
+            selection.end = selection.start;
+        }
+    }
+}
+
 fn resolve_selections_point<'a>(
     selections: impl 'a + IntoIterator<Item = &'a Selection<Anchor>>,
     map: &'a DisplaySnapshot,
@@ -1585,6 +1654,120 @@ mod tests {
             }
         }
         text
+    }
+
+    #[gpui::test(iterations = 200)]
+    fn spliced_selections_match_anchor_resolution(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
+        let text = random_text(&mut rng);
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let snapshot = buffer.update(cx, |buffer, cx| buffer.snapshot(cx));
+
+        let mut offset_selections = Vec::new();
+        let mut offset = 0;
+        for id in 0..rng.random_range(1..32) {
+            if offset > text.len() {
+                break;
+            }
+            let start = rng.random_range(offset..=text.len());
+            let end = rng.random_range(start..=text.len());
+            offset_selections.push(Selection {
+                id,
+                start: MultiBufferOffset(start),
+                end: MultiBufferOffset(end),
+                reversed: false,
+                goal: SelectionGoal::None,
+            });
+            offset = end + rng.random_range(1..=4);
+        }
+        let initial_selections = offset_selections.clone();
+        let anchor_selections = offset_selections
+            .iter()
+            .map(|selection| selection_to_anchor_selection(selection.clone(), &snapshot))
+            .collect::<Vec<_>>();
+        let mut right_spliced = offset_selections.clone();
+        let mut endpoints = vec![SplicedEndpoints::default(); offset_selections.len()];
+        let mut right_endpoints = endpoints.clone();
+
+        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let mut all_patches = Vec::new();
+        for _ in 0..rng.random_range(1..=3) {
+            buffer.update(cx, |buffer, cx| {
+                let buffer_len = buffer.read(cx).len().0;
+                let mut edits = Vec::new();
+                let mut edit_start = 0;
+                for _ in 0..rng.random_range(1..=10) {
+                    if edit_start > buffer_len {
+                        break;
+                    }
+                    let start = rng.random_range(edit_start..=buffer_len);
+                    let end = rng.random_range(start..=buffer_len);
+                    let new_text = (0..rng.random_range(0..10))
+                        .map(|_| rng.random_range(b'a'..=b'z') as char)
+                        .collect::<String>();
+                    edits.push((MultiBufferOffset(start)..MultiBufferOffset(end), new_text));
+                    edit_start = end + 1;
+                }
+                buffer.edit(edits, None, cx);
+                buffer.snapshot(cx);
+            });
+            let patch = subscription.consume();
+            splice_offset_selections(patch.edits(), &mut offset_selections, &mut endpoints);
+            splice_offset_selections_with_policy(
+                patch.edits(),
+                &mut right_spliced,
+                &mut right_endpoints,
+                Bias::Right,
+            );
+            all_patches.push(patch);
+        }
+
+        let new_snapshot = buffer.update(cx, |buffer, cx| buffer.snapshot(cx));
+        for (ix, (offset_selection, anchor_selection)) in
+            offset_selections.iter().zip(&anchor_selections).enumerate()
+        {
+            let resolved_start = anchor_selection.start.to_offset(&new_snapshot);
+            let resolved_end = anchor_selection.end.to_offset(&new_snapshot);
+            let context = || {
+                format!(
+                    "selection id {}, initial: {:?}, patches: {:?}",
+                    offset_selection.id,
+                    initial_selections
+                        .iter()
+                        .find(|initial| initial.id == offset_selection.id),
+                    all_patches,
+                )
+            };
+            for (spliced, right, resolved, entombed) in [
+                (
+                    offset_selection.start,
+                    right_spliced[ix].start,
+                    resolved_start,
+                    endpoints[ix].start_entombed,
+                ),
+                (
+                    offset_selection.end,
+                    right_spliced[ix].end,
+                    resolved_end,
+                    endpoints[ix].end_entombed,
+                ),
+            ] {
+                if entombed {
+                    assert!(
+                        spliced <= resolved && resolved <= right,
+                        "entombed endpoint out of policy bounds: \
+                         left {spliced:?}, resolved {resolved:?}, right {right:?}\n{}",
+                        context(),
+                    );
+                } else {
+                    assert_eq!(
+                        spliced,
+                        resolved,
+                        "live endpoint diverged from anchor resolution\n{}",
+                        context(),
+                    );
+                }
+            }
+        }
     }
 
     fn random_anchor_selections(
