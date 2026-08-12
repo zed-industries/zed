@@ -16291,6 +16291,42 @@ async fn test_worktree_released_when_creation_caller_is_cancelled(cx: &mut gpui:
     );
 }
 
+#[gpui::test]
+async fn test_initial_scan_completes_when_creation_caller_is_cancelled(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), serde_json::json!({ "a.rs": "" }))
+        .await;
+    fs.insert_tree(path!("/other"), serde_json::json!({ "b.rs": "" }))
+        .await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    cx.run_until_parked();
+
+    let task = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(path!("/other"), true, cx)
+    });
+    drop(task);
+    cx.run_until_parked();
+
+    let (initial_scan_completed, loading_worktrees) = project.read_with(cx, |project, cx| {
+        let worktree_store = project.worktree_store().read(cx);
+        (
+            worktree_store.initial_scan_completed(),
+            worktree_store.diagnostics(cx).loading_worktrees,
+        )
+    });
+    assert_eq!(
+        loading_worktrees, 0,
+        "no loading entry should remain after creation resolves"
+    );
+    assert!(
+        initial_scan_completed,
+        "initial scan should complete even when the creation task's caller was cancelled"
+    );
+}
+
 /// Regression test for https://github.com/zed-industries/zed/issues/60424.
 ///
 /// The committed text contains repeated `end\n\n` line runs, so the deletion

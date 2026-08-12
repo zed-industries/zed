@@ -797,64 +797,58 @@ impl WorktreeStore {
                 }
             };
 
-            let shared_task = task.shared();
-            self.loading_worktrees
-                .insert(abs_path.clone(), shared_task.clone());
-
-            if visible && self.scanning_enabled {
-                *self.initial_scan_complete.0.borrow_mut() = false;
-            }
-
-            // Remove the entry in its own task rather than in the one returned to
-            // callers: every caller can be cancelled while creation keeps running
-            // through the map's own clone, and a resolved task left in the map
-            // would retain the worktree entity it produced forever.
-            cx.spawn({
+            let loading_task = cx.spawn({
                 let abs_path = abs_path.clone();
                 async move |this, cx| {
-                    let is_err = shared_task.await.is_err();
+                    let result = task.await;
                     this.update(cx, |this, cx| {
                         this.loading_worktrees.remove(&abs_path);
-                        if !visible || !this.scanning_enabled || is_err {
+                        if !visible || !this.scanning_enabled || result.is_err() {
                             this.update_initial_scan_state(cx);
                         }
                     })
                     .ok();
-                }
-            })
-            .detach();
-        }
-        let task = self.loading_worktrees.get(&abs_path).unwrap().clone();
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(worktree) => {
-                if !is_via_collab {
-                    if let Some((trusted_worktrees, worktree_store)) = this
-                        .update(cx, |_, cx| {
-                            TrustedWorktrees::try_get_global(cx).zip(Some(cx.entity()))
-                        })
-                        .ok()
-                        .flatten()
+
+                    if let Ok(worktree) = &result
+                        && !is_via_collab
                     {
-                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(
-                                &worktree_store,
-                                worktree.read(cx).id(),
-                                cx,
-                            );
-                        });
+                        if let Some((trusted_worktrees, worktree_store)) = this
+                            .update(cx, |_, cx| {
+                                TrustedWorktrees::try_get_global(cx).zip(Some(cx.entity()))
+                            })
+                            .ok()
+                            .flatten()
+                        {
+                            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                                trusted_worktrees.can_trust(
+                                    &worktree_store,
+                                    worktree.read(cx).id(),
+                                    cx,
+                                );
+                            });
+                        }
+
+                        this.update(cx, |this, cx| {
+                            if this.scanning_enabled && visible {
+                                this.observe_worktree_scan_completion(worktree, cx);
+                            }
+                        })
+                        .ok();
                     }
 
-                    this.update(cx, |this, cx| {
-                        if this.scanning_enabled && visible {
-                            this.observe_worktree_scan_completion(&worktree, cx);
-                        }
-                    })
-                    .ok();
+                    result
                 }
-                Ok(worktree)
+            });
+
+            self.loading_worktrees
+                .insert(abs_path.clone(), loading_task.shared());
+
+            if visible && self.scanning_enabled {
+                *self.initial_scan_complete.0.borrow_mut() = false;
             }
-            Err(err) => Err((*err).cloned()),
-        })
+        }
+        let task = self.loading_worktrees.get(&abs_path).unwrap().clone();
+        cx.background_spawn(async move { task.await.map_err(|error| (*error).cloned()) })
     }
 
     fn create_remote_worktree(
