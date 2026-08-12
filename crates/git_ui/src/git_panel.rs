@@ -98,7 +98,7 @@ use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
-    Item, Workspace,
+    Item, ModalView, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
 };
@@ -199,6 +199,67 @@ struct GitPanelViewOptionsMenuState {
     sort_by: GitPanelSortBy,
     group_by: GitPanelGroupBy,
     tree_view: bool,
+}
+
+/// Prompts for an optional stash name. Confirming with an empty editor stashes
+/// without `--message`, letting git generate its usual "WIP on ..." description.
+struct StashMessageModal {
+    editor: Entity<Editor>,
+    panel: WeakEntity<GitPanel>,
+}
+
+impl StashMessageModal {
+    fn new(panel: WeakEntity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Optionally provide a stash message", window, cx);
+            editor
+        });
+        Self { editor, panel }
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        let message = self.editor.read(cx).text(cx).trim().to_owned();
+        let message = (!message.is_empty()).then_some(message);
+        self.panel
+            .update(cx, |panel, cx| panel.perform_stash(message, cx))
+            .ok();
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for StashMessageModal {}
+impl ModalView for StashMessageModal {}
+impl Focusable for StashMessageModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for StashMessageModal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("StashMessageModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .w_full()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
+                    .child(Headline::new("Stash All").size(HeadlineSize::XSmall)),
+            )
+            .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
+    }
 }
 
 fn git_panel_context_menu(
@@ -2731,7 +2792,25 @@ impl GitPanel {
         .detach();
     }
 
-    pub fn stash_all(&mut self, _: &StashAll, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn stash_all(&mut self, _: &StashAll, window: &mut Window, cx: &mut Context<Self>) {
+        if self.active_repository.is_none() {
+            return;
+        }
+        // `git::StashAll` is also registered on the workspace, which dispatches it while
+        // `Workspace` is leased, so opening the modal inline would re-enter that update.
+        cx.defer_in(window, |this, window, cx| {
+            let panel = cx.entity().downgrade();
+            this.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        StashMessageModal::new(panel, window, cx)
+                    });
+                })
+                .ok();
+        });
+    }
+
+    fn perform_stash(&mut self, message: Option<String>, cx: &mut Context<Self>) {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
@@ -2739,7 +2818,7 @@ impl GitPanel {
         cx.spawn({
             async move |this, cx| {
                 let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_all(cx))
+                    .update(cx, |repo, cx| repo.stash_all(message, cx))
                     .await;
                 this.update(cx, |this, cx| {
                     stash_task

@@ -809,7 +809,7 @@ slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union", "const_new"] }
 smol = "2.0"
 sqlformat = "0.2"
-stacksafe = "0.1"
+stacksafe = "1.0"
 streaming-iterator = "0.1"
 strsim = "0.11"
 strum = { version = "0.27.2", features = ["derive"] }
