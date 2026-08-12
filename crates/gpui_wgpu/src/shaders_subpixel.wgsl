@@ -15,7 +15,7 @@ struct SubpixelSpriteOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) color: vec4<f32>,
-    @location(3) clip_distances: vec4<f32>,
+    @location(2) clip_distances: vec4<f32>,
 }
 
 struct SubpixelSpriteFragmentOutput {
@@ -29,10 +29,21 @@ fn vs_subpixel_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_i
     let sprite = b_subpixel_sprites[instance_id];
 
     var out = SubpixelSpriteOutput();
-    out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
-    out.tile_position = to_tile_position(unit_vertex, sprite.tile);
+    if (transform_is_axis_aligned(sprite.transformation)) {
+        let mask = mask_in_transform_space(sprite.content_mask, sprite.transformation);
+        let clipped = clip_to_mask(sprite.bounds, mask);
+        out.position = to_device_position_transformed(unit_vertex, clipped, sprite.transformation);
+        let local_position = unit_vertex * clipped.size + clipped.origin;
+        out.tile_position = to_tile_position((local_position - sprite.bounds.origin) / sprite.bounds.size, sprite.tile);
+        out.clip_distances = vec4<f32>(1.0);
+    } else {
+        // A rotated sprite intersected with the axis-aligned mask isn't
+        // representable as a quad, so fall back to per-fragment clipping.
+        out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+        out.tile_position = to_tile_position(unit_vertex, sprite.tile);
+        out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
+    }
     out.color = hsla_to_rgba(sprite.color);
-    out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     return out;
 }
 
@@ -44,7 +55,9 @@ fn fs_subpixel_sprite(input: SubpixelSpriteOutput) -> SubpixelSpriteFragmentOutp
     }
     let alpha_corrected = apply_contrast_and_gamma_correction3(sample, input.color.rgb, gamma_params.subpixel_enhanced_contrast, gamma_params.gamma_ratios);
 
-    // Alpha clip after using the derivatives.
+    // Only rotated sprites need per-fragment clipping; axis-aligned sprites
+    // are clipped geometrically in the vertex shader. Alpha clip after using
+    // the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return SubpixelSpriteFragmentOutput(vec4<f32>(0.0), vec4<f32>(0.0));
     }
