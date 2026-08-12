@@ -1,15 +1,18 @@
-# Builds the Windows bundle after a successful fork sync (or on demand),
-# publishes a GitHub release on this fork, and lets the built binary's
-# auto-update (crates/auto_update) pick up the new version.
+# Builds the Windows bundle after a direct push to main, a successful fork sync,
+# or a manual dispatch, then publishes a GitHub release on this fork.
+# The built binary's auto-update (crates/auto_update) picks up the new version.
 name: build-binaries
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       branch:
         description: Branch to build
         required: false
         default: main
+  # sync-fork uses GITHUB_TOKEN, so its main push is covered by workflow_run.
   workflow_run:
     workflows: [sync-fork]
     types: [completed]
@@ -28,7 +31,7 @@ concurrency:
 
 jobs:
   prepare:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.compute.outputs.version }}
