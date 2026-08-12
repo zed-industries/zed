@@ -101,6 +101,7 @@ impl Prettier {
         }
 
         let mut closest_package_json_path = None;
+        let mut closest_package_json_declares_prettier = false;
         loop {
             if installed_prettiers.contains(&path_to_check) {
                 log::debug!("Found prettier path {path_to_check:?} in installed prettiers");
@@ -113,7 +114,11 @@ impl Prettier {
                     return Ok(ControlFlow::Continue(Some(path_to_check)));
                 } else {
                     match &closest_package_json_path {
-                        None => closest_package_json_path = Some(path_to_check.clone()),
+                        None => {
+                            closest_package_json_declares_prettier =
+                                package_json_declares_prettier(&package_json_contents);
+                            closest_package_json_path = Some(path_to_check.clone());
+                        }
                         Some(closest_package_json_path) => {
                             match package_json_contents.get("workspaces") {
                                 Some(serde_json::Value::Array(workspaces)) => {
@@ -129,15 +134,24 @@ impl Prettier {
                                         workspace_definition == subproject_path.to_string_lossy() || PathMatcher::new(&[workspace_definition], PathStyle::local()).ok().is_some_and(
                                             |path_matcher| RelPath::new(subproject_path, PathStyle::local()).is_ok_and(|path|  path_matcher.is_match(path)))
                                     }) {
-                                        anyhow::ensure!(has_prettier_in_node_modules(fs, &path_to_check).await?,
-                                            "Path {path_to_check:?} is the workspace root for project in \
-                                            {closest_package_json_path:?}, but it has no prettier installed"
-                                        );
-                                        log::info!(
-                                            "Found prettier path {path_to_check:?} in the workspace \
-                                            root for project in {closest_package_json_path:?}"
-                                        );
-                                        return Ok(ControlFlow::Continue(Some(path_to_check)));
+                                        if has_prettier_in_node_modules(fs, &path_to_check).await? {
+                                            log::info!(
+                                                "Found prettier path {path_to_check:?} in the workspace \
+                                                root for project in {closest_package_json_path:?}"
+                                            );
+                                            return Ok(ControlFlow::Continue(Some(path_to_check)));
+                                        } else if closest_package_json_declares_prettier {
+                                            anyhow::bail!(
+                                                "Path {path_to_check:?} is the workspace root for project in \
+                                                {closest_package_json_path:?}, but it has no prettier installed"
+                                            );
+                                        } else {
+                                            log::warn!(
+                                                "Path {path_to_check:?} is the workspace root for project in \
+                                                {closest_package_json_path:?}, which does not depend on prettier; \
+                                                falling back to the default prettier"
+                                            );
+                                        }
                                     } else {
                                         log::warn!(
                                             "Skipping path {path_to_check:?} workspace root with \
@@ -621,6 +635,15 @@ fn prettier_parser_name(
     Ok(parser.map(ToOwned::to_owned))
 }
 
+fn package_json_declares_prettier(contents: &HashMap<String, serde_json::Value>) -> bool {
+    ["dependencies", "devDependencies"].iter().any(|section| {
+        contents
+            .get(*section)
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|deps| deps.contains_key(PRETTIER_PACKAGE_NAME))
+    })
+}
+
 async fn has_prettier_in_node_modules(fs: &dyn Fs, path: &Path) -> anyhow::Result<bool> {
     let possible_node_modules_location = path.join("node_modules").join(PRETTIER_PACKAGE_NAME);
     if let Some(node_modules_location_metadata) = fs
@@ -1069,6 +1092,45 @@ mod tests {
                 assert!(message.contains("/root/work/full-stack-foundations"), "Error message should mention potential candidates without prettier node_modules contents");
             },
         };
+    }
+
+    // Regression test for https://github.com/zed-industries/zed/issues/60866. A file inside a
+    // workspace member whose root has no prettier dependency should fall back to the default
+    // prettier instead of failing to format.
+    #[gpui::test]
+    async fn test_prettier_lookup_in_npm_workspaces_without_prettier_dependency(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    "package.json": r#"{ "workspaces": ["apps/*"] }"#,
+                    "apps": {
+                        "web": {
+                            "package.json": r#"{}"#,
+                            "src": {
+                                "index.js": "// index.js file contents",
+                            },
+                        },
+                    },
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            Prettier::locate_prettier_installation(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/project/apps/web/src/index.js"),
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(None),
+            "Should fall back to the default prettier when the workspace root has no prettier dependency"
+        );
     }
 
     #[gpui::test]
