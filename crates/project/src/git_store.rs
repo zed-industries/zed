@@ -9520,10 +9520,13 @@ impl Repository {
         )
     }
 
-    fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
+    /// Bypasses the serial git job queue: blobs are content-addressed, so this read
+    /// doesn't depend on the status snapshot, and a diff issues one per changed file.
+    fn load_blob_content(&self, oid: Oid, cx: &App) -> Task<Result<String>> {
         let repository_id = self.snapshot.id;
-        let rx = self.send_job("load_blob_content", None, move |state, _| async move {
-            match state {
+        let repository_state = self.repository_state.clone();
+        cx.background_spawn(async move {
+            match repository_state.await.map_err(|err| anyhow::anyhow!(err))? {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.load_blob_content(oid).await
                 }
@@ -9538,8 +9541,7 @@ impl Repository {
                     Ok(response.content)
                 }
             }
-        });
-        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+        })
     }
 
     fn paths_changed(
