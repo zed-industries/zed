@@ -1060,23 +1060,29 @@ impl SyntaxSnapshot {
         buffer: &'a BufferSnapshot,
         include_hidden: bool,
     ) -> impl 'a + Iterator<Item = SyntaxLayer<'a>> {
-        let start_offset = range.start.to_offset(buffer);
-        let end_offset = range.end.to_offset(buffer);
-        let start = buffer.anchor_before(start_offset);
-        let end = buffer.anchor_after(end_offset);
+        let mut cursor = if self.layers.is_empty() {
+            None
+        } else {
+            let start_offset = range.start.to_offset(buffer);
+            let end_offset = range.end.to_offset(buffer);
+            let start = buffer.anchor_before(start_offset);
+            let end = buffer.anchor_after(end_offset);
 
-        let mut cursor = self.layers.filter::<_, ()>(buffer, move |summary| {
-            if summary.max_depth > summary.min_depth {
-                true
-            } else {
-                let is_before_start = summary.range.end.cmp(&start, buffer).is_lt();
-                let is_after_end = summary.range.start.cmp(&end, buffer).is_gt();
-                !is_before_start && !is_after_end
-            }
-        });
+            let mut cursor = self.layers.filter::<_, ()>(buffer, move |summary| {
+                if summary.max_depth > summary.min_depth {
+                    true
+                } else {
+                    let is_before_start = summary.range.end.cmp(&start, buffer).is_lt();
+                    let is_after_end = summary.range.start.cmp(&end, buffer).is_gt();
+                    !is_before_start && !is_after_end
+                }
+            });
 
-        cursor.next();
+            cursor.next();
+            Some(cursor)
+        };
         iter::from_fn(move || {
+            let cursor = cursor.as_mut()?;
             while let Some(layer) = cursor.item() {
                 let mut info = None;
                 if let SyntaxLayerContent::Parsed {

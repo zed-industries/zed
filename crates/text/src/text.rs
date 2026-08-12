@@ -943,9 +943,18 @@ impl Buffer {
         edits: impl ExactSizeIterator<Item = (Range<S>, T)>,
         timestamp: clock::Lamport,
     ) -> EditOperation {
-        let edits: Vec<_> = edits
-            .map(|(range, new_text)| (range.to_offset(&*self), new_text.into()))
-            .collect();
+        let edits: Vec<_> = {
+            let mut seeker = OffsetSeeker::new(&self.snapshot);
+            edits
+                .map(|(range, new_text)| {
+                    (
+                        range.start.to_offset_seeking(&self.snapshot, &mut seeker)
+                            ..range.end.to_offset_seeking(&self.snapshot, &mut seeker),
+                        new_text.into(),
+                    )
+                })
+                .collect()
+        };
         let (edit_op, edits_patch) = self.snapshot.apply_edit_internal(edits, timestamp);
         self.subscriptions.publish_mut(&edits_patch);
         self.publish_batch(timestamp, edits_patch.edits());
@@ -3519,8 +3528,27 @@ impl operation_queue::Operation for Operation {
     }
 }
 
+pub struct OffsetSeeker<'a> {
+    boundary: rope::CharBoundaryConverter<'a>,
+    point_to_offset: rope::PointToOffsetConverter<'a>,
+}
+
+impl<'a> OffsetSeeker<'a> {
+    pub fn new(snapshot: &'a BufferSnapshot) -> Self {
+        let rope = snapshot.as_rope();
+        Self {
+            boundary: rope.char_boundary_converter(),
+            point_to_offset: rope.point_to_offset_converter(),
+        }
+    }
+}
+
 pub trait ToOffset {
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize;
+
+    fn to_offset_seeking(&self, snapshot: &BufferSnapshot, _seeker: &mut OffsetSeeker) -> usize {
+        self.to_offset(snapshot)
+    }
     /// Turns this point into the next offset in the buffer that comes after this, respecting utf8 boundaries.
     fn to_next_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot
@@ -3540,6 +3568,10 @@ impl ToOffset for Point {
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.point_to_offset(*self)
     }
+
+    fn to_offset_seeking(&self, _snapshot: &BufferSnapshot, seeker: &mut OffsetSeeker) -> usize {
+        seeker.point_to_offset.map(*self)
+    }
 }
 
 impl ToOffset for usize {
@@ -3553,6 +3585,10 @@ impl ToOffset for usize {
         } else {
             *self
         }
+    }
+
+    fn to_offset_seeking(&self, _snapshot: &BufferSnapshot, seeker: &mut OffsetSeeker) -> usize {
+        seeker.boundary.round(*self, Bias::Left)
     }
 }
 
