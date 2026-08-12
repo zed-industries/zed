@@ -64,12 +64,104 @@ use std::io::Cursor;
 use std::ops;
 use std::time::Duration;
 use std::{
+    any::Any,
     fmt::{self, Debug},
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
+
+/// A platform attachment participating in a window composition tree.
+pub trait PlatformSurfaceAttachment {
+    /// Updates the native surface geometry in window-content device pixels.
+    fn set_bounds(&self, bounds: Bounds<DevicePixels>) -> Result<()>;
+    /// Returns the native surface geometry in window-content device pixels.
+    fn bounds(&self) -> Bounds<DevicePixels>;
+    /// Updates the window-content origin of the surface's composition parent.
+    /// Platform adapters use this to preserve window-coordinate geometry when
+    /// a surface is nested.
+    fn set_parent_origin(&self, origin: Point<DevicePixels>) -> Result<()>;
+    /// Rebinds externally owned content after the platform compositor has been
+    /// recreated. Native surfaces managed by GPUI may use the default no-op.
+    fn compositor_recreated(&self, _platform_context: &dyn Any) -> Result<()> {
+        Ok(())
+    }
+    /// Registers a callback that reattaches native content when the platform
+    /// attachment object changes after compositor recovery.
+    fn set_compositor_recreated_callback(
+        &self,
+        _callback: Rc<dyn Fn(Box<dyn Any>) -> Result<()>>,
+    ) -> Result<()> {
+        anyhow::bail!("compositor recreation callbacks are not supported")
+    }
+    /// Updates whether the native surface participates in composition.
+    fn set_visible(&self, visible: bool) -> Result<()>;
+    /// Returns the platform attachment object, such as an
+    /// `IDCompositionVisual` on Windows.
+    fn platform_handle(&self) -> Result<Box<dyn Any>>;
+}
+
+/// The ranges of a GPUI scene rendered onto one composition surface.
+#[derive(Clone)]
+pub struct ComposedSceneLayer {
+    /// The GPUI composition surface receiving these scene ranges.
+    pub surface: crate::CompositionSurfaceId,
+    /// Paint-operation ranges belonging to the surface.
+    pub ranges: Vec<Range<usize>>,
+}
+
+/// A scene split across GPUI surfaces in composition order.
+pub struct ComposedScene<'a> {
+    scene: &'a Scene,
+    layers: Vec<ComposedSceneLayer>,
+}
+
+impl<'a> ComposedScene<'a> {
+    pub(crate) fn new(scene: &'a Scene, layers: Vec<ComposedSceneLayer>) -> Self {
+        Self { scene, layers }
+    }
+
+    /// Returns the complete scene containing all GPUI planes.
+    pub fn scene(&self) -> &'a Scene {
+        self.scene
+    }
+
+    /// Returns the GPUI surface layers in composition order.
+    pub fn layers(&self) -> &[ComposedSceneLayer] {
+        &self.layers
+    }
+}
+
+/// A platform surface participating in window composition.
+#[derive(Clone)]
+pub struct PlatformCompositionSurface {
+    /// Stable identity in the window composition tree.
+    pub id: crate::CompositionSurfaceId,
+    /// Parent surface, or `None` for a root surface.
+    pub parent: Option<crate::CompositionSurfaceId>,
+    /// This surface's origin in window-content device pixels. GPUI surfaces
+    /// use the window origin because their backing scenes remain window-based.
+    pub window_origin: Point<DevicePixels>,
+    /// The parent surface's origin in window-content device pixels.
+    pub parent_origin: Point<DevicePixels>,
+    /// Native or external surface bounds in window-content device pixels.
+    /// GPUI surfaces use the full window and therefore have no explicit bounds.
+    pub window_bounds: Option<Bounds<DevicePixels>>,
+    /// Renderer or attachment supplying this surface's content.
+    pub content: PlatformCompositionSurfaceContent,
+}
+
+/// Content attached to a platform composition surface.
+#[derive(Clone)]
+pub enum PlatformCompositionSurfaceContent {
+    /// A surface rendered by GPUI.
+    Gpui,
+    /// A surface backed by a platform-native view or visual.
+    Native(Rc<dyn PlatformSurfaceAttachment>),
+    /// A surface backed by an external GPU producer.
+    ExternalGpu(Rc<dyn PlatformSurfaceAttachment>),
+}
 use strum::EnumIter;
 use uuid::Uuid;
 
@@ -849,6 +941,27 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
+    /// Draws a scene with primitives at and after `overlay_start` on a platform
+    /// overlay surface when one has been enabled.
+    ///
+    /// Platforms without layered scene support fall back to drawing the complete
+    /// scene on their primary surface.
+    fn draw_composed(&self, scene: ComposedScene<'_>) {
+        self.draw(scene.scene());
+    }
+    /// Enables multi-surface window composition.
+    fn enable_window_composition(&self) -> anyhow::Result<()> {
+        anyhow::bail!("window composition is not supported on this platform")
+    }
+    /// Creates a platform surface slot for native or external GPU content.
+    fn create_native_surface(&self) -> Result<Rc<dyn PlatformSurfaceAttachment>> {
+        anyhow::bail!("native surface portals are not supported on this platform")
+    }
+    /// Applies the parent relationships and bottom-to-top sibling order of the
+    /// composition tree.
+    fn set_composition_order(&self, _surfaces: &[PlatformCompositionSurface]) -> Result<()> {
+        anyhow::bail!("surface ordering is not supported on this platform")
+    }
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;

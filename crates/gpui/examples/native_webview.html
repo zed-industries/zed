@@ -1,0 +1,117 @@
+<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #0d1016;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #0d1016;
+      color: #bfbdb6;
+    }
+    main {
+      display: grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 28px;
+      padding: 42px 38px;
+    }
+    .eyebrow {
+      color: #5ac1fe;
+      font: 600 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 360px;
+      margin: 14px 0;
+      font-size: 34px;
+      font-weight: 590;
+      letter-spacing: -.035em;
+      line-height: 1.06;
+    }
+    p {
+      max-width: 390px;
+      margin: 0;
+      color: #8a8986;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .details { display: grid; gap: 10px; align-content: start; }
+    .datum {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid #3f4043;
+      color: #8a8986;
+      font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .datum strong { color: #bfbdb6; font-weight: 600; }
+    input {
+      grid-column: 1 / -1;
+      width: 100%;
+      margin-top: 8px;
+      padding: 13px 14px;
+      border: 1px solid #3f4043;
+      border-radius: 7px;
+      outline: none;
+      background: #1f2127;
+      color: #bfbdb6;
+      font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    input:focus {
+      border-color: #5ac1fe;
+      box-shadow: 0 0 0 3px rgba(90, 193, 254, .16);
+    }
+    #keyboard-event {
+      grid-column: 1 / -1;
+      min-height: 16px;
+      color: #8a8986;
+      font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <div class="eyebrow">Native surface / live</div>
+      <h1>A real browser inside GPUI’s scene.</h1>
+      <p>
+        This page is rendered by WKWebView. GPUI owns the surfaces
+        below and above it, while AppKit composes all three.
+      </p>
+    </section>
+    <aside class="details">
+      <div class="datum"><span>ENGINE</span><strong>WEBKIT</strong></div>
+      <div class="datum"><span>HOST</span><strong>NSVIEW</strong></div>
+      <div class="datum"><span>STATE</span><strong>INTERACTIVE</strong></div>
+    </aside>
+    <input autofocus value="Focus and type inside the native layer">
+    <div id="keyboard-event" aria-live="polite">Keyboard event: waiting for input</div>
+  </main>
+  <script>
+    const keyboardEvent = document.querySelector("#keyboard-event");
+
+    function showKeyboardEvent(event) {
+      const modifiers = [
+        event.metaKey && "Meta",
+        event.ctrlKey && "Ctrl",
+        event.altKey && "Alt",
+        event.shiftKey && "Shift",
+      ].filter(Boolean).join("+") || "None";
+      const key = event.key === " " ? "Space" : event.key;
+      keyboardEvent.textContent =
+        `${event.type}: key=${key} · code=${event.code} · modifiers=${modifiers} · repeat=${event.repeat}`;
+    }
+
+    window.addEventListener("keydown", showKeyboardEvent, true);
+    window.addEventListener("keyup", showKeyboardEvent, true);
+  </script>
+</body>
+</html>

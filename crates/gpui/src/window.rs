@@ -949,6 +949,7 @@ pub(crate) struct Frame {
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
+    pub(crate) composition_surface_starts: Vec<(crate::CompositionSurfaceId, usize)>,
     pub(crate) hitboxes: Vec<Hitbox>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
@@ -995,6 +996,7 @@ impl Frame {
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
+            composition_surface_starts: Vec::new(),
             hitboxes: Vec::new(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
@@ -1020,6 +1022,7 @@ impl Frame {
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
+        self.composition_surface_starts.clear();
         self.input_handlers.clear();
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
@@ -1106,12 +1109,391 @@ enum InputModality {
     Touch,
 }
 
+struct WindowCompositionState {
+    tree: crate::CompositionTree,
+    platform_surfaces:
+        FxHashMap<crate::CompositionSurfaceId, Rc<dyn crate::PlatformSurfaceAttachment>>,
+    base_surface: crate::CompositionSurfaceId,
+    overlay_surface: crate::CompositionSurfaceId,
+    geometry_dirty: Rc<Cell<bool>>,
+}
+
+impl WindowCompositionState {
+    fn new() -> anyhow::Result<Self> {
+        let mut tree = crate::CompositionTree::new();
+        let base_surface = tree.insert(crate::CompositionSurfaceKind::Gpui, None)?;
+        let overlay_surface = tree.insert(crate::CompositionSurfaceKind::Gpui, None)?;
+        Ok(Self {
+            tree,
+            platform_surfaces: FxHashMap::default(),
+            base_surface,
+            overlay_surface,
+            geometry_dirty: Rc::new(Cell::new(false)),
+        })
+    }
+}
+
+struct ManagedPlatformSurface {
+    platform_surface: Rc<dyn crate::PlatformSurfaceAttachment>,
+    bounds: Cell<Bounds<DevicePixels>>,
+    geometry_dirty: Rc<Cell<bool>>,
+}
+
+impl crate::PlatformSurfaceAttachment for ManagedPlatformSurface {
+    fn set_bounds(&self, bounds: Bounds<DevicePixels>) -> anyhow::Result<()> {
+        self.platform_surface.set_bounds(bounds)?;
+        self.bounds.set(bounds);
+        self.geometry_dirty.set(true);
+        Ok(())
+    }
+
+    fn bounds(&self) -> Bounds<DevicePixels> {
+        self.bounds.get()
+    }
+
+    fn set_parent_origin(&self, origin: Point<DevicePixels>) -> anyhow::Result<()> {
+        self.platform_surface.set_parent_origin(origin)
+    }
+
+    fn compositor_recreated(&self, platform_context: &dyn Any) -> anyhow::Result<()> {
+        self.platform_surface.compositor_recreated(platform_context)
+    }
+
+    fn set_compositor_recreated_callback(
+        &self,
+        callback: Rc<dyn Fn(Box<dyn Any>) -> anyhow::Result<()>>,
+    ) -> anyhow::Result<()> {
+        self.platform_surface
+            .set_compositor_recreated_callback(callback)
+    }
+
+    fn set_visible(&self, visible: bool) -> anyhow::Result<()> {
+        self.platform_surface.set_visible(visible)
+    }
+
+    fn platform_handle(&self) -> anyhow::Result<Box<dyn Any>> {
+        self.platform_surface.platform_handle()
+    }
+}
+
+struct WindowCompositionSurfaceInner {
+    id: crate::CompositionSurfaceId,
+    platform_surface: Option<Rc<dyn crate::PlatformSurfaceAttachment>>,
+}
+
+/// A stable handle to a surface in a window composition tree.
+#[derive(Clone)]
+pub struct WindowCompositionSurface(Rc<WindowCompositionSurfaceInner>);
+
+impl WindowCompositionSurface {
+    /// Returns this surface's stable identity.
+    pub fn id(&self) -> crate::CompositionSurfaceId {
+        self.0.id
+    }
+
+    /// Returns the platform surface used to attach native content.
+    pub fn platform_surface(&self) -> anyhow::Result<&dyn crate::PlatformSurfaceAttachment> {
+        self.0
+            .platform_surface
+            .as_deref()
+            .context("this composition surface is rendered by GPUI")
+    }
+}
+
+/// Controls the surface tree composited into a window.
+pub struct WindowComposition<'a> {
+    platform_window: &'a dyn PlatformWindow,
+    state: Rc<RefCell<WindowCompositionState>>,
+}
+
+impl WindowComposition<'_> {
+    /// Returns the GPUI surface initially rendered below native content.
+    pub fn base_surface(&self) -> crate::CompositionSurfaceId {
+        self.state.borrow().base_surface
+    }
+
+    /// Returns the GPUI surface initially rendered above native content.
+    pub fn overlay_surface(&self) -> crate::CompositionSurfaceId {
+        self.state.borrow().overlay_surface
+    }
+
+    /// Creates a platform-native surface as a root of the composition tree.
+    pub fn create_native_surface(&self) -> anyhow::Result<WindowCompositionSurface> {
+        self.create_platform_surface(crate::CompositionSurfaceKind::Native, None)
+    }
+
+    /// Registers an externally produced GPU surface as a root of the
+    /// composition tree.
+    ///
+    /// The producer owns the platform attachment and its synchronization. GPUI
+    /// owns its placement in the window composition tree.
+    pub fn create_external_gpu_surface(
+        &self,
+        platform_surface: Rc<dyn crate::PlatformSurfaceAttachment>,
+    ) -> anyhow::Result<WindowCompositionSurface> {
+        self.register_platform_surface(
+            crate::CompositionSurfaceKind::ExternalGpu,
+            None,
+            platform_surface,
+        )
+    }
+
+    /// Creates another GPUI-rendered surface in the composition tree.
+    pub fn create_gpui_surface(
+        &self,
+        parent: Option<crate::CompositionSurfaceId>,
+    ) -> anyhow::Result<WindowCompositionSurface> {
+        let id = self
+            .state
+            .borrow_mut()
+            .tree
+            .insert(crate::CompositionSurfaceKind::Gpui, parent)?;
+        if let Err(error) = self.synchronize_platform_order() {
+            self.state.borrow_mut().tree.remove(id)?;
+            self.synchronize_platform_order().log_err();
+            return Err(error);
+        }
+        Ok(self.surface_handle(id, None))
+    }
+
+    /// Places `surface` immediately above `sibling`.
+    pub fn place_above(
+        &self,
+        surface: crate::CompositionSurfaceId,
+        sibling: crate::CompositionSurfaceId,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            surface != self.state.borrow().base_surface,
+            "the GPUI base surface cannot be reordered"
+        );
+        let previous_tree = self.state.borrow().tree.clone();
+        self.state.borrow_mut().tree.place_above(surface, sibling)?;
+        if let Err(error) = self.synchronize_platform_order() {
+            self.state.borrow_mut().tree = previous_tree;
+            self.synchronize_platform_order().log_err();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Places `surface` immediately below `sibling`.
+    pub fn place_below(
+        &self,
+        surface: crate::CompositionSurfaceId,
+        sibling: crate::CompositionSurfaceId,
+    ) -> anyhow::Result<()> {
+        let base_surface = self.state.borrow().base_surface;
+        anyhow::ensure!(
+            surface != base_surface && sibling != base_surface,
+            "surfaces cannot be placed below or move the GPUI base surface"
+        );
+        let previous_tree = self.state.borrow().tree.clone();
+        self.state.borrow_mut().tree.place_below(surface, sibling)?;
+        if let Err(error) = self.synchronize_platform_order() {
+            self.state.borrow_mut().tree = previous_tree;
+            self.synchronize_platform_order().log_err();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Moves `surface` under a new parent, placing it above existing children.
+    pub fn reparent(
+        &self,
+        surface: crate::CompositionSurfaceId,
+        parent: Option<crate::CompositionSurfaceId>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            surface != self.state.borrow().base_surface,
+            "the GPUI base surface cannot be reparented"
+        );
+        let previous_tree = self.state.borrow().tree.clone();
+        self.state.borrow_mut().tree.reparent(surface, parent)?;
+        if let Err(error) = self.synchronize_platform_order() {
+            self.state.borrow_mut().tree = previous_tree;
+            self.synchronize_platform_order().log_err();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Removes a surface while preserving its children at the removed
+    /// surface's previous position.
+    pub fn remove_surface(&self, surface: crate::CompositionSurfaceId) -> anyhow::Result<()> {
+        let mut state = self.state.borrow_mut();
+        if surface == state.base_surface || surface == state.overlay_surface {
+            anyhow::bail!("the default GPUI composition surfaces cannot be removed");
+        }
+        let previous_tree = state.tree.clone();
+        let platform_surface = state.platform_surfaces.get(&surface).cloned();
+        if let Some(platform_surface) = &platform_surface {
+            platform_surface.set_visible(false)?;
+        }
+        state.tree.remove(surface)?;
+        state.platform_surfaces.remove(&surface);
+        drop(state);
+        if let Err(error) = self.synchronize_platform_order() {
+            let mut state = self.state.borrow_mut();
+            state.tree = previous_tree;
+            if let Some(platform_surface) = platform_surface {
+                platform_surface.set_visible(true).log_err();
+                state.platform_surfaces.insert(surface, platform_surface);
+            }
+            drop(state);
+            self.synchronize_platform_order().log_err();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Returns the renderer kind for a surface.
+    pub fn surface_kind(
+        &self,
+        surface: crate::CompositionSurfaceId,
+    ) -> anyhow::Result<crate::CompositionSurfaceKind> {
+        self.state.borrow().tree.kind(surface)
+    }
+
+    /// Returns a surface's parent.
+    pub fn parent(
+        &self,
+        surface: crate::CompositionSurfaceId,
+    ) -> anyhow::Result<Option<crate::CompositionSurfaceId>> {
+        self.state.borrow().tree.parent(surface)
+    }
+
+    /// Returns the ordered children of a surface, or the root surfaces when
+    /// `parent` is `None`.
+    pub fn children(
+        &self,
+        parent: Option<crate::CompositionSurfaceId>,
+    ) -> anyhow::Result<Vec<crate::CompositionSurfaceId>> {
+        Ok(self.state.borrow().tree.children(parent)?.to_vec())
+    }
+
+    fn create_platform_surface(
+        &self,
+        kind: crate::CompositionSurfaceKind,
+        parent: Option<crate::CompositionSurfaceId>,
+    ) -> anyhow::Result<WindowCompositionSurface> {
+        let platform_surface = self.platform_window.create_native_surface()?;
+        self.register_platform_surface(kind, parent, platform_surface)
+    }
+
+    fn register_platform_surface(
+        &self,
+        kind: crate::CompositionSurfaceKind,
+        parent: Option<crate::CompositionSurfaceId>,
+        platform_surface: Rc<dyn crate::PlatformSurfaceAttachment>,
+    ) -> anyhow::Result<WindowCompositionSurface> {
+        let initial_bounds = platform_surface.bounds();
+        let geometry_dirty = self.state.borrow().geometry_dirty.clone();
+        let platform_surface: Rc<dyn crate::PlatformSurfaceAttachment> =
+            Rc::new(ManagedPlatformSurface {
+                platform_surface,
+                bounds: Cell::new(initial_bounds),
+                geometry_dirty,
+            });
+        let mut state = self.state.borrow_mut();
+        let id = state.tree.insert(kind, parent)?;
+        if parent.is_none() {
+            let overlay_surface = state.overlay_surface;
+            state.tree.place_below(id, overlay_surface)?;
+        }
+        state.platform_surfaces.insert(id, platform_surface.clone());
+        drop(state);
+        if let Err(error) = self.synchronize_platform_order() {
+            platform_surface.set_visible(false).log_err();
+            let mut state = self.state.borrow_mut();
+            state.platform_surfaces.remove(&id);
+            state.tree.remove(id)?;
+            drop(state);
+            self.synchronize_platform_order().log_err();
+            return Err(error);
+        }
+        Ok(self.surface_handle(id, Some(platform_surface)))
+    }
+
+    fn surface_handle(
+        &self,
+        id: crate::CompositionSurfaceId,
+        platform_surface: Option<Rc<dyn crate::PlatformSurfaceAttachment>>,
+    ) -> WindowCompositionSurface {
+        WindowCompositionSurface(Rc::new(WindowCompositionSurfaceInner {
+            id,
+            platform_surface,
+        }))
+    }
+
+    fn synchronize_platform_order(&self) -> anyhow::Result<()> {
+        let state = self.state.borrow();
+        let mut origins = FxHashMap::default();
+        let mut surfaces = Vec::new();
+        for id in state.tree.flattened() {
+            let parent = state.tree.parent(id)?;
+            let parent_origin = parent
+                .and_then(|parent| origins.get(&parent).copied())
+                .unwrap_or_default();
+            let content = match state.tree.kind(id)? {
+                crate::CompositionSurfaceKind::Gpui => {
+                    crate::PlatformCompositionSurfaceContent::Gpui
+                }
+                crate::CompositionSurfaceKind::Native => {
+                    crate::PlatformCompositionSurfaceContent::Native(
+                        state
+                            .platform_surfaces
+                            .get(&id)
+                            .context("native composition surface is missing")?
+                            .clone(),
+                    )
+                }
+                crate::CompositionSurfaceKind::ExternalGpu => {
+                    crate::PlatformCompositionSurfaceContent::ExternalGpu(
+                        state
+                            .platform_surfaces
+                            .get(&id)
+                            .context("external GPU composition surface is missing")?
+                            .clone(),
+                    )
+                }
+            };
+            let window_origin = match &content {
+                crate::PlatformCompositionSurfaceContent::Gpui => Point::default(),
+                crate::PlatformCompositionSurfaceContent::Native(platform_surface)
+                | crate::PlatformCompositionSurfaceContent::ExternalGpu(platform_surface) => {
+                    platform_surface.bounds().origin
+                }
+            };
+            let window_bounds = match &content {
+                crate::PlatformCompositionSurfaceContent::Gpui => None,
+                crate::PlatformCompositionSurfaceContent::Native(platform_surface)
+                | crate::PlatformCompositionSurfaceContent::ExternalGpu(platform_surface) => {
+                    Some(platform_surface.bounds())
+                }
+            };
+            origins.insert(id, window_origin);
+            surfaces.push(crate::PlatformCompositionSurface {
+                id,
+                parent,
+                window_origin,
+                parent_origin,
+                window_bounds,
+                content,
+            });
+        }
+        self.platform_window.set_composition_order(&surfaces)?;
+        state.geometry_dirty.set(false);
+        Ok(())
+    }
+}
+
 /// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
+    composition: Rc<RefCell<WindowCompositionState>>,
     display_id: Option<DisplayId>,
     is_resizable: bool,
     is_minimizable: bool,
@@ -1977,6 +2359,7 @@ impl Window {
             invalidator,
             removed: false,
             platform_window,
+            composition: Rc::new(RefCell::new(WindowCompositionState::new()?)),
             display_id,
             is_resizable,
             is_minimizable,
@@ -2160,6 +2543,58 @@ impl Window {
     /// Obtain a handle to the window that belongs to this context.
     pub fn window_handle(&self) -> AnyWindowHandle {
         self.handle
+    }
+
+    /// Enables native window composition and returns its controller.
+    ///
+    /// GPUI's root scene is rendered below surfaces created by the controller,
+    /// while deferred and window-level overlays are rendered above them.
+    pub fn enable_window_composition(&self) -> anyhow::Result<WindowComposition<'_>> {
+        self.platform_window.enable_window_composition()?;
+        let composition = WindowComposition {
+            platform_window: self.platform_window.as_ref(),
+            state: self.composition.clone(),
+        };
+        composition.synchronize_platform_order()?;
+        Ok(composition)
+    }
+
+    /// Paints a scope of scene operations onto a GPUI surface in this window's
+    /// composition tree, then restores the previous surface.
+    pub fn with_composition_surface<R>(
+        &mut self,
+        surface: crate::CompositionSurfaceId,
+        paint: impl FnOnce(&mut Self) -> R,
+    ) -> anyhow::Result<R> {
+        self.invalidator.debug_assert_paint();
+        anyhow::ensure!(
+            self.composition.borrow().tree.kind(surface)? == crate::CompositionSurfaceKind::Gpui,
+            "paint operations can only target GPUI composition surfaces"
+        );
+        let previous_surface = self
+            .next_frame
+            .composition_surface_starts
+            .last()
+            .map(|(surface, _)| *surface)
+            .context("composition paint scope has no base surface")?;
+        self.set_composition_surface(surface);
+        let result = paint(self);
+        self.set_composition_surface(previous_surface);
+        Ok(result)
+    }
+
+    fn set_composition_surface(&mut self, surface: crate::CompositionSurfaceId) {
+        if self
+            .next_frame
+            .composition_surface_starts
+            .last()
+            .is_some_and(|(current, _)| *current == surface)
+        {
+            return;
+        }
+        self.next_frame
+            .composition_surface_starts
+            .push((surface, self.next_frame.scene.len()));
     }
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
@@ -3131,7 +3566,34 @@ impl Window {
 
     #[profiling::function]
     fn present(&mut self) {
-        self.platform_window.draw(&self.rendered_frame.scene);
+        if self.composition.borrow().geometry_dirty.get() {
+            let composition = WindowComposition {
+                platform_window: self.platform_window.as_ref(),
+                state: self.composition.clone(),
+            };
+            if let Err(error) = composition.synchronize_platform_order() {
+                log::error!("updating window composition geometry: {error:#}");
+            }
+        }
+        let composition = self.composition.borrow();
+        let layers = crate::composition::composed_scene_layers(
+            &composition.tree,
+            &self.rendered_frame.composition_surface_starts,
+            self.rendered_frame.scene.len(),
+        )
+        .unwrap_or_else(|error| {
+            log::error!("invalid window composition scene: {error:#}");
+            vec![crate::ComposedSceneLayer {
+                surface: composition.base_surface,
+                ranges: vec![0..self.rendered_frame.scene.len()],
+            }]
+        });
+        drop(composition);
+        self.platform_window
+            .draw_composed(crate::ComposedScene::new(
+                &self.rendered_frame.scene,
+                layers,
+            ));
         #[cfg(feature = "input-latency-histogram")]
         self.input_latency_tracker.record_frame_presented();
         #[cfg(feature = "frame-duration-histogram")]
@@ -3240,12 +3702,24 @@ impl Window {
 
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
+        let base_surface = self.composition.borrow().base_surface;
+        self.next_frame
+            .composition_surface_starts
+            .push((base_surface, self.next_frame.scene.len()));
+
         // Now actually paint the elements.
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector(inspector_element, cx);
+
+        // Deferred and window-level draws target the default GPUI overlay
+        // surface. Other paint scopes may select additional GPUI surfaces.
+        let overlay_surface = self.composition.borrow().overlay_surface;
+        self.next_frame
+            .composition_surface_starts
+            .push((overlay_surface, self.next_frame.scene.len()));
 
         self.paint_deferred_draws(cx);
 
@@ -6954,6 +7428,7 @@ pub fn outline(
 
 #[cfg(test)]
 mod tests {
+    use std::any::Any;
     use std::{
         cell::{Cell, RefCell},
         path::PathBuf,
@@ -6961,13 +7436,77 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty,
+        AnyWindowHandle, AppContext as _, Bounds, Context, DevicePixels, DragMoveEvent, Empty,
         ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
         InputEvent as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
-        MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
-        StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
-        WindowOptions, canvas, div, point, px, size,
+        MouseMoveEvent, ParentElement, Pixels, PlatformSurfaceAttachment, Point, Render,
+        RequestFrameOptions, StatefulInteractiveElement as _, Styled, TestAppContext, Window,
+        WindowAppearance, WindowOptions, canvas, div, point, px, size,
     };
+
+    use super::ManagedPlatformSurface;
+
+    struct TestPlatformSurface {
+        bounds: Cell<Bounds<DevicePixels>>,
+        parent_origin: Cell<Point<DevicePixels>>,
+    }
+
+    impl PlatformSurfaceAttachment for TestPlatformSurface {
+        fn set_bounds(&self, bounds: Bounds<DevicePixels>) -> anyhow::Result<()> {
+            self.bounds.set(bounds);
+            Ok(())
+        }
+
+        fn bounds(&self) -> Bounds<DevicePixels> {
+            self.bounds.get()
+        }
+
+        fn set_parent_origin(&self, origin: Point<DevicePixels>) -> anyhow::Result<()> {
+            self.parent_origin.set(origin);
+            Ok(())
+        }
+
+        fn set_visible(&self, _visible: bool) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn platform_handle(&self) -> anyhow::Result<Box<dyn Any>> {
+            Ok(Box::new(()))
+        }
+    }
+
+    #[test]
+    fn managed_composition_surface_tracks_window_geometry_changes() {
+        let platform_surface = Rc::new(TestPlatformSurface {
+            bounds: Cell::new(Bounds::default()),
+            parent_origin: Cell::new(Point::default()),
+        });
+        let geometry_dirty = Rc::new(Cell::new(false));
+        let surface = ManagedPlatformSurface {
+            platform_surface: platform_surface.clone(),
+            bounds: Cell::new(Bounds::default()),
+            geometry_dirty: geometry_dirty.clone(),
+        };
+        let bounds = Bounds {
+            origin: Point {
+                x: DevicePixels(25),
+                y: DevicePixels(40),
+            },
+            size: size(DevicePixels(300), DevicePixels(200)),
+        };
+        let parent_origin = Point {
+            x: DevicePixels(10),
+            y: DevicePixels(15),
+        };
+
+        assert!(surface.set_bounds(bounds).is_ok());
+        assert!(surface.set_parent_origin(parent_origin).is_ok());
+
+        assert_eq!(surface.bounds(), bounds);
+        assert_eq!(platform_surface.bounds.get(), bounds);
+        assert_eq!(platform_surface.parent_origin.get(), parent_origin);
+        assert!(geometry_dirty.get());
+    }
 
     struct EmptyView;
 

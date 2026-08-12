@@ -1,9 +1,12 @@
 use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
     slice,
     sync::{Arc, OnceLock},
 };
 
 use anyhow::{Context, Result};
+use collections::{FxHashMap, FxHashSet};
 use gpui_util::ResultExt;
 use windows::{
     Win32::{
@@ -41,9 +44,13 @@ pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
     devices: Option<DirectXRendererDevices>,
     resources: Option<DirectXResources>,
+    composition_resources: FxHashMap<CompositionSurfaceId, OverlayResources>,
+    base_composition_surface: Option<CompositionSurfaceId>,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
     direct_composition: Option<DirectComposition>,
+    composition_surfaces: Vec<PlatformCompositionSurface>,
+    native_surfaces: Vec<std::rc::Weak<RefCell<DirectCompositionPortalState>>>,
     font_info: &'static FontInfo,
 
     width: u32,
@@ -83,6 +90,12 @@ struct DirectXResources {
     viewport: D3D11_VIEWPORT,
 }
 
+struct OverlayResources {
+    swap_chain: IDXGISwapChain1,
+    render_target: Option<ID3D11Texture2D>,
+    render_target_view: Option<ID3D11RenderTargetView>,
+}
+
 struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState<Shadow>,
     quad_pipeline: PipelineState<Quad>,
@@ -117,8 +130,29 @@ impl Drop for Annotation<'_> {
 
 struct DirectComposition {
     comp_device: IDCompositionDevice,
+    // Keep these COM objects alive for the lifetime of the visual tree. They
+    // are not otherwise read after the tree is attached to the target.
+    #[allow(dead_code)]
     comp_target: IDCompositionTarget,
-    comp_visual: IDCompositionVisual,
+    #[allow(dead_code)]
+    root_visual: IDCompositionVisual,
+    base_visual: IDCompositionVisual,
+    gpui_visuals: RefCell<FxHashMap<CompositionSurfaceId, IDCompositionVisual>>,
+}
+
+struct DirectCompositionPortal {
+    state: Rc<RefCell<DirectCompositionPortalState>>,
+}
+
+struct DirectCompositionPortalState {
+    comp_device: IDCompositionDevice,
+    visual: IDCompositionVisual,
+    clip: IDCompositionRectangleClip,
+    bounds: Cell<Bounds<DevicePixels>>,
+    parent_origin: Cell<Point<DevicePixels>>,
+    visible: Cell<bool>,
+    compositor_recreated_callback:
+        RefCell<Option<Rc<dyn Fn(Box<dyn std::any::Any>) -> Result<()>>>>,
 }
 
 impl DirectXRendererDevices {
@@ -187,9 +221,13 @@ impl DirectXRenderer {
             atlas,
             devices: Some(devices),
             resources: Some(resources),
+            composition_resources: FxHashMap::default(),
+            base_composition_surface: None,
             globals,
             pipelines,
             direct_composition,
+            composition_surfaces: Vec::new(),
+            native_surfaces: Vec::new(),
             font_info: Self::get_font_info(),
             width: 1,
             height: 1,
@@ -201,7 +239,11 @@ impl DirectXRenderer {
         self.atlas.clone()
     }
 
-    fn pre_draw(&self, clear_color: &[f32; 4]) -> Result<()> {
+    fn pre_draw(
+        &self,
+        render_target_view: &Option<ID3D11RenderTargetView>,
+        clear_color: &[f32; 4],
+    ) -> Result<()> {
         let resources = self.resources.as_ref().expect("resources missing");
         let device_context = &self
             .devices
@@ -222,14 +264,12 @@ impl DirectXRenderer {
         )?;
         unsafe {
             device_context.ClearRenderTargetView(
-                resources
-                    .render_target_view
+                render_target_view
                     .as_ref()
                     .context("missing render target view")?,
                 clear_color,
             );
-            device_context
-                .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
+            device_context.OMSetRenderTargets(Some(slice::from_ref(render_target_view)), None);
             device_context.RSSetViewports(Some(slice::from_ref(&resources.viewport)));
             device_context
                 .VSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
@@ -262,6 +302,11 @@ impl DirectXRenderer {
 
     fn handle_device_lost_impl(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
         let disable_direct_composition = self.direct_composition.is_none();
+        let composition_surface_ids = self
+            .composition_resources
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
 
         unsafe {
             #[cfg(debug_assertions)]
@@ -272,6 +317,7 @@ impl DirectXRenderer {
             }
 
             self.resources.take();
+            self.composition_resources.clear();
             if let Some(devices) = &self.devices {
                 devices.device_context.OMSetRenderTargets(None, None);
                 devices.device_context.ClearState();
@@ -309,6 +355,48 @@ impl DirectXRenderer {
             composition.set_swap_chain(&resources.swap_chain)?;
             Some(composition)
         };
+        let mut composition_resources = FxHashMap::default();
+        for surface in composition_surface_ids {
+            let resources = OverlayResources::new(&devices, self.width, self.height)?;
+            direct_composition
+                .as_ref()
+                .context("DirectComposition missing for GPUI surface")?
+                .set_gpui_swap_chain(surface, &resources.swap_chain)?;
+            composition_resources.insert(surface, resources);
+        }
+        let mut live_native_surfaces = Vec::with_capacity(self.native_surfaces.len());
+        for surface in &self.native_surfaces {
+            let Some(live_surface) = surface.upgrade() else {
+                continue;
+            };
+            if let Some(composition) = direct_composition.as_ref() {
+                composition
+                    .rebind_portal(&mut live_surface.borrow_mut())
+                    .context("Recreating DirectComposition native surface")?;
+            }
+            live_native_surfaces.push(Rc::downgrade(&live_surface));
+        }
+        self.native_surfaces = live_native_surfaces;
+        if let (Some(composition), Some(base_surface)) =
+            (direct_composition.as_ref(), self.base_composition_surface)
+            && !self.composition_surfaces.is_empty()
+        {
+            let platform_context = composition.comp_device.cast::<windows::core::IUnknown>()?;
+            for surface in &self.composition_surfaces {
+                match &surface.content {
+                    PlatformCompositionSurfaceContent::Native(platform_surface)
+                    | PlatformCompositionSurfaceContent::ExternalGpu(platform_surface) => {
+                        platform_surface
+                            .compositor_recreated(&platform_context)
+                            .context("Rebinding platform composition surface")?;
+                    }
+                    PlatformCompositionSurfaceContent::Gpui => {}
+                }
+            }
+            composition
+                .set_surface_order(&self.composition_surfaces, base_surface)
+                .context("Restoring DirectComposition surface order")?;
+        }
 
         self.atlas
             .handle_device_lost(&devices.device, &devices.device_context);
@@ -320,6 +408,7 @@ impl DirectXRenderer {
         }
         self.devices = Some(devices);
         self.resources = Some(resources);
+        self.composition_resources = composition_resources;
         self.globals = globals;
         self.pipelines = pipelines;
         self.direct_composition = direct_composition;
@@ -337,13 +426,164 @@ impl DirectXRenderer {
             // and so likely do not have the textures anymore that are required for drawing
             return Ok(());
         }
-        self.pre_draw(&match background_appearance {
-            WindowBackgroundAppearance::Opaque => [1.0f32; 4],
-            _ => [0.0f32; 4],
-        })?;
+        let render_target_view = self
+            .resources
+            .as_ref()
+            .context("resources missing")?
+            .render_target_view
+            .clone();
+        self.pre_draw(
+            &render_target_view,
+            &match background_appearance {
+                WindowBackgroundAppearance::Opaque => [1.0f32; 4],
+                _ => [0.0f32; 4],
+            },
+        )?;
+        self.draw_scene(scene)?;
+        self.present()
+    }
 
+    pub(crate) fn draw_composed(
+        &mut self,
+        scene: gpui::ComposedScene<'_>,
+        background_appearance: WindowBackgroundAppearance,
+    ) -> Result<()> {
+        if self.base_composition_surface.is_none() {
+            return self.draw(scene.scene(), background_appearance);
+        }
+        if self.skip_draws {
+            return Ok(());
+        }
+
+        for layer in scene.layers() {
+            let mut surface_scene = Scene::default();
+            for range in &layer.ranges {
+                surface_scene.replay_balanced(range.clone(), scene.scene())?;
+            }
+            surface_scene.finish();
+            let (view, clear_color) = if self.base_composition_surface == Some(layer.surface) {
+                (
+                    self.resources
+                        .as_ref()
+                        .context("resources missing")?
+                        .render_target_view
+                        .clone(),
+                    match background_appearance {
+                        WindowBackgroundAppearance::Opaque => [1.0; 4],
+                        _ => [0.0; 4],
+                    },
+                )
+            } else {
+                (
+                    self.composition_resources
+                        .get(&layer.surface)
+                        .context("GPUI composition resources missing")?
+                        .render_target_view
+                        .clone(),
+                    [0.0; 4],
+                )
+            };
+            self.pre_draw(&view, &clear_color)?;
+            self.draw_scene(&surface_scene)?;
+        }
+
+        unsafe {
+            self.resources
+                .as_ref()
+                .context("resources missing")?
+                .swap_chain
+                .Present(0, DXGI_PRESENT(0))
+                .ok()
+                .context("presenting base swap chain")?;
+            for resources in self.composition_resources.values() {
+                resources
+                    .swap_chain
+                    .Present(0, DXGI_PRESENT(0))
+                    .ok()
+                    .context("presenting GPUI composition swap chain")?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn enable_window_composition(&mut self) -> Result<()> {
+        anyhow::ensure!(
+            self.direct_composition.is_some(),
+            "DirectComposition is disabled"
+        );
+        Ok(())
+    }
+
+    pub(crate) fn create_native_surface(&mut self) -> Result<Rc<dyn PlatformSurfaceAttachment>> {
+        self.enable_window_composition()?;
+        let state = Rc::new(RefCell::new(
+            self.direct_composition
+                .as_ref()
+                .context("DirectComposition is disabled")?
+                .create_portal_state()?,
+        ));
+        self.native_surfaces.push(Rc::downgrade(&state));
+        Ok(Rc::new(DirectCompositionPortal { state }))
+    }
+
+    pub(crate) fn set_composition_order(
+        &mut self,
+        surfaces: &[PlatformCompositionSurface],
+    ) -> Result<()> {
+        let base = surfaces
+            .iter()
+            .find_map(|surface| match surface.content {
+                PlatformCompositionSurfaceContent::Gpui => Some(surface.id),
+                PlatformCompositionSurfaceContent::Native(_)
+                | PlatformCompositionSurfaceContent::ExternalGpu(_) => None,
+            })
+            .context("composition has no GPUI base surface")?;
+        let previous_base = self.base_composition_surface;
+        let devices = self.devices.as_ref().context("devices missing")?;
+        let composition = self
+            .direct_composition
+            .as_ref()
+            .context("DirectComposition is disabled")?;
+        for surface in surfaces {
+            if !matches!(surface.content, PlatformCompositionSurfaceContent::Gpui) {
+                continue;
+            }
+            if surface.id == base || self.composition_resources.contains_key(&surface.id) {
+                continue;
+            }
+            let resources = OverlayResources::new(devices, self.width, self.height)?;
+            composition.set_gpui_swap_chain(surface.id, &resources.swap_chain)?;
+            self.composition_resources.insert(surface.id, resources);
+        }
+        let active_gpui_surfaces = surfaces
+            .iter()
+            .filter_map(|surface| match surface.content {
+                PlatformCompositionSurfaceContent::Gpui if surface.id != base => Some(surface.id),
+                _ => None,
+            })
+            .collect::<FxHashSet<_>>();
+        if let Err(error) = composition.set_surface_order(surfaces, base) {
+            if let Some(previous_base) = previous_base
+                && !self.composition_surfaces.is_empty()
+                && let Err(rollback_error) =
+                    composition.set_surface_order(&self.composition_surfaces, previous_base)
+            {
+                return Err(error).context(format!(
+                    "restoring the previous DirectComposition tree also failed: {rollback_error:#}"
+                ));
+            }
+            return Err(error);
+        }
+        self.composition_resources
+            .retain(|id, _| active_gpui_surfaces.contains(id));
+        composition.retain_gpui_surfaces(&active_gpui_surfaces);
+        self.base_composition_surface = Some(base);
+        self.composition_surfaces = surfaces.to_vec();
+        Ok(())
+    }
+
+    fn draw_scene(&mut self, scene: &Scene) -> Result<()> {
         self.upload_scene_buffers(scene)?;
-
         let annotation = self
             .devices
             .as_ref()
@@ -388,7 +628,7 @@ impl DirectXRenderer {
                 )
             })?;
         }
-        self.present()
+        Ok(())
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
@@ -425,6 +665,10 @@ impl DirectXRenderer {
         }
 
         resources.recreate_resources(devices, width, height)?;
+
+        for resources in self.composition_resources.values_mut() {
+            resources.resize(devices, width, height)?;
+        }
 
         unsafe {
             devices
@@ -918,21 +1162,295 @@ impl DirectComposition {
     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
         let comp_device = get_comp_device(dxgi_device)?;
         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-        let comp_visual = unsafe { comp_device.CreateVisual() }?;
+        let root_visual = unsafe { comp_device.CreateVisual() }?;
+        let base_visual = unsafe { comp_device.CreateVisual() }?;
+
+        unsafe {
+            root_visual.AddVisual(&base_visual, false, None)?;
+            comp_target.SetRoot(&root_visual)?;
+            comp_device.Commit()?;
+        }
 
         Ok(Self {
             comp_device,
             comp_target,
-            comp_visual,
+            root_visual,
+            base_visual,
+            gpui_visuals: RefCell::new(FxHashMap::default()),
         })
     }
 
     pub fn set_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
         unsafe {
-            self.comp_visual.SetContent(swap_chain)?;
-            self.comp_target.SetRoot(&self.comp_visual)?;
+            self.base_visual.SetContent(swap_chain)?;
             self.comp_device.Commit()?;
         }
+        Ok(())
+    }
+
+    pub fn set_gpui_swap_chain(
+        &self,
+        surface: CompositionSurfaceId,
+        swap_chain: &IDXGISwapChain1,
+    ) -> Result<()> {
+        let visual = unsafe { self.comp_device.CreateVisual()? };
+        unsafe {
+            visual.SetContent(swap_chain)?;
+            self.comp_device.Commit()?;
+        }
+        self.gpui_visuals.borrow_mut().insert(surface, visual);
+        Ok(())
+    }
+
+    fn create_portal_state(&self) -> Result<DirectCompositionPortalState> {
+        let visual = unsafe { self.comp_device.CreateVisual() }?;
+        let clip = unsafe { self.comp_device.CreateRectangleClip() }?;
+        unsafe {
+            visual.SetClip(&clip)?;
+        }
+        Ok(DirectCompositionPortalState {
+            comp_device: self.comp_device.clone(),
+            visual,
+            clip,
+            bounds: Cell::new(Bounds::default()),
+            parent_origin: Cell::new(Point::default()),
+            visible: Cell::new(true),
+            compositor_recreated_callback: RefCell::new(None),
+        })
+    }
+
+    fn rebind_portal(&self, state: &mut DirectCompositionPortalState) -> Result<()> {
+        let bounds = state.bounds.get();
+        let parent_origin = state.parent_origin.get();
+        let visible = state.visible.get();
+        let compositor_recreated_callback = state.compositor_recreated_callback.borrow().clone();
+        let replacement = self.create_portal_state()?;
+        let x = (bounds.origin.x - parent_origin.x).0 as f32;
+        let y = (bounds.origin.y - parent_origin.y).0 as f32;
+        let width = bounds.size.width.0.max(0) as f32;
+        let height = bounds.size.height.0.max(0) as f32;
+        unsafe {
+            replacement.visual.SetOffsetX2(x)?;
+            replacement.visual.SetOffsetY2(y)?;
+            replacement.clip.SetLeft2(0.0)?;
+            replacement.clip.SetTop2(0.0)?;
+            replacement.clip.SetRight2(width)?;
+            replacement.clip.SetBottom2(height)?;
+            replacement
+                .visual
+                .cast::<IDCompositionVisual3>()?
+                .SetOpacity2(if visible { 1.0 } else { 0.0 })?;
+        }
+        replacement.bounds.set(bounds);
+        replacement.parent_origin.set(parent_origin);
+        replacement.visible.set(visible);
+        *replacement.compositor_recreated_callback.borrow_mut() = compositor_recreated_callback;
+        *state = replacement;
+        Ok(())
+    }
+
+    fn set_surface_order(
+        &self,
+        surfaces: &[PlatformCompositionSurface],
+        base_surface: CompositionSurfaceId,
+    ) -> Result<()> {
+        let gpui_visuals = self.gpui_visuals.borrow();
+        let visuals = surfaces
+            .iter()
+            .map(|surface| match &surface.content {
+                PlatformCompositionSurfaceContent::Gpui if surface.id == base_surface => {
+                    Ok((surface.id, self.base_visual.clone()))
+                }
+                PlatformCompositionSurfaceContent::Gpui => gpui_visuals
+                    .get(&surface.id)
+                    .cloned()
+                    .map(|visual| (surface.id, visual))
+                    .context("GPUI composition visual is missing"),
+                PlatformCompositionSurfaceContent::Native(platform_surface)
+                | PlatformCompositionSurfaceContent::ExternalGpu(platform_surface) => {
+                    let handle = platform_surface.platform_handle()?;
+                    let unknown = handle.downcast::<windows::core::IUnknown>().map_err(|_| {
+                        anyhow::anyhow!("native surface is not a DirectComposition visual")
+                    })?;
+                    unknown
+                        .cast::<IDCompositionVisual>()
+                        .map(|visual| (surface.id, visual))
+                        .map_err(Into::into)
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let visuals_by_id = visuals.iter().cloned().collect::<FxHashMap<_, _>>();
+        for surface in surfaces {
+            match &surface.content {
+                PlatformCompositionSurfaceContent::Gpui => {
+                    let visual = visuals_by_id
+                        .get(&surface.id)
+                        .context("GPUI composition visual is missing")?;
+                    unsafe {
+                        visual.SetOffsetX2(
+                            (surface.window_origin.x - surface.parent_origin.x).0 as f32,
+                        )?;
+                        visual.SetOffsetY2(
+                            (surface.window_origin.y - surface.parent_origin.y).0 as f32,
+                        )?;
+                    }
+                }
+                PlatformCompositionSurfaceContent::Native(platform_surface)
+                | PlatformCompositionSurfaceContent::ExternalGpu(platform_surface) => {
+                    platform_surface.set_parent_origin(surface.parent_origin)?;
+                }
+            }
+        }
+        unsafe {
+            self.root_visual.RemoveAllVisuals()?;
+            for surface in surfaces {
+                if matches!(surface.content, PlatformCompositionSurfaceContent::Gpui) {
+                    visuals_by_id
+                        .get(&surface.id)
+                        .context("GPUI composition visual is missing")?
+                        .RemoveAllVisuals()?;
+                }
+            }
+            let mut previous_by_parent = FxHashMap::default();
+            for surface in surfaces {
+                let visual = visuals_by_id
+                    .get(&surface.id)
+                    .context("composition visual is missing")?;
+                let parent = surface.parent.and_then(|parent| visuals_by_id.get(&parent));
+                let container = parent.unwrap_or(&self.root_visual);
+                let previous = previous_by_parent.get(&surface.parent);
+                container.AddVisual(visual, true, previous)?;
+                previous_by_parent.insert(surface.parent, visual.clone());
+            }
+            self.comp_device.Commit()?;
+        }
+        Ok(())
+    }
+
+    fn retain_gpui_surfaces(&self, surfaces: &FxHashSet<CompositionSurfaceId>) {
+        self.gpui_visuals
+            .borrow_mut()
+            .retain(|id, _| surfaces.contains(id));
+    }
+}
+
+impl PlatformSurfaceAttachment for DirectCompositionPortal {
+    fn set_bounds(&self, bounds: Bounds<DevicePixels>) -> Result<()> {
+        let state = self.state.borrow();
+        let parent_origin = state.parent_origin.get();
+        let x = (bounds.origin.x - parent_origin.x).0 as f32;
+        let y = (bounds.origin.y - parent_origin.y).0 as f32;
+        let width = bounds.size.width.0.max(0) as f32;
+        let height = bounds.size.height.0.max(0) as f32;
+        unsafe {
+            state.visual.SetOffsetX2(x)?;
+            state.visual.SetOffsetY2(y)?;
+            state.clip.SetLeft2(0.0)?;
+            state.clip.SetTop2(0.0)?;
+            state.clip.SetRight2(width)?;
+            state.clip.SetBottom2(height)?;
+            state.comp_device.Commit()?;
+        }
+        state.bounds.set(bounds);
+        Ok(())
+    }
+
+    fn bounds(&self) -> Bounds<DevicePixels> {
+        self.state.borrow().bounds.get()
+    }
+
+    fn set_parent_origin(&self, origin: Point<DevicePixels>) -> Result<()> {
+        let bounds = {
+            let state = self.state.borrow();
+            state.parent_origin.set(origin);
+            state.bounds.get()
+        };
+        self.set_bounds(bounds)
+    }
+
+    fn set_visible(&self, visible: bool) -> Result<()> {
+        let state = self.state.borrow();
+        if state.visible.get() != visible {
+            unsafe {
+                state
+                    .visual
+                    .cast::<IDCompositionVisual3>()?
+                    .SetOpacity2(if visible { 1.0 } else { 0.0 })?;
+                state.comp_device.Commit()?;
+            }
+            state.visible.set(visible);
+        }
+        Ok(())
+    }
+
+    fn compositor_recreated(&self, _platform_context: &dyn std::any::Any) -> Result<()> {
+        let callback = self
+            .state
+            .borrow()
+            .compositor_recreated_callback
+            .borrow()
+            .clone();
+        if let Some(callback) = callback {
+            callback(self.platform_handle()?)?;
+        }
+        Ok(())
+    }
+
+    fn set_compositor_recreated_callback(
+        &self,
+        callback: Rc<dyn Fn(Box<dyn std::any::Any>) -> Result<()>>,
+    ) -> Result<()> {
+        *self
+            .state
+            .borrow()
+            .compositor_recreated_callback
+            .borrow_mut() = Some(callback);
+        Ok(())
+    }
+
+    fn platform_handle(&self) -> Result<Box<dyn std::any::Any>> {
+        Ok(Box::new(
+            self.state
+                .borrow()
+                .visual
+                .cast::<windows::core::IUnknown>()?,
+        ))
+    }
+}
+
+impl OverlayResources {
+    fn new(devices: &DirectXRendererDevices, width: u32, height: u32) -> Result<Self> {
+        let swap_chain = create_swap_chain_for_composition(
+            &devices.dxgi_factory,
+            &devices.device,
+            width,
+            height,
+        )?;
+        let (render_target, render_target_view) =
+            create_render_target_and_its_view(&swap_chain, &devices.device)?;
+        Ok(Self {
+            swap_chain,
+            render_target: Some(render_target),
+            render_target_view,
+        })
+    }
+
+    fn resize(&mut self, devices: &DirectXRendererDevices, width: u32, height: u32) -> Result<()> {
+        self.render_target.take();
+        self.render_target_view.take();
+        unsafe {
+            self.swap_chain.ResizeBuffers(
+                BUFFER_COUNT as u32,
+                width,
+                height,
+                RENDER_TARGET_FORMAT,
+                DXGI_SWAP_CHAIN_FLAG(0),
+            )?;
+        }
+        let (render_target, render_target_view) =
+            create_render_target_and_its_view(&self.swap_chain, &devices.device)?;
+        self.render_target = Some(render_target);
+        self.render_target_view = render_target_view;
         Ok(())
     }
 }

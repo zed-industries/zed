@@ -67,6 +67,9 @@ best starting point for new applications:
 - `active_state_bug` is a focused active-state reproduction.
 - `layer_shell` demonstrates Linux layer-shell windows.
 - `list_example` demonstrates bottom-aligned list state and scrollbar behavior.
+- `native_webview` demonstrates the macOS native-surface overlay API with a
+  directly hosted `WKWebView`, without depending on wry. It also demonstrates
+  click-anywhere overlay dismissal and native-focus handoff back to GPUI.
 - `ownership_post` supports the ownership and data-flow documentation.
 - `paths_bench` is a path rendering benchmark.
 - `tree` renders a deep tree of nested elements.

@@ -355,20 +355,33 @@ impl WindowsPlatform {
     }
 }
 
-fn translate_accelerator(msg: &MSG) -> Option<()> {
-    if msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN {
+fn translate_accelerator(message: &MSG, is_gpui_window: impl FnOnce() -> bool) -> Option<()> {
+    if message.message != WM_KEYDOWN && message.message != WM_SYSKEYDOWN {
+        return None;
+    }
+    if !is_gpui_window() {
         return None;
     }
 
     let result = unsafe {
         SendMessageW(
-            msg.hwnd,
+            message.hwnd,
             WM_GPUI_KEYDOWN,
-            Some(msg.wParam),
-            Some(msg.lParam),
+            Some(message.wParam),
+            Some(message.lParam),
         )
     };
     (result.0 == 0).then_some(())
+}
+
+fn contains_window_handle(
+    window_handles: &RwLock<SmallVec<[SafeHwnd; 4]>>,
+    window_handle: HWND,
+) -> bool {
+    window_handles
+        .read()
+        .iter()
+        .any(|handle| handle.as_raw() == window_handle)
 }
 
 impl Platform for WindowsPlatform {
@@ -416,12 +429,16 @@ impl Platform for WindowsPlatform {
             self.begin_vsync_thread();
         }
 
-        let mut msg = MSG::default();
+        let mut message = MSG::default();
         unsafe {
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                if translate_accelerator(&msg).is_none() {
-                    _ = TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
+            while GetMessageW(&mut message, None, 0, 0).as_bool() {
+                if translate_accelerator(&message, || {
+                    contains_window_handle(&self.raw_window_handles, message.hwnd)
+                })
+                .is_none()
+                {
+                    _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
                 }
             }
         }
@@ -1009,23 +1026,29 @@ impl WindowsPlatformInner {
                     // we spent our budget on gpui tasks, we likely have a lot of work queued so drain system events first to stay responsive
                     // then quit out of foreground work to allow us to process other gpui events first before returning back to foreground task work
                     // if we don't we might not for example process window quit events
-                    let mut msg = MSG::default();
-                    let process_message = |msg: &_| {
-                        if translate_accelerator(msg).is_none() {
-                            _ = unsafe { TranslateMessage(msg) };
-                            unsafe { DispatchMessageW(msg) };
+                    let mut message = MSG::default();
+                    let process_message = |message: &MSG| {
+                        if translate_accelerator(message, || {
+                            self.raw_window_handles.upgrade().is_some_and(|handles| {
+                                contains_window_handle(&handles, message.hwnd)
+                            })
+                        })
+                        .is_none()
+                        {
+                            _ = unsafe { TranslateMessage(message) };
+                            unsafe { DispatchMessageW(message) };
                         }
                     };
-                    let peek_msg = |msg: &mut _, msg_kind| unsafe {
-                        PeekMessageW(msg, None, 0, 0, PM_REMOVE | msg_kind).as_bool()
+                    let peek_message = |message: &mut _, message_kind| unsafe {
+                        PeekMessageW(message, None, 0, 0, PM_REMOVE | message_kind).as_bool()
                     };
                     // We need to process a paint message here as otherwise we will re-enter `run_foreground_task` before painting if we have work remaining.
                     // The reason for this is that windows prefers custom application message processing over system messages.
-                    if peek_msg(&mut msg, PM_QS_PAINT) {
-                        process_message(&msg);
+                    if peek_message(&mut message, PM_QS_PAINT) {
+                        process_message(&message);
                     }
-                    while peek_msg(&mut msg, PM_QS_INPUT) {
-                        process_message(&msg);
+                    while peek_message(&mut message, PM_QS_INPUT) {
+                        process_message(&message);
                     }
                     // Allow the main loop to process other gpui events before going back into `run_foreground_task`
                     unsafe {

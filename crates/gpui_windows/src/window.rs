@@ -996,6 +996,32 @@ impl PlatformWindow for WindowsWindow {
             .log_err();
     }
 
+    fn draw_composed(&self, scene: gpui::ComposedScene<'_>) {
+        self.state
+            .renderer
+            .borrow_mut()
+            .draw_composed(scene, self.state.background_appearance.get())
+            .log_err();
+    }
+
+    fn enable_window_composition(&self) -> anyhow::Result<()> {
+        self.state.renderer.borrow_mut().enable_window_composition()
+    }
+
+    fn create_native_surface(&self) -> anyhow::Result<Rc<dyn PlatformSurfaceAttachment>> {
+        self.state.renderer.borrow_mut().create_native_surface()
+    }
+
+    fn set_composition_order(
+        &self,
+        surfaces: &[gpui::PlatformCompositionSurface],
+    ) -> anyhow::Result<()> {
+        self.state
+            .renderer
+            .borrow_mut()
+            .set_composition_order(surfaces)
+    }
+
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.state.renderer.borrow().sprite_atlas()
     }
