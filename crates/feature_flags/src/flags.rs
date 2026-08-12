@@ -8,6 +8,14 @@ impl FeatureFlag for NotebookFeatureFlag {
 }
 register_feature_flag!(NotebookFeatureFlag);
 
+pub struct SettingsSyncFeatureFlag;
+
+impl FeatureFlag for SettingsSyncFeatureFlag {
+    const NAME: &'static str = "settings-sync";
+    type Value = PresenceFlag;
+}
+register_feature_flag!(SettingsSyncFeatureFlag);
+
 pub struct PanicFeatureFlag;
 
 impl FeatureFlag for PanicFeatureFlag {
