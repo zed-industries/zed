@@ -135,14 +135,13 @@ impl LineFragmentBuilder {
 
     fn replacement_width(&mut self, ch: char) -> Option<Pixels> {
         let replacement_char = replacement(ch)?.chars().next()?;
-        if let Some(width) = self.cached_replacement_widths.get(&replacement_char) {
-            return Some(*width);
-        }
-        let width = self
-            .text_system
-            .layout_width(self.font_id, self.font_size, replacement_char);
-        self.cached_replacement_widths
-            .insert(replacement_char, width);
+        let width = *self
+            .cached_replacement_widths
+            .entry(replacement_char)
+            .or_insert_with(|| {
+                self.text_system
+                    .layout_width(self.font_id, self.font_size, replacement_char)
+            });
         Some(width)
     }
 }
