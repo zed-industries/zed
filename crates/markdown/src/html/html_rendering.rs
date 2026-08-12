@@ -136,7 +136,7 @@ impl MarkdownElement {
                 self.render_html_table(table, source_allocator, builder, markdown_end, cx);
             }
             ParsedHtmlElement::Image(image) => {
-                self.render_html_image(image, builder);
+                self.render_html_image(image, builder, cx);
             }
         }
     }
@@ -358,7 +358,7 @@ impl MarkdownElement {
                     self.render_html_text(text, source_allocator, builder, cx);
                 }
                 HtmlParagraphChunk::Image(image) => {
-                    self.render_html_image(image, builder);
+                    self.render_html_image(image, builder, cx);
                 }
             }
         }
@@ -447,11 +447,11 @@ impl MarkdownElement {
         }
     }
 
-    fn render_html_image(&self, image: &HtmlImage, builder: &mut MarkdownElementBuilder) {
+    fn render_html_image(&self, image: &HtmlImage, builder: &mut MarkdownElementBuilder, cx: &App) {
         let Some(source) = self
             .image_resolver
             .as_ref()
-            .and_then(|resolve| resolve(image.dest_url.as_ref()))
+            .and_then(|resolve| resolve(image.dest_url.as_ref(), cx))
         else {
             return;
         };
