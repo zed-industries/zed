@@ -153,6 +153,8 @@ pub enum Model {
     GrokBuild0_1,
     #[serde(rename = "grok-4.5")]
     Grok4_5,
+    #[serde(rename = "grok-4.6")]
+    Grok4_6,
     #[serde(rename = "kimi-k2.5")]
     KimiK2_5,
     #[serde(rename = "kimi-k2.6")]
@@ -310,6 +312,7 @@ impl Model {
             Self::Glm5_2 => "glm-5.2",
             Self::GrokBuild0_1 => "grok-build-0.1",
             Self::Grok4_5 => "grok-4.5",
+            Self::Grok4_6 => "grok-4.6",
             Self::KimiK2_5 => "kimi-k2.5",
             Self::KimiK2_6 => "kimi-k2.6",
             Self::KimiK2_7Code => "kimi-k2.7-code",
@@ -380,6 +383,7 @@ impl Model {
             Self::Glm5_2 => "GLM 5.2",
             Self::GrokBuild0_1 => "Grok Build 0.1",
             Self::Grok4_5 => "Grok 4.5",
+            Self::Grok4_6 => "Grok 4.6",
             Self::KimiK2_5 => "Kimi K2.5",
             Self::KimiK2_6 => "Kimi K2.6",
             Self::KimiK2_7Code => "Kimi K2.7 Code",
@@ -476,7 +480,7 @@ impl Model {
             | Self::BigPickle
             | Self::Nemotron3UltraFree => ApiProtocol::OpenAiChat,
 
-            Self::Grok4_5 => ApiProtocol::OpenAiResponses,
+            Self::Grok4_6 | Self::Grok4_5 => ApiProtocol::OpenAiResponses,
 
             Self::Custom { protocol, .. } => *protocol,
         }
@@ -562,7 +566,7 @@ impl Model {
             Self::KimiK2_6 | Self::KimiK2_5 | Self::KimiK2_7Code => 262_144,
             Self::KimiK3 => 1_048_576,
             Self::GrokBuild0_1 => 256_000,
-            Self::Grok4_5 => 500_000,
+            Self::Grok4_6 | Self::Grok4_5 => 500_000,
             Self::MimoV2_5Pro => 1_048_576,
             Self::MimoV2_5 => 1_000_000,
             Self::Qwen3_5Plus => 262_144,
@@ -655,7 +659,7 @@ impl Model {
             Self::KimiK2_7Code => Some(262_144),
             Self::KimiK3 => Some(131_072),
             Self::GrokBuild0_1 => Some(256_000),
-            Self::Grok4_5 => Some(500_000),
+            Self::Grok4_6 | Self::Grok4_5 => Some(500_000),
             Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
                 Some(65_536)
             }
@@ -728,6 +732,7 @@ impl Model {
             | Self::KimiK2_5
             | Self::GrokBuild0_1
             | Self::Grok4_5
+            | Self::Grok4_6
             | Self::MimoV2_5
             | Self::Qwen3_5Plus
             | Self::Qwen3_6Plus
@@ -898,7 +903,7 @@ impl Model {
             ]),
 
             // SpaceXAI models
-            Self::Grok4_5 => Some(vec![
+            Self::Grok4_6 | Self::Grok4_5 => Some(vec![
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
