@@ -1839,8 +1839,7 @@ impl Terminal {
     }
 
     fn clear_hyperlink(&mut self, cx: &mut Context<Self>) {
-        if self.last_content.last_hovered_word.is_some() {
-            self.last_content.last_hovered_word = None;
+        if self.last_content.last_hovered_word.take().is_some() {
             cx.emit(Event::NewNavigationTarget(None));
         }
     }
