@@ -114,15 +114,46 @@ float4 distance_from_clip_rect_impl(float2 position, Bounds clip_bounds) {
     return float4(tl.x, br.x, tl.y, br.y);
 }
 
-float4 distance_from_clip_rect(float2 unit_vertex, Bounds bounds, Bounds clip_bounds) {
-    float2 position = unit_vertex * bounds.size + bounds.origin;
-    return distance_from_clip_rect_impl(position, clip_bounds);
-}
-
 float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds bounds, Bounds clip_bounds, TransformationMatrix transformation) {
     float2 position = unit_vertex * bounds.size + bounds.origin;
     float2 transformed = mul(position, transformation.rotation_scale) + transformation.translation;
     return distance_from_clip_rect_impl(transformed, clip_bounds);
+}
+
+// Intersects `bounds` with `mask` so the emitted geometry never covers pixels
+// outside the content mask, making per-fragment clipping unnecessary. An empty
+// intersection collapses to zero size, which rasterizes to nothing. Fragment
+// shaders reload the original bounds by instance id, so their math is
+// unaffected by the shrunken geometry.
+Bounds clip_to_mask(Bounds bounds, Bounds mask) {
+    Bounds result;
+    result.origin = max(bounds.origin, mask.origin);
+    float2 extent = min(bounds.origin + bounds.size, mask.origin + mask.size);
+    result.size = max(extent - result.origin, float2(0.0, 0.0));
+    return result;
+}
+
+// Whether the transformation only scales and translates, keeping rectangles
+// axis-aligned in screen space. Zero scale is excluded so callers can safely
+// invert the transformation.
+bool transform_is_axis_aligned(TransformationMatrix transformation) {
+    return transformation.rotation_scale[0][1] == 0.0 &&
+           transformation.rotation_scale[1][0] == 0.0 &&
+           transformation.rotation_scale[0][0] != 0.0 &&
+           transformation.rotation_scale[1][1] != 0.0;
+}
+
+// Maps the screen-space mask into pre-transform space. Only valid for
+// axis-aligned transformations; min/max normalization handles negative scale
+// (e.g. rotation by 180 degrees).
+Bounds mask_in_transform_space(Bounds mask, TransformationMatrix transformation) {
+    float2 scale = float2(transformation.rotation_scale[0][0], transformation.rotation_scale[1][1]);
+    float2 p0 = (mask.origin - transformation.translation) / scale;
+    float2 p1 = (mask.origin + mask.size - transformation.translation) / scale;
+    Bounds result;
+    result.origin = min(p0, p1);
+    result.size = max(p0, p1) - result.origin;
+    return result;
 }
 
 // Convert linear RGB to sRGB
@@ -516,7 +547,6 @@ struct QuadVertexOutput {
     nointerpolation float4 background_solid: COLOR1;
     nointerpolation float4 background_color0: COLOR2;
     nointerpolation float4 background_color1: COLOR3;
-    float4 clip_distance: SV_ClipDistance;
 };
 
 struct QuadFragmentInput {
@@ -534,7 +564,7 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_I
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint quad_id = batch_start_index + instance_id;
     Quad quad = quads[quad_id];
-    float4 device_position = to_device_position(unit_vertex, quad.bounds);
+    float4 device_position = to_device_position(unit_vertex, clip_to_mask(quad.bounds, quad.content_mask));
 
     GradientColor gradient = prepare_gradient_color(
         quad.background.tag,
@@ -542,7 +572,6 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_I
         quad.background.solid,
         quad.background.colors
     );
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
     float4 border_color = hsla_to_rgba(quad.border_color);
 
     QuadVertexOutput output;
@@ -552,7 +581,6 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_I
     output.background_solid = gradient.solid;
     output.background_color0 = gradient.color0;
     output.background_color1 = gradient.color1;
-    output.clip_distance = clip_distance;
     return output;
 }
 
@@ -870,7 +898,6 @@ struct ShadowVertexOutput {
     nointerpolation uint shadow_id: TEXCOORD0;
     float4 position: SV_Position;
     nointerpolation float4 color: COLOR;
-    float4 clip_distance: SV_ClipDistance;
 };
 
 struct ShadowFragmentInput {
@@ -897,15 +924,13 @@ ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint instance_id: 
         bounds.size += 2.0 * margin;
     }
 
-    float4 device_position = to_device_position(unit_vertex, bounds);
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask);
+    float4 device_position = to_device_position(unit_vertex, clip_to_mask(bounds, shadow.content_mask));
     float4 color = hsla_to_rgba(shadow.color);
 
     ShadowVertexOutput output;
     output.position = device_position;
     output.color = color;
     output.shadow_id = shadow_id;
-    output.clip_distance = clip_distance;
 
     return output;
 }
@@ -1076,7 +1101,6 @@ struct UnderlineVertexOutput {
   nointerpolation uint underline_id: TEXCOORD0;
   float4 position: SV_Position;
   nointerpolation float4 color: COLOR;
-  float4 clip_distance: SV_ClipDistance;
 };
 
 struct UnderlineFragmentInput {
@@ -1091,16 +1115,14 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint instanc
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint underline_id = batch_start_index + instance_id;
     Underline underline = underlines[underline_id];
-    float4 device_position = to_device_position(unit_vertex, underline.bounds);
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
-                                                    underline.content_mask);
+    float4 device_position = to_device_position(
+        unit_vertex, clip_to_mask(underline.bounds, underline.content_mask));
     float4 color = hsla_to_rgba(underline.color);
 
     UnderlineVertexOutput output;
     output.position = device_position;
     output.color = color;
     output.underline_id = underline_id;
-    output.clip_distance = clip_distance;
     return output;
 }
 
@@ -1167,10 +1189,23 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint sprite_id = batch_start_index + instance_id;
     MonochromeSprite sprite = mono_sprites[sprite_id];
-    float4 device_position =
-        to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
-    float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
-    float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
+    float4 device_position;
+    float2 tile_position;
+    float4 clip_distance;
+    if (transform_is_axis_aligned(sprite.transformation)) {
+        Bounds mask = mask_in_transform_space(sprite.content_mask, sprite.transformation);
+        Bounds clipped = clip_to_mask(sprite.bounds, mask);
+        device_position = to_device_position_transformed(unit_vertex, clipped, sprite.transformation);
+        float2 local_position = unit_vertex * clipped.size + clipped.origin;
+        tile_position = to_tile_position((local_position - sprite.bounds.origin) / sprite.bounds.size, sprite.tile);
+        clip_distance = float4(1.0, 1.0, 1.0, 1.0);
+    } else {
+        // A rotated sprite intersected with the axis-aligned mask isn't
+        // representable as a quad, so fall back to hardware clip distances.
+        device_position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+        tile_position = to_tile_position(unit_vertex, sprite.tile);
+        clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
+    }
     float4 color = hsla_to_rgba(sprite.color);
 
     MonochromeSpriteVertexOutput output;
@@ -1225,7 +1260,6 @@ struct PolychromeSpriteVertexOutput {
     nointerpolation uint sprite_id: TEXCOORD0;
     float4 position: SV_Position;
     float2 tile_position: POSITION;
-    float4 clip_distance: SV_ClipDistance;
 };
 
 struct PolychromeSpriteFragmentInput {
@@ -1240,16 +1274,15 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint sprite_id = batch_start_index + instance_id;
     PolychromeSprite sprite = poly_sprites[sprite_id];
-    float4 device_position = to_device_position(unit_vertex, sprite.bounds);
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds,
-                                                    sprite.content_mask);
-    float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
+    Bounds clipped = clip_to_mask(sprite.bounds, sprite.content_mask);
+    float4 device_position = to_device_position(unit_vertex, clipped);
+    float2 position = unit_vertex * clipped.size + clipped.origin;
+    float2 tile_position = to_tile_position((position - sprite.bounds.origin) / sprite.bounds.size, sprite.tile);
 
     PolychromeSpriteVertexOutput output;
     output.position = device_position;
     output.tile_position = tile_position;
     output.sprite_id = sprite_id;
-    output.clip_distance = clip_distance;
     return output;
 }
 

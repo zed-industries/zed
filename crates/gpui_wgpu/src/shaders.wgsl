@@ -195,15 +195,40 @@ fn distance_from_clip_rect_impl(position: vec2<f32>, clip_bounds: Bounds) -> vec
     return vec4<f32>(tl.x, br.x, tl.y, br.y);
 }
 
-fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds) -> vec4<f32> {
-    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
-    return distance_from_clip_rect_impl(position, clip_bounds);
-}
-
 fn distance_from_clip_rect_transformed(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds, transform: TransformationMatrix) -> vec4<f32> {
     let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
     let transformed = transpose(transform.rotation_scale) * position + transform.translation;
     return distance_from_clip_rect_impl(transformed, clip_bounds);
+}
+
+// Intersects `bounds` with `mask` so the emitted geometry never covers pixels
+// outside the content mask, making per-fragment clipping unnecessary. An empty
+// intersection collapses to zero size, which rasterizes to nothing. Fragment
+// shaders reload the original bounds by instance id, so their math is
+// unaffected by the shrunken geometry.
+fn clip_to_mask(bounds: Bounds, mask: Bounds) -> Bounds {
+    let origin = max(bounds.origin, mask.origin);
+    let extent = min(bounds.origin + bounds.size, mask.origin + mask.size);
+    return Bounds(origin, max(extent - origin, vec2<f32>(0.0)));
+}
+
+// Whether the transformation only scales and translates, keeping rectangles
+// axis-aligned in screen space. Zero scale is excluded so callers can safely
+// invert the transformation.
+fn transform_is_axis_aligned(transform: TransformationMatrix) -> bool {
+    let m = transform.rotation_scale;
+    return m[0][1] == 0.0 && m[1][0] == 0.0 && m[0][0] != 0.0 && m[1][1] != 0.0;
+}
+
+// Maps the screen-space mask into pre-transform space. Only valid for
+// axis-aligned transformations; min/max normalization handles negative scale
+// (e.g. rotation by 180 degrees).
+fn mask_in_transform_space(mask: Bounds, transform: TransformationMatrix) -> Bounds {
+    let scale = vec2<f32>(transform.rotation_scale[0][0], transform.rotation_scale[1][1]);
+    let p0 = (mask.origin - transform.translation) / scale;
+    let p1 = (mask.origin + mask.size - transform.translation) / scale;
+    let origin = min(p0, p1);
+    return Bounds(origin, max(p0, p1) - origin);
 }
 
 // https://gamedev.stackexchange.com/questions/92015/optimized-linear-to-srgb-glsl
@@ -531,11 +556,9 @@ struct QuadVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) border_color: vec4<f32>,
     @location(1) @interpolate(flat) quad_id: u32,
-    // TODO: use `clip_distance` once Naga supports it
-    @location(2) clip_distances: vec4<f32>,
-    @location(3) @interpolate(flat) background_solid: vec4<f32>,
-    @location(4) @interpolate(flat) background_color0: vec4<f32>,
-    @location(5) @interpolate(flat) background_color1: vec4<f32>,
+    @location(2) @interpolate(flat) background_solid: vec4<f32>,
+    @location(3) @interpolate(flat) background_color0: vec4<f32>,
+    @location(4) @interpolate(flat) background_color1: vec4<f32>,
 }
 
 @vertex
@@ -544,7 +567,7 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     let quad = load_quad(instance_id);
 
     var out = QuadVarying();
-    out.position = to_device_position(unit_vertex, quad.bounds);
+    out.position = to_device_position(unit_vertex, clip_to_mask(quad.bounds, quad.content_mask));
 
     let gradient = prepare_gradient_color(
         quad.background.tag,
@@ -557,17 +580,11 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     out.background_color1 = gradient.color1;
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
     return out;
 }
 
 @fragment
 fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
-    // Alpha clip first, since we don't have `clip_distance`.
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return vec4<f32>(0.0);
-    }
-
     let quad = load_quad(input.quad_id);
 
     let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
@@ -968,8 +985,6 @@ struct ShadowVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) color: vec4<f32>,
     @location(1) @interpolate(flat) shadow_id: u32,
-    //TODO: use `clip_distance` once Naga supports it
-    @location(3) clip_distances: vec4<f32>,
 }
 
 @vertex
@@ -989,20 +1004,14 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
     }
 
     var out = ShadowVarying();
-    out.position = to_device_position(unit_vertex, geometry);
+    out.position = to_device_position(unit_vertex, clip_to_mask(geometry, shadow.content_mask));
     out.color = hsla_to_rgba(shadow.color);
     out.shadow_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, geometry, shadow.content_mask);
     return out;
 }
 
 @fragment
 fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
-    // Alpha clip first, since we don't have `clip_distance`.
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return vec4<f32>(0.0);
-    }
-
     let shadow = load_shadow(input.shadow_id);
     let half_size = shadow.bounds.size / 2.0;
     let center = shadow.bounds.origin + half_size;
@@ -1161,8 +1170,6 @@ struct UnderlineVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) color: vec4<f32>,
     @location(1) @interpolate(flat) underline_id: u32,
-    //TODO: use `clip_distance` once Naga supports it
-    @location(3) clip_distances: vec4<f32>,
 }
 
 @vertex
@@ -1171,10 +1178,9 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
     let underline = load_underline(instance_id);
 
     var out = UnderlineVarying();
-    out.position = to_device_position(unit_vertex, underline.bounds);
+    out.position = to_device_position(unit_vertex, clip_to_mask(underline.bounds, underline.content_mask));
     out.color = hsla_to_rgba(underline.color);
     out.underline_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, underline.bounds, underline.content_mask);
     return out;
 }
 
@@ -1182,11 +1188,6 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
 fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     const WAVE_FREQUENCY: f32 = 2.0;
     const WAVE_HEIGHT_RATIO: f32 = 0.8;
-
-    // Alpha clip first, since we don't have `clip_distance`.
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return vec4<f32>(0.0);
-    }
 
     let underline = load_underline(input.underline_id);
     if (underline.wavy == 0u)
@@ -1227,7 +1228,7 @@ struct MonoSpriteVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) color: vec4<f32>,
-    @location(3) clip_distances: vec4<f32>,
+    @location(2) clip_distances: vec4<f32>,
 }
 
 @vertex
@@ -1236,11 +1237,21 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     let sprite = load_mono_sprite(instance_id);
 
     var out = MonoSpriteVarying();
-    out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
-
-    out.tile_position = to_tile_position(unit_vertex, sprite.tile);
+    if (transform_is_axis_aligned(sprite.transformation)) {
+        let mask = mask_in_transform_space(sprite.content_mask, sprite.transformation);
+        let clipped = clip_to_mask(sprite.bounds, mask);
+        out.position = to_device_position_transformed(unit_vertex, clipped, sprite.transformation);
+        let local_position = unit_vertex * clipped.size + clipped.origin;
+        out.tile_position = to_tile_position((local_position - sprite.bounds.origin) / sprite.bounds.size, sprite.tile);
+        out.clip_distances = vec4<f32>(1.0);
+    } else {
+        // A rotated sprite intersected with the axis-aligned mask isn't
+        // representable as a quad, so fall back to per-fragment clipping.
+        out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+        out.tile_position = to_tile_position(unit_vertex, sprite.tile);
+        out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
+    }
     out.color = hsla_to_rgba(sprite.color);
-    out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     return out;
 }
 
@@ -1249,7 +1260,9 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
     let alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, gamma_params.grayscale_enhanced_contrast, gamma_params.gamma_ratios);
 
-    // Alpha clip after using the derivatives.
+    // Only rotated sprites need per-fragment clipping; axis-aligned sprites
+    // are clipped geometrically in the vertex shader. Alpha clip after using
+    // the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
     }
@@ -1275,30 +1288,25 @@ struct PolySpriteVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) sprite_id: u32,
-    @location(3) clip_distances: vec4<f32>,
 }
 
 @vertex
 fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PolySpriteVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = load_poly_sprite(instance_id);
+    let clipped = clip_to_mask(sprite.bounds, sprite.content_mask);
 
     var out = PolySpriteVarying();
-    out.position = to_device_position(unit_vertex, sprite.bounds);
-    out.tile_position = to_tile_position(unit_vertex, sprite.tile);
+    out.position = to_device_position(unit_vertex, clipped);
+    let position = unit_vertex * clipped.size + clipped.origin;
+    out.tile_position = to_tile_position((position - sprite.bounds.origin) / sprite.bounds.size, sprite.tile);
     out.sprite_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
     return out;
 }
 
 @fragment
 fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position);
-    // Alpha clip after using the derivatives.
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return vec4<f32>(0.0);
-    }
-
     let sprite = load_poly_sprite(input.sprite_id);
     let distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
 
@@ -1332,27 +1340,22 @@ const ycbcr_to_RGB = mat4x4<f32>(
 struct SurfaceVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) texture_position: vec2<f32>,
-    @location(3) clip_distances: vec4<f32>,
 }
 
 @vertex
 fn vs_surface(@builtin(vertex_index) vertex_id: u32) -> SurfaceVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let clipped = clip_to_mask(surface_locals.bounds, surface_locals.content_mask);
 
     var out = SurfaceVarying();
-    out.position = to_device_position(unit_vertex, surface_locals.bounds);
-    out.texture_position = unit_vertex;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, surface_locals.bounds, surface_locals.content_mask);
+    out.position = to_device_position(unit_vertex, clipped);
+    let position = unit_vertex * clipped.size + clipped.origin;
+    out.texture_position = (position - surface_locals.bounds.origin) / surface_locals.bounds.size;
     return out;
 }
 
 @fragment
 fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
-    // Alpha clip after using the derivatives.
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return vec4<f32>(0.0);
-    }
-
     let y_cb_cr = vec4<f32>(
         textureSampleLevel(t_y, s_surface, input.texture_position, 0.0).r,
         textureSampleLevel(t_cb_cr, s_surface, input.texture_position, 0.0).rg,
