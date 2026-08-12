@@ -2827,8 +2827,10 @@ impl Buffer {
         // Skip invalid edits and coalesce contiguous ones.
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
 
+        let mut seeker = text::OffsetSeeker::new(self);
         for (range, new_text) in edits_iter {
-            let mut range = range.start.to_offset(self)..range.end.to_offset(self);
+            let mut range = range.start.to_offset_seeking(self, &mut seeker)
+                ..range.end.to_offset_seeking(self, &mut seeker);
 
             if range.start > range.end {
                 mem::swap(&mut range.start, &mut range.end);
@@ -2854,6 +2856,7 @@ impl Buffer {
                 }
             }
         }
+        drop(seeker);
         if edits.is_empty() {
             return None;
         }
@@ -4118,6 +4121,9 @@ impl BufferSnapshot {
 
     /// Returns the [`LanguageScope`] at the given location.
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
+        if self.language.is_none() && self.syntax.is_empty() {
+            return None;
+        }
         let offset = position.to_offset(self);
         let mut scope = None;
         let mut smallest_range_and_depth: Option<(Range<usize>, usize)> = None;

@@ -928,9 +928,19 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     where
         T: ToOffset + std::marker::Copy + std::fmt::Debug,
     {
+        let mut seeker = multi_buffer::OffsetSeeker::new(self.snapshot.buffer_snapshot());
         let mut selections = selections
             .into_iter()
-            .map(|selection| selection.map(|it| it.to_offset(self.snapshot)))
+            .map(|selection| {
+                let snapshot = self.snapshot.buffer_snapshot();
+                Selection {
+                    id: selection.id,
+                    start: selection.start.to_offset_seeking(snapshot, &mut seeker),
+                    end: selection.end.to_offset_seeking(snapshot, &mut seeker),
+                    reversed: selection.reversed,
+                    goal: selection.goal,
+                }
+            })
             .map(|mut selection| {
                 if selection.start > selection.end {
                     mem::swap(&mut selection.start, &mut selection.end);
@@ -939,6 +949,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
                 selection
             })
             .collect::<Vec<_>>();
+        drop(seeker);
         selections.sort_unstable_by_key(|s| s.start);
 
         selections.dedup_by(|current, prev| {
