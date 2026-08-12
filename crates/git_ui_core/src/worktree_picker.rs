@@ -89,7 +89,9 @@ impl WorktreePicker {
 
         let project_worktree_paths = active_worktree_paths.clone();
 
-        let has_multiple_repositories = project_ref.repositories(cx).len() > 1;
+        let repository_count = project_ref.repositories(cx).len();
+        let has_multiple_repositories = repository_count > 1;
+        let custom_selection_available = repository_count == 1;
         let repository = project_ref.active_repository(cx);
 
         let current_branch_name = repository.as_ref().and_then(|repo| {
@@ -120,6 +122,7 @@ impl WorktreePicker {
             current_branch_name,
             default_branch: None,
             has_multiple_repositories,
+            custom_selection_available,
             focus_handle: cx.focus_handle(),
             show_footer,
             modifiers: Modifiers::default(),
@@ -301,6 +304,7 @@ struct WorktreePickerDelegate {
     current_branch_name: Option<String>,
     default_branch: Option<RemoteBranchName>,
     has_multiple_repositories: bool,
+    custom_selection_available: bool,
     focus_handle: FocusHandle,
     show_footer: bool,
     modifiers: Modifiers,
@@ -432,7 +436,7 @@ impl WorktreePickerDelegate {
         })
         .collect();
 
-        if !self.has_multiple_repositories {
+        if self.custom_selection_available {
             entries.push(WorktreeEntry::ChooseBaseBranch);
         }
 
@@ -851,14 +855,18 @@ impl PickerDelegate for WorktreePickerDelegate {
         let has_named_worktree = self.all_worktrees.iter().any(|worktree| {
             worktree.directory_name(main_worktree_path.as_deref()) == normalized_query
         });
-        let create_named_disabled_reason: Option<String> = if has_named_worktree {
+        let create_named_disabled_reason: Option<String> = if !self.custom_selection_available
+            && !self.has_multiple_repositories
+        {
+            Some("Requires a Git repository in the project".into())
+        } else if has_named_worktree {
             Some("A worktree with this name already exists".into())
         } else {
             None
         };
 
         let show_default_branch_create =
-            !self.has_multiple_repositories && self.default_branch.is_some();
+            self.custom_selection_available && self.default_branch.is_some();
         let default_branch = self.default_branch.clone();
 
         if query.is_empty() {
@@ -1089,7 +1097,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 from_branch,
                 disabled_reason: None,
             } => {
-                if self.has_multiple_repositories {
+                if !self.custom_selection_available {
                     if let Some(workspace) = self.workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
                             crate::worktree_service::handle_create_worktree(
@@ -1909,6 +1917,38 @@ mod tests {
         (fs, worktree_picker, repository, worktree_path, cx)
     }
 
+    async fn init_worktree_picker_without_repository(
+        cx: &mut TestAppContext,
+    ) -> (Entity<WorktreePicker>, VisualTestContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "file.txt": "buffer_text",
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        let worktree_picker = cx.update(|window, cx| {
+            cx.new(|cx| WorktreePicker::new(project, workspace.downgrade(), window, cx))
+        });
+        cx.run_until_parked();
+
+        (worktree_picker, cx)
+    }
+
     async fn select_named_worktree_entry(
         worktree_picker: &Entity<WorktreePicker>,
         query: &str,
@@ -2152,6 +2192,7 @@ mod tests {
         worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
             worktree_picker.picker.update(cx, |picker, cx| {
                 picker.delegate.has_multiple_repositories = true;
+                picker.delegate.custom_selection_available = false;
                 picker.refresh(window, cx);
             });
         });
@@ -2168,6 +2209,53 @@ mod tests {
                 );
             });
         });
+    }
+
+    #[gpui::test]
+    async fn test_zero_repository_disables_custom_base_worktree_creation(
+        cx: &mut TestAppContext,
+    ) {
+        let (worktree_picker, mut cx) = init_worktree_picker_without_repository(cx).await;
+        let has_choose_base = worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .any(|entry| matches!(entry, WorktreeEntry::ChooseBaseBranch))
+            })
+        });
+        let selected_callback = install_test_branch_selector(&mut cx);
+
+        select_named_worktree_entry(&worktree_picker, "feature name", "feature-name", &mut cx)
+            .await;
+        let named_entry_is_disabled =
+            worktree_picker.update(&mut cx, |worktree_picker, cx| {
+                worktree_picker.picker.update(cx, |picker, _| {
+                    matches!(
+                        picker.delegate.matches.get(picker.delegate.selected_index),
+                        Some(WorktreeEntry::CreateNamed {
+                            disabled_reason: Some(_),
+                            ..
+                        })
+                    )
+                })
+            });
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.confirm(false, window, cx);
+            });
+        });
+
+        assert_eq!(
+            (
+                has_choose_base,
+                named_entry_is_disabled,
+                selected_callback.borrow().is_some(),
+            ),
+            (false, true, false),
+            "a project without repositories must hide custom-base creation, disable named creation, and never open the selector"
+        );
     }
 
     #[gpui::test]
