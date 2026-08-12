@@ -82,6 +82,23 @@ pub fn init(cx: &mut App) {
         cx,
     );
 
+    git_ui_core::set_branch_selector_builder(
+        |workspace, repository, selected_branch, on_select, window, cx| {
+            let picker = cx.new(|cx| {
+                branch_picker::select_modal(
+                    workspace,
+                    repository,
+                    selected_branch,
+                    on_select,
+                    window,
+                    cx,
+                )
+            });
+            cx.new(|cx| git_ui_core::GitPickerPopover::new(picker, cx))
+        },
+        cx,
+    );
+
     git_ui_core::set_file_history_opener(
         |workspace, project_path, window, cx| {
             let Some((repo_id, log_source)) =

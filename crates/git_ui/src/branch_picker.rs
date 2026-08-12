@@ -28,7 +28,7 @@ use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
 use crate::branch_picker;
-use git_ui_core::notifications::show_error_toast;
+use git_ui_core::{SelectBranchCallback, notifications::show_error_toast};
 
 actions!(
     branch_picker,
@@ -154,8 +154,6 @@ pub fn select_modal(
     list.focus_handle(cx).focus(window, cx);
     list
 }
-
-pub type SelectBranchCallback = Arc<dyn Fn(Branch, &mut Window, &mut App)>;
 
 pub fn create_embedded(
     workspace: WeakEntity<Workspace>,
@@ -2138,7 +2136,11 @@ impl PickerDelegate for BranchListDelegate {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::{
+        cell::{Cell, RefCell},
+        collections::HashSet,
+        rc::Rc,
+    };
 
     use super::*;
     use git::repository::{
@@ -2344,6 +2346,73 @@ mod tests {
         let cx = VisualTestContext::from_window(window_handle.into(), cx);
 
         (branch_list, cx)
+    }
+
+    #[gpui::test]
+    async fn test_select_branch_callback(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let branches = create_test_branches();
+        let expected_branch = branches[0].clone();
+        let (fixture_branch_list, mut cx) =
+            init_branch_list_test(None, branches.clone(), cx).await;
+        let workspace = fixture_branch_list.read_with(&cx, |branch_list, cx| {
+            branch_list
+                .picker
+                .read(cx)
+                .delegate
+                .workspace
+                .upgrade()
+                .expect("fixture workspace should remain alive")
+        });
+        let workspace_handle = workspace.downgrade();
+
+        let selected_branch = Rc::new(RefCell::new(None));
+        let selected_branch_for_callback = selected_branch.clone();
+        let on_select: git_ui_core::SelectBranchCallback =
+            Arc::new(move |branch, _, _| {
+                *selected_branch_for_callback.borrow_mut() = Some(branch);
+            });
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                BranchList::new_select(
+                    workspace_handle,
+                    None,
+                    BranchListStyle::Modal,
+                    rems(34.),
+                    None,
+                    on_select,
+                    window,
+                    cx,
+                )
+            });
+        });
+
+        let branch_list = workspace.read_with(&cx, |workspace, cx| {
+            workspace
+                .active_modal::<BranchList>(cx)
+                .expect("select branch picker should be open")
+        });
+        branch_list.update(&mut cx, |branch_list, cx| {
+            branch_list.picker.update(cx, |picker, _| {
+                picker.delegate.all_branches = branches;
+            });
+        });
+        update_branch_list_matches_with_empty_query(&branch_list, &mut cx).await;
+
+        let dismissed = Rc::new(Cell::new(false));
+        let dismissed_for_subscription = dismissed.clone();
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&branch_list, move |_, _: &DismissEvent, _| {
+                dismissed_for_subscription.set(true);
+            })
+        });
+
+        cx.dispatch_action(menu::Confirm);
+
+        assert_eq!(*selected_branch.borrow(), Some(expected_branch));
+        assert!(dismissed.get(), "select branch picker should dismiss");
     }
 
     async fn init_fake_repository_with_fs(

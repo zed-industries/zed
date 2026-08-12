@@ -1,9 +1,10 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use gpui::{
     AnyView, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global,
-    IntoElement, ManagedView, Render, Subscription, WeakEntity, Window,
+    IntoElement, ManagedView, Render, SharedString, Subscription, WeakEntity, Window,
 };
+use git::repository::Branch;
 use project::{ProjectPath, git_store::Repository};
 use workspace::Workspace;
 
@@ -83,6 +84,55 @@ pub fn build_branch_picker(
 ) -> Option<Entity<GitPickerPopover>> {
     let builder = cx.try_global::<BranchPickerBuilderGlobal>()?.0.clone();
     Some(builder(workspace, repository, window, cx))
+}
+
+pub type SelectBranchCallback = Arc<dyn Fn(Branch, &mut Window, &mut App)>;
+
+type BranchSelectorBuilder = dyn Fn(
+    WeakEntity<Workspace>,
+    Option<Entity<Repository>>,
+    Option<SharedString>,
+    SelectBranchCallback,
+    &mut Window,
+    &mut App,
+) -> Entity<GitPickerPopover>;
+
+struct BranchSelectorBuilderGlobal(Rc<BranchSelectorBuilder>);
+
+impl Global for BranchSelectorBuilderGlobal {}
+
+pub fn set_branch_selector_builder(
+    builder: impl Fn(
+        WeakEntity<Workspace>,
+        Option<Entity<Repository>>,
+        Option<SharedString>,
+        SelectBranchCallback,
+        &mut Window,
+        &mut App,
+    ) -> Entity<GitPickerPopover>
+    + 'static,
+    cx: &mut App,
+) {
+    cx.set_global(BranchSelectorBuilderGlobal(Rc::new(builder)));
+}
+
+pub fn build_branch_selector(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    selected_branch: Option<SharedString>,
+    on_select: SelectBranchCallback,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<GitPickerPopover> {
+    let builder = cx.global::<BranchSelectorBuilderGlobal>().0.clone();
+    builder(
+        workspace,
+        repository,
+        selected_branch,
+        on_select,
+        window,
+        cx,
+    )
 }
 
 type FileHistoryOpener = dyn Fn(&mut Workspace, &ProjectPath, &mut Window, &mut Context<Workspace>);
