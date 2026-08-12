@@ -1509,7 +1509,7 @@ mod tests {
     async fn test_excerpts_are_ordered_by_path(cx: &mut TestAppContext) {
         init_test(cx);
 
-        const FILE_COUNT: usize = 12;
+        const FILE_COUNT: usize = 20;
 
         let names = (0..FILE_COUNT)
             .map(|index| format!("f{index:02}.txt"))
