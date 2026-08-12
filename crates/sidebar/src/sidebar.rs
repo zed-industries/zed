@@ -761,14 +761,16 @@ fn choose_worktree_base_in_workspace(
 ) {
     let repository = workspace.read(cx).project().read(cx).active_repository(cx);
     let selector_workspace = workspace.downgrade();
-    let callback_workspace = workspace.clone();
+    let callback_workspace = workspace.downgrade();
     let on_select = Arc::new(move |branch, window: &mut Window, cx: &mut App| {
-        create_worktree_in_workspace(
-            &callback_workspace,
-            worktree_branch_target(&branch),
-            window,
-            cx,
-        );
+        if let Some(workspace) = callback_workspace.upgrade() {
+            create_worktree_in_workspace(
+                &workspace,
+                worktree_branch_target(&branch),
+                window,
+                cx,
+            );
+        }
     });
 
     workspace.update(cx, |workspace, cx| {
