@@ -497,7 +497,13 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                         compact_request,
                         &extra_headers,
                     )
-                    .await?;
+                    .await
+                    .inspect_err(|error| {
+                        log::error!(
+                            "ChatGPT subscription compaction request to \
+                             {CODEX_BASE_URL}/responses/compact failed: {error}"
+                        );
+                    })?;
                     let usage = token_usage_from_response_usage(&response.usage);
                     let context = response
                         .into_compacted_context(PROVIDER_ID)
