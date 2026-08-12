@@ -1704,26 +1704,30 @@ impl Editor {
 
         let selections = &self.selections.disjoint_anchors_arc();
         if local && let Some(buffer_snapshot) = buffer.as_singleton() {
-            let mut points = buffer_snapshot.summaries_for_anchors::<Point, _>(
-                selections.iter().flat_map(|s| {
-                    let range = s.range();
-                    [
-                        range.start.text_anchor_in(buffer_snapshot),
-                        range.end.text_anchor_in(buffer_snapshot),
-                    ]
-                }),
-            );
-            let inmemory_selections = selections
-                .iter()
-                .map(|_| {
-                    let start = points.next().unwrap();
-                    let end = points.next().unwrap();
-                    start..end
-                })
-                .collect();
-            self.update_restoration_data(cx, |data| {
-                data.selections = inmemory_selections;
-            });
+            if !self.mode.is_minimap()
+                && WorkspaceSettings::get(None, cx).restore_on_file_reopen
+                && self.workspace().is_some()
+            {
+                let selections = selections.clone();
+                let buffer_snapshot = buffer_snapshot.clone();
+                self.update_restoration_selections = cx.spawn(async move |editor, cx| {
+                    cx.background_executor()
+                        .timer(SERIALIZATION_THROTTLE_TIME)
+                        .await;
+                    let inmemory_selections = cx
+                        .background_spawn(async move {
+                            resolve_restoration_selections(&selections, &buffer_snapshot)
+                        })
+                        .await;
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.update_restoration_data(cx, |data| {
+                                data.selections = inmemory_selections;
+                            });
+                        })
+                        .ok();
+                });
+            }
 
             if WorkspaceSettings::get(None, cx).restore_on_startup
                 != RestoreOnStartupBehavior::EmptyTab
@@ -1760,6 +1764,24 @@ impl Editor {
         }
 
         cx.notify();
+    }
+
+    pub(crate) fn flush_restoration_selections(&mut self, cx: &mut Context<Self>) {
+        if self.mode.is_minimap() || !WorkspaceSettings::get(None, cx).restore_on_file_reopen {
+            return;
+        }
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let Some(buffer_snapshot) = snapshot.as_singleton() else {
+            return;
+        };
+        self.update_restoration_selections = Task::ready(());
+        let inmemory_selections = resolve_restoration_selections(
+            &self.selections.disjoint_anchors_arc(),
+            buffer_snapshot,
+        );
+        self.update_restoration_data(cx, |data| {
+            data.selections = inmemory_selections;
+        });
     }
 
     fn apply_selection_effects(
@@ -2445,4 +2467,27 @@ impl Editor {
             s.select(new_selections);
         });
     }
+}
+
+fn resolve_restoration_selections(
+    selections: &[Selection<Anchor>],
+    buffer_snapshot: &language::BufferSnapshot,
+) -> Vec<Range<Point>> {
+    let mut points = buffer_snapshot.summaries_for_anchors::<Point, _>(selections.iter().flat_map(
+        |selection| {
+            let range = selection.range();
+            [
+                range.start.text_anchor_in(buffer_snapshot),
+                range.end.text_anchor_in(buffer_snapshot),
+            ]
+        },
+    ));
+    selections
+        .iter()
+        .map(|_| {
+            let start = points.next().unwrap();
+            let end = points.next().unwrap();
+            start..end
+        })
+        .collect()
 }
