@@ -10462,6 +10462,86 @@ async fn test_paste_undo_does_not_include_preceding_edits(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn test_paste_preserves_scroll_position_when_result_is_visible(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_vertical_scroll_margin(4, cx);
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), 8. * line_height));
+
+    cx.set_state(
+        "ˇzero\none\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n",
+    );
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([Point::new(6, 0)..Point::new(9, 0)]);
+        });
+        editor.set_scroll_position(gpui::Point::new(0., 3.), window, cx);
+        editor.copy(&Copy, window, cx);
+    });
+
+    let scroll_position_before =
+        cx.update_editor(|editor, window, cx| editor.snapshot(window, cx).scroll_position());
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    let scroll_position_after =
+        cx.update_editor(|editor, window, cx| editor.snapshot(window, cx).scroll_position());
+
+    assert_eq!(scroll_position_after, scroll_position_before);
+}
+
+#[gpui::test]
+async fn test_paste_scrolls_minimally_to_reveal_result(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_vertical_scroll_margin(4, cx);
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), 8. * line_height));
+
+    cx.set_state(
+        "ˇzero\none\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n",
+    );
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([Point::new(9, 0)..Point::new(9, 0)]);
+        });
+        editor.set_scroll_position(gpui::Point::new(0., 3.), window, cx);
+    });
+    cx.write_to_clipboard(ClipboardItem::new_string("alpha\nbeta\ngamma\n".into()));
+
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let scroll_position = snapshot.scroll_position();
+        let cursor_bottom = editor
+            .selections
+            .newest_display(&snapshot.display_snapshot)
+            .head()
+            .row()
+            .next_row()
+            .as_f64();
+        let visible_lines = editor
+            .visible_line_count()
+            .expect("the test editor should have a measured viewport");
+
+        assert_eq!(scroll_position.y, cursor_bottom - visible_lines);
+    });
+}
+
+#[gpui::test]
 async fn test_paste_content_from_other_app(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

@@ -24,6 +24,12 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Fit, None)
     }
 
+    /// Scrolls the minimal amount to (try to) fit all cursors onscreen without
+    /// applying the configured vertical scroll margin.
+    pub fn fit_without_vertical_margin() -> Self {
+        Self::Strategy(AutoscrollStrategy::FitWithoutVerticalMargin, None)
+    }
+
     /// scrolls the minimal amount to fit the newest cursor
     pub fn newest() -> Self {
         Self::Strategy(AutoscrollStrategy::Newest, None)
@@ -99,6 +105,7 @@ impl Into<SelectionEffects> for Option<Autoscroll> {
 #[derive(Debug, PartialEq, Default, Clone, Copy)]
 pub enum AutoscrollStrategy {
     Fit,
+    FitWithoutVerticalMargin,
     Newest,
     #[default]
     Center,
@@ -191,8 +198,13 @@ impl Editor {
             if matches!(
                 autoscroll,
                 Autoscroll::Strategy(AutoscrollStrategy::Newest, _)
-            ) || (matches!(autoscroll, Autoscroll::Strategy(AutoscrollStrategy::Fit, _))
-                && !selections_fit)
+            ) || (matches!(
+                autoscroll,
+                Autoscroll::Strategy(
+                    AutoscrollStrategy::Fit | AutoscrollStrategy::FitWithoutVerticalMargin,
+                    _
+                )
+            ) && !selections_fit)
             {
                 target_point = self
                     .selections
@@ -234,8 +246,14 @@ impl Editor {
             self.visible_sticky_header_count_for_point(&display_map, target_point, cx);
 
         let was_autoscrolled = match strategy {
-            AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
-                let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
+            AutoscrollStrategy::Fit
+            | AutoscrollStrategy::FitWithoutVerticalMargin
+            | AutoscrollStrategy::Newest => {
+                let margin = if strategy == AutoscrollStrategy::FitWithoutVerticalMargin {
+                    0.
+                } else {
+                    margin.min(self.scroll_manager.vertical_scroll_margin)
+                };
                 let target_top = (target_top - margin - visible_sticky_headers as f64).max(0.0);
                 let target_bottom = target_bottom + margin;
                 let start_row = scroll_position.y;

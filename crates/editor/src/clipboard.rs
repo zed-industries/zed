@@ -168,7 +168,12 @@ impl Editor {
                 let selections = this
                     .selections
                     .all::<MultiBufferOffset>(&this.display_snapshot(cx));
-                this.change_selections(Default::default(), window, cx, |s| s.select(selections));
+                this.change_selections(
+                    SelectionEffects::scroll(Autoscroll::fit_without_vertical_margin()),
+                    window,
+                    cx,
+                    |s| s.select(selections),
+                );
             } else {
                 let clipboard_is_url = is_standalone_url(&clipboard_text);
 
@@ -233,9 +238,12 @@ impl Editor {
                     anchors
                 });
 
-                this.change_selections(Default::default(), window, cx, |s| {
-                    s.select_anchors(selection_anchors);
-                });
+                this.change_selections(
+                    SelectionEffects::scroll(Autoscroll::fit_without_vertical_margin()),
+                    window,
+                    cx,
+                    |s| s.select_anchors(selection_anchors),
+                );
             }
 
             //   🤔                 |    ..     | show_in_menu |
