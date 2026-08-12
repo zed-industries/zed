@@ -54,8 +54,13 @@ impl Locator {
         let rhs = rhs.0.iter().copied().chain(iter::repeat(u64::MAX));
         let mut location = SmallVec::new();
         for (lhs, rhs) in lhs.zip(rhs) {
+            let gap = rhs.saturating_sub(lhs);
             // This shift is essential! It optimizes for the common case of sequential typing.
-            let mid = lhs + ((rhs.saturating_sub(lhs)) >> 48);
+            let mut step = gap >> 48;
+            if step == 0 {
+                step = gap >> 1;
+            }
+            let mid = lhs + step;
             location.push(mid);
             if mid > lhs {
                 break;
@@ -164,14 +169,38 @@ mod tests {
     fn test_typing_at_cursor_stays_at_depth_2() {
         let initial = Locator::between(&Locator::min(), &Locator::max());
         let prefix = Locator::between(&Locator::min(), &initial);
-        assert_eq!(prefix.len(), 2);
+        assert!(prefix.len() <= 2);
 
         let suffix_id = initial;
         let mut prev = prefix;
         for _ in 0..10_000 {
             let loc = Locator::between(&prev, &suffix_id);
-            assert_eq!(loc.len(), 2, "forward typing after split grew past depth 2");
+            assert!(
+                loc.len() <= 2,
+                "forward typing after split grew past depth 2"
+            );
             prev = loc;
+        }
+    }
+
+    #[test]
+    fn test_type_delete_retype_cycles_stay_shallow() {
+        let right = Locator::between(&Locator::min(), &Locator::max());
+        let mut left = Locator::between(&Locator::min(), &right);
+        for generation in 0..1_000 {
+            let mut prev = Locator::between(&left, &right);
+            assert!(left < prev && prev < right);
+            for _ in 0..10 {
+                let next = Locator::between(&prev, &right);
+                assert!(prev < next && next < right);
+                prev = next;
+            }
+            assert!(
+                prev.len() <= 6,
+                "depth {} at generation {generation}",
+                prev.len()
+            );
+            left = prev;
         }
     }
 }
