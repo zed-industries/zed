@@ -45,6 +45,9 @@ pub struct MistralLanguageModelProvider {
 pub struct State {
     api_key_state: ApiKeyState,
     credentials_provider: Arc<dyn CredentialsProvider>,
+    http_client: Arc<dyn HttpClient>,
+    fetched_models: Vec<mistral::Model>,
+    fetch_models_task: Option<Task<Result<()>>>,
 }
 
 impl State {
@@ -55,24 +58,76 @@ impl State {
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = self.credentials_provider.clone();
         let api_url = MistralLanguageModelProvider::api_url(cx);
-        self.api_key_state.store(
+        let should_fetch_models = api_key.is_some();
+        let task = self.api_key_state.store(
             api_url,
             api_key,
             |this| &mut this.api_key_state,
             credentials_provider,
             cx,
-        )
+        );
+        self.fetched_models.clear();
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            if result.is_ok() && should_fetch_models {
+                this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                    .ok();
+            }
+            result
+        })
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = self.credentials_provider.clone();
         let api_url = MistralLanguageModelProvider::api_url(cx);
-        self.api_key_state.load_if_needed(
+        let task = self.api_key_state.load_if_needed(
             api_url,
             |this| &mut this.api_key_state,
             credentials_provider,
             cx,
-        )
+        );
+
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            if result.is_ok() {
+                this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                    .ok();
+            }
+            result
+        })
+    }
+
+    fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let http_client = self.http_client.clone();
+        let api_url = MistralLanguageModelProvider::api_url(cx);
+        let Some(api_key) = self.api_key_state.key(&api_url) else {
+            return Task::ready(Err(anyhow!(
+                "cannot fetch Mistral models without an API key"
+            )));
+        };
+        let extra_headers = MistralLanguageModelProvider::settings(cx)
+            .custom_headers
+            .clone();
+
+        cx.spawn(async move |this, cx| {
+            let models = mistral::list_models(
+                http_client.as_ref(),
+                &api_url,
+                api_key.as_ref(),
+                &extra_headers,
+            )
+            .await?;
+
+            this.update(cx, |this, cx| {
+                this.fetched_models = models;
+                cx.notify();
+            })
+        })
+    }
+
+    fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        let task = self.fetch_models(cx);
+        self.fetch_models_task.replace(task);
     }
 }
 
@@ -95,21 +150,33 @@ impl MistralLanguageModelProvider {
             return this.0.clone();
         }
         let state = cx.new(|cx| {
-            cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                let credentials_provider = this.credentials_provider.clone();
-                let api_url = Self::api_url(cx);
-                this.api_key_state.handle_url_change(
-                    api_url,
-                    |this| &mut this.api_key_state,
-                    credentials_provider,
-                    cx,
-                );
-                cx.notify();
+            cx.observe_global::<SettingsStore>({
+                let mut last_api_url = Self::api_url(cx);
+                move |this: &mut State, cx| {
+                    let credentials_provider = this.credentials_provider.clone();
+                    let api_url = Self::api_url(cx);
+                    let url_changed = api_url != last_api_url;
+                    last_api_url = api_url.clone();
+                    this.api_key_state.handle_url_change(
+                        api_url,
+                        |this| &mut this.api_key_state,
+                        credentials_provider,
+                        cx,
+                    );
+                    if url_changed {
+                        this.fetched_models.clear();
+                        this.authenticate(cx).detach();
+                    }
+                    cx.notify();
+                }
             })
             .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
                 credentials_provider,
+                http_client: http_client.clone(),
+                fetched_models: Vec::new(),
+                fetch_models_task: None,
             }
         });
 
@@ -174,10 +241,18 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
-        // Add base models from mistral::Model::iter()
-        for model in mistral::Model::iter() {
-            if !matches!(model, mistral::Model::Custom { .. }) {
-                models.insert(model.id().to_string(), model);
+        let fetched_models = &self.state.read(cx).fetched_models;
+        if fetched_models.is_empty() {
+            // Fallback until the first successful fetch (offline,
+            // unauthenticated, or an endpoint without `/models`).
+            for model in mistral::Model::iter() {
+                if !matches!(model, mistral::Model::Custom { .. }) {
+                    models.insert(model.id().to_string(), model);
+                }
+            }
+        } else {
+            for model in fetched_models {
+                models.insert(model.id().to_string(), model.clone());
             }
         }
 
