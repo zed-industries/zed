@@ -27,6 +27,7 @@ mod profile_selector;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 pub mod terminal_thread_metadata_store;
+pub mod terminal_agent_resume;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 mod thread_import;
@@ -326,6 +327,10 @@ actions!(
         ImportThreadsFromOtherChannels,
         /// Starts a new terminal thread.
         NewTerminalThread,
+        /// Starts a new dedicated OMP agent terminal, distinct from a plain
+        /// terminal thread. Assigns a Zed-controlled resume path and launches
+        /// the agent with `--session-dir <path>`.
+        NewOmpAgentTerminal,
     ]
 );
 
@@ -1014,6 +1019,7 @@ mod tests {
             show_merge_conflict_indicator: true,
             sidebar_side: Default::default(),
             thinking_display: Default::default(),
+            terminal_agent: Default::default(),
         };
 
         cx.update(|cx| {

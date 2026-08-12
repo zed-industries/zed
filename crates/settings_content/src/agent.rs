@@ -360,6 +360,39 @@ pub struct AgentSettingsContent {
     /// These are populated when choosing "Allow always" from a sandbox
     /// escalation prompt.
     pub sandbox_permissions: Option<SandboxPermissionsContent>,
+
+    /// Settings for dedicated agent terminals created from the agent panel.
+    ///
+    /// Default: `{ "program": "omp", "policy": "local" }`
+    pub terminal_agent: Option<TerminalAgentSettingsContent>,
+}
+
+/// Policy governing dedicated agent-terminal sessions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalAgentPolicy {
+    /// Local-only first release: dedicated agent terminals are created only
+    /// for local projects. Remote/WSL sessions are out of scope.
+    #[default]
+    Local,
+}
+
+/// Settings for the dedicated agent-terminal entry in the agent panel.
+///
+/// A dedicated agent terminal is distinct from a plain terminal thread that
+/// reuses `terminal_init_command`: creating one assigns a Zed-controlled
+/// resume path and launches the harness program with `--session-dir <path>`.
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct TerminalAgentSettingsContent {
+    /// The harness program to launch for a dedicated agent terminal.
+    ///
+    /// Default: "omp"
+    pub program: Option<String>,
+    /// Session policy for dedicated agent terminals.
+    ///
+    /// Default: local
+    pub policy: Option<TerminalAgentPolicy>,
 }
 
 impl AgentSettingsContent {

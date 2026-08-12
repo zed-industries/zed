@@ -44,6 +44,31 @@ impl TestTerminalMetadataDbName {
     }
 }
 
+/// Profile of a terminal-agent whose session can be revived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TerminalAgentProfile {
+    Omp,
+}
+
+impl TerminalAgentProfile {
+    /// Stable short label used in fencing claim keys and telemetry.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Omp => "omp",
+        }
+    }
+}
+
+/// Lifecycle boundary of a revivable agent session: live while the agent
+/// process runs, sleeping once it has ended but remains resumable, cleared
+/// when it is no longer resumable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum AgentSessionBoundary {
+    Live,
+    Sleeping,
+    Cleared,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerminalThreadMetadata {
     pub terminal_id: TerminalId,
@@ -53,6 +78,15 @@ pub struct TerminalThreadMetadata {
     pub worktree_paths: WorktreePaths,
     pub remote_connection: Option<RemoteConnectionOptions>,
     pub working_directory: Option<PathBuf>,
+    /// Terminal-agent profile if this terminal is a revivable agent session.
+    pub agent_profile: Option<TerminalAgentProfile>,
+    /// Opaque Zed-assigned resume path for the agent session.
+    pub resume_path: Option<PathBuf>,
+    /// Session-boundary state of a revivable agent session.
+    pub session_boundary: Option<AgentSessionBoundary>,
+    /// When true, a sleeping session was slept manually and must only resume
+    /// when its tab is opened (restore-on-tab-open), never on activation.
+    pub restore_on_tab_open: bool,
 }
 
 impl TerminalThreadMetadata {
@@ -458,7 +492,11 @@ impl Domain for TerminalThreadMetadataDb {
             main_worktree_paths_order TEXT,
             remote_connection TEXT
         ) STRICT;
-    )];
+    ),
+    sql!(ALTER TABLE sidebar_terminal_threads ADD COLUMN agent_profile TEXT),
+    sql!(ALTER TABLE sidebar_terminal_threads ADD COLUMN resume_path TEXT),
+    sql!(ALTER TABLE sidebar_terminal_threads ADD COLUMN session_boundary TEXT),
+    sql!(ALTER TABLE sidebar_terminal_threads ADD COLUMN restore_on_tab_open INTEGER NOT NULL DEFAULT 0)];
 }
 
 db::static_connection!(TerminalThreadMetadataDb, []);
@@ -468,7 +506,8 @@ impl TerminalThreadMetadataDb {
         self.select::<TerminalThreadMetadata>(
             "SELECT terminal_id, title, custom_title, created_at, \
             working_directory, folder_paths, folder_paths_order, main_worktree_paths, \
-            main_worktree_paths_order, remote_connection \
+            main_worktree_paths_order, remote_connection, agent_profile, resume_path, \
+            session_boundary, restore_on_tab_open \
             FROM sidebar_terminal_threads \
             ORDER BY created_at DESC",
         )?()
@@ -502,10 +541,27 @@ impl TerminalThreadMetadataDb {
             .map(serde_json::to_string)
             .transpose()
             .context("serialize terminal thread remote connection")?;
+        let agent_profile = row
+            .agent_profile
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serialize terminal agent profile")?;
+        let resume_path = row
+            .resume_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned());
+        let session_boundary = row
+            .session_boundary
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serialize terminal session boundary")?;
+        let restore_on_tab_open = row.restore_on_tab_open;
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_terminal_threads(terminal_id, title, custom_title, created_at, working_directory, folder_paths, folder_paths_order, main_worktree_paths, main_worktree_paths_order, remote_connection) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+            let sql = "INSERT INTO sidebar_terminal_threads(terminal_id, title, custom_title, created_at, working_directory, folder_paths, folder_paths_order, main_worktree_paths, main_worktree_paths_order, remote_connection, agent_profile, resume_path, session_boundary, restore_on_tab_open) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
                        ON CONFLICT(terminal_id) DO UPDATE SET \
                            title = excluded.title, \
                            custom_title = excluded.custom_title, \
@@ -515,7 +571,11 @@ impl TerminalThreadMetadataDb {
                            folder_paths_order = excluded.folder_paths_order, \
                            main_worktree_paths = excluded.main_worktree_paths, \
                            main_worktree_paths_order = excluded.main_worktree_paths_order, \
-                           remote_connection = excluded.remote_connection";
+                           remote_connection = excluded.remote_connection, \
+                           agent_profile = excluded.agent_profile, \
+                           resume_path = excluded.resume_path, \
+                           session_boundary = excluded.session_boundary, \
+                           restore_on_tab_open = excluded.restore_on_tab_open";
             let mut stmt = Statement::prepare(conn, sql)?;
             let mut i = stmt.bind(&terminal_id, 1)?;
             i = stmt.bind(&title, i)?;
@@ -526,7 +586,11 @@ impl TerminalThreadMetadataDb {
             i = stmt.bind(&folder_paths_order, i)?;
             i = stmt.bind(&main_worktree_paths, i)?;
             i = stmt.bind(&main_worktree_paths_order, i)?;
-            stmt.bind(&remote_connection, i)?;
+            i = stmt.bind(&remote_connection, i)?;
+            i = stmt.bind(&agent_profile, i)?;
+            i = stmt.bind(&resume_path, i)?;
+            i = stmt.bind(&session_boundary, i)?;
+            stmt.bind(&restore_on_tab_open, i)?;
             stmt.exec()
         })
         .await
@@ -562,6 +626,10 @@ impl Column for TerminalThreadMetadata {
             Column::column(statement, next)?;
         let (remote_connection_json, next): (Option<String>, i32) =
             Column::column(statement, next)?;
+        let (agent_profile_json, next): (Option<String>, i32) = Column::column(statement, next)?;
+        let (resume_path_str, next): (Option<String>, i32) = Column::column(statement, next)?;
+        let (session_boundary_json, next): (Option<String>, i32) = Column::column(statement, next)?;
+        let (restore_on_tab_open, next): (bool, i32) = Column::column(statement, next)?;
 
         let folder_paths = folder_paths_str
             .map(|paths| {
@@ -586,6 +654,16 @@ impl Column for TerminalThreadMetadata {
             .map(serde_json::from_str::<RemoteConnectionOptions>)
             .transpose()
             .context("deserialize terminal thread remote connection")?;
+        let agent_profile = agent_profile_json
+            .as_deref()
+            .map(serde_json::from_str::<TerminalAgentProfile>)
+            .transpose()
+            .context("deserialize terminal agent profile")?;
+        let session_boundary = session_boundary_json
+            .as_deref()
+            .map(serde_json::from_str::<AgentSessionBoundary>)
+            .transpose()
+            .context("deserialize terminal session boundary")?;
 
         let worktree_paths = WorktreePaths::from_path_lists(main_worktree_paths, folder_paths)
             .unwrap_or_else(|_| WorktreePaths::default());
@@ -601,6 +679,10 @@ impl Column for TerminalThreadMetadata {
                 worktree_paths,
                 remote_connection,
                 working_directory: working_directory.map(PathBuf::from),
+                agent_profile,
+                resume_path: resume_path_str.map(PathBuf::from),
+                session_boundary,
+                restore_on_tab_open,
             },
             next,
         ))
@@ -630,6 +712,10 @@ mod tests {
             worktree_paths,
             remote_connection: None,
             working_directory: None,
+            agent_profile: None,
+            resume_path: None,
+            session_boundary: None,
+            restore_on_tab_open: false,
         }
     }
 
@@ -720,5 +806,47 @@ mod tests {
                 old_main_paths.paths()
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_revival_fields_round_trip_through_db(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let db = cx.update(|cx| {
+            let store = TerminalThreadMetadataStore::global(cx);
+            store.read(cx).db.clone()
+        });
+
+        let mut metadata = metadata("OMP Agent", WorktreePaths::default());
+        metadata.agent_profile = Some(TerminalAgentProfile::Omp);
+        metadata.resume_path = Some(PathBuf::from("/tmp/omp-zed/terminal-session"));
+        metadata.session_boundary = Some(AgentSessionBoundary::Sleeping);
+        metadata.restore_on_tab_open = true;
+        let terminal_id = metadata.terminal_id;
+
+        db.save(metadata).await.unwrap();
+
+        let rows = db.list().unwrap();
+        let row = rows
+            .into_iter()
+            .find(|row| row.terminal_id == terminal_id)
+            .expect("saved terminal should be listed");
+        assert_eq!(row.agent_profile, Some(TerminalAgentProfile::Omp));
+        assert_eq!(
+            row.resume_path.as_deref(),
+            Some(Path::new("/tmp/omp-zed/terminal-session"))
+        );
+        assert_eq!(row.session_boundary, Some(AgentSessionBoundary::Sleeping));
+        assert!(
+            row.restore_on_tab_open,
+            "restore-on-tab-open flag should survive a store round trip"
+        );
+
+        db.delete(terminal_id).await.unwrap();
+        let rows = db.list().unwrap();
+        assert!(
+            !rows.into_iter().any(|row| row.terminal_id == terminal_id),
+            "deleted terminal should no longer be listed"
+        );
     }
 }

@@ -1,0 +1,5 @@
+# Orca-model sleeping sessions with automatic resume and claim-key fencing
+
+After an agent process exits or the app quits, the terminal transitions to a sleeping session whose resume locator is retained. On panel/worktree activation Zed automatically resumes sleeping sessions (new process, same logical session), gated by a claim key that guarantees exactly-once relaunch, an `automaticResumeBlockedBy` opt-out, a restore-on-tab-open mode for manually slept sessions, and an 18-minute staleness timeout. Resumed sessions show a "session restored (new process, same session)" banner.
+
+**Considered:** prompt-first resume — rejected because the user chose to follow Orca's auto-resume model. **Consequences:** fencing must be correct across Zed windows; the first release trusts OMP's own session-file locking plus in-process claim keys.

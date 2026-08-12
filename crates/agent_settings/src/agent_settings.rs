@@ -242,6 +242,26 @@ pub struct AgentSettings {
     pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
     pub sandbox_permissions: SandboxPermissions,
+    pub terminal_agent: TerminalAgentSettings,
+}
+
+/// Compiled settings for the dedicated agent-terminal entry in the agent
+/// panel. A single OMP profile for the local-only first release.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalAgentSettings {
+    /// The harness program to launch for a dedicated agent terminal.
+    pub program: String,
+    /// Session policy for dedicated agent terminals.
+    pub policy: settings::TerminalAgentPolicy,
+}
+
+impl Default for TerminalAgentSettings {
+    fn default() -> Self {
+        Self {
+            program: "omp".to_string(),
+            policy: settings::TerminalAgentPolicy::Local,
+        }
+    }
 }
 
 impl AgentSettings {
@@ -818,6 +838,16 @@ impl Settings for AgentSettings {
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
             sandbox_permissions: compile_sandbox_permissions(agent.sandbox_permissions),
+            terminal_agent: {
+                let terminal_agent = agent.terminal_agent.unwrap_or_default();
+                TerminalAgentSettings {
+                    program: terminal_agent
+                        .program
+                        .filter(|program| !program.trim().is_empty())
+                        .unwrap_or_else(|| "omp".to_string()),
+                    policy: terminal_agent.policy.unwrap_or_default(),
+                }
+            },
         }
     }
 }
@@ -1109,6 +1139,55 @@ mod tests {
             AgentSettings::get_global(cx)
                 .terminal_init_command
                 .is_none()
+        );
+    }
+
+    #[gpui::test]
+    fn test_terminal_agent_settings_parse_and_default(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        // No explicit settings: single OMP profile, program "omp", local policy.
+        assert_eq!(
+            AgentSettings::get_global(cx).terminal_agent,
+            TerminalAgentSettings {
+                program: "omp".to_string(),
+                policy: settings::TerminalAgentPolicy::Local,
+            }
+        );
+
+        // Custom program and policy parse through the settings block.
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{ "agent": { "terminal_agent": { "program": "my-omp", "policy": "local" } } }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+        assert_eq!(
+            AgentSettings::get_global(cx).terminal_agent.program,
+            "my-omp"
+        );
+        assert_eq!(
+            AgentSettings::get_global(cx).terminal_agent.policy,
+            settings::TerminalAgentPolicy::Local
+        );
+
+        // An empty program falls back to the default "omp".
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{ "agent": { "terminal_agent": { "program": "   " } } }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+        assert_eq!(
+            AgentSettings::get_global(cx).terminal_agent.program,
+            "omp"
         );
     }
 

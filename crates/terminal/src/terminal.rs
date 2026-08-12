@@ -655,6 +655,11 @@ pub enum Event {
     TitleChanged,
     BreadcrumbsChanged,
     CloseTerminal,
+    /// The terminal's child process has exited. Emitted in addition to
+    /// `CloseTerminal` (when the shell is eligible to close) so observers can
+    /// react to the process ending without necessarily closing the terminal —
+    /// e.g. to transition a revivable agent session to `sleeping`.
+    ProcessExited,
     Bell,
     Wakeup,
     BlinkChanged(bool),
@@ -2963,6 +2968,7 @@ impl Terminal {
             self.child_exited = Some(e);
         }
         self.complete_init_command_startup_handshake();
+        cx.emit(Event::ProcessExited);
         let task = match &mut self.task {
             Some(task) => task,
             None => {

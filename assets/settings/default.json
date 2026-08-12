@@ -1267,6 +1267,27 @@
     //
     // Example: "terminal_init_command": "claude"
     "terminal_init_command": "",
+    // Settings for the dedicated OMP agent terminal entry in the agent panel.
+    // A dedicated agent terminal is distinct from a plain Terminal Thread shell:
+    // creating one assigns a Zed-controlled resume path and launches the program
+    // with "--session-dir <path>", so the session can be revived later.
+    //
+    // Default:
+    // {
+    //   "program": "omp",
+    //   "policy": "local"
+    // }
+    "terminal_agent": {
+      // The harness program to launch for a dedicated agent terminal.
+      //
+      // Default: "omp"
+      "program": "omp",
+      // Session policy for dedicated agent terminals. Local-only for the first
+      // release; remote/WSL sessions are out of scope.
+      //
+      // Default: "local"
+      "policy": "local"
+    },
     // How thinking blocks should be displayed by default in the agent panel.
     //
     // Default: auto
