@@ -23,7 +23,7 @@ use std::{
 };
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
 use text::Patch;
-use unicode_segmentation::UnicodeSegmentation;
+use unicode_segmentation::GraphemeCursor;
 
 pub use super::tab_map::TextSummary;
 pub type WrapEdit = text::Edit<WrapRow>;
@@ -106,35 +106,31 @@ impl LineFragmentBuilder {
     }
 
     fn push_fragments<'a>(&mut self, fragments: &mut Vec<gpui::LineFragment<'a>>, text: &'a str) {
-        if !text.chars().any(is_invisible) {
-            fragments.push(gpui::LineFragment::text(text));
-            return;
-        }
         let mut prefix_start = 0;
-        let mut offset = 0;
-        for grapheme in text.graphemes(true) {
-            let grapheme_len = grapheme.len();
-            let replaced_width = grapheme
-                .chars()
-                .next()
-                .filter(|ch| grapheme_len == ch.len_utf8() && is_invisible(*ch))
-                .and_then(|ch| self.replacement_width(ch));
-            if let Some(width) = replaced_width {
-                if prefix_start < offset {
-                    fragments.push(gpui::LineFragment::text(&text[prefix_start..offset]));
-                }
-                fragments.push(gpui::LineFragment::element(width, grapheme_len));
-                prefix_start = offset + grapheme_len;
+        for (offset, ch) in text.char_indices() {
+            if !is_invisible(ch) {
+                continue;
             }
-            offset += grapheme_len;
+            let ch_end = offset + ch.len_utf8();
+            if !is_standalone_grapheme(text, offset, ch_end) {
+                continue;
+            }
+            let Some(width) = self.replacement_width(ch) else {
+                continue;
+            };
+            if prefix_start < offset {
+                fragments.push(gpui::LineFragment::text(&text[prefix_start..offset]));
+            }
+            fragments.push(gpui::LineFragment::element(width, ch_end - offset));
+            prefix_start = ch_end;
         }
-        if prefix_start < text.len() {
+        if prefix_start < text.len() || text.is_empty() {
             fragments.push(gpui::LineFragment::text(&text[prefix_start..]));
         }
     }
 
     fn replacement_width(&mut self, ch: char) -> Option<Pixels> {
-        let replacement_char = replacement(ch)?.chars().next()?;
+        let replacement_char = replacement(ch)?;
         let width = *self
             .cached_replacement_widths
             .entry(replacement_char)
@@ -144,6 +140,15 @@ impl LineFragmentBuilder {
             });
         Some(width)
     }
+}
+
+fn is_standalone_grapheme(text: &str, start: usize, end: usize) -> bool {
+    let mut cursor = GraphemeCursor::new(start, text.len(), true);
+    if cursor.is_boundary(text, 0) != Ok(true) {
+        return false;
+    }
+    cursor.set_cursor(end);
+    cursor.is_boundary(text, 0) == Ok(true)
 }
 
 pub struct WrapChunks<'a> {
@@ -1625,7 +1630,7 @@ mod tests {
                 .chars()
                 .map(|ch| {
                     let rendered_char = if is_invisible(ch) {
-                        replacement(ch).and_then(|s| s.chars().next()).unwrap_or(ch)
+                        replacement(ch).unwrap_or(ch)
                     } else {
                         ch
                     };

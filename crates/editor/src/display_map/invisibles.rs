@@ -46,9 +46,9 @@ pub fn is_invisible(c: char) -> bool {
 // ASCII control characters have fancy unicode glyphs, everything else
 // is replaced by a space - unless it is used in combining characters in
 // which case we need to leave it in the string.
-pub fn replacement(c: char) -> Option<&'static str> {
+pub fn replacement(c: char) -> Option<char> {
     if c <= '\x1f' {
-        Some(C0_SYMBOLS[c as usize])
+        C0_SYMBOLS.get(c as usize).copied()
     } else if c == '\x7f' {
         Some(DEL)
     } else if contains(c, PRESERVE) {
@@ -58,18 +58,18 @@ pub fn replacement(c: char) -> Option<&'static str> {
     }
 }
 
-const FIXED_WIDTH_SPACE: &str = "\u{2007}";
+const FIXED_WIDTH_SPACE: char = '\u{2007}';
 
 // IDEOGRAPHIC SPACE is common alongside Chinese and other wide character sets.
 // We don't highlight this for now (as it already shows up wide in the editor),
 // but could if we tracked state in the classifier.
 const IDEOGRAPHIC_SPACE: char = '\u{3000}';
 
-const C0_SYMBOLS: &[&str] = &[
-    "␀", "␁", "␂", "␃", "␄", "␅", "␆", "␇", "␈", "␉", "␊", "␋", "␌", "␍", "␎", "␏", "␐", "␑", "␒",
-    "␓", "␔", "␕", "␖", "␗", "␘", "␙", "␚", "␛", "␜", "␝", "␞", "␟",
+const C0_SYMBOLS: &[char] = &[
+    '␀', '␁', '␂', '␃', '␄', '␅', '␆', '␇', '␈', '␉', '␊', '␋', '␌', '␍', '␎', '␏', '␐', '␑', '␒',
+    '␓', '␔', '␕', '␖', '␗', '␘', '␙', '␚', '␛', '␜', '␝', '␞', '␟',
 ];
-const DEL: &str = "␡";
+const DEL: char = '␡';
 
 // generated using ucd-generate: ucd-generate general-category --include Format --chars ucd-16.0.0
 pub const FORMAT: &[(char, char)] = &[
