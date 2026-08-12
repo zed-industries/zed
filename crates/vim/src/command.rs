@@ -2366,13 +2366,7 @@ impl Vim {
                 .newest_display(&editor.display_snapshot(cx));
             let text_layout_details = editor.text_layout_details(window, cx);
             let (mut range, _) = motion
-                .range(
-                    &snapshot,
-                    start.clone(),
-                    times,
-                    &text_layout_details,
-                    forced_motion,
-                )
+                .range(&snapshot, start, times, &text_layout_details, forced_motion)
                 .unwrap_or((start.range(), MotionKind::Exclusive));
             if range.start != start.start {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -2414,7 +2408,7 @@ impl Vim {
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
             let range = object
-                .range(&snapshot, start.clone(), around, None)
+                .range(&snapshot, start, around, None)
                 .unwrap_or(start.range());
             if range.start != start.start {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {

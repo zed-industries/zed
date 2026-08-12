@@ -960,7 +960,7 @@ impl Vim {
                     new_end -= ch.len_utf8();
                 }
 
-                let mut new_selection = selection.clone();
+                let mut new_selection = *selection;
                 new_selection.start = new_start;
                 new_selection.end = new_end;
                 trimmed.push(new_selection);

@@ -300,10 +300,10 @@ impl Editor {
                                     start: cursor,
                                     end: cursor,
                                     goal: SelectionGoal::None,
-                                    ..selection.clone()
+                                    ..*selection
                                 }
                             }
-                            None => selection.clone(),
+                            None => *selection,
                         })
                         .collect();
                     if restored_any_cursor {
