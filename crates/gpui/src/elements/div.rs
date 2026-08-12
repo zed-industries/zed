@@ -406,12 +406,14 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::capture_action`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    #[track_caller]
     pub fn capture_action<A: Action>(
         &mut self,
         listener: impl Fn(&A, &mut Window, &mut App) + 'static,
     ) {
         self.action_listeners.push((
             TypeId::of::<A>(),
+            crate::action_listener_source(),
             Box::new(move |action, phase, window, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Capture {
@@ -431,6 +433,7 @@ impl Interactivity {
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Window, &mut App) + 'static) {
         self.action_listeners.push((
             TypeId::of::<A>(),
+            crate::action_listener_source(),
             Box::new(move |action, phase, window, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Bubble {
@@ -446,6 +449,7 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::on_boxed_action`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    #[track_caller]
     pub fn on_boxed_action(
         &mut self,
         action: &dyn Action,
@@ -454,6 +458,7 @@ impl Interactivity {
         let action = action.boxed_clone();
         self.action_listeners.push((
             (*action).type_id(),
+            crate::action_listener_source(),
             Box::new(move |_, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
                     (listener)(&*action, window, cx)
@@ -1031,6 +1036,7 @@ pub trait InteractiveElement: Sized {
     /// The fluent API equivalent to [`Interactivity::capture_action`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    #[track_caller]
     fn capture_action<A: Action>(
         mut self,
         listener: impl Fn(&A, &mut Window, &mut App) + 'static,
@@ -1058,6 +1064,7 @@ pub trait InteractiveElement: Sized {
     /// The fluent API equivalent to [`Interactivity::on_boxed_action`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    #[track_caller]
     fn on_boxed_action(
         mut self,
         action: &dyn Action,
@@ -2065,7 +2072,7 @@ pub struct Interactivity {
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
     pub(crate) modifiers_changed_listeners: Vec<ModifiersChangedListener>,
-    pub(crate) action_listeners: Vec<(TypeId, ActionListener)>,
+    pub(crate) action_listeners: Vec<(TypeId, crate::ActionListenerSource, ActionListener)>,
     pub(crate) drop_listeners: Vec<(TypeId, DropListener)>,
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
@@ -3162,8 +3169,8 @@ impl Interactivity {
             })
         }
 
-        for (action_type, listener) in action_listeners {
-            window.on_action(action_type, listener)
+        for (action_type, source_location, listener) in action_listeners {
+            window.on_action_with_source(action_type, source_location, listener)
         }
     }
 

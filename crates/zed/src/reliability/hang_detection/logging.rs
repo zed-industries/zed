@@ -11,7 +11,11 @@ use log::info;
 enum PerfIssue {
     Foreground(&'static Location<'static>),
     Background(&'static Location<'static>),
-    Action(&'static str),
+    Action(
+        &'static str,
+        gpui::DispatchPhase,
+        &'static Location<'static>,
+    ),
 }
 
 pub struct Reporter {
@@ -140,10 +144,20 @@ impl Reporter {
         let hangs: Vec<_> = action_stats
             .longest_runtimes(true)
             .filter(|action| action.runtime() > self.report_longer_then)
-            .filter(|action| !self.hold_report(PerfIssue::Action(action.name)))
+            .filter(|action| {
+                !self.hold_report(PerfIssue::Action(
+                    action.name,
+                    action.phase,
+                    action.source_location,
+                ))
+            })
             .collect();
 
-        self.update_reported(hangs.iter().map(|action| PerfIssue::Action(action.name)));
+        self.update_reported(
+            hangs
+                .iter()
+                .map(|action| PerfIssue::Action(action.name, action.phase, action.source_location)),
+        );
         if !hangs.is_empty() {
             info!("Action hang detected:\n{}", DisplayActions(hangs));
         }
@@ -158,9 +172,11 @@ impl Display for DisplayActions {
         f.write_str("Actions(s) that ran too long\n")?;
         for action in self.0.iter().sorted_by_key(|action| action.runtime()).rev() {
             f.write_fmt(format_args!(
-                "{:<20} - {}",
+                "{:<20} - {} ({:?}) at {}",
                 format!("{:?}", action.runtime()), // impl debug does not support alignment
-                action.name
+                action.name,
+                action.phase,
+                action.source_location,
             ))?;
             writeln!(f)?;
         }

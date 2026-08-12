@@ -1,5 +1,7 @@
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
+#[cfg(feature = "profiler")]
+use crate::profiler;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
@@ -17,7 +19,7 @@ use crate::{
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
     TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler, px, rems, size,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
     transparent_black,
 };
 
@@ -30,8 +32,6 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
-#[cfg(feature = "profiler")]
-use hdrhistogram::Histogram;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -84,7 +84,7 @@ pub const DEFAULT_ADDITIONAL_WINDOW_SIZE: Size<Pixels> = Size {
 };
 
 /// Represents the two different phases when dispatching events.
-#[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Default, Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub enum DispatchPhase {
     /// After the capture phase comes the bubble phase, in which mouse event listeners are
     /// invoked front to back and keyboard event listeners are invoked from the focused element
@@ -1165,9 +1165,7 @@ pub struct Window {
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     #[cfg(feature = "profiler")]
-    input_latency_tracker: InputLatencyTracker,
-    #[cfg(feature = "profiler")]
-    frame_profiler: profiler::WindowFrameProfiler,
+    window_profiler: profiler::WindowProfiler,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -1237,89 +1235,6 @@ impl InputRateTracker {
     fn prune_old_timestamps(&mut self, now: Instant) {
         self.timestamps
             .retain(|&t| now.duration_since(t) <= self.window);
-    }
-}
-
-/// A point-in-time snapshot of the input-latency histograms for a window,
-/// suitable for external formatting.
-#[cfg(feature = "profiler")]
-#[derive(Clone)]
-pub struct InputLatencySnapshot {
-    /// Histogram of input-to-frame latency samples, in nanoseconds.
-    pub latency_histogram: Histogram<u64>,
-    /// Histogram of input events coalesced per rendered frame.
-    pub events_per_frame_histogram: Histogram<u64>,
-    /// Count of input events that arrived mid-draw and were excluded from
-    /// latency recording.
-    pub mid_draw_events_dropped: u64,
-}
-
-/// Records the time between when the first input event in a frame is dispatched
-/// and when the resulting frame is presented, capturing worst-case latency when
-/// multiple events are coalesced into a single frame.
-#[cfg(feature = "profiler")]
-struct InputLatencyTracker {
-    /// Timestamp of the first unrendered input event in the current frame;
-    /// cleared when a frame is presented.
-    first_input_at: Option<Instant>,
-    /// Count of input events received since the last frame was presented.
-    pending_input_count: u64,
-    /// Histogram of input-to-frame latency samples, in nanoseconds.
-    latency_histogram: Histogram<u64>,
-    /// Histogram of input events coalesced per rendered frame.
-    events_per_frame_histogram: Histogram<u64>,
-    /// Count of input events that arrived mid-draw and were excluded from
-    /// latency recording because their effects won't appear until the next frame.
-    mid_draw_events_dropped: u64,
-}
-
-#[cfg(feature = "profiler")]
-impl InputLatencyTracker {
-    fn new() -> Result<Self> {
-        Ok(Self {
-            first_input_at: None,
-            pending_input_count: 0,
-            latency_histogram: Histogram::new(3)
-                .map_err(|e| anyhow!("Failed to create input latency histogram: {e}"))?,
-            events_per_frame_histogram: Histogram::new(3)
-                .map_err(|e| anyhow!("Failed to create events per frame histogram: {e}"))?,
-            mid_draw_events_dropped: 0,
-        })
-    }
-
-    /// Record that an input event was dispatched at the given time.
-    /// Only the first event's timestamp per frame is retained (worst-case latency).
-    fn record_input(&mut self, dispatch_time: Instant) {
-        self.first_input_at.get_or_insert(dispatch_time);
-        self.pending_input_count += 1;
-    }
-
-    /// Record that an input event arrived during a draw phase and was excluded
-    /// from latency tracking.
-    fn record_mid_draw_input(&mut self) {
-        self.mid_draw_events_dropped += 1;
-    }
-
-    /// Record that a frame was presented, flushing pending latency and coalescing samples.
-    fn record_frame_presented(&mut self) {
-        if let Some(first_input_at) = self.first_input_at.take() {
-            let latency_nanos = first_input_at.elapsed().as_nanos() as u64;
-            self.latency_histogram.record(latency_nanos).ok();
-        }
-        if self.pending_input_count > 0 {
-            self.events_per_frame_histogram
-                .record(self.pending_input_count)
-                .ok();
-            self.pending_input_count = 0;
-        }
-    }
-
-    fn snapshot(&self) -> InputLatencySnapshot {
-        InputLatencySnapshot {
-            latency_histogram: self.latency_histogram.clone(),
-            events_per_frame_histogram: self.events_per_frame_histogram.clone(),
-            mid_draw_events_dropped: self.mid_draw_events_dropped,
-        }
     }
 }
 
@@ -1930,9 +1845,7 @@ impl Window {
             needs_present,
             input_rate_tracker,
             #[cfg(feature = "profiler")]
-            input_latency_tracker: InputLatencyTracker::new()?,
-            #[cfg(feature = "profiler")]
-            frame_profiler: profiler::WindowFrameProfiler::new(handle.window_id())?,
+            window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -2890,7 +2803,7 @@ impl Window {
         #[cfg(feature = "profiler")]
         let frame_dirty = self.invalidator.take_frame_dirty();
         #[cfg(feature = "profiler")]
-        let draw_started_at = self.frame_profiler.begin_draw();
+        self.window_profiler.begin_draw();
 
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
@@ -2999,11 +2912,8 @@ impl Window {
         self.needs_present.set(true);
 
         #[cfg(feature = "profiler")]
-        self.frame_profiler.end_draw(
-            draw_started_at,
-            frame_dirty.dirty_at,
-            frame_dirty.invalidations,
-        );
+        self.window_profiler
+            .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
 
         // Exit the scope to obtain the arena-clear token this draw owes; the
         // scope's teardown itself happens in `ElementArenaScope::drop`.
@@ -3036,10 +2946,7 @@ impl Window {
     fn present(&mut self) {
         self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "profiler")]
-        self.input_latency_tracker.record_frame_presented();
-        #[cfg(feature = "profiler")]
-        self.frame_profiler.record_present(
-            Instant::now(),
+        self.window_profiler.record_present(
             self.active.get(),
             !self.next_frame_callbacks.borrow().is_empty(),
         );
@@ -3061,14 +2968,14 @@ impl Window {
 
     /// Returns a snapshot of the current input-latency histograms.
     #[cfg(feature = "profiler")]
-    pub fn input_latency_snapshot(&self) -> InputLatencySnapshot {
-        self.input_latency_tracker.snapshot()
+    pub fn input_latency_snapshot(&self) -> profiler::InputLatencySnapshot {
+        self.window_profiler.input_latency_snapshot()
     }
 
     /// Returns a snapshot of the current frame-duration histograms.
     #[cfg(feature = "profiler")]
     pub fn frame_duration_snapshot(&self) -> profiler::FrameDurationSnapshot {
-        self.frame_profiler.snapshot()
+        self.window_profiler.frame_duration_snapshot()
     }
 
     fn draw_roots(&mut self, cx: &mut App) {
@@ -4997,7 +4904,7 @@ impl Window {
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         #[cfg(feature = "profiler")]
-        let dispatch_time = Instant::now();
+        self.window_profiler.begin_input();
         let update_count_before = self.invalidator.update_count();
         // Track input modality for focus-visible styling and hover suppression.
         // Hover is suppressed during keyboard modality so that keyboard navigation
@@ -5124,15 +5031,12 @@ impl Window {
         // is the last chance for drag listeners to see the pointer leave and reset their state.
         self.promote_external_drag_to_platform(&event, cx);
 
-        if self.invalidator.update_count() > update_count_before {
+        let caused_invalidation = self.invalidator.update_count() > update_count_before;
+        if caused_invalidation {
             self.input_rate_tracker.borrow_mut().record_input();
-            #[cfg(feature = "profiler")]
-            if self.invalidator.not_drawing() {
-                self.input_latency_tracker.record_input(dispatch_time);
-            } else {
-                self.input_latency_tracker.record_mid_draw_input();
-            }
         }
+        #[cfg(feature = "profiler")]
+        self.window_profiler.end_input(caused_invalidation);
 
         DispatchEventResult {
             propagate: cx.propagate_event,
@@ -5577,9 +5481,16 @@ impl Window {
             .remove(&action.as_any().type_id())
         {
             for listener in &global_listeners {
-                profiler::update_running_action(action, cx);
-                listener(action.as_any(), DispatchPhase::Capture, cx);
-                profiler::save_action_timing();
+                #[cfg(feature = "profiler")]
+                self.window_profiler.begin_action_handler(
+                    action,
+                    DispatchPhase::Capture,
+                    listener.source_location,
+                    cx,
+                );
+                (listener.callback)(action.as_any(), DispatchPhase::Capture, cx);
+                #[cfg(feature = "profiler")]
+                self.window_profiler.end_action_handler();
                 if !cx.propagate_event {
                     break;
                 }
@@ -5604,14 +5515,23 @@ impl Window {
             let node = self.rendered_frame.dispatch_tree.node(*node_id);
             for DispatchActionListener {
                 action_type,
+                #[cfg(feature = "profiler")]
+                source_location,
                 listener,
             } in node.action_listeners.clone()
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
-                    profiler::update_running_action(action, cx);
+                    #[cfg(feature = "profiler")]
+                    self.window_profiler.begin_action_handler(
+                        action,
+                        DispatchPhase::Capture,
+                        source_location,
+                        cx,
+                    );
                     listener(any_action, DispatchPhase::Capture, self, cx);
-                    profiler::save_action_timing();
+                    #[cfg(feature = "profiler")]
+                    self.window_profiler.end_action_handler();
 
                     if !cx.propagate_event {
                         return;
@@ -5625,15 +5545,24 @@ impl Window {
             let node = self.rendered_frame.dispatch_tree.node(*node_id);
             for DispatchActionListener {
                 action_type,
+                #[cfg(feature = "profiler")]
+                source_location,
                 listener,
             } in node.action_listeners.clone()
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
                     cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
-                    profiler::update_running_action(action, cx);
+                    #[cfg(feature = "profiler")]
+                    self.window_profiler.begin_action_handler(
+                        action,
+                        DispatchPhase::Bubble,
+                        source_location,
+                        cx,
+                    );
                     listener(any_action, DispatchPhase::Bubble, self, cx);
-                    profiler::save_action_timing();
+                    #[cfg(feature = "profiler")]
+                    self.window_profiler.end_action_handler();
 
                     if !cx.propagate_event {
                         return;
@@ -5650,9 +5579,16 @@ impl Window {
             for listener in global_listeners.iter().rev() {
                 cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
 
-                profiler::update_running_action(action, cx);
-                listener(action.as_any(), DispatchPhase::Bubble, cx);
-                profiler::save_action_timing();
+                #[cfg(feature = "profiler")]
+                self.window_profiler.begin_action_handler(
+                    action,
+                    DispatchPhase::Bubble,
+                    listener.source_location,
+                    cx,
+                );
+                (listener.callback)(action.as_any(), DispatchPhase::Bubble, cx);
+                #[cfg(feature = "profiler")]
+                self.window_profiler.end_action_handler();
                 if !cx.propagate_event {
                     break;
                 }
@@ -5946,16 +5882,26 @@ impl Window {
     /// a specific need to register a listener yourself.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
+    #[track_caller]
     pub fn on_action(
         &mut self,
         action_type: TypeId,
+        listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
+    ) {
+        self.on_action_with_source(action_type, crate::action_listener_source(), listener);
+    }
+
+    pub(crate) fn on_action_with_source(
+        &mut self,
+        action_type: TypeId,
+        source_location: crate::ActionListenerSource,
         listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
         self.invalidator.debug_assert_paint();
 
         self.next_frame
             .dispatch_tree
-            .on_action(action_type, Rc::new(listener));
+            .on_action(action_type, source_location, Rc::new(listener));
     }
 
     /// Register a capturing action listener on this node for the next frame if the condition is true.
@@ -5966,6 +5912,7 @@ impl Window {
     /// a specific need to register a listener yourself.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
+    #[track_caller]
     pub fn on_action_when(
         &mut self,
         condition: bool,
@@ -5975,9 +5922,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         if condition {
-            self.next_frame
-                .dispatch_tree
-                .on_action(action_type, Rc::new(listener));
+            self.on_action_with_source(action_type, crate::action_listener_source(), listener);
         }
     }
 

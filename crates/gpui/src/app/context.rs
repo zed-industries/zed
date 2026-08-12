@@ -732,6 +732,7 @@ impl<'a, T: 'static> Context<'a, T> {
     }
 
     /// Register a callback to be invoked when the given Action type is dispatched to the window.
+    #[track_caller]
     pub fn on_action(
         &mut self,
         action_type: TypeId,

@@ -130,9 +130,30 @@ pub(crate) struct DispatchResult {
 type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut App)>;
 type ModifiersChangedListener = Rc<dyn Fn(&ModifiersChangedEvent, &mut Window, &mut App)>;
 
+#[cfg(feature = "profiler")]
+pub(crate) type ActionListenerSource = &'static std::panic::Location<'static>;
+#[cfg(not(feature = "profiler"))]
+#[derive(Clone, Copy)]
+pub(crate) struct ActionListenerSource;
+
+#[track_caller]
+pub(crate) fn action_listener_source() -> ActionListenerSource {
+    #[cfg(feature = "profiler")]
+    {
+        std::panic::Location::caller()
+    }
+
+    #[cfg(not(feature = "profiler"))]
+    {
+        ActionListenerSource
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct DispatchActionListener {
     pub(crate) action_type: TypeId,
+    #[cfg(feature = "profiler")]
+    pub(crate) source_location: ActionListenerSource,
     pub(crate) listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut App)>,
 }
 
@@ -333,12 +354,18 @@ impl DispatchTree {
     pub fn on_action(
         &mut self,
         action_type: TypeId,
+        source_location: ActionListenerSource,
         listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut App)>,
     ) {
+        #[cfg(not(feature = "profiler"))]
+        let _ = source_location;
+
         self.active_node()
             .action_listeners
             .push(DispatchActionListener {
                 action_type,
+                #[cfg(feature = "profiler")]
+                source_location,
                 listener,
             });
     }

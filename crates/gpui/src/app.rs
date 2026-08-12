@@ -686,6 +686,12 @@ enum PlatformOwnedDragState {
     RestoredInSourceWindow,
 }
 
+pub(crate) struct GlobalActionListener {
+    pub(crate) callback: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut App)>,
+    #[cfg(feature = "profiler")]
+    pub(crate) source_location: crate::ActionListenerSource,
+}
+
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other [Context] derefs to this type.
 /// You need a reference to an `App` to access the state of a [Entity].
@@ -707,8 +713,7 @@ pub struct App {
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) keyboard_mapper: Rc<dyn PlatformKeyboardMapper>,
-    pub(crate) global_action_listeners:
-        TypeIdHashMap<Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
+    pub(crate) global_action_listeners: TypeIdHashMap<Vec<GlobalActionListener>>,
     pending_effects: VecDeque<Effect>,
 
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
@@ -2180,6 +2185,7 @@ impl App {
     /// Register a global handler for actions invoked via the keyboard. These handlers are run at
     /// the end of the bubble phase for actions, and so will only be invoked if there are no other
     /// handlers or if they called `cx.propagate()`.
+    #[track_caller]
     pub fn on_action<A: Action>(
         &mut self,
         listener: impl Fn(&A, &mut Self) + 'static,
@@ -2187,12 +2193,16 @@ impl App {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
             .or_default()
-            .push(Rc::new(move |action, phase, cx| {
-                if phase == DispatchPhase::Bubble {
-                    let action = action.downcast_ref().unwrap();
-                    listener(action, cx)
-                }
-            }));
+            .push(GlobalActionListener {
+                #[cfg(feature = "profiler")]
+                source_location: crate::action_listener_source(),
+                callback: Rc::new(move |action, phase, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        let action = action.downcast_ref().unwrap();
+                        listener(action, cx)
+                    }
+                }),
+            });
         self
     }
 
@@ -2406,7 +2416,16 @@ impl App {
             .remove(&action.as_any().type_id())
         {
             for listener in &global_listeners {
-                listener(action.as_any(), DispatchPhase::Capture, self);
+                #[cfg(feature = "profiler")]
+                crate::profiler::begin_action_handler(
+                    action,
+                    DispatchPhase::Capture,
+                    listener.source_location,
+                    self,
+                );
+                (listener.callback)(action.as_any(), DispatchPhase::Capture, self);
+                #[cfg(feature = "profiler")]
+                crate::profiler::end_action_handler();
                 if !self.propagate_event {
                     break;
                 }
@@ -2428,7 +2447,16 @@ impl App {
                 .remove(&action.as_any().type_id())
         {
             for listener in global_listeners.iter().rev() {
-                listener(action.as_any(), DispatchPhase::Bubble, self);
+                #[cfg(feature = "profiler")]
+                crate::profiler::begin_action_handler(
+                    action,
+                    DispatchPhase::Bubble,
+                    listener.source_location,
+                    self,
+                );
+                (listener.callback)(action.as_any(), DispatchPhase::Bubble, self);
+                #[cfg(feature = "profiler")]
+                crate::profiler::end_action_handler();
                 if !self.propagate_event {
                     break;
                 }

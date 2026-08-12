@@ -114,16 +114,27 @@ impl Hang for gpui::TaskTiming {
 }
 
 impl Hang for gpui::ActionTiming {
-    type Descriptor = &'static str;
+    type Descriptor = (
+        &'static str,
+        gpui::DispatchPhase,
+        std::panic::Location<'static>,
+    );
 
     fn poll_duration(&self) -> Duration {
         self.duration()
     }
     fn descriptor(&self) -> Self::Descriptor {
-        self.name
+        (self.name, self.phase, *self.source_location)
     }
     fn format_location(location: &Self::Descriptor) -> String {
-        location.to_string()
+        format!(
+            "{} ({:?}) at {}:{}:{}",
+            location.0,
+            location.1,
+            location.2.file(),
+            location.2.line(),
+            location.2.column()
+        )
     }
     fn start(&self) -> Instant {
         self.start
