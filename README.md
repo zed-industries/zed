@@ -12,63 +12,54 @@ Welcome to Zed, a high-performance, multiplayer code editor from the creators of
 
 ### Fork builds & auto-update
 
-This fork keeps `main` in sync with upstream and publishes ready-to-install macOS
-and Windows builds:
+This fork keeps `main` in sync with upstream and publishes a ready-to-install
+Windows build:
 
 - [`sync-fork`](.github/workflows/sync-fork.yml) runs daily at 03:00 UTC and merges
   `zed-industries/zed` `main` into this fork's `main` (local fork commits are preserved
   via a merge commit).
 - [`build-binaries`](.github/workflows/build-binaries.yml) runs after each successful
   sync (or manually via **Actions → build-binaries → Run workflow**). It builds the
-  macOS app bundle (`.dmg`) and the Windows installer (`.exe`), then publishes a
-  GitHub release on this fork. Each build bumps the release version, so the built
-  binary detects the new version.
+  Windows installer (`.exe`) and publishes a GitHub release on this fork. Each build
+  bumps the release version, so the built binary detects the new version.
 
 The auto-update check in `crates/auto_update` is patched to query **this fork's
 GitHub releases** instead of `zed.dev`:
 
-- Release assets are named `zed-{os}-{arch}.{ext}` (e.g. `zed-macos-aarch64.dmg`,
-  `zed-windows-x86_64.exe`).
+- Release assets are named `zed-{os}-{arch}.{ext}`. The current release contains
+  `zed-windows-x86_64.exe` and the Windows remote server archive.
 - The fork builds on the `stable` release channel (`crates/zed/RELEASE_CHANNEL`), so
-  `zed update` polls for updates and installs them in place.
+  `zed update` polls for updates and installs them in place on Windows.
 - To point the update at a different fork, set `ZED_FORK_REPO` (e.g. `owner/repo`) at
   build time.
-- Only macOS (aarch64) and Windows (x86_64) assets are published. Remote-server
-  downloads (SSH remotes) resolve against this fork's releases too, so remote
-  development on hosts of other platforms (e.g. Linux) is not supported by these
-  builds.
+- macOS binaries are not produced by this workflow. Build macOS locally with
+  `cargo run -p zed` or `./script/bundle-mac -d -o aarch64-apple-darwin`.
 
 If `sync-fork` hits a merge conflict (e.g. upstream changed `crates/auto_update`),
 resolve it locally and push, then re-run the workflow.
 
 
-### macOS release signing
+### Local macOS builds
 
-Fork releases are Developer ID signed and notarized only when the repository has
-the following GitHub Actions configuration:
+The GitHub binary workflow intentionally skips macOS. To run this fork locally:
 
-- Secrets: `MACOS_CERTIFICATE` (base64-encoded `.p12`), `MACOS_CERTIFICATE_PASSWORD`,
-  `APPLE_NOTARIZATION_KEY` (the App Store Connect `.p8` key), `APPLE_NOTARIZATION_KEY_ID`,
-  and `APPLE_NOTARIZATION_ISSUER_ID`.
-- Repository variable: `MACOS_SIGNING_IDENTITY`, set to the full Developer ID
-  certificate name, for example `Developer ID Application: Example, Inc. (TEAMID)`.
+```sh
+cargo run -p zed
+```
 
-The certificate must be issued for the fork owner. The checked-in provisioning
-profile belongs to Zed Industries, so fork builds deliberately do not embed it.
-Configure these values under **Settings → Secrets and variables → Actions**, then
-run `build-binaries` again.
+For a local `.app` bundle:
 
-Without all of these values, the macOS build job fails before publishing a
-release. For local builds or an existing ad-hoc-signed copy, remove the
-quarantine attribute once and launch it:
+```sh
+./script/bundle-mac -d -o aarch64-apple-darwin
+```
+
+An ad-hoc-signed local app may be blocked by Gatekeeper. Remove quarantine
+from that local copy only:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Zed.app
 open /Applications/Zed.app
 ```
-
-This bypasses Gatekeeper for that local copy; it does not replace Developer ID
-signing or notarization for distribution.
 
 ### Installation
 
