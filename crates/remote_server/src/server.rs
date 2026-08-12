@@ -757,6 +757,12 @@ pub enum ServerPathError {
         source: std::io::Error,
         path: PathBuf,
     },
+    #[error("Failed to create socket_dir `{path}`")]
+    CreateSocketDir {
+        #[source]
+        source: std::io::Error,
+        path: PathBuf,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -783,10 +789,28 @@ impl ServerPaths {
             path: log_dir.clone(),
         })?;
 
+        // On MacOS, external volumes utilized as primary/startup drives seem to prevent
+        // sockets from being created on them. So, utilize $TMPDIR instead for MacOS server
+        // targets. This directory is per-user temp directory and always on the boot drive.
+        // The MacOS temp directory seems to reside in /var/folders/..., e.g.,
+        //     /var/folders/7c/4njxmbrs28n2z_w5y3swr50r0000gn/T/
+        // Other platforms retain the original behavior - store sockets alongside server state.
+        #[cfg(target_os = "macos")]
+        let socket_dir = {
+            let dir = std::env::temp_dir().join("zed_server").join(identifier);
+            std::fs::create_dir_all(&dir).map_err(|source| ServerPathError::CreateSocketDir {
+                source,
+                path: dir.clone(),
+            })?;
+            dir
+        };
+        #[cfg(not(target_os = "macos"))]
+        let socket_dir = server_dir.clone();
+
         let pid_file = server_dir.join("server.pid");
-        let stdin_socket = server_dir.join("stdin.sock");
-        let stdout_socket = server_dir.join("stdout.sock");
-        let stderr_socket = server_dir.join("stderr.sock");
+        let stdin_socket = socket_dir.join("stdin.sock");
+        let stdout_socket = socket_dir.join("stdout.sock");
+        let stderr_socket = socket_dir.join("stderr.sock");
         let log_file = logs_dir().join(format!("server-{}.log", identifier));
 
         Ok(Self {
