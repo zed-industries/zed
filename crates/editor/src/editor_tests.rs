@@ -37584,6 +37584,116 @@ async fn test_paste_image_in_markdown_single_file_worktree_falls_through(cx: &mu
 }
 
 #[gpui::test]
+async fn test_format_echoing_received_line_endings_keeps_cursor(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.ensure_final_newline_on_save = Some(false);
+    });
+
+    let lf_content = "// one\nstruct Foo {\n    bar: Bar,\n}\n\n// two\nstruct Bar {\n    foobar:u32,\n}\n\nfn main() {\n    let foo = 1;\n}\n";
+    let crlf_content = lf_content.replace('\n', "\r\n");
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), crlf_content.clone().into())
+        .await;
+
+    let project = Project::test(fs, [path!("/file.rs").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let server_side_texts = Arc::new(Mutex::new(Vec::<String>::new()));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            initializer: Some({
+                let server_side_texts = server_side_texts.clone();
+                Box::new(move |fake_server| {
+                    fake_server.handle_notification::<lsp::notification::DidOpenTextDocument, _>({
+                        let server_side_texts = server_side_texts.clone();
+                        move |params, _| {
+                            server_side_texts.lock().push(params.text_document.text);
+                        }
+                    });
+                })
+            }),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multi_buffer, window, cx)
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([Point::new(2, 4)..Point::new(2, 4)]);
+        });
+    });
+
+    let server_side_text = server_side_texts.lock().last().cloned().unwrap();
+    assert_eq!(
+        server_side_text, crlf_content,
+        "server should have received the CRLF text on DidOpenTextDocument",
+    );
+
+    let formatted_text = server_side_text.replace("foobar:u32", "foobar: u32");
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| {
+        let formatted_text = formatted_text.clone();
+        async move {
+            Ok(Some(vec![lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(13, 0)),
+                new_text: formatted_text,
+            }]))
+        }
+    });
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        lf_content.replace("foobar:u32", "foobar: u32"),
+        "only the minimal formatting change should be applied",
+    );
+    editor.update(cx, |editor, cx| {
+        let snapshot = editor.display_snapshot(cx);
+        let cursor = editor.selections.newest::<Point>(&snapshot).head();
+        assert_eq!(
+            cursor,
+            Point::new(2, 4),
+            "whole-document echo of the received line endings must not move the cursor",
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_race_in_multibuffer_save(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

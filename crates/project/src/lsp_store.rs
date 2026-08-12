@@ -3051,7 +3051,7 @@ impl LocalLspStore {
                         uri.clone(),
                         adapter.language_id(&language.name()),
                         0,
-                        initial_snapshot.text(),
+                        initial_snapshot.text_with_line_endings(),
                     );
 
                     vec![snapshot]
@@ -4841,6 +4841,13 @@ impl LspStore {
     ) {
         match event {
             language::BufferEvent::Edited { .. } => {
+                self.on_buffer_edited(buffer, cx);
+            }
+
+            language::BufferEvent::Operation {
+                operation: language::Operation::UpdateLineEnding { .. },
+                ..
+            } => {
                 self.on_buffer_edited(buffer, cx);
             }
 
@@ -8582,6 +8589,8 @@ impl LspStore {
             .with_context(|| format!("Failed to convert path to URI: {}", abs_path.display()))
             .log_err()?;
         let next_snapshot = buffer.text_snapshot();
+        let line_ending = next_snapshot.line_ending();
+
         for language_server in language_servers {
             let language_server = language_server.clone();
 
@@ -8591,6 +8600,19 @@ impl LspStore {
                 .get_mut(&buffer.remote_id())
                 .and_then(|m| m.get_mut(&language_server.server_id()))?;
             let previous_snapshot = buffer_snapshots.last()?;
+
+            // If the line ending differs from what this server was last sent, the LF-normalized
+            // rope is byte-identical so `edits_since` yields no diffs. We must resync the whole
+            // document, otherwise the server keeps the stale line endings indefinitely.
+            let line_ending_changed = line_ending != previous_snapshot.snapshot.line_ending();
+
+            let build_full_change = || {
+                vec![lsp::TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: next_snapshot.text_with_line_endings(),
+                }]
+            };
 
             let build_incremental_change = || {
                 buffer
@@ -8609,7 +8631,7 @@ impl LspStore {
                                 point_to_lsp(edit_end),
                             )),
                             range_length: None,
-                            text: new_text,
+                            text: line_ending.apply(new_text),
                         }
                     })
                     .collect()
@@ -8624,19 +8646,21 @@ impl LspStore {
                     lsp::TextDocumentSyncCapability::Options(options) => options.change,
                 });
 
-            let content_changes: Vec<_> = match document_sync_kind {
-                Some(lsp::TextDocumentSyncKind::FULL) => {
-                    vec![lsp::TextDocumentContentChangeEvent {
-                        range: None,
-                        range_length: None,
-                        text: next_snapshot.text(),
-                    }]
+            let build_change = || {
+                if line_ending_changed {
+                    build_full_change()
+                } else {
+                    build_incremental_change()
                 }
-                Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_incremental_change(),
+            };
+
+            let content_changes: Vec<_> = match document_sync_kind {
+                Some(lsp::TextDocumentSyncKind::FULL) => build_full_change(),
+                Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_change(),
                 _ => {
                     #[cfg(any(test, feature = "test-support"))]
                     {
-                        build_incremental_change()
+                        build_change()
                     }
 
                     #[cfg(not(any(test, feature = "test-support")))]
@@ -12451,7 +12475,7 @@ impl LspStore {
                         uri,
                         adapter.language_id(&language.name()),
                         version,
-                        initial_snapshot.text(),
+                        initial_snapshot.text_with_line_endings(),
                     );
                     buffer_paths_registered.push((buffer_id, abs_path));
                     local
