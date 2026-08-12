@@ -4,7 +4,7 @@ use super::{
 };
 
 use language::{LanguageAwareStyling, Point};
-use multi_buffer::MultiBufferSnapshot;
+use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
 use std::{cmp, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
@@ -390,6 +390,11 @@ impl TabSnapshot {
             expanded_char_column,
             to_next_stop,
         )
+    }
+
+    pub fn buffer_row_to_tab_row(&self, buffer_row: MultiBufferRow) -> u32 {
+        self.point_to_tab_point(Point::new(buffer_row.0, 0), Bias::Left)
+            .row()
     }
 
     #[ztracing::instrument(skip_all)]
