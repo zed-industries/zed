@@ -82,6 +82,11 @@ impl AgentNotification {
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
         cx.emit(AgentNotificationEvent::Dismissed);
     }
+
+    #[cfg(test)]
+    pub(crate) fn title(&self) -> &SharedString {
+        &self.title
+    }
 }
 
 impl Render for AgentNotification {
