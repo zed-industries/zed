@@ -4646,7 +4646,7 @@ impl Project {
         trigger: String,
         push_to_history: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Transaction>>> {
+    ) -> Option<Task<Result<Option<Transaction>>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.on_type_format(buffer, position, trigger, push_to_history, cx)
         })

@@ -6284,11 +6284,14 @@ impl LspStore {
                         buffer.wait_for_edits(Some(position.timestamp()))
                     })
                     .await?;
-                this.update(cx, |this, cx| {
+                let Some(on_type_formatting) = this.update(cx, |this, cx| {
                     let position = position.to_point_utf16(buffer.read(cx));
                     this.on_type_format(buffer, position, trigger, false, cx)
                 })?
-                .await
+                else {
+                    return Ok(None);
+                };
+                on_type_formatting.await
             })
         } else {
             Task::ready(Err(anyhow!("No upstream client or local language server")))
@@ -6302,9 +6305,17 @@ impl LspStore {
         trigger: String,
         push_to_history: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Transaction>>> {
+    ) -> Option<Task<Result<Option<Transaction>>>> {
+        if !self.check_if_capable_for_proto_request(
+            &buffer,
+            |capabilities| OnTypeFormatting::supports_on_type_formatting(&trigger, capabilities),
+            cx,
+        ) {
+            return None;
+        }
+
         let position = position.to_point_utf16(buffer.read(cx));
-        self.on_type_format_impl(buffer, position, trigger, push_to_history, cx)
+        Some(self.on_type_format_impl(buffer, position, trigger, push_to_history, cx))
     }
 
     fn on_type_format_impl(
