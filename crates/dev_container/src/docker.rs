@@ -1070,7 +1070,7 @@ mod test {
     /// transport quotes it, and must not spawn the engine locally.
     #[test]
     fn should_route_commands_through_the_host_connection() {
-        let connection = Arc::new(FakeRemoteConnection);
+        let connection = Arc::new(FakeRemoteConnection::default());
         let host = DevContainerHost::Remote(connection);
         let command = host
             .command(
@@ -1115,7 +1115,7 @@ mod test {
         assert_eq!(deployed.get_program().display().to_string(), "docker");
 
         let remote = Docker {
-            host: DevContainerHost::Remote(Arc::new(FakeRemoteConnection)),
+            host: DevContainerHost::Remote(Arc::new(FakeRemoteConnection::default())),
             docker_cli: "docker".to_string(),
             has_buildx: false,
         };

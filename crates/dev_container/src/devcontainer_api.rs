@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::TryFutureExt;
-use gpui::{AsyncWindowContext, Entity};
+use gpui::{AsyncApp, AsyncWindowContext, Entity};
 use project::Worktree;
 use serde::Deserialize;
 use settings::{DevContainerConnection, infer_json_indent_size, replace_value_in_json_text};
@@ -256,6 +256,7 @@ pub async fn start_dev_container_with_config(
     context: DevContainerContext,
     config: Option<DevContainerConfig>,
     environment: HashMap<String, String>,
+    cx: &mut AsyncApp,
 ) -> Result<(DevContainerConnection, String), DevContainerError> {
     check_for_docker(context.use_podman).await?;
 
@@ -268,6 +269,7 @@ pub async fn start_dev_container_with_config(
         environment.clone(),
         actual_config.clone(),
         context.project_directory.clone().as_ref(),
+        cx,
     )
     .await
     {

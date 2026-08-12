@@ -167,7 +167,11 @@ impl DevContainerHost {
 /// the working directory were applied by the transport rather than by the
 /// caller.
 #[cfg(test)]
-pub(crate) struct FakeRemoteConnection;
+#[derive(Default)]
+pub(crate) struct FakeRemoteConnection {
+    /// Every `(source, destination)` pair handed to [`RemoteConnection::upload_directory`].
+    pub(crate) uploads: std::sync::Mutex<Vec<(std::path::PathBuf, String)>>,
+}
 
 #[cfg(test)]
 #[async_trait::async_trait(?Send)]
@@ -187,11 +191,17 @@ impl RemoteConnection for FakeRemoteConnection {
 
     fn upload_directory(
         &self,
-        _src_path: std::path::PathBuf,
-        _dest_path: util::paths::RemotePathBuf,
+        src_path: std::path::PathBuf,
+        dest_path: util::paths::RemotePathBuf,
         _cx: &gpui::App,
     ) -> gpui::Task<anyhow::Result<()>> {
-        gpui::Task::ready(Err(anyhow::anyhow!("not supported in tests")))
+        match self.uploads.lock() {
+            Ok(mut uploads) => {
+                uploads.push((src_path, dest_path.to_string()));
+                gpui::Task::ready(Ok(()))
+            }
+            Err(e) => gpui::Task::ready(Err(anyhow::anyhow!("uploads lock poisoned: {e}"))),
+        }
     }
 
     async fn kill(&self) -> anyhow::Result<()> {

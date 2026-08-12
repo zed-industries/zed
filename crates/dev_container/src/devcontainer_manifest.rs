@@ -9,8 +9,9 @@ use std::{
 use regex::Regex;
 
 use fs::Fs;
+use gpui::AsyncApp;
 use http_client::HttpClient;
-use util::{ResultExt, command::Command, normalize_path};
+use util::{ResultExt, command::Command, normalize_path, paths::RemotePathBuf};
 
 use crate::{
     DevContainerConfig, DevContainerContext, DevContainerHost,
@@ -64,6 +65,25 @@ struct DevContainerManifest {
     features: Vec<FeatureManifest>,
 }
 const DEFAULT_REMOTE_PROJECT_DIR: &str = "/workspaces";
+
+/// Where build inputs that Zed generates — the extended Dockerfile, feature
+/// content, the empty build context — are staged before a build.
+///
+/// They are always written locally, because the OCI downloads and template
+/// rendering that produce them run locally. For a remote host they are then
+/// pushed to [`REMOTE_BUILD_CONTEXT_DIR`].
+fn local_staging_directory() -> PathBuf {
+    std::env::temp_dir().join("devcontainer-zed")
+}
+
+/// Where the staged build context lands on a remote host, relative to the
+/// connection's home directory.
+///
+/// Relative is deliberate: `upload_directory` resolves a relative destination
+/// against the remote home, and an engine command built with no working
+/// directory does `cd` with no argument, which is also the home. The two
+/// therefore agree without Zed having to resolve `$HOME` itself.
+const REMOTE_BUILD_CONTEXT_DIR: &str = ".zed_devcontainer";
 impl DevContainerManifest {
     fn new(
         context: &DevContainerContext,
@@ -440,7 +460,7 @@ impl DevContainerManifest {
         let root_image_tag = self.get_base_image_from_config().await?;
         let root_image = self.docker_client.inspect(&root_image_tag).await?;
 
-        let temp_base = std::env::temp_dir().join("devcontainer-zed");
+        let temp_base = local_staging_directory();
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
@@ -924,7 +944,83 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         })
     }
 
-    async fn build_resources(&self) -> Result<DevContainerBuildResources, DevContainerError> {
+    /// Translates a staged build input to the path the host's engine will see.
+    ///
+    /// Paths outside the staging directory are returned unchanged: under the
+    /// remote model the project itself already lives on the host, so only the
+    /// inputs Zed generates locally need moving.
+    fn host_build_path(&self, path: &Path) -> PathBuf {
+        let DevContainerHost::Remote(_) = &self.host else {
+            return path.to_path_buf();
+        };
+        let Ok(relative) = path.strip_prefix(local_staging_directory()) else {
+            return path.to_path_buf();
+        };
+        let mut remote = String::from(REMOTE_BUILD_CONTEXT_DIR);
+        for component in relative.components() {
+            remote.push('/');
+            remote.push_str(&component.as_os_str().to_string_lossy());
+        }
+        PathBuf::from(remote)
+    }
+
+    /// Pushes the staged build context to the host.
+    ///
+    /// Called immediately before each build rather than once after staging,
+    /// because every build writes a fresh Dockerfile into the staged directory
+    /// first. Re-uploading is idempotent, and a no-op when the host is local.
+    async fn stage_build_context(&self, cx: &mut AsyncApp) -> Result<(), DevContainerError> {
+        let DevContainerHost::Remote(connection) = &self.host else {
+            return Ok(());
+        };
+        let Some(features_build_info) = &self.features_build_info else {
+            return Ok(());
+        };
+
+        let empty_context_dir = self.host_build_path(&features_build_info.empty_context_dir);
+        let mut command = self.host.command(
+            "mkdir",
+            &[
+                "-p".to_string(),
+                REMOTE_BUILD_CONTEXT_DIR.to_string(),
+                empty_context_dir.display().to_string(),
+            ],
+            &HashMap::new(),
+            None,
+        )?;
+        let output = self
+            .command_runner
+            .run_command(&mut command)
+            .await
+            .map_err(|e| {
+                log::error!("Error creating the remote build context directory: {e}");
+                DevContainerError::CommandFailed("mkdir".to_string())
+            })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("Could not create the remote build context directory: {stderr}");
+            return Err(DevContainerError::CommandFailed("mkdir".to_string()));
+        }
+
+        let source = features_build_info.features_content_dir.clone();
+        let destination = RemotePathBuf::new(
+            REMOTE_BUILD_CONTEXT_DIR.to_string(),
+            connection.path_style(),
+        );
+        log::info!("uploading the dev container build context to the host");
+        let upload = cx.update(|cx| connection.upload_directory(source, destination, cx));
+        upload.await.map_err(|e| {
+            log::error!("Failed to upload the dev container build context: {e}");
+            DevContainerError::FilesystemError
+        })?;
+
+        Ok(())
+    }
+
+    async fn build_resources(
+        &self,
+        cx: &mut AsyncApp,
+    ) -> Result<DevContainerBuildResources, DevContainerError> {
         if let ConfigStatus::Deserialized(_) = &self.config {
             log::error!(
                 "Dev container has not yet been parsed for variable expansion. Cannot yet build resources"
@@ -934,7 +1030,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         let dev_container = self.dev_container();
         match dev_container.build_type() {
             DevContainerBuildType::Image(base_image) => {
-                let built_docker_image = self.build_docker_image().await?;
+                let built_docker_image = self.build_docker_image(cx).await?;
                 let has_features = dev_container
                     .features
                     .as_ref()
@@ -952,7 +1048,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     self.should_update_remote_user_uid(&built_docker_image)?;
 
                 let built_docker_image = self
-                    .update_remote_user_uid(built_docker_image, uid_base_image)
+                    .update_remote_user_uid(built_docker_image, uid_base_image, cx)
                     .await?;
 
                 let image_tag = if has_features || will_update_remote_user_uid {
@@ -964,7 +1060,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 Ok(DevContainerBuildResources::Docker(resources))
             }
             DevContainerBuildType::Dockerfile(_) => {
-                let built_docker_image = self.build_docker_image().await?;
+                let built_docker_image = self.build_docker_image(cx).await?;
                 let Some(features_build_info) = &self.features_build_info else {
                     log::error!(
                         "Can't attempt to build update UID dockerfile before initial docker build"
@@ -972,7 +1068,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     return Err(DevContainerError::DevContainerParseFailed);
                 };
                 let built_docker_image = self
-                    .update_remote_user_uid(built_docker_image, &features_build_info.image_tag)
+                    .update_remote_user_uid(built_docker_image, &features_build_info.image_tag, cx)
                     .await?;
 
                 let resources = self
@@ -981,7 +1077,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             }
             DevContainerBuildType::DockerCompose => {
                 log::debug!("Using docker compose. Building extended compose files");
-                let docker_compose_resources = self.build_and_extend_compose_files().await?;
+                let docker_compose_resources = self.build_and_extend_compose_files(cx).await?;
 
                 return Ok(DevContainerBuildResources::DockerCompose(
                     docker_compose_resources,
@@ -1069,6 +1165,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
     async fn build_and_extend_compose_files(
         &self,
+        cx: &mut AsyncApp,
     ) -> Result<DockerComposeResources, DevContainerError> {
         let dev_container = match &self.config {
             ConfigStatus::Deserialized(_) => {
@@ -1098,7 +1195,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             .is_some()
         {
             if !supports_buildkit {
-                self.build_feature_content_image().await?;
+                self.build_feature_content_image(cx).await?;
             }
 
             let dockerfile_path = &features_build_info.dockerfile_path;
@@ -1166,7 +1263,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 volumes: HashMap::new(),
             };
 
-            let temp_base = std::env::temp_dir().join("devcontainer-zed");
+            let temp_base = local_staging_directory();
             let config_location = temp_base.join("docker_compose_build.json");
 
             let config_json = serde_json_lenient::to_string(&build_override).map_err(|e| {
@@ -1209,7 +1306,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 (self.docker_client.inspect(image).await?, image)
             } else {
                 if !supports_buildkit {
-                    self.build_feature_content_image().await?;
+                    self.build_feature_content_image(cx).await?;
                 }
 
                 let dockerfile_path = &features_build_info.dockerfile_path;
@@ -1265,7 +1362,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     volumes: HashMap::new(),
                 };
 
-                let temp_base = std::env::temp_dir().join("devcontainer-zed");
+                let temp_base = local_staging_directory();
                 let config_location = temp_base.join("docker_compose_build.json");
 
                 let config_json = serde_json_lenient::to_string(&build_override).map_err(|e| {
@@ -1307,7 +1404,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         };
 
         let built_service_image = self
-            .update_remote_user_uid(built_service_image, built_service_image_tag)
+            .update_remote_user_uid(built_service_image, built_service_image_tag, cx)
             .await?;
 
         let resources =
@@ -1332,7 +1429,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
     ) -> Result<PathBuf, DevContainerError> {
         let config =
             self.build_runtime_override(main_service_name, network_mode_service, resources)?;
-        let temp_base = std::env::temp_dir().join("devcontainer-zed");
+        let temp_base = local_staging_directory();
         let config_location = temp_base.join("docker_compose_runtime.json");
 
         let config_json = serde_json_lenient::to_string(&config).map_err(|e| {
@@ -1579,7 +1676,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         Ok(new_docker_compose_config)
     }
 
-    async fn build_docker_image(&self) -> Result<DockerInspect, DevContainerError> {
+    async fn build_docker_image(
+        &self,
+        cx: &mut AsyncApp,
+    ) -> Result<DockerInspect, DevContainerError> {
         let dev_container = match &self.config {
             ConfigStatus::Deserialized(_) => {
                 log::error!(
@@ -1608,6 +1708,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             }
         };
 
+        self.stage_build_context(cx).await?;
         let mut command = self.docker_client.deploy(self.create_docker_build()?)?;
 
         let output = self
@@ -1653,6 +1754,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         &self,
         image: DockerInspect,
         _base_image: &str,
+        _cx: &mut AsyncApp,
     ) -> Result<DockerInspect, DevContainerError> {
         Ok(image)
     }
@@ -1677,6 +1779,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         &self,
         image: DockerInspect,
         base_image: &str,
+        cx: &mut AsyncApp,
     ) -> Result<DockerInspect, DevContainerError> {
         let Some(features_build_info) = &self.features_build_info else {
             return Ok(image);
@@ -1744,6 +1847,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 DevContainerError::FilesystemError
             })?;
 
+        self.stage_build_context(cx).await?;
         let updated_image_tag = features_build_info.image_tag.clone();
 
         let mut command = self.docker_client.new_command();
@@ -1754,14 +1858,21 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             command.env("DOCKER_BUILDKIT", "0");
         }
         command.args(["build"]);
-        command.args(["-f", &dockerfile_path.display().to_string()]);
+        command.args([
+            "-f",
+            &self.host_build_path(&dockerfile_path).display().to_string(),
+        ]);
         command.args(["-t", &updated_image_tag]);
         command.args(["--build-arg", &format!("BASE_IMAGE={}", base_image)]);
         command.args(["--build-arg", &format!("REMOTE_USER={}", remote_user)]);
         command.args(["--build-arg", &format!("NEW_UID={}", host_uid)]);
         command.args(["--build-arg", &format!("NEW_GID={}", host_gid)]);
         command.args(["--build-arg", &format!("IMAGE_USER={}", image_user)]);
-        command.arg(features_build_info.empty_context_dir.display().to_string());
+        command.arg(
+            self.host_build_path(&features_build_info.empty_context_dir)
+                .display()
+                .to_string(),
+        );
         let mut command = self.docker_client.deploy(command)?;
 
         let output = self
@@ -1838,7 +1949,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         dockerfile
     }
 
-    async fn build_feature_content_image(&self) -> Result<(), DevContainerError> {
+    async fn build_feature_content_image(
+        &self,
+        cx: &mut AsyncApp,
+    ) -> Result<(), DevContainerError> {
         let Some(features_build_info) = &self.features_build_info else {
             log::error!("Features build info not available for building feature content image");
             return Err(DevContainerError::DevContainerParseFailed);
@@ -1856,6 +1970,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 DevContainerError::FilesystemError
             })?;
 
+        self.stage_build_context(cx).await?;
         let mut command = self.docker_client.new_command();
         // This path runs only when BuildKit is unavailable, so force the classic
         // builder: the feature content image is consumed by a later multi-stage
@@ -1868,8 +1983,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             "-t",
             "dev_container_feature_content_temp",
             "-f",
-            &dockerfile_path.display().to_string(),
-            &features_content_dir.display().to_string(),
+            &self.host_build_path(&dockerfile_path).display().to_string(),
+            &self
+                .host_build_path(features_content_dir)
+                .display()
+                .to_string(),
         ]);
         let mut command = self.docker_client.deploy(command)?;
 
@@ -1923,7 +2041,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             "--build-context",
             &format!(
                 "dev_containers_feature_content_source={}",
-                features_build_info.features_content_dir.display()
+                self.host_build_path(&features_build_info.features_content_dir)
+                    .display()
             ),
         ]);
 
@@ -1986,7 +2105,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
         command.args([
             "-f",
-            &features_build_info.dockerfile_path.display().to_string(),
+            &self
+                .host_build_path(&features_build_info.dockerfile_path)
+                .display()
+                .to_string(),
         ]);
 
         command.args(["-t", &features_build_info.image_tag]);
@@ -1996,7 +2118,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         } else {
             // Use an empty folder as the build context to avoid pulling in unneeded files.
             // The actual feature content is supplied via the BuildKit build context above.
-            command.arg(features_build_info.empty_context_dir.display().to_string());
+            command.arg(
+                self.host_build_path(&features_build_info.empty_context_dir)
+                    .display()
+                    .to_string(),
+            );
         }
 
         Ok(command)
@@ -2303,14 +2429,17 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             .unwrap_or_default()
     }
 
-    async fn build_and_run(&mut self) -> Result<DevContainerUp, DevContainerError> {
+    async fn build_and_run(
+        &mut self,
+        cx: &mut AsyncApp,
+    ) -> Result<DevContainerUp, DevContainerError> {
         self.dev_container().validate_devcontainer_contents()?;
 
         self.run_initialize_commands().await?;
 
         self.download_feature_and_dockerfile_resources().await?;
 
-        let build_resources = self.build_resources().await?;
+        let build_resources = self.build_resources(cx).await?;
 
         let devcontainer_up = self.run_dev_container(build_resources).await?;
 
@@ -2754,6 +2883,7 @@ pub(crate) async fn spawn_dev_container(
     environment: HashMap<String, String>,
     config: DevContainerConfig,
     local_project_path: &Path,
+    cx: &mut AsyncApp,
 ) -> Result<DevContainerUp, DevContainerError> {
     let docker_client = container_client_for(context).await;
     let config_path = config_path_for(local_project_path, &config);
@@ -2779,7 +2909,7 @@ pub(crate) async fn spawn_dev_container(
     } else {
         log::debug!("Existing container not found. Building");
 
-        devcontainer_manifest.build_and_run().await
+        devcontainer_manifest.build_and_run(cx).await
     }
 }
 
@@ -3534,10 +3664,10 @@ mod test {
         devcontainer_json::MountDefinition,
         devcontainer_manifest::{
             ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
-            DockerInspect, config_path_for, dockerfile_inject_alias, escape_compose_interpolation,
-            extract_feature_id, find_primary_service, get_remote_user_from_config,
-            image_from_dockerfile, is_local_feature_ref, load_devcontainer_contents,
-            resolve_compose_dockerfile,
+            DockerInspect, REMOTE_BUILD_CONTEXT_DIR, config_path_for, dockerfile_inject_alias,
+            escape_compose_interpolation, extract_feature_id, find_primary_service,
+            get_remote_user_from_config, image_from_dockerfile, is_local_feature_ref,
+            load_devcontainer_contents, local_staging_directory, resolve_compose_dockerfile,
         },
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -3633,6 +3763,115 @@ mod test {
         .await
     }
 
+    /// Build inputs are generated locally — the OCI downloads and template
+    /// rendering that produce them run on the machine with the HTTP client — so
+    /// a remote build has to be handed paths on the host, not paths that only
+    /// exist here.
+    #[gpui::test]
+    async fn build_context_is_staged_on_a_remote_host(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let connection = Arc::new(crate::FakeRemoteConnection::default());
+        let (test_dependencies, mut devcontainer_manifest) = init_devcontainer_manifest(
+            cx,
+            FakeFs::new(cx.executor()),
+            fake_http_client(),
+            Arc::new(FakeDocker::new()),
+            Arc::new(TestCommandRunner::new()),
+            HashMap::new(),
+            r#"
+            {
+              "name": "cli-remote-build-context",
+              "image": "test_image:latest",
+              "features": {
+                "./lsp-devtools": {
+                  "version": "0.1.0"
+                }
+              }
+            }
+            "#,
+            DevContainerHost::Remote(connection.clone()),
+        )
+        .await
+        .unwrap();
+
+        test_dependencies
+            .fs
+            .insert_tree(
+                format!("{TEST_PROJECT_PATH}/.devcontainer/lsp-devtools"),
+                serde_json::json!({
+                    "devcontainer-feature.json": r#"{
+                        "id": "lsp-devtools",
+                        "version": "0.1.0",
+                        "name": "LSP Devtools"
+                    }"#,
+                    "install.sh": "#!/bin/sh\nset -e\n",
+                }),
+            )
+            .await;
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
+
+        let uploads = connection.uploads.lock().expect("uploads recorded");
+        let (source, destination) = uploads.first().expect("build context uploaded");
+        assert!(
+            source.starts_with(local_staging_directory()),
+            "the staged directory is what gets uploaded, got {source:?}"
+        );
+        assert_eq!(destination, REMOTE_BUILD_CONTEXT_DIR);
+
+        let staged_directory = source
+            .file_name()
+            .expect("staged directory has a name")
+            .display()
+            .to_string();
+
+        let build_command = test_dependencies
+            .command_runner
+            .commands_by_program("docker")
+            .into_iter()
+            .find(|command| command.args.first().map(String::as_str) == Some("buildx"))
+            .expect("docker buildx build command recorded");
+
+        let dockerfile_argument = build_command
+            .args
+            .iter()
+            .position(|argument| argument == "-f")
+            .and_then(|index| build_command.args.get(index + 1))
+            .expect("build command names a Dockerfile")
+            .clone();
+        assert_eq!(
+            dockerfile_argument,
+            format!("{REMOTE_BUILD_CONTEXT_DIR}/{staged_directory}/Dockerfile.extended"),
+            "the build must reference the uploaded Dockerfile, not the local one"
+        );
+
+        assert!(
+            build_command.args.contains(&format!(
+                "dev_containers_feature_content_source={REMOTE_BUILD_CONTEXT_DIR}/{staged_directory}"
+            )),
+            "the feature content context must point at the uploaded directory, got: {:?}",
+            build_command.args
+        );
+        assert_eq!(
+            build_command.args.last().map(String::as_str),
+            Some(format!("{REMOTE_BUILD_CONTEXT_DIR}/empty-folder").as_str()),
+            "the build context must be the uploaded empty directory"
+        );
+
+        assert!(
+            test_dependencies
+                .command_runner
+                .commands_by_program("ssh")
+                .iter()
+                .any(|command| command.args.contains(&"'mkdir'".to_string())),
+            "the remote staging directory must be created before the upload"
+        );
+    }
+
     /// The spec runs `initializeCommand` on "the host machine", which for a
     /// remote dev container is the remote — running it locally would apply the
     /// side effects to the wrong filesystem.
@@ -3651,7 +3890,7 @@ mod test {
     "initializeCommand": "touch IAM.md",
 }
             "#,
-            DevContainerHost::Remote(Arc::new(crate::FakeRemoteConnection)),
+            DevContainerHost::Remote(Arc::new(crate::FakeRemoteConnection::default())),
         )
         .await
         .unwrap();
@@ -4712,7 +4951,10 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
-        let devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+        let devcontainer_up = devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
 
         assert_eq!(
             devcontainer_up.extension_ids,
@@ -5070,7 +5312,10 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
-        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+        let _devcontainer_up = devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
 
         let docker_commands = test_dependencies
             .command_runner
@@ -5365,7 +5610,10 @@ RUN apt-get update
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
-        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+        let _devcontainer_up = devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
 
         let recorded = test_dependencies.docker.recorded_compose_build_services();
         let build_services = recorded
@@ -5838,7 +6086,10 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
-        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+        let _devcontainer_up = devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
 
         let files = test_dependencies.fs.files();
         let feature_dockerfile = files
@@ -5988,7 +6239,10 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             .unwrap();
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
-        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+        let _devcontainer_up = devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
 
         let docker_commands = test_dependencies
             .command_runner
@@ -6191,7 +6445,10 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
-        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+        let _devcontainer_up = devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
 
         let files = test_dependencies.fs.files();
 
@@ -6433,7 +6690,10 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
-        let devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+        let devcontainer_up = devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
 
         assert_eq!(
             devcontainer_up.extension_ids,
@@ -6637,7 +6897,10 @@ chmod +x ./install.sh
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
-        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+        let _devcontainer_up = devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
 
         let files = test_dependencies.fs.files();
 
@@ -6721,7 +6984,10 @@ chmod +x ./install.sh
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
-        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+        let _devcontainer_up = devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
 
         let files = test_dependencies.fs.files();
         let uid_dockerfile = files
@@ -6796,7 +7062,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
-        let devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+        let devcontainer_up = devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
 
         assert_eq!(
             devcontainer_up.remote_workspace_folder,
@@ -6842,7 +7111,10 @@ services:
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
-        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+        let _devcontainer_up = devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
 
         let files = test_dependencies.fs.files();
         let uid_dockerfile = files

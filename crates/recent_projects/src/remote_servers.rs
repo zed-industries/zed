@@ -2246,7 +2246,7 @@ impl RemoteServerProjects {
             let environment = context.environment(cx).await;
 
             let (dev_container_connection, starting_dir) =
-                match start_dev_container_with_config(context, config, environment).await {
+                match start_dev_container_with_config(context, config, environment, cx).await {
                     Ok((c, s)) => (c, s),
                     Err(e) => {
                         log::error!("Failed to start dev container: {:?}", e);
