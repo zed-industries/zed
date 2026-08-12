@@ -7985,8 +7985,10 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
 
 // Regression test for https://github.com/zed-industries/zed/issues/59077:
 // a "rename symbol" whose workspace edit also renames the file used to swap the
-// two files' contents. The edited content must end up in the renamed file.
-#[gpui::test]
+// two files' contents. The edited content must end up in the renamed file, and
+// the open buffer must follow the rename regardless of the order the filesystem
+// watcher reports the change (hence the seed iterations).
+#[gpui::test(iterations = 30)]
 async fn test_rename_that_also_renames_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -9223,7 +9225,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         let new_server = language_servers[i].next().await.unwrap_or_else(|| {
             panic!(
                 "Failed to get language server #{i} with name {}",
-                &language_server_names[i]
+                language_server_names[i]
             )
         });
         let new_server_name = new_server.server.name();
@@ -9618,7 +9620,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         let new_server = language_server_rxs[i].next().await.unwrap_or_else(|| {
             panic!(
                 "Failed to get language server #{i} with name {}",
-                &language_server_names[i]
+                language_server_names[i]
             )
         });
         let new_server_name = new_server.server.name();
