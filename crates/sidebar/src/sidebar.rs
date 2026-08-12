@@ -69,7 +69,9 @@ use workspace::{
     notifications::NotificationId, sidebar_side_context_menu,
 };
 
-use git_ui_core::worktree_service::{RemoteBranchName, worktree_create_targets};
+use git_ui_core::worktree_service::{
+    RemoteBranchName, WorktreeCreateTarget, worktree_branch_target, worktree_create_targets,
+};
 use zed_actions::editor::{MoveDown, MoveUp};
 use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, OpenRecent};
 
@@ -705,6 +707,31 @@ enum DefaultBranchCache {
     Resolved(Option<RemoteBranchName>),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SidebarWorktreeCreateTarget {
+    Immediate(WorktreeCreateTarget),
+    ChooseBaseBranch,
+}
+
+fn sidebar_worktree_create_targets(
+    has_multiple_repositories: bool,
+    default_branch: Option<RemoteBranchName>,
+    current_branch_name: Option<&str>,
+) -> Vec<SidebarWorktreeCreateTarget> {
+    let mut targets = worktree_create_targets(
+        has_multiple_repositories,
+        default_branch,
+        current_branch_name,
+    )
+    .into_iter()
+    .map(SidebarWorktreeCreateTarget::Immediate)
+    .collect::<Vec<_>>();
+    if !has_multiple_repositories {
+        targets.push(SidebarWorktreeCreateTarget::ChooseBaseBranch);
+    }
+    targets
+}
+
 // Mirrors the behavior of the worktree picker's "Create new worktree" entries.
 fn create_worktree_in_workspace(
     workspace: &Entity<Workspace>,
@@ -725,6 +752,61 @@ fn create_worktree_in_workspace(
             cx,
         );
     });
+}
+
+fn choose_worktree_base_in_workspace(
+    workspace: &Entity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let repository = workspace.read(cx).project().read(cx).active_repository(cx);
+    let selector_workspace = workspace.downgrade();
+    let callback_workspace = workspace.clone();
+    let on_select = Arc::new(move |branch, window: &mut Window, cx: &mut App| {
+        create_worktree_in_workspace(
+            &callback_workspace,
+            worktree_branch_target(&branch),
+            window,
+            cx,
+        );
+    });
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.toggle_modal(window, cx, move |window, cx| {
+            git_ui_core::build_branch_selector(
+                selector_workspace,
+                repository,
+                None,
+                on_select,
+                window,
+                cx,
+            )
+        });
+    });
+}
+
+#[cfg(test)]
+mod worktree_menu_tests {
+    use super::*;
+
+    #[test]
+    fn test_sidebar_worktree_create_targets_include_choose_base_only_for_single_repository() {
+        assert_eq!(
+            sidebar_worktree_create_targets(false, None, None),
+            vec![
+                SidebarWorktreeCreateTarget::Immediate(
+                    git_ui_core::worktree_service::WorktreeCreateTarget::CurrentBranch,
+                ),
+                SidebarWorktreeCreateTarget::ChooseBaseBranch,
+            ]
+        );
+        assert_eq!(
+            sidebar_worktree_create_targets(true, None, None),
+            vec![SidebarWorktreeCreateTarget::Immediate(
+                git_ui_core::worktree_service::WorktreeCreateTarget::CurrentBranch,
+            )]
+        );
+    }
 }
 
 /// The sidebar re-derives its entire entry list from scratch on every
@@ -2661,29 +2743,46 @@ impl Sidebar {
                                     .ok()
                                     .flatten();
 
-                                let targets = worktree_create_targets(
+                                let targets = sidebar_worktree_create_targets(
                                     has_multiple_repositories,
                                     default_branch,
                                     current_branch.as_deref(),
                                 );
                                 for target in targets {
-                                    let label = format!(
-                                        "Based on {}",
-                                        target.branch_label(
-                                            has_multiple_repositories,
-                                            current_branch.as_deref(),
-                                        )
-                                    );
-                                    let branch_target = target.branch_target();
-                                    let workspace = base_workspace.clone();
-                                    submenu = submenu.entry(label, None, move |window, cx| {
-                                        create_worktree_in_workspace(
-                                            &workspace,
-                                            branch_target.clone(),
-                                            window,
-                                            cx,
-                                        );
-                                    });
+                                    match target {
+                                        SidebarWorktreeCreateTarget::Immediate(target) => {
+                                            let label = format!(
+                                                "Based on {}",
+                                                target.branch_label(
+                                                    has_multiple_repositories,
+                                                    current_branch.as_deref(),
+                                                )
+                                            );
+                                            let branch_target = target.branch_target();
+                                            let workspace = base_workspace.clone();
+                                            submenu =
+                                                submenu.entry(label, None, move |window, cx| {
+                                                    create_worktree_in_workspace(
+                                                        &workspace,
+                                                        branch_target.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                        }
+                                        SidebarWorktreeCreateTarget::ChooseBaseBranch => {
+                                            let workspace = base_workspace.clone();
+                                            submenu = submenu.entry(
+                                                "Choose Base Branch…",
+                                                None,
+                                                move |window, cx| {
+                                                    choose_worktree_base_in_workspace(
+                                                        &workspace, window, cx,
+                                                    );
+                                                },
+                                            );
+                                        }
+                                    }
                                 }
 
                                 submenu

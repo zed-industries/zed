@@ -23,7 +23,7 @@ use workspace::{
 };
 use zed_actions::NewWorktreeBranchTarget;
 
-use git::repository::{FetchOptions, Remote};
+use git::repository::{Branch, FetchOptions, Remote};
 
 use util::ResultExt as _;
 
@@ -93,6 +93,24 @@ impl WorktreeCreateTarget {
                     current_branch_name.unwrap_or("HEAD").to_string()
                 }
             }
+        }
+    }
+}
+
+pub fn worktree_branch_target(branch: &Branch) -> NewWorktreeBranchTarget {
+    if let Some(remote_name) = branch.remote_name() {
+        let branch_name = branch
+            .name()
+            .strip_prefix(remote_name)
+            .and_then(|name| name.strip_prefix('/'))
+            .unwrap_or(branch.name());
+        NewWorktreeBranchTarget::RemoteBranch {
+            remote_name: remote_name.to_string(),
+            branch_name: branch_name.to_string(),
+        }
+    } else {
+        NewWorktreeBranchTarget::ExistingBranch {
+            name: branch.name().to_string(),
         }
     }
 }

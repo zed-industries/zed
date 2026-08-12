@@ -25,7 +25,9 @@ use workspace::{
 };
 
 use crate::notifications::show_error_toast;
-use crate::worktree_service::{RemoteBranchName, WorktreeCreateTarget, worktree_create_targets};
+use crate::worktree_service::{
+    RemoteBranchName, WorktreeCreateTarget, worktree_branch_target, worktree_create_targets,
+};
 use zed_actions::{
     CreateWorktree, NewWorktreeBranchTarget, OpenWorktreeInNewWindow, OpenWorktreeSetupTasks,
     SwitchWorktree,
@@ -307,25 +309,9 @@ struct WorktreePickerDelegate {
 }
 
 fn create_worktree_action(branch: &Branch, worktree_name: Option<String>) -> CreateWorktree {
-    let branch_target = if let Some(remote_name) = branch.remote_name() {
-        let branch_name = branch
-            .name()
-            .strip_prefix(remote_name)
-            .and_then(|name| name.strip_prefix('/'))
-            .unwrap_or(branch.name());
-        NewWorktreeBranchTarget::RemoteBranch {
-            remote_name: remote_name.to_string(),
-            branch_name: branch_name.to_string(),
-        }
-    } else {
-        NewWorktreeBranchTarget::ExistingBranch {
-            name: branch.name().to_string(),
-        }
-    };
-
     CreateWorktree {
         worktree_name,
-        branch_target,
+        branch_target: worktree_branch_target(branch),
     }
 }
 
