@@ -262,6 +262,7 @@ image.workspace = true
 pkg-config = "0.3.22"
 
 [dev-dependencies]
+activity_indicator = { workspace = true, features = ["test-support"] }
 call = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }

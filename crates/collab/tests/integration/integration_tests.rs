@@ -2540,6 +2540,65 @@ async fn test_propagate_saves_and_fs_changes(
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_unloaded_entries_sync_to_guests(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_a.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_depth = Some(1);
+            });
+        });
+    });
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "junk": {
+                    "x": {
+                        "deep.txt": ""
+                    }
+                },
+                "top.txt": ""
+            }),
+        )
+        .await;
+
+    let (project_a, _) = client_a.build_local_project(path!("/a"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let worktree_b = project_b.read_with(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
+    worktree_b.read_with(cx_b, |tree, _| {
+        assert_eq!(
+            tree.entry_for_path(rel_path("junk"))
+                .map(|entry| entry.kind),
+            Some(worktree::EntryKind::UnloadedDir)
+        );
+        assert_eq!(tree.entry_for_path(rel_path("junk/x")), None);
+        assert_eq!(tree.deferred_scan_dir_count(), 1);
+    });
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_git_diff_base_change(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,

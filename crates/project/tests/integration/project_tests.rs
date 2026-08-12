@@ -13909,6 +13909,16 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
         .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
+    let _buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(root_path.join("projects/project1/a"), cx)
+        })
+        .await
+        .unwrap();
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
 
     let repository = project.read_with(cx, |project, cx| {
         project.repositories(cx).values().next().unwrap().clone()

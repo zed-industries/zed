@@ -459,7 +459,8 @@ CREATE TABLE public.worktree_entries (
     is_external boolean DEFAULT false NOT NULL,
     is_fifo boolean DEFAULT false NOT NULL,
     canonical_path text,
-    is_hidden boolean DEFAULT false NOT NULL
+    is_hidden boolean DEFAULT false NOT NULL,
+    is_unloaded boolean DEFAULT false NOT NULL
 );
 
 CREATE TABLE public.worktree_settings_files (
