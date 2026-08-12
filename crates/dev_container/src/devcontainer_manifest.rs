@@ -11,7 +11,12 @@ use regex::Regex;
 use fs::Fs;
 use gpui::AsyncApp;
 use http_client::HttpClient;
-use util::{ResultExt, command::Command, normalize_path, paths::RemotePathBuf};
+use util::{
+    ResultExt,
+    command::Command,
+    normalize_path,
+    paths::{PathStyle, RemotePathBuf},
+};
 
 use crate::{
     DevContainerConfig, DevContainerContext, DevContainerHost,
@@ -94,12 +99,12 @@ impl DevContainerManifest {
         local_project_path: &Path,
         devcontainer_contents: String,
     ) -> Result<Self, DevContainerError> {
-        let config_path = config_path_for(local_project_path, &local_config);
+        let config_path = config_path_for(&context.host, local_project_path, &local_config);
         log::debug!("parsing devcontainer json found in {config_path:?}");
 
         let devcontainer = deserialize_devcontainer_json(&devcontainer_contents)?;
 
-        let devcontainer_directory = config_path.parent().ok_or_else(|| {
+        let devcontainer_directory = context.host.parent(&config_path).ok_or_else(|| {
             log::error!("Dev container file should be in a directory");
             DevContainerError::NotInValidProject
         })?;
@@ -121,7 +126,7 @@ impl DevContainerManifest {
             config: ConfigStatus::Deserialized(devcontainer),
             local_project_directory: local_project_path.to_path_buf(),
             local_environment: environment,
-            config_directory: devcontainer_directory.to_path_buf(),
+            config_directory: devcontainer_directory,
             file_name: file_name.to_string(),
             root_image: None,
             features_build_info: None,
@@ -146,11 +151,17 @@ impl DevContainerManifest {
         let labels = vec![
             (
                 "devcontainer.local_folder",
-                normalize_label_path(&self.local_project_directory.display().to_string()),
+                normalize_label_path(
+                    &self.local_project_directory.display().to_string(),
+                    self.host.path_style(),
+                ),
             ),
             (
                 "devcontainer.config_file",
-                normalize_label_path(&self.config_file().display().to_string()),
+                normalize_label_path(
+                    &self.config_file().display().to_string(),
+                    self.host.path_style(),
+                ),
             ),
         ];
         labels
@@ -288,7 +299,8 @@ impl DevContainerManifest {
     }
 
     fn config_file(&self) -> PathBuf {
-        self.config_directory.join(&self.file_name)
+        self.host
+            .join(&self.config_directory, Path::new(&self.file_name))
     }
 
     fn dev_container(&self) -> &DevContainer {
@@ -2230,11 +2242,25 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
     fn local_workspace_folder(&self) -> String {
         self.local_project_directory.display().to_string()
     }
+
+    /// The last component of the project directory, split in the host's style.
+    ///
+    /// `Path::file_name` splits in the style of the machine running Zed, which
+    /// finds no separators at all in a `C:\\projects\\app` path on a POSIX
+    /// client and would hand the whole path back as the name.
     fn local_workspace_base_name(&self) -> Result<String, DevContainerError> {
-        self.local_project_directory
-            .file_name()
-            .map(|f| f.display().to_string())
-            .ok_or(DevContainerError::DevContainerParseFailed)
+        let folder = self.local_workspace_folder();
+        // Not `PathStyle::split`: that only looks for the primary separator,
+        // and a Windows host accepts forward slashes too.
+        let base_name = folder
+            .rsplit(self.host.path_style().separators_ch())
+            .next()
+            .unwrap_or_default();
+        if base_name.is_empty() {
+            log::error!("The project directory has no final component: {folder}");
+            return Err(DevContainerError::DevContainerParseFailed);
+        }
+        Ok(base_name.to_string())
     }
 
     fn remote_workspace_folder(&self) -> Result<PathBuf, DevContainerError> {
@@ -2254,32 +2280,34 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             ))
             .ok_or(DevContainerError::DevContainerParseFailed)
     }
+    /// The last component of the workspace folder *inside* the container,
+    /// which is a POSIX path regardless of either machine's platform.
     fn remote_workspace_base_name(&self) -> Result<String, DevContainerError> {
-        self.remote_workspace_folder().and_then(|f| {
-            f.file_name()
-                .map(|file_name| file_name.display().to_string())
-                .ok_or(DevContainerError::DevContainerParseFailed)
-        })
+        let folder = self.remote_workspace_folder()?;
+        let folder = folder.display().to_string();
+        let base_name = folder
+            .rsplit(PathStyle::Unix.separators_ch())
+            .next()
+            .unwrap_or_default();
+        if base_name.is_empty() {
+            log::error!("The container workspace folder has no final component: {folder}");
+            return Err(DevContainerError::DevContainerParseFailed);
+        }
+        Ok(base_name.to_string())
     }
 
     fn remote_workspace_mount(&self) -> Result<MountDefinition, DevContainerError> {
         if let Some(mount) = &self.dev_container().workspace_mount {
             return Ok(mount.clone());
         }
-        let Some(project_directory_name) = self.local_project_directory.file_name() else {
-            return Err(DevContainerError::DevContainerParseFailed);
-        };
+        let project_directory_name = self.local_workspace_base_name()?;
 
         Ok(MountDefinition {
             source: Some(self.local_workspace_folder()),
             // We explicitly use "/" here, instead of PathBuf::join
-            // because we want the remote target to use unix-style filepaths,
-            // even on a Windows host
-            target: format!(
-                "{}/{}",
-                PathBuf::from(DEFAULT_REMOTE_PROJECT_DIR).display(),
-                project_directory_name.display()
-            ),
+            // because the target is a path inside the container, which is
+            // unix-style even when the host is Windows
+            target: format!("{DEFAULT_REMOTE_PROJECT_DIR}/{project_directory_name}"),
             mount_type: None,
         })
     }
@@ -2823,8 +2851,12 @@ pub(crate) struct FeaturesBuildInfo {
 /// The absolute path of a discovered configuration, given the project it was
 /// discovered in. [`DevContainerConfig::config_path`] is relative to the
 /// project root.
-fn config_path_for(local_project_path: &Path, config: &DevContainerConfig) -> PathBuf {
-    local_project_path.join(&config.config_path)
+fn config_path_for(
+    host: &DevContainerHost,
+    local_project_path: &Path,
+    config: &DevContainerConfig,
+) -> PathBuf {
+    host.join(local_project_path, &config.config_path)
 }
 
 /// Reads the raw contents of a devcontainer configuration.
@@ -2863,7 +2895,7 @@ pub(crate) async fn read_devcontainer_configuration(
 ) -> Result<DevContainer, DevContainerError> {
     let docker_client = container_client_for(context).await;
     let project_path = context.project_directory.as_ref();
-    let config_path = config_path_for(project_path, &config);
+    let config_path = config_path_for(&context.host, project_path, &config);
     let devcontainer_contents = load_devcontainer_contents(context, &config_path).await?;
     let mut dev_container = DevContainerManifest::new(
         context,
@@ -2886,7 +2918,7 @@ pub(crate) async fn spawn_dev_container(
     cx: &mut AsyncApp,
 ) -> Result<DevContainerUp, DevContainerError> {
     let docker_client = container_client_for(context).await;
-    let config_path = config_path_for(local_project_path, &config);
+    let config_path = config_path_for(&context.host, local_project_path, &config);
     let devcontainer_contents = load_devcontainer_contents(context, &config_path).await?;
     let mut devcontainer_manifest = DevContainerManifest::new(
         context,
@@ -3611,21 +3643,23 @@ fn build_devcontainer_metadata_entry(
         .collect()
 }
 
-fn normalize_label_path(path: &str) -> String {
-    #[cfg(not(target_os = "windows"))]
-    {
-        path.to_string()
+/// Renders a path the way the container's labels must record it.
+///
+/// The labels describe the engine host's filesystem and are matched against
+/// labels written by earlier runs and by the reference CLI, so the style is
+/// the host's — not that of the machine running Zed. A Windows host takes
+/// backslashes and a lowercase drive letter, which is what the CLI writes.
+fn normalize_label_path(path: &str, path_style: PathStyle) -> String {
+    if path_style.is_posix() {
+        return path.to_string();
     }
-    #[cfg(target_os = "windows")]
-    {
-        let normalized = path.replace('/', "\\");
-        if normalized.len() >= 2 && normalized.as_bytes()[1] == b':' {
-            let mut result = normalized[..1].to_lowercase();
-            result.push_str(&normalized[1..]);
-            result
-        } else {
-            normalized
-        }
+    let normalized = path.replace('/', "\\");
+    if normalized.len() >= 2 && normalized.as_bytes()[1] == b':' {
+        let mut result = normalized[..1].to_lowercase();
+        result.push_str(&normalized[1..]);
+        result
+    } else {
+        normalized
     }
 }
 
@@ -3655,7 +3689,10 @@ mod test {
         worktree_store::{WorktreeIdCounter, WorktreeStore},
     };
     use serde_json_lenient::Value;
-    use util::{command::Command, paths::SanitizedPath};
+    use util::{
+        command::Command,
+        paths::{PathStyle, SanitizedPath},
+    };
 
     use crate::{
         DevContainerConfig, DevContainerContext, DevContainerHost,
@@ -3761,6 +3798,77 @@ mod test {
             DevContainerHost::Local,
         )
         .await
+    }
+
+    /// Labels and mounts describe the engine host's filesystem. Rendering them
+    /// in the client's style is the classic cross-platform break: a POSIX
+    /// remote opened from Windows would get backslashed labels, so Zed would
+    /// fail to match the container it created a moment earlier — or match one
+    /// belonging to a different project.
+    #[gpui::test]
+    async fn labels_and_mounts_follow_the_host_path_style(cx: &mut TestAppContext) {
+        for (path_style, project_directory, expected_label) in [
+            (PathStyle::Unix, "/home/dev/app", "/home/dev/app"),
+            (PathStyle::Windows, "C:/projects/app", "c:\\projects\\app"),
+        ] {
+            let (_, mut devcontainer_manifest) =
+                init_default_devcontainer_manifest(cx, r#"{ "image": "test_image:latest" }"#)
+                    .await
+                    .unwrap();
+
+            // The manifest is built against the local fake filesystem and then
+            // pointed at a host path, so that the discovery I/O does not have
+            // to be a Windows filesystem for the Windows case.
+            devcontainer_manifest.host = DevContainerHost::Remote(Arc::new(
+                crate::FakeRemoteConnection::with_path_style(path_style),
+            ));
+            devcontainer_manifest.local_project_directory = PathBuf::from(project_directory);
+            devcontainer_manifest.config_directory = devcontainer_manifest
+                .host
+                .join(Path::new(project_directory), Path::new(".devcontainer"));
+
+            let labels = devcontainer_manifest.identifying_labels();
+            let local_folder = labels
+                .iter()
+                .find(|(key, _)| *key == "devcontainer.local_folder")
+                .map(|(_, value)| value.clone())
+                .expect("the local folder label is always emitted");
+            assert_eq!(
+                local_folder, expected_label,
+                "{path_style:?} host label must be written in the host's style"
+            );
+
+            assert_eq!(
+                devcontainer_manifest.local_workspace_base_name().unwrap(),
+                "app",
+                "{path_style:?} host project name must be split in the host's style"
+            );
+
+            let config_file = labels
+                .iter()
+                .find(|(key, _)| *key == "devcontainer.config_file")
+                .map(|(_, value)| value.clone())
+                .expect("the config file label is always emitted");
+            assert_eq!(
+                config_file,
+                super::normalize_label_path(
+                    &format!("{project_directory}/.devcontainer/devcontainer.json"),
+                    path_style
+                ),
+                "{path_style:?} host config label must be joined in the host's style"
+            );
+
+            let mount = devcontainer_manifest.remote_workspace_mount().unwrap();
+            assert_eq!(
+                mount.source.as_deref(),
+                Some(project_directory),
+                "the bind mount source is a path on the host, passed through unchanged"
+            );
+            assert_eq!(
+                mount.target, "/workspaces/app",
+                "the bind mount target is a path inside the container, always POSIX"
+            );
+        }
     }
 
     /// Build inputs are generated locally — the OCI downloads and template
@@ -3956,7 +4064,7 @@ mod test {
             command_runner: command_runner.clone(),
         };
         let project_path = PathBuf::from(TEST_PROJECT_PATH);
-        let config_path = config_path_for(&project_path, &local_config);
+        let config_path = config_path_for(&context.host, &project_path, &local_config);
         let contents = load_devcontainer_contents(&context, &config_path).await?;
         let manifest = DevContainerManifest::new(
             &context,
@@ -4114,14 +4222,17 @@ mod test {
         assert_eq!(docker_run_command.get_program(), "docker");
         let expected_local_folder_label = format!(
             "devcontainer.local_folder={}",
-            super::normalize_label_path(TEST_PROJECT_PATH)
+            super::normalize_label_path(TEST_PROJECT_PATH, PathStyle::local())
         );
         let expected_config_file_path = PathBuf::from(TEST_PROJECT_PATH)
             .join(".devcontainer")
             .join("devcontainer.json");
         let expected_config_file_label = format!(
             "devcontainer.config_file={}",
-            super::normalize_label_path(&expected_config_file_path.display().to_string())
+            super::normalize_label_path(
+                &expected_config_file_path.display().to_string(),
+                PathStyle::local(),
+            )
         );
         assert_eq!(
             docker_run_command.get_args().collect::<Vec<&OsStr>>(),

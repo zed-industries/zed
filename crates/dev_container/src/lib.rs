@@ -113,6 +113,46 @@ pub enum DevContainerHost {
 }
 
 impl DevContainerHost {
+    /// How the host writes paths.
+    ///
+    /// Every path that reaches an engine command, a bind mount, or a container
+    /// label describes the host's filesystem, so it must be rendered in this
+    /// style rather than the style of the machine running Zed.
+    pub(crate) fn path_style(&self) -> util::paths::PathStyle {
+        match self {
+            DevContainerHost::Local => util::paths::PathStyle::local(),
+            DevContainerHost::Remote(connection) => connection.path_style(),
+        }
+    }
+
+    /// Joins a relative path onto a host path.
+    ///
+    /// `Path::join` and `Path::parent` split on the separators of the machine
+    /// running Zed, which mangles a host path written in the other style.
+    pub(crate) fn join(&self, base: &Path, relative: &Path) -> std::path::PathBuf {
+        let DevContainerHost::Remote(_) = self else {
+            return base.join(relative);
+        };
+        let path_style = self.path_style();
+        match path_style.join(base, relative) {
+            Some(joined) => std::path::PathBuf::from(path_style.normalize(&joined)),
+            None => base.join(relative),
+        }
+    }
+
+    /// The directory containing `path`, split in the host's style.
+    pub(crate) fn parent(&self, path: &Path) -> Option<std::path::PathBuf> {
+        let DevContainerHost::Remote(_) = self else {
+            return path.parent().map(Path::to_path_buf);
+        };
+        let path = path.display().to_string();
+        let index = path.rfind(self.path_style().separators_ch())?;
+        if index == 0 {
+            return Some(std::path::PathBuf::from(&path[..1]));
+        }
+        Some(std::path::PathBuf::from(&path[..index]))
+    }
+
     /// Builds the process Zed spawns in order to run `program args` on this
     /// host, with `working_dir` interpreted as a path on the host.
     ///
@@ -167,10 +207,27 @@ impl DevContainerHost {
 /// the working directory were applied by the transport rather than by the
 /// caller.
 #[cfg(test)]
-#[derive(Default)]
 pub(crate) struct FakeRemoteConnection {
     /// Every `(source, destination)` pair handed to [`RemoteConnection::upload_directory`].
     pub(crate) uploads: std::sync::Mutex<Vec<(std::path::PathBuf, String)>>,
+    path_style: util::paths::PathStyle,
+}
+
+#[cfg(test)]
+impl Default for FakeRemoteConnection {
+    fn default() -> Self {
+        Self::with_path_style(util::paths::PathStyle::Unix)
+    }
+}
+
+#[cfg(test)]
+impl FakeRemoteConnection {
+    pub(crate) fn with_path_style(path_style: util::paths::PathStyle) -> Self {
+        Self {
+            uploads: std::sync::Mutex::new(Vec::new()),
+            path_style,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -249,7 +306,7 @@ impl RemoteConnection for FakeRemoteConnection {
     }
 
     fn path_style(&self) -> util::paths::PathStyle {
-        util::paths::PathStyle::Unix
+        self.path_style
     }
 
     fn remote_platform(&self) -> remote::RemotePlatform {
