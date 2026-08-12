@@ -1754,6 +1754,8 @@ pub async fn open_remote_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{cell::RefCell, rc::Rc};
+
     use fs::FakeFs;
 
     use gpui::{AppContext, TestAppContext, VisualTestContext};
@@ -1764,6 +1766,40 @@ mod tests {
     use settings::SettingsStore;
     use util::path;
     use workspace::MultiWorkspace;
+
+    struct TestBranchSelector(FocusHandle);
+
+    impl EventEmitter<DismissEvent> for TestBranchSelector {}
+
+    impl Focusable for TestBranchSelector {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
+            self.0.clone()
+        }
+    }
+
+    impl Render for TestBranchSelector {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().track_focus(&self.0)
+        }
+    }
+
+    fn install_test_branch_selector(
+        cx: &mut VisualTestContext,
+    ) -> Rc<RefCell<Option<crate::SelectBranchCallback>>> {
+        let selected_callback = Rc::new(RefCell::new(None));
+        let callback_capture = selected_callback.clone();
+        cx.update(|_, cx| {
+            crate::set_branch_selector_builder(
+                move |_, _, _, on_select, _, cx| {
+                    *callback_capture.borrow_mut() = Some(on_select);
+                    let selector = cx.new(|cx| TestBranchSelector(cx.focus_handle()));
+                    crate::GitPickerPopover::new(selector, cx)
+                },
+                cx,
+            );
+        });
+        selected_callback
+    }
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1885,6 +1921,44 @@ mod tests {
         cx.run_until_parked();
 
         (fs, worktree_picker, repository, worktree_path, cx)
+    }
+
+    async fn select_named_worktree_entry(
+        worktree_picker: &Entity<WorktreePicker>,
+        query: &str,
+        expected_name: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        let update_matches = worktree_picker.update_in(cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker
+                    .delegate
+                    .update_matches(query.to_string(), window, cx)
+            })
+        });
+        update_matches.await;
+        cx.run_until_parked();
+
+        worktree_picker.update(cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                assert!(matches!(
+                    picker.delegate.matches.get(picker.delegate.selected_index),
+                    Some(WorktreeEntry::CreateNamed { name, .. }) if name == expected_name
+                ));
+            });
+        });
+    }
+
+    async fn repo_worktree_count(
+        repository: &Entity<project::git_store::Repository>,
+        cx: &mut VisualTestContext,
+    ) -> usize {
+        repository
+            .update(cx, |repository, _| repository.worktrees())
+            .await
+            .unwrap()
+            .unwrap()
+            .len()
     }
 
     fn worktree_index(
@@ -2108,6 +2182,80 @@ mod tests {
                 );
             });
         });
+    }
+
+    #[gpui::test]
+    async fn test_named_worktree_waits_for_branch_selection_before_creation(
+        cx: &mut TestAppContext,
+    ) {
+        let (_fs, worktree_picker, repository, _worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+        let selected_callback = install_test_branch_selector(&mut cx);
+        select_named_worktree_entry(&worktree_picker, "feature name", "feature-name", &mut cx)
+            .await;
+        let worktree_count = repo_worktree_count(&repository, &mut cx).await;
+
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.confirm(false, window, cx);
+            });
+        });
+
+        assert!(
+            selected_callback.borrow().is_some(),
+            "confirming a named entry should open the branch selector"
+        );
+        assert_eq!(
+            repo_worktree_count(&repository, &mut cx).await,
+            worktree_count,
+            "worktree creation should wait for the branch callback"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cancelling_branch_selection_does_not_create_worktree(cx: &mut TestAppContext) {
+        let (_fs, worktree_picker, repository, _worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+        let _selected_callback = install_test_branch_selector(&mut cx);
+        select_named_worktree_entry(&worktree_picker, "feature name", "feature-name", &mut cx)
+            .await;
+        let worktree_count = repo_worktree_count(&repository, &mut cx).await;
+        let workspace = worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker
+                .picker
+                .read(cx)
+                .delegate
+                .workspace
+                .upgrade()
+                .expect("test workspace should still be available")
+        });
+
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.confirm(false, window, cx);
+            });
+        });
+
+        let selector = workspace.update(&mut cx, |workspace, cx| {
+            workspace
+                .active_modal::<crate::GitPickerPopover>(cx)
+                .expect("branch selector should be open")
+        });
+        selector.update(&mut cx, |_, cx| cx.emit(DismissEvent));
+        cx.run_until_parked();
+
+        assert!(
+            workspace
+                .read_with(&cx, |workspace, cx| workspace
+                    .active_modal::<crate::GitPickerPopover>(cx)
+                    .is_none()),
+            "cancelling should dismiss the branch selector"
+        );
+        assert_eq!(
+            repo_worktree_count(&repository, &mut cx).await,
+            worktree_count,
+            "cancelling branch selection should not create a worktree"
+        );
     }
 
     #[gpui::test]
