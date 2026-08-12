@@ -2047,6 +2047,7 @@ impl Editor {
             .selections
             .all::<MultiBufferOffset>(&self.display_snapshot(cx));
         let buffer = self.buffer.read(cx).read(cx);
+        let mut changed = false;
         let new_selections = self
             .selections_with_autoclose_regions(selections, &buffer)
             .map(|(mut selection, region)| {
@@ -2064,11 +2065,16 @@ impl Editor {
                             range.end += region.pair.end.len();
                             selection.start = range.start;
                             selection.end = range.end;
+                            changed = true;
 
                             return selection;
                         }
                     }
                 }
+
+                let Some(scope) = buffer.language_scope_at(selection.start) else {
+                    return selection;
+                };
 
                 let always_treat_brackets_as_autoclosed = buffer
                     .language_settings_at(selection.start, cx)
@@ -2078,35 +2084,36 @@ impl Editor {
                     return selection;
                 }
 
-                if let Some(scope) = buffer.language_scope_at(selection.start) {
-                    for (pair, enabled) in scope.brackets() {
-                        if !enabled || !pair.close {
-                            continue;
-                        }
+                for (pair, enabled) in scope.brackets() {
+                    if !enabled || !pair.close {
+                        continue;
+                    }
 
-                        if buffer.contains_str_at(selection.start, &pair.end) {
-                            let pair_start_len = pair.start.len();
-                            if buffer.contains_str_at(
-                                selection.start.saturating_sub_usize(pair_start_len),
-                                &pair.start,
-                            ) {
-                                selection.start -= pair_start_len;
-                                selection.end += pair.end.len();
+                    if buffer.contains_str_at(selection.start, &pair.end) {
+                        let pair_start_len = pair.start.len();
+                        if buffer.contains_str_at(
+                            selection.start.saturating_sub_usize(pair_start_len),
+                            &pair.start,
+                        ) {
+                            selection.start -= pair_start_len;
+                            selection.end += pair.end.len();
+                            changed = true;
 
-                                return selection;
-                            }
+                            return selection;
                         }
                     }
                 }
 
                 selection
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         drop(buffer);
-        self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-            selections.select(new_selections)
-        });
+        if changed {
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select(new_selections)
+            });
+        }
     }
 
     /// Remove any autoclose regions that no longer contain their selection or have invalid anchors in ranges.
