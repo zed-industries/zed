@@ -812,8 +812,8 @@ impl gpui::Element for BreadcrumbStrip {
         let menu_element = match (menu, menu_anchor_bounds) {
             (Some(menu), Some(anchor_bounds)) => {
                 let offset = point(
-                    -(rems_from_px(5. - SEGMENT_TRIGGER_PADDING_X) * window.rem_size()),
-                    rems_from_px(2.) * window.rem_size(),
+                    -(rems_from_px(5_f32 - SEGMENT_TRIGGER_PADDING_X) * window.rem_size()),
+                    rems_from_px(2_f32) * window.rem_size(),
                 );
                 let position = point(
                     anchor_bounds.origin.x + offset.x,
