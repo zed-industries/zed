@@ -17,7 +17,7 @@ use alacritty_terminal::{
     },
     sync::FairMutex,
     term::{
-        Config, Osc52, RenderableCursor, Term, TermMode,
+        Config, Osc52, RenderableCursor, SEMANTIC_ESCAPE_CHARS, Term, TermMode,
         cell::{Cell as AlacCell, Flags, Hyperlink as AlacHyperlink},
         search::{Match, RegexIter, RegexSearch},
     },
@@ -123,6 +123,7 @@ pub(super) fn display_only_term_config(
     Config {
         scrolling_history,
         default_cursor_style: alacritty_cursor_style(cursor_shape),
+        semantic_escape_chars: format!("{SEMANTIC_ESCAPE_CHARS}─"),
         osc52: Osc52::Disabled,
         ..Config::default()
     }
@@ -135,6 +136,7 @@ pub(super) fn pty_term_config(
     Config {
         scrolling_history,
         default_cursor_style: alacritty_cursor_style(cursor_shape),
+        semantic_escape_chars: format!("{SEMANTIC_ESCAPE_CHARS}─"),
         ..Config::default()
     }
 }
@@ -804,6 +806,19 @@ pub(super) fn shrink_to_used(term: &mut Term<ZedListener>) {
     term.grid_mut().truncate();
 }
 
+pub(super) fn used_lines(term: &Term<ZedListener>) -> usize {
+    if term.mode().contains(TermMode::ALT_SCREEN) {
+        return term.total_lines();
+    }
+    let grid = term.grid();
+    let cursor_line = grid.cursor.point.line.0.max(0) as usize;
+    let last_occupied_line = (cursor_line + 1..term.screen_lines())
+        .rev()
+        .find(|&line| !grid[Line(line as i32)].is_clear())
+        .unwrap_or(cursor_line);
+    term.history_size() + last_occupied_line + 1
+}
+
 pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> Content {
     let content = term.renderable_content();
 
@@ -1100,5 +1115,24 @@ mod tests {
                 is_block: true,
             }
         );
+    }
+
+    #[test]
+    fn semantic_selection_stops_at_tree_branch() {
+        let config = pty_term_config(1000, SettingsCursorShape::default());
+        let (events_tx, _events_rx) = futures::channel::mpsc::unbounded();
+        let mut term = Term::new(config, &TerminalBounds::default(), ZedListener(events_tx));
+        for character in "└─zms-demo.target".chars() {
+            term.input(character);
+        }
+
+        let selection = Selection::new(
+            SelectionType::Semantic,
+            Point::new(0, 2),
+            SelectionSide::Left,
+        );
+        set_selection(&mut term, Some(&selection));
+
+        assert_eq!(selection_text(&term).as_deref(), Some("zms-demo.target"));
     }
 }

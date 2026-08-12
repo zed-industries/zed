@@ -50,7 +50,7 @@ pub struct WorktreePaths {
 
 impl PartialEq for WorktreePaths {
     fn eq(&self, other: &Self) -> bool {
-        self.paths == other.paths && self.main_paths == other.main_paths
+        self.ordered_pairs().eq(other.ordered_pairs())
     }
 }
 
@@ -1402,7 +1402,7 @@ impl WorktreeStore {
         let entry_id = ProjectEntryId::from_proto(request.entry_id);
         let new_worktree_id = WorktreeId::from_proto(request.new_worktree_id);
         let rel_path = RelPath::from_unix_str(&request.new_path)
-            .with_context(|| format!("received invalid relative path {:?}", &request.new_path))?;
+            .with_context(|| format!("received invalid relative path {:?}", request.new_path))?;
 
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
             let worktree = this
@@ -1483,6 +1483,7 @@ impl WorktreeStore {
                 let folder_path = snapshot.abs_path().to_path_buf();
                 let main_path = snapshot
                     .root_repo_common_dir()
+                    .filter(|dir| !crate::git_store::is_submodule_git_dir(dir))
                     .map(|dir| crate::git_store::repo_identity_path(dir))
                     .filter(|repo_path| {
                         snapshot.root_repo_is_linked_worktree()
