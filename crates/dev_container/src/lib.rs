@@ -9,7 +9,7 @@ use http_client::anyhow;
 use picker::Picker;
 use picker::PickerDelegate;
 use project::ProjectEnvironment;
-use remote::RemoteConnection;
+use remote::{RemoteClient, RemoteConnection};
 use settings::RegisterSetting;
 use settings::Settings;
 use std::collections::HashMap;
@@ -333,9 +333,38 @@ impl RemoteConnection for FakeRemoteConnection {
     }
 }
 
+/// Which machine's shell environment applies to a dev container's
+/// configuration — the environment that `${localEnv:...}` resolves against and
+/// that lifecycle commands inherit.
+#[derive(Debug, PartialEq, Eq)]
+enum EnvironmentSource {
+    /// The machine running Zed.
+    Local,
+    /// The machine whose engine builds the container.
+    Host,
+    /// The host's environment cannot be reached, so no environment applies.
+    /// Falling back to this machine's would be wrong: it would resolve
+    /// `${localEnv:PATH}` against a filesystem the container never sees.
+    Unavailable,
+}
+
+/// `has_remote_client` is whether a proto connection to the host's Zed server
+/// is available; reading the host's environment is an RPC, so a remote host
+/// without one has no environment to offer.
+fn environment_source(host: &DevContainerHost, has_remote_client: bool) -> EnvironmentSource {
+    match (host, has_remote_client) {
+        (DevContainerHost::Local, _) => EnvironmentSource::Local,
+        (DevContainerHost::Remote(_), true) => EnvironmentSource::Host,
+        (DevContainerHost::Remote(_), false) => EnvironmentSource::Unavailable,
+    }
+}
+
 pub struct DevContainerContext {
     pub project_directory: Arc<Path>,
     pub host: DevContainerHost,
+    /// The connection to the host's Zed server, when the project is remote.
+    /// Used for host operations that are proto requests rather than commands.
+    pub remote_client: Option<Entity<RemoteClient>>,
     pub use_podman: bool,
     pub use_buildkit: Option<bool>,
     pub fs: Arc<dyn Fs>,
@@ -352,9 +381,11 @@ impl DevContainerContext {
         let http_client = cx.http_client().clone();
         let fs = workspace.app_state().fs.clone();
         let environment = workspace.project().read(cx).environment().downgrade();
+        let remote_client = workspace.project().read(cx).remote_client();
         Some(Self {
             project_directory,
             host: DevContainerHost::Local,
+            remote_client,
             use_podman,
             use_buildkit,
             fs,
@@ -363,15 +394,72 @@ impl DevContainerContext {
         })
     }
 
+    /// The shell environment the configuration is resolved against.
+    ///
+    /// It has to come from the machine the container is built on: a remote dev
+    /// container's `${localEnv:...}` references and lifecycle commands see the
+    /// host's environment, not this machine's.
     pub async fn environment(&self, cx: &mut impl AppContext) -> HashMap<String, String> {
-        let Ok(task) = self.environment.update(cx, |this, cx| {
-            this.local_directory_environment(&Shell::System, self.project_directory.clone(), cx)
-        }) else {
+        let task = match environment_source(&self.host, self.remote_client.is_some()) {
+            EnvironmentSource::Local => self.environment.update(cx, |this, cx| {
+                this.local_directory_environment(&Shell::System, self.project_directory.clone(), cx)
+            }),
+            EnvironmentSource::Host => {
+                let Some(remote_client) = self.remote_client.clone() else {
+                    return HashMap::default();
+                };
+                self.environment.update(cx, |this, cx| {
+                    this.remote_directory_environment(
+                        &Shell::System,
+                        self.project_directory.clone(),
+                        remote_client,
+                        cx,
+                    )
+                })
+            }
+            EnvironmentSource::Unavailable => {
+                log::warn!(
+                    "No connection to the dev container host, so its shell environment is unavailable"
+                );
+                return HashMap::default();
+            }
+        };
+        let Ok(task) = task else {
             return HashMap::default();
         };
         task.await
             .map(|env| env.into_iter().collect::<std::collections::HashMap<_, _>>())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod environment_source_tests {
+    use super::{DevContainerHost, EnvironmentSource, FakeRemoteConnection, environment_source};
+    use std::sync::Arc;
+
+    /// A remote dev container's configuration must resolve against the host's
+    /// environment. Falling back to this machine's would silently substitute
+    /// paths and versions that do not exist over there.
+    #[test]
+    fn environment_follows_the_host() {
+        assert_eq!(
+            environment_source(&DevContainerHost::Local, false),
+            EnvironmentSource::Local
+        );
+        assert_eq!(
+            environment_source(&DevContainerHost::Local, true),
+            EnvironmentSource::Local,
+            "an open remote project does not move a local container's environment"
+        );
+
+        let remote = DevContainerHost::Remote(Arc::new(FakeRemoteConnection::default()));
+        assert_eq!(environment_source(&remote, true), EnvironmentSource::Host);
+        assert_eq!(
+            environment_source(&remote, false),
+            EnvironmentSource::Unavailable,
+            "reading the host environment is an RPC, so it needs the server connection"
+        );
     }
 }
 

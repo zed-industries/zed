@@ -3850,6 +3850,7 @@ mod test {
                 "/home/dev/app",
             ))),
             host: DevContainerHost::Remote(Arc::new(crate::FakeRemoteConnection::default())),
+            remote_client: None,
             use_podman: false,
             use_buildkit: None,
             fs: fs.clone(),
@@ -4135,6 +4136,7 @@ mod test {
         let context = DevContainerContext {
             project_directory: SanitizedPath::cast_arc(project_path),
             host,
+            remote_client: None,
             use_podman: false,
             use_buildkit: None,
             fs: fs.clone(),
