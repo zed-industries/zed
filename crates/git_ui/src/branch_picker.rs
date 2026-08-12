@@ -2354,8 +2354,11 @@ mod tests {
 
         let branches = create_test_branches();
         let expected_branch = branches[0].clone();
+        let (_project, repository) = init_fake_repository(cx).await;
+        let checked_out_branch =
+            repository.read_with(cx, |repository, _| repository.branch.clone());
         let (fixture_branch_list, mut cx) =
-            init_branch_list_test(None, branches.clone(), cx).await;
+            init_branch_list_test(Some(repository.clone()), branches.clone(), cx).await;
         let workspace = fixture_branch_list.read_with(&cx, |branch_list, cx| {
             branch_list
                 .picker
@@ -2378,7 +2381,7 @@ mod tests {
             workspace.toggle_modal(window, cx, |window, cx| {
                 BranchList::new_select(
                     workspace_handle,
-                    None,
+                    Some(repository.clone()),
                     BranchListStyle::Modal,
                     rems(34.),
                     None,
@@ -2412,6 +2415,11 @@ mod tests {
         cx.dispatch_action(menu::Confirm);
 
         assert_eq!(*selected_branch.borrow(), Some(expected_branch));
+        assert_eq!(
+            repository.read_with(&cx, |repository, _| repository.branch.clone()),
+            checked_out_branch,
+            "selecting a branch should not check it out"
+        );
         assert!(dismissed.get(), "select branch picker should dismiss");
     }
 
