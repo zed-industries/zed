@@ -1412,6 +1412,7 @@ mod tests {
     use language::Capability;
     use multi_buffer::PathKey;
     use project::project_settings::DiagnosticSeverity;
+    use rand::{Rng as _, rngs::StdRng};
     use settings::SettingsStore;
     use util::post_inc;
 
@@ -2155,6 +2156,124 @@ mod tests {
                 glyphs,
             }],
             len: text.len(),
+        }
+    }
+
+    #[gpui::test(iterations = 50)]
+    async fn test_batched_motions_match_plain_movement(
+        cx: &mut gpui::TestAppContext,
+        mut rng: StdRng,
+    ) {
+        cx.update(init_test);
+        let mut cx = EditorTestContext::new(cx).await;
+        let editor = cx.editor.clone();
+        let window = cx.window;
+        cx.update_window(window, |_, window, cx| {
+            let text_layout_details =
+                editor.update(cx, |editor, cx| editor.text_layout_details(window, cx));
+            let plain_ascii = rng.random::<bool>();
+            let mut text = String::new();
+            for line in 0..rng.random_range(2..20) {
+                if line > 0 {
+                    text.push('\n');
+                }
+                for _ in 0..rng.random_range(0..24) {
+                    text.push(match rng.random_range(0..20) {
+                        0 if !plain_ascii => '\t',
+                        1 if !plain_ascii => 'é',
+                        2 if !plain_ascii => '🎉',
+                        3 => ' ',
+                        _ => rng.random_range(b'a'..=b'z') as char,
+                    });
+                }
+            }
+            let (snapshot, _) = marked_display_snapshot(&(text + "ˇ"), cx);
+
+            let mut points = Vec::new();
+            for row in 0..=snapshot.max_point().row().0 {
+                if rng.random() {
+                    let column = rng.random_range(0..=snapshot.line_len(DisplayRow(row)));
+                    points.push(
+                        snapshot.clip_point(DisplayPoint::new(DisplayRow(row), column), Bias::Left),
+                    );
+                }
+            }
+
+            let mut horizontal = HorizontalMotion::new(&snapshot);
+            for point in &points {
+                assert_eq!(
+                    horizontal.left(*point),
+                    left(&snapshot, *point),
+                    "left at {point:?}, text {:?}",
+                    snapshot.text()
+                );
+            }
+            let mut horizontal = HorizontalMotion::new(&snapshot);
+            for point in &points {
+                assert_eq!(
+                    horizontal.right(*point),
+                    right(&snapshot, *point),
+                    "right at {point:?}, text {:?}",
+                    snapshot.text()
+                );
+            }
+
+            let mut vertical = VerticalMotion::new(&snapshot, &text_layout_details);
+            for point in &points {
+                let batched = vertical.up(*point, SelectionGoal::None, false);
+                let plain = unbatched_up_by_rows(
+                    &snapshot,
+                    *point,
+                    1,
+                    SelectionGoal::None,
+                    false,
+                    &text_layout_details,
+                );
+                assert_vertical_motions_match(batched, plain, "up", *point, &snapshot);
+            }
+            let mut vertical = VerticalMotion::new(&snapshot, &text_layout_details);
+            for point in &points {
+                let batched = vertical.down(*point, SelectionGoal::None, false);
+                let plain = unbatched_down_by_rows(
+                    &snapshot,
+                    *point,
+                    1,
+                    SelectionGoal::None,
+                    false,
+                    &text_layout_details,
+                );
+                assert_vertical_motions_match(batched, plain, "down", *point, &snapshot);
+            }
+        });
+    }
+
+    fn assert_vertical_motions_match(
+        batched: (DisplayPoint, SelectionGoal),
+        plain: (DisplayPoint, SelectionGoal),
+        direction: &str,
+        point: DisplayPoint,
+        snapshot: &DisplaySnapshot,
+    ) {
+        assert_eq!(
+            batched.0,
+            plain.0,
+            "{direction} at {point:?}, text {:?}",
+            snapshot.text()
+        );
+        match (batched.1, plain.1) {
+            (SelectionGoal::HorizontalPosition(a), SelectionGoal::HorizontalPosition(b)) => {
+                assert!(
+                    (a - b).abs() < 0.001,
+                    "{direction} goal diverged at {point:?}: {a} vs {b}, text {:?}",
+                    snapshot.text()
+                );
+            }
+            (a, b) => assert_eq!(
+                a,
+                b,
+                "{direction} goal kind diverged at {point:?}, text {:?}",
+                snapshot.text()
+            ),
         }
     }
 
