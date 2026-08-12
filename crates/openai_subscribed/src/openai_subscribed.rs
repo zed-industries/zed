@@ -15,7 +15,7 @@ use language_model::{
 };
 use open_ai::{
     ReasoningEffort,
-    responses::{compact_response, stream_response},
+    responses::{ReasoningSummaryMode, compact_response, stream_response},
 };
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
@@ -401,6 +401,11 @@ impl OpenAiSubscribedLanguageModel {
                 .contains(&ReasoningEffort::None),
             &PROVIDER_ID,
         )?;
+        // The Codex backend resolves `auto` to title-only status updates, while
+        // `detailed` includes the explanatory prose expected from reasoning summaries.
+        if let Some(reasoning) = responses_request.reasoning.as_mut() {
+            reasoning.summary = Some(ReasoningSummaryMode::Detailed);
+        }
         responses_request.store = Some(false);
         responses_request.instructions.get_or_insert_default();
         Ok(responses_request)
@@ -1003,6 +1008,37 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[gpui::test]
+    async fn test_codex_requests_detailed_reasoning_summaries(cx: &mut TestAppContext) {
+        let http_client: Arc<dyn HttpClient> = FakeHttpClient::create(|_| async {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::default())?)
+        });
+        let state = make_state(http_client.clone(), Some(make_fresh_credentials()), cx);
+        let model = OpenAiSubscribedLanguageModel {
+            id: LanguageModelId::from(ChatGptModel::Gpt56Sol.id().to_string()),
+            model: ChatGptModel::Gpt56Sol,
+            state,
+            http_client,
+            request_limiter: RateLimiter::new(4),
+        };
+
+        let request = model
+            .codex_responses_request(LanguageModelRequest {
+                thinking_allowed: true,
+                thinking_effort: Some("high".to_string()),
+                ..Default::default()
+            })
+            .expect("request should convert to the Responses API shape");
+        let request = serde_json::to_value(request).expect("request should serialize");
+
+        assert_eq!(
+            request.pointer("/reasoning/summary"),
+            Some(&serde_json::json!("detailed"))
+        );
+    }
 
     #[gpui::test]
     async fn test_concurrent_refresh_deduplicates(cx: &mut TestAppContext) {
