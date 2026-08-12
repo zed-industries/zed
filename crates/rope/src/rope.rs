@@ -471,6 +471,14 @@ impl Rope {
         }
     }
 
+    pub fn offset_to_point_converter(&self) -> OffsetToPointConverter<'_> {
+        OffsetToPointConverter {
+            rope: self,
+            cursor: self.chunks.cursor::<Dimensions<usize, Point>>(()),
+            prev_offset: 0,
+        }
+    }
+
     pub fn point_to_offset_utf16(&self, point: Point) -> OffsetUtf16 {
         if point >= self.summary().lines {
             return self.summary().len_utf16;
@@ -753,6 +761,32 @@ impl CharBoundaryConverter<'_> {
                 Bias::Right => self.cursor.start() + chunk.text.ceil_char_boundary(chunk_offset),
             }
         }
+    }
+}
+
+pub struct OffsetToPointConverter<'a> {
+    rope: &'a Rope,
+    cursor: sum_tree::Cursor<'a, 'static, Chunk, Dimensions<usize, Point>>,
+    prev_offset: usize,
+}
+
+impl OffsetToPointConverter<'_> {
+    pub fn map(&mut self, offset: usize) -> Point {
+        if offset >= self.rope.summary().len {
+            return self.rope.summary().lines;
+        }
+        if !self.cursor.did_seek() || offset < self.prev_offset {
+            self.cursor.seek(&offset, Bias::Left);
+        } else {
+            self.cursor.seek_forward(&offset, Bias::Left);
+        }
+        self.prev_offset = offset;
+
+        let overshoot = offset - self.cursor.start().0;
+        self.cursor.start().1
+            + self.cursor.item().map_or(Point::zero(), |chunk| {
+                chunk.as_slice().offset_to_point(overshoot)
+            })
     }
 }
 

@@ -63,6 +63,7 @@ pub struct Buffer {
     deferred_replicas: HashSet<ReplicaId>,
     pub lamport_clock: clock::Lamport,
     subscriptions: Topic<usize>,
+    batch_subscriptions: BatchTopic,
     edit_id_resolvers: HashMap<clock::Lamport, Vec<oneshot::Sender<()>>>,
     wait_for_version_txs: Vec<(clock::Global, oneshot::Sender<()>)>,
 }
@@ -867,6 +868,7 @@ impl Buffer {
             deferred_replicas: HashSet::default(),
             lamport_clock,
             subscriptions: Default::default(),
+            batch_subscriptions: Default::default(),
             edit_id_resolvers: Default::default(),
             wait_for_version_txs: Default::default(),
         }
@@ -892,6 +894,7 @@ impl Buffer {
             deferred_replicas: HashSet::default(),
             lamport_clock: clock::Lamport::new(ReplicaId::LOCAL_BRANCH),
             subscriptions: Default::default(),
+            batch_subscriptions: Default::default(),
             edit_id_resolvers: Default::default(),
             wait_for_version_txs: Default::default(),
         }
@@ -945,7 +948,17 @@ impl Buffer {
             .collect();
         let (edit_op, edits_patch) = self.snapshot.apply_edit_internal(edits, timestamp);
         self.subscriptions.publish_mut(&edits_patch);
+        self.publish_batch(timestamp, edits_patch.edits());
         edit_op
+    }
+
+    fn publish_batch(&mut self, timestamp: clock::Lamport, edits: &[Edit<usize>]) {
+        if self.batch_subscriptions.has_subscribers() {
+            let mut version = self.snapshot.version.clone();
+            version.observe(timestamp);
+            self.batch_subscriptions
+                .publish_mut(&version, &Patch::new(edits.to_vec()));
+        }
     }
 
     pub fn set_line_ending(&mut self, line_ending: LineEnding) {
@@ -1192,7 +1205,8 @@ impl Buffer {
         self.snapshot.deleted_text = deleted_text;
         self.snapshot.insertions.edit(new_insertions, ());
         self.snapshot.insertion_slices.extend(insertion_slices);
-        self.subscriptions.publish_mut(&edits_patch)
+        self.subscriptions.publish_mut(&edits_patch);
+        self.publish_batch(timestamp, edits_patch.edits());
     }
 
     fn fragment_ids_for_edits<'a>(
@@ -1317,6 +1331,7 @@ impl Buffer {
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.subscriptions.publish_mut(&edits);
+        self.publish_batch(undo.timestamp, edits.edits());
     }
 
     fn flush_deferred_ops(&mut self) {
@@ -1593,6 +1608,10 @@ impl Buffer {
 
     pub fn subscribe(&mut self) -> Subscription<usize> {
         self.subscriptions.subscribe()
+    }
+
+    pub fn subscribe_batches(&mut self) -> BatchSubscription {
+        self.batch_subscriptions.subscribe()
     }
 
     pub fn wait_for_edits<It: IntoIterator<Item = clock::Lamport>>(

@@ -8,6 +8,7 @@ use gpui::Pixels;
 use itertools::{Either, Itertools as _};
 use language::{Bias, Point, Selection, SelectionGoal};
 use multi_buffer::{MultiBufferDimension, MultiBufferOffset, MultiBufferRow, ToPoint};
+use rope::Rope;
 use util::post_inc;
 
 use crate::{
@@ -22,17 +23,41 @@ pub struct PendingSelection {
     mode: SelectMode,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SelectionsCollection {
     next_selection_id: usize,
     line_mode: bool,
     /// The non-pending, non-overlapping selections.
     /// The [SelectionsCollection::pending] selection could possibly overlap these
     disjoint: Arc<[Selection<Anchor>]>,
+    spliced: Option<SplicedSelections>,
+    batch_subscription: Option<text::BatchSubscription>,
     /// A pending selection, such as when the mouse is being dragged
     pending: Option<PendingSelection>,
     select_mode: SelectMode,
     is_extending: bool,
+}
+
+#[derive(Clone, Debug)]
+struct SplicedSelections {
+    version: clock::Global,
+    selections: Vec<Selection<MultiBufferOffset>>,
+    endpoints: Vec<SplicedEndpoints>,
+}
+
+impl Clone for SelectionsCollection {
+    fn clone(&self) -> Self {
+        Self {
+            next_selection_id: self.next_selection_id,
+            line_mode: self.line_mode,
+            disjoint: self.disjoint.clone(),
+            spliced: None,
+            batch_subscription: None,
+            pending: self.pending.clone(),
+            select_mode: self.select_mode.clone(),
+            is_extending: self.is_extending,
+        }
+    }
 }
 
 impl SelectionsCollection {
@@ -41,6 +66,8 @@ impl SelectionsCollection {
             next_selection_id: 1,
             line_mode: false,
             disjoint: Arc::default(),
+            spliced: None,
+            batch_subscription: None,
             pending: Some(PendingSelection {
                 selection: Selection {
                     id: 0,
@@ -56,10 +83,54 @@ impl SelectionsCollection {
         }
     }
 
+    pub fn set_batch_subscription(&mut self, subscription: text::BatchSubscription) {
+        self.batch_subscription = Some(subscription);
+    }
+
+    pub fn sync_buffer_edits(&mut self) {
+        let Some(subscription) = &self.batch_subscription else {
+            return;
+        };
+        let batches = subscription.drain();
+        if batches.is_empty() {
+            return;
+        }
+        let Some(spliced) = &mut self.spliced else {
+            return;
+        };
+        for batch in batches {
+            if spliced.version.observed_all(&batch.version) {
+                continue;
+            }
+            let edits = batch
+                .patch
+                .edits()
+                .iter()
+                .map(|edit| text::Edit {
+                    old: MultiBufferOffset(edit.old.start)..MultiBufferOffset(edit.old.end),
+                    new: MultiBufferOffset(edit.new.start)..MultiBufferOffset(edit.new.end),
+                })
+                .collect::<Vec<_>>();
+            splice_offset_selections(&edits, &mut spliced.selections, &mut spliced.endpoints);
+            spliced.version = batch.version;
+        }
+    }
+
+    fn spliced_for_buffer<'a, 'b>(
+        &'a self,
+        snapshot: &'b MultiBufferSnapshot,
+    ) -> Option<(&'a SplicedSelections, &'b Rope)> {
+        let spliced = self.spliced.as_ref()?;
+        let buffer = snapshot.as_singleton_without_transforms()?;
+        (self.pending.is_none() && *buffer.version() == spliced.version)
+            .then(|| (spliced, buffer.as_rope()))
+    }
+
     pub fn clone_state(&mut self, other: &SelectionsCollection) {
         self.next_selection_id = other.next_selection_id;
         self.line_mode = other.line_mode;
         self.disjoint = other.disjoint.clone();
+        self.spliced.clone_from(&other.spliced);
         self.pending.clone_from(&other.pending);
     }
 
@@ -133,8 +204,18 @@ impl SelectionsCollection {
     where
         D: 'a + MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     {
-        let mut disjoint =
-            resolve_selections_wrapping_blocks::<D, _>(self.disjoint.iter(), snapshot).peekable();
+        let mut disjoint = if let Some((spliced, rope)) = self
+            .spliced_for_buffer(snapshot.buffer_snapshot())
+            .filter(|_| !snapshot.has_collapsed_content())
+        {
+            Either::Left(convert_offset_selections::<D>(rope, &spliced.selections))
+        } else {
+            Either::Right(resolve_selections_wrapping_blocks::<D, _>(
+                self.disjoint.iter(),
+                snapshot,
+            ))
+        }
+        .peekable();
         let mut pending_opt = self.pending::<D>(snapshot);
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
@@ -252,8 +333,29 @@ impl SelectionsCollection {
 
     pub fn all_display(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<DisplayPoint>> {
         let disjoint_anchors = &self.disjoint;
-        let mut disjoint =
-            resolve_selections_display(disjoint_anchors.iter(), &snapshot).peekable();
+        let mut disjoint = if let Some((spliced, rope)) = self
+            .spliced_for_buffer(snapshot.buffer_snapshot())
+            .filter(|_| snapshot.maps_points_identically())
+        {
+            let mut converter = rope.offset_to_point_converter();
+            Either::Left(spliced.selections.iter().map(move |selection| {
+                let start = converter.map(selection.start.0);
+                let end = converter.map(selection.end.0);
+                Selection {
+                    id: selection.id,
+                    start: DisplayPoint::new(DisplayRow(start.row), start.column),
+                    end: DisplayPoint::new(DisplayRow(end.row), end.column),
+                    reversed: selection.reversed,
+                    goal: selection.goal,
+                }
+            }))
+        } else {
+            Either::Right(resolve_selections_display(
+                disjoint_anchors.iter(),
+                &snapshot,
+            ))
+        }
+        .peekable();
         let mut pending_opt = resolve_selections_display(self.pending_anchor(), &snapshot).next();
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
@@ -562,6 +664,7 @@ impl SelectionsCollection {
         snapshot: &DisplaySnapshot,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
     ) -> (bool, R) {
+        self.sync_buffer_edits();
         let mut mutable_collection = MutableSelectionsCollection {
             snapshot,
             collection: self,
@@ -667,10 +770,12 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn clear_disjoint(&mut self) {
         self.collection.disjoint = Arc::default();
+        self.collection.spliced = None;
     }
 
     pub fn delete(&mut self, selection_id: usize) {
         let mut changed = false;
+        self.collection.spliced = None;
         self.collection.disjoint = self
             .disjoint
             .iter()
@@ -723,6 +828,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         } else {
             self.collection.disjoint = filtered_selections;
         }
+        self.collection.spliced = None;
 
         self.selections_changed |= changed;
     }
@@ -767,6 +873,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         if let Some(pending) = self.collection.pending.take() {
             if self.disjoint.is_empty() {
                 self.collection.disjoint = Arc::from([pending.selection]);
+                self.collection.spliced = None;
             }
             self.selections_changed = true;
             return true;
@@ -775,6 +882,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         let mut oldest = *self.oldest_anchor();
         if self.count() > 1 {
             self.collection.disjoint = Arc::from([oldest]);
+            self.collection.spliced = None;
             self.selections_changed = true;
             return true;
         }
@@ -784,6 +892,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             oldest.start = head;
             oldest.end = head;
             self.collection.disjoint = Arc::from([oldest]);
+            self.collection.spliced = None;
             self.selections_changed = true;
             return true;
         }
@@ -846,8 +955,9 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             }
         });
 
-        let mut converter = self.snapshot.buffer_snapshot().anchor_converter();
-        self.collection.disjoint = Arc::from_iter(selections.into_iter().map(|selection| {
+        let buffer_snapshot = self.snapshot.buffer_snapshot();
+        let mut converter = buffer_snapshot.anchor_converter();
+        self.collection.disjoint = Arc::from_iter(selections.iter().map(|selection| {
             let end_bias = if selection.start == selection.end {
                 Bias::Right
             } else {
@@ -861,9 +971,47 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
                 goal: selection.goal,
             }
         }));
+        self.collection.spliced = Self::spliced_state(
+            &self.collection.batch_subscription,
+            buffer_snapshot,
+            selections,
+        );
         self.collection.pending = None;
         self.collection.select_mode = SelectMode::Character;
         self.selections_changed = true;
+    }
+
+    fn spliced_state(
+        subscription: &Option<text::BatchSubscription>,
+        snapshot: &MultiBufferSnapshot,
+        selections: Vec<Selection<MultiBufferOffset>>,
+    ) -> Option<SplicedSelections> {
+        subscription.as_ref()?;
+        let buffer = snapshot.as_singleton_without_transforms()?;
+        let mut boundary = buffer.as_rope().char_boundary_converter();
+        let aligned = selections.iter().all(|selection| {
+            boundary.round(selection.start.0, Bias::Left) == selection.start.0
+                && boundary.round(selection.end.0, Bias::Left) == selection.end.0
+        });
+        if !aligned {
+            return None;
+        }
+        let version = buffer.version().clone();
+        if let Some(subscription) = subscription {
+            let stale = subscription
+                .drain()
+                .iter()
+                .any(|batch| !version.observed_all(&batch.version));
+            if stale {
+                return None;
+            }
+        }
+        let endpoints = vec![SplicedEndpoints::default(); selections.len()];
+        Some(SplicedSelections {
+            version,
+            selections,
+            endpoints,
+        })
     }
 
     pub fn select_anchors(&mut self, selections: Vec<Selection<Anchor>>) {
@@ -1150,6 +1298,29 @@ fn selection_to_anchor_selection(
         reversed: selection.reversed,
         goal: selection.goal,
     }
+}
+
+fn convert_offset_selections<'a, D>(
+    rope: &'a Rope,
+    selections: &'a [Selection<MultiBufferOffset>],
+) -> impl 'a + Iterator<Item = Selection<D>>
+where
+    D: MultiBufferDimension,
+{
+    let mut cursor = rope.cursor(0);
+    let mut position = D::default();
+    selections.iter().map(move |selection| {
+        position.add_text_dim(&cursor.summary::<D::TextDimension>(selection.start.0));
+        let start = position;
+        position.add_text_dim(&cursor.summary::<D::TextDimension>(selection.end.0));
+        Selection {
+            id: selection.id,
+            start,
+            end: position,
+            reversed: selection.reversed,
+            goal: selection.goal,
+        }
+    })
 }
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]

@@ -1981,7 +1981,12 @@ impl Editor {
             })
         });
 
-        let selections = SelectionsCollection::new();
+        let mut selections = SelectionsCollection::new();
+        if let Some(singleton) = multi_buffer.read(cx).as_singleton() {
+            selections.set_batch_subscription(
+                singleton.update(cx, |singleton, _| singleton.subscribe_batches()),
+            );
+        }
 
         let blink_manager = cx.new(|cx| {
             let mut blink_manager = BlinkManager::new(
@@ -9628,6 +9633,7 @@ impl Editor {
                 edited_buffer,
                 source,
             } => {
+                self.selections.sync_buffer_edits();
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
