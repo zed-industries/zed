@@ -140,24 +140,29 @@ impl Project {
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
 
-            let activation_script = maybe!(async {
-                for toolchain in toolchains {
-                    let Some(toolchain) = toolchain.await else {
-                        continue;
-                    };
-                    let language = lang_registry
-                        .language_for_name(&toolchain.language_name.0)
-                        .await
-                        .ok();
-                    let lister = language?.toolchain_lister()?;
-                    let future =
-                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx));
-                    return Some(future.await);
-                }
-                None
-            })
-            .await
-            .unwrap_or_default();
+            let activation_script = if self.is_restricted_project(cx) {
+                Vec::new() // Do not activate environments if project is restricted
+                
+            } else {
+                maybe!(async {
+                    for toolchain in toolchains {
+                        let Some(toolchain) = toolchain.await else {
+                            continue;
+                        };
+                        let language = lang_registry
+                            .language_for_name(&toolchain.language_name.0)
+                            .await
+                            .ok();
+                        let lister = language?.toolchain_lister()?;
+                        let future =
+                            cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx));
+                        return Some(future.await);
+                    }
+                    None
+                })
+                .await
+                .unwrap_or_default()
+            };
 
             let builder = project
                 .update(cx, move |_, cx| {
@@ -285,6 +290,15 @@ impl Project {
                 terminal_handle
             })
         })
+    }
+
+    pub fn is_restricted_project(&self, cx: &App) -> bool {
+        // Access Zed's global settings
+        let session_settings = settings::SessionSettings::current(cx);
+        let trust_all_worktrees = session_settings.trust_all_worktrees.unwrap_or(false);
+
+        // If not trusted all worktrees → restricted mode
+        !trust_all_worktrees
     }
 
     pub fn create_terminal_shell(

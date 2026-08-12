@@ -179,15 +179,18 @@ pub struct SessionQuirks {
 }
 
 fn client_source(abs_path: &Path) -> dap::Source {
+    // Resolvemos el source map, si existe
+    let resolved_path = resolve_source_mapped_path(abs_path);
+
     dap::Source {
-        name: abs_path
+        name: resolved_path
             .file_name()
             .map(|filename| filename.to_string_lossy().into_owned()),
-        path: Some(abs_path.to_string_lossy().into_owned()),
+        path: Some(resolved_path.to_string_lossy().into_owned()),
         source_reference: None,
         presentation_hint: None,
         origin: None,
-        sources: None,
+        sources: None, // opcional: aquí podrías poner info del source map
         adapter_data: None,
         checksums: None,
     }
@@ -353,6 +356,7 @@ impl RunningMode {
         let mut raw_breakpoints = breakpoint_store.read_with(cx, |this, _| this.all_breakpoints());
         debug_assert_eq!(raw_breakpoints.len(), breakpoints.len());
         let session_id = self.client.id();
+    
         for (path, breakpoints) in breakpoints {
             let breakpoints = if ignore_breakpoints {
                 vec![]
@@ -363,26 +367,29 @@ impl RunningMode {
                     .map(Into::into)
                     .collect()
             };
-
+    
             let raw_breakpoints = raw_breakpoints
                 .remove(&path)
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|bp| bp.bp.state.is_enabled());
+    
             let error_path = path.clone();
+            let resolved_path = resolve_source_mapped_path(&path); // <- aquí resolvemos source map
+    
             let send_request = self
                 .request(dap_command::SetBreakpoints {
-                    source: client_source(&path),
+                    source: client_source(&resolved_path), // usamos la ruta resuelta
                     source_modified: Some(false),
                     breakpoints,
                 })
                 .map(|result| result.map_err(move |e| (error_path, e)));
-
+    
             let task = cx.spawn({
                 let breakpoint_store = breakpoint_store.downgrade();
                 async move |cx| {
                     let breakpoints = cx.background_spawn(send_request).await?;
-
+    
                     let breakpoints = breakpoints.into_iter().zip(raw_breakpoints).filter_map(
                         |(dap_bp, zed_bp)| {
                             Some((
@@ -394,18 +401,19 @@ impl RunningMode {
                             ))
                         },
                     );
+    
                     breakpoint_store
                         .update(cx, |this, _| {
                             this.mark_breakpoints_verified(session_id, &path, breakpoints);
                         })
                         .ok();
-
+    
                     Ok(())
                 }
             });
             breakpoint_tasks.push(task);
         }
-
+    
         cx.background_spawn(async move {
             futures::future::join_all(breakpoint_tasks)
                 .await
