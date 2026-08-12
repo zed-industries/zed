@@ -494,6 +494,26 @@ impl ops::AddAssign<MultiBufferOffset> for MultiBufferOffset {
 pub trait ToOffset: 'static + fmt::Debug {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset;
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16;
+
+    fn to_offset_seeking(
+        &self,
+        snapshot: &MultiBufferSnapshot,
+        _seeker: &mut OffsetSeeker,
+    ) -> MultiBufferOffset {
+        self.to_offset(snapshot)
+    }
+}
+
+pub struct OffsetSeeker<'a> {
+    point_converter: PointDimensionConverter<'a, MultiBufferOffset>,
+}
+
+impl<'a> OffsetSeeker<'a> {
+    pub fn new(snapshot: &'a MultiBufferSnapshot) -> Self {
+        Self {
+            point_converter: snapshot.point_dimension_converter(),
+        }
+    }
 }
 
 pub trait ToPoint: 'static + fmt::Debug {
@@ -1591,17 +1611,21 @@ impl MultiBuffer {
             return;
         }
         self.sync_mut(cx);
-        let edits = edits
-            .into_iter()
-            .map(|(range, new_text)| {
-                let mut range = range.start.to_offset(self.snapshot.get_mut())
-                    ..range.end.to_offset(self.snapshot.get_mut());
-                if range.start > range.end {
-                    mem::swap(&mut range.start, &mut range.end);
-                }
-                (range, new_text.into())
-            })
-            .collect::<Vec<_>>();
+        let edits = {
+            let snapshot = &*self.snapshot.get_mut();
+            let mut seeker = OffsetSeeker::new(snapshot);
+            edits
+                .into_iter()
+                .map(|(range, new_text)| {
+                    let mut range = range.start.to_offset_seeking(snapshot, &mut seeker)
+                        ..range.end.to_offset_seeking(snapshot, &mut seeker);
+                    if range.start > range.end {
+                        mem::swap(&mut range.start, &mut range.end);
+                    }
+                    (range, new_text.into())
+                })
+                .collect::<Vec<_>>()
+        };
 
         return edit_internal(
             self,
@@ -8497,6 +8521,13 @@ impl ToOffset for Point {
     }
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16 {
         snapshot.point_to_offset_utf16(*self)
+    }
+    fn to_offset_seeking(
+        &self,
+        _snapshot: &MultiBufferSnapshot,
+        seeker: &mut OffsetSeeker,
+    ) -> MultiBufferOffset {
+        seeker.point_converter.map(*self)
     }
 }
 
