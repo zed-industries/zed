@@ -178,7 +178,7 @@ impl RelatedExcerptStore {
                     .path
                     .strip_prefix(worktree.root_name().as_unix_str())
                     .ok()?;
-                let relative_path = RelPath::new(relative_path, PathStyle::Posix).ok()?;
+                let relative_path = RelPath::new(relative_path, PathStyle::Unix).ok()?;
                 let project_path = ProjectPath {
                     worktree_id: worktree.id(),
                     path: relative_path.into_owned().into(),

@@ -595,7 +595,7 @@ impl HostWorktree for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         let delegate = self.table.get(&delegate)?;
         Ok(delegate
-            .read_text_file(&RelPath::new(Path::new(&path), PathStyle::Posix)?)
+            .read_text_file(&RelPath::new(Path::new(&path), PathStyle::Unix)?)
             .await
             .map_err(|error| error.to_string()))
     }
@@ -948,7 +948,7 @@ impl ExtensionImports for WasmState {
         self.on_main_thread(|cx| {
             async move {
                 let path = location.as_ref().and_then(|location| {
-                    RelPath::new(Path::new(&location.path), PathStyle::Posix).ok()
+                    RelPath::new(Path::new(&location.path), PathStyle::Unix).ok()
                 });
                 let location = path
                     .as_ref()
