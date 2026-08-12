@@ -6006,6 +6006,55 @@ Example:
 
 To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for {#action settings_profile_selector::Toggle}.
 
+## Settings Sync
+
+- Description: Opt-in sync of `settings.json` across your account's machines via Zed Cloud.
+- Setting: `settings_sync`
+- Default:
+
+```json [settings]
+{
+  "settings_sync": {
+    "enabled": false,
+    "exclude": []
+  }
+}
+```
+
+### Enabled
+
+- Description: Whether settings sync is enabled on this device. This flag is device-local and never uploaded, so enabling sync on one machine can never flip it on another.
+- Setting: `enabled`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+### Exclude
+
+- Description: JSON paths (and their subtrees) that are never uploaded. Excluded values stay untouched on this machine, are stripped from every upload, and are removed from the synced document on the next sync, so adding an exclusion also redacts values that were uploaded earlier. The list is merged with the built-in exclusions and itself syncs across your machines, so a redaction ordered on one device propagates to the whole group.
+- Setting: `exclude`
+- Default: `[]`
+
+Each entry is a `/`-separated path into `settings.json`, naming a value or a whole subtree. A `*` segment matches exactly one key, which is useful under map-like settings such as `lsp`. The example below excludes a single value, a whole language subtree, one value inside the macOS override block, and one key under every entry of a map-like setting:
+
+```json [settings]
+{
+  "settings_sync": {
+    "enabled": true,
+    "exclude": [
+      "/vim_mode",
+      "/languages/Rust",
+      "/macos/buffer_font_size",
+      "/lsp/*/initialization_options"
+    ]
+  }
+}
+```
+
+The following paths are always excluded, on top of anything you list: `/settings_sync/enabled`, `/proxy`, `/server_url`, `/credentials_url`, `/ssh_connections`, `/wsl_connections`, `/dev_container_connections`, `/audio/input_audio_device`, `/audio/output_audio_device`, `/terminal/env`, `/lsp/*/binary/env`, `/dap/*/env`, `/context_servers/*/env`, `/context_servers/*/headers`, `/context_servers/*/oauth`, and `/agent_servers/*/env`. The same paths are also excluded inside every release-channel (`dev`, `nightly`, `preview`, `stable`) and platform (`macos`, `linux`, `windows`) override block, and inside every profile's `settings` block. Built-in exclusions cannot be removed.
+
 ## An example configuration:
 
 ```json [settings]

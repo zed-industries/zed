@@ -1,0 +1,44 @@
+[package]
+name = "settings_sync"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/settings_sync.rs"
+doctest = false
+
+[features]
+test-support = ["gpui/test-support", "fs/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+client.workspace = true
+cloud_api_client.workspace = true
+feature_flags.workspace = true
+fs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+log.workspace = true
+migrator.workspace = true
+parking_lot.workspace = true
+paths.workspace = true
+rand.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+settings_content.workspace = true
+settings_json = { workspace = true, features = ["editing"] }
+
+[dev-dependencies]
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+indoc.workspace = true
+pretty_assertions.workspace = true
+settings = { workspace = true, features = ["test-support"] }

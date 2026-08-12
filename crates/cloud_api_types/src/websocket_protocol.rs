@@ -12,6 +12,13 @@ pub const PROTOCOL_VERSION_HEADER_NAME: &str = "x-zed-protocol-version";
 pub enum MessageToClient {
     /// The user was updated and should be refreshed.
     UserUpdated,
+    // TODO kb cloud: Cloud does not send this yet; broadcast to all of the
+    // user's sockets, clients filter by group and dedupe by version.
+    SyncedSettingsChanged {
+        group_id: String,
+        kind: String,
+        version: u64,
+    },
 }
 
 impl MessageToClient {

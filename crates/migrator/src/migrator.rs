@@ -157,7 +157,15 @@ enum MigrationType<'a> {
 }
 
 pub fn migrate_settings(text: &str) -> Result<Option<String>> {
-    let migrations: &[MigrationType] = &[
+    run_migrations(text, &SETTINGS_MIGRATIONS)
+}
+
+pub fn settings_migrations_count() -> usize {
+    SETTINGS_MIGRATIONS.len()
+}
+
+static SETTINGS_MIGRATIONS: LazyLock<Vec<MigrationType<'static>>> = LazyLock::new(|| {
+    vec![
         MigrationType::TreeSitter(
             migrations::m_2025_01_02::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_01_02,
@@ -255,9 +263,8 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         ),
         MigrationType::Json(migrations::m_2026_08_17::make_git_gutter_width_an_enum),
         MigrationType::Json(migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator),
-    ];
-    run_migrations(text, migrations)
-}
+    ]
+});
 
 pub fn migrate_edit_prediction_provider_settings(text: &str) -> Result<Option<String>> {
     migrate(

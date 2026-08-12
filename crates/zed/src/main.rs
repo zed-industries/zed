@@ -651,6 +651,8 @@ fn main() {
         AppState::set_global(app_state.clone(), cx);
 
         auto_update::init(client.clone(), cx);
+        settings_sync::init(&client, fs.clone(), cx);
+        zed::settings_sync_notifications::init(cx);
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
         reliability::init(client.clone(), app_state.workspace_store.clone(), cx);

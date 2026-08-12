@@ -73,6 +73,32 @@ pub fn update_value_in_json_text<'a>(
 
 /// * `replace_key` - When an exact key match according to `key_path` is found, replace the key with `replace_key` if `Some`.
 #[cfg(feature = "editing")]
+fn insertion_point_before_line_comments(text: &str, key_start: usize) -> usize {
+    let mut point = key_start;
+    loop {
+        let before = &text[..point];
+        let line_start = before.rfind('\n').map(|ix| ix + 1).unwrap_or(0);
+        if !before[line_start..].trim().is_empty() {
+            break;
+        }
+        if line_start == 0 {
+            break;
+        }
+        let previous_line_start = before[..line_start - 1]
+            .rfind('\n')
+            .map(|ix| ix + 1)
+            .unwrap_or(0);
+        let previous_line = &before[previous_line_start..line_start - 1];
+        if previous_line.trim_start().starts_with("//") {
+            let indent_len = previous_line.len() - previous_line.trim_start().len();
+            point = previous_line_start + indent_len;
+        } else {
+            break;
+        }
+    }
+    point
+}
+
 pub fn replace_value_in_json_text<T: AsRef<str>>(
     text: &str,
     key_path: &[T],
@@ -227,6 +253,7 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
         }
     } else {
         if let Some(first_key_start) = first_key_start {
+            let first_key_start = insertion_point_before_line_comments(text, first_key_start);
             // We have key paths, construct the sub objects
             let new_key = key_path[depth].as_ref();
             // We don't have the key, construct the nested objects
@@ -2586,6 +2613,100 @@ mod tests {
             ]"#
             .unindent(),
         )
+    }
+
+    #[test]
+    fn object_insert_before_attached_line_comments() {
+        #[track_caller]
+        fn check_insert(input: String, key_path: &[&str], value: Value, expected: String) {
+            let result = replace_value_in_json_text(&input, key_path, 4, Some(&value), None);
+            let mut result_str = input;
+            result_str.replace_range(result.0, &result.1);
+            pretty_assertions::assert_eq!(expected, result_str);
+        }
+        check_insert(
+            r#"{
+                // Describes a.
+                "a": 1
+            }"#
+            .unindent(),
+            &["c"],
+            json!(3),
+            r#"{
+                "c": 3,
+                // Describes a.
+                "a": 1
+            }"#
+            .unindent(),
+        );
+        check_insert(
+            r#"{
+                // First comment line.
+                // Second comment line.
+                "a": 1
+            }"#
+            .unindent(),
+            &["c"],
+            json!(3),
+            r#"{
+                "c": 3,
+                // First comment line.
+                // Second comment line.
+                "a": 1
+            }"#
+            .unindent(),
+        );
+        check_insert(
+            r#"{
+                // Detached comment.
+
+                "a": 1
+            }"#
+            .unindent(),
+            &["c"],
+            json!(3),
+            r#"{
+                // Detached comment.
+
+                "c": 3,
+                "a": 1
+            }"#
+            .unindent(),
+        );
+        check_insert(
+            r#"{
+                "outer": {
+                    // Describes a.
+                    "a": 1
+                }
+            }"#
+            .unindent(),
+            &["outer", "c"],
+            json!(3),
+            r#"{
+                "outer": {
+                    "c": 3,
+                    // Describes a.
+                    "a": 1
+                }
+            }"#
+            .unindent(),
+        );
+        check_insert(
+            r#"{
+                // Schriftgröße überall — 字体大小 🎨
+                "a": 1
+            }"#
+            .unindent(),
+            &["c"],
+            json!(3),
+            r#"{
+                "c": 3,
+                // Schriftgröße überall — 字体大小 🎨
+                "a": 1
+            }"#
+            .unindent(),
+        );
     }
 
     #[test]

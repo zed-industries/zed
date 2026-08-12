@@ -2908,4 +2908,13 @@
       "enabled": false,
     },
   },
+  // Opt-in sync of settings.json across this account's machines via Zed Cloud.
+  "settings_sync": {
+    // Whether settings sync is enabled on this device. Device-local:
+    // enabling on one machine never flips it on another.
+    "enabled": false,
+    // JSON paths (subtrees) to never upload. Merged with built-in defaults
+    // (audio devices, ssh/wsl/dev-container connections, proxy).
+    "exclude": [],
+  },
 }

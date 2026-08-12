@@ -95,6 +95,72 @@ pub struct SystemSettings {
     pub selected_organization_id: Option<OrganizationId>,
 }
 
+// TODO kb cloud: these types describe the settings-sync endpoints that do not
+// exist server-side yet. Cloud consumes this crate by pinned rev.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncedSettings {
+    pub group_id: String,
+    pub kind: String,
+    pub version: u64,
+    pub schema_epoch: u64,
+    pub doc: serde_json::Value,
+    pub updated_by_system_id: Option<String>,
+}
+
+pub const SYNCED_SETTINGS_KIND_SETTINGS: &str = "settings";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetSyncedSettingsResponse {
+    pub synced_settings: Option<SyncedSettings>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UpdateSyncedSettingsBody {
+    pub kind: String,
+    pub base_version: Option<u64>,
+    pub schema_epoch: u64,
+    pub doc: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UpdateSyncedSettingsResponse {
+    pub group_id: String,
+    pub version: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncedSettingsHost {
+    pub system_id: String,
+    pub label: String,
+    pub group_id: String,
+    pub last_synced_at: Option<Timestamp>,
+    pub last_synced_version: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetSyncedSettingsHostsResponse {
+    pub hosts: Vec<SyncedSettingsHost>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UpdateSyncedSettingsHostBody {
+    pub label: Option<String>,
+    pub group_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncedSettingsRevision {
+    pub version: u64,
+    pub doc: serde_json::Value,
+    pub system_id: Option<String>,
+    pub created_at: Timestamp,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetSyncedSettingsHistoryResponse {
+    pub revisions: Vec<SyncedSettingsRevision>,
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct SubmitAgentThreadFeedbackBody {
     pub organization_id: Option<OrganizationId>,

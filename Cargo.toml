@@ -188,6 +188,7 @@ members = [
     "crates/settings",
     "crates/settings_content",
     "crates/settings_json",
+    "crates/settings_sync",
     "crates/settings_macros",
     "crates/settings_profile_selector",
     "crates/settings_ui",
@@ -455,6 +456,7 @@ session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_content = { path = "crates/settings_content" }
 settings_json = { path = "crates/settings_json", default-features = false }
+settings_sync = { path = "crates/settings_sync" }
 settings_macros = { path = "crates/settings_macros" }
 settings_profile_selector = { path = "crates/settings_profile_selector" }
 settings_ui = { path = "crates/settings_ui" }
