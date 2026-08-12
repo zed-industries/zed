@@ -8617,22 +8617,26 @@ impl LspStore {
                     lsp::TextDocumentSyncCapability::Options(options) => options.change,
                 });
 
-            let content_changes: Vec<_> = if line_ending_changed {
-                build_full_change()
-            } else {
-                match document_sync_kind {
-                    Some(lsp::TextDocumentSyncKind::FULL) => build_full_change(),
-                    Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_incremental_change(),
-                    _ => {
-                        #[cfg(any(test, feature = "test-support"))]
-                        {
-                            build_incremental_change()
-                        }
+            let build_change = || {
+                if line_ending_changed {
+                    build_full_change()
+                } else {
+                    build_incremental_change()
+                }
+            };
 
-                        #[cfg(not(any(test, feature = "test-support")))]
-                        {
-                            continue;
-                        }
+            let content_changes: Vec<_> = match document_sync_kind {
+                Some(lsp::TextDocumentSyncKind::FULL) => build_full_change(),
+                Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_change(),
+                _ => {
+                    #[cfg(any(test, feature = "test-support"))]
+                    {
+                        build_change()
+                    }
+
+                    #[cfg(not(any(test, feature = "test-support")))]
+                    {
+                        continue;
                     }
                 }
             };

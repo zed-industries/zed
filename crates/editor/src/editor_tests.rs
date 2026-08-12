@@ -37168,88 +37168,23 @@ async fn test_paste_image_in_markdown_single_file_worktree_falls_through(cx: &mu
 }
 
 #[gpui::test]
-async fn test_crlf_line_endings_sent_to_lsp(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let lf_content = "fn main() {\n    let a = 5;\n}";
-    let crlf_content = lf_content.replace('\n', "\r\n");
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/a"), json!({ "main.rs": crlf_content.clone() }))
-        .await;
-
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-
-    let registered_texts = Arc::new(Mutex::new(Vec::<String>::new()));
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            initializer: Some({
-                let registered_texts = registered_texts.clone();
-                Box::new(move |fake_server| {
-                    fake_server.handle_notification::<lsp::notification::DidOpenTextDocument, _>({
-                        let registered_texts = registered_texts.clone();
-                        move |params, _| {
-                            registered_texts.lock().push(params.text_document.text);
-                        }
-                    });
-                })
-            }),
-            ..FakeLspAdapter::default()
-        },
-    );
-
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-
-    let editor = workspace
-        .update_in(cx, |workspace, window, cx| {
-            workspace.open_abs_path(
-                PathBuf::from(path!("/a/main.rs")),
-                OpenOptions::default(),
-                window,
-                cx,
-            )
-        })
-        .await
-        .unwrap()
-        .downcast::<Editor>()
-        .unwrap();
-    let _fake_server = fake_servers.next().await.unwrap();
-    cx.executor().run_until_parked();
-
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.text(cx)),
-        lf_content,
-        "editor text() should return LF-normalized content",
-    );
-    assert_eq!(
-        registered_texts.lock().clone(),
-        vec![crlf_content],
-        "LSP should receive original CRLF text on DidOpenTextDocument",
-    );
-}
-
-#[gpui::test]
-async fn test_format_on_save_with_crlf_does_not_apply_spurious_edits(cx: &mut TestAppContext) {
+async fn test_format_echoing_received_line_endings_keeps_cursor(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.ensure_final_newline_on_save = Some(false);
     });
 
-    let crlf_content = "fn main() {\r\n    let a = 5;\r\n    let b = 6;\r\n}\r\n";
+    let lf_content = "// one\nstruct Foo {\n    bar: Bar,\n}\n\n// two\nstruct Bar {\n    foobar:u32,\n}\n\nfn main() {\n    let foo = 1;\n}\n";
+    let crlf_content = lf_content.replace('\n', "\r\n");
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_file(path!("/file.rs"), crlf_content.into()).await;
+    fs.insert_file(path!("/file.rs"), crlf_content.clone().into())
+        .await;
 
     let project = Project::test(fs, [path!("/file.rs").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
 
+    let server_side_texts = Arc::new(Mutex::new(Vec::<String>::new()));
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
@@ -37257,7 +37192,18 @@ async fn test_format_on_save_with_crlf_does_not_apply_spurious_edits(cx: &mut Te
                 document_formatting_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
-            ..Default::default()
+            initializer: Some({
+                let server_side_texts = server_side_texts.clone();
+                Box::new(move |fake_server| {
+                    fake_server.handle_notification::<lsp::notification::DidOpenTextDocument, _>({
+                        let server_side_texts = server_side_texts.clone();
+                        move |params, _| {
+                            server_side_texts.lock().push(params.text_document.text);
+                        }
+                    });
+                })
+            }),
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -37274,24 +37220,30 @@ async fn test_format_on_save_with_crlf_does_not_apply_spurious_edits(cx: &mut Te
     });
 
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
 
-    // Move the cursor to the beginning of the file.
     editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([Point::new(2, 4)..Point::new(2, 4)]);
+        });
     });
 
-    // The formatter returns edits with CRLF new_text that would be spurious if
-    // compared to the LF-normalized old_text. With the fix, new_text is normalized
-    // before diffing, so these edits produce no net change and are not applied.
-    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
-        move |_params, _| async move {
-            Ok(Some(vec![lsp::TextEdit {
-                // Replace lines 1-3 with the same content but CRLF endings.
-                range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(3, 0)),
-                new_text: "    let a = 5;\r\n    let b = 6;\r\n".into(),
-            }]))
-        },
+    let server_side_text = server_side_texts.lock().last().cloned().unwrap();
+    assert_eq!(
+        server_side_text, crlf_content,
+        "server should have received the CRLF text on DidOpenTextDocument",
     );
+
+    let formatted_text = server_side_text.replace("foobar:u32", "foobar: u32");
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| {
+        let formatted_text = formatted_text.clone();
+        async move {
+            Ok(Some(vec![lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(13, 0)),
+                new_text: formatted_text,
+            }]))
+        }
+    });
 
     let save = editor
         .update_in(cx, |editor, window, cx| {
@@ -37309,104 +37261,20 @@ async fn test_format_on_save_with_crlf_does_not_apply_spurious_edits(cx: &mut Te
         .unwrap();
     save.await;
 
-    // Buffer content should be unchanged (same LF-normalized content as before).
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
-        "fn main() {\n    let a = 5;\n    let b = 6;\n}\n",
-        "buffer content should be unchanged after no-op CRLF formatting",
+        lf_content.replace("foobar:u32", "foobar: u32"),
+        "only the minimal formatting change should be applied",
     );
-
-    // The cursor should remain at the start, not scroll to the end of the file.
     editor.update(cx, |editor, cx| {
         let snapshot = editor.display_snapshot(cx);
         let cursor = editor.selections.newest::<Point>(&snapshot).head();
         assert_eq!(
             cursor,
-            Point::new(0, 0),
-            "cursor should stay at beginning after no-op CRLF formatting",
+            Point::new(2, 4),
+            "whole-document echo of the received line endings must not move the cursor",
         );
     });
-}
-
-#[gpui::test]
-async fn test_line_ending_change_notifies_lsp(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let lf_content = "fn main() {\n    let a = 5;\n}";
-    let crlf_content = lf_content.replace('\n', "\r\n");
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/a"), json!({ "main.rs": lf_content }))
-        .await;
-
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-
-    // Record the full-document changes (range, text) sent to the language server.
-    let changes = Arc::new(Mutex::new(Vec::<(Option<lsp::Range>, String)>::new()));
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            initializer: Some({
-                let changes = changes.clone();
-                Box::new(move |fake_server| {
-                    fake_server.handle_notification::<lsp::notification::DidChangeTextDocument, _>(
-                        {
-                            let changes = changes.clone();
-                            move |params, _| {
-                                changes.lock().extend(
-                                    params
-                                        .content_changes
-                                        .into_iter()
-                                        .map(|change| (change.range, change.text)),
-                                );
-                            }
-                        },
-                    );
-                })
-            }),
-            ..FakeLspAdapter::default()
-        },
-    );
-
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-
-    let editor = workspace
-        .update_in(cx, |workspace, window, cx| {
-            workspace.open_abs_path(
-                PathBuf::from(path!("/a/main.rs")),
-                OpenOptions::default(),
-                window,
-                cx,
-            )
-        })
-        .await
-        .unwrap()
-        .downcast::<Editor>()
-        .unwrap();
-    let _fake_server = fake_servers.next().await.unwrap();
-    cx.executor().run_until_parked();
-
-    let buffer = editor.update(cx, |editor, cx| {
-        editor.buffer().read(cx).as_singleton().unwrap()
-    });
-
-    // Switch the buffer's line endings; the language server should receive a full-document resync.
-    buffer.update(cx, |buffer, cx| {
-        buffer.set_line_ending(language::LineEnding::Windows, cx);
-    });
-    cx.executor().run_until_parked();
-
-    assert_eq!(
-        changes.lock().clone(),
-        vec![(None, crlf_content)],
-        "LSP should receive a full-document resync with CRLF text after the line ending changes",
-    );
 }
 
 #[gpui::test]

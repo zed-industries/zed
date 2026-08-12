@@ -2195,7 +2195,7 @@ impl BufferSnapshot {
     }
 
     pub fn text_with_line_endings(&self) -> String {
-        self.line_ending.apply(self.text())
+        chunks_with_line_ending(&self.visible_text, self.line_ending).collect()
     }
 
     pub fn line_ending(&self) -> LineEnding {
