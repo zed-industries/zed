@@ -2413,6 +2413,7 @@ mod tests {
         });
 
         cx.dispatch_action(menu::Confirm);
+        cx.run_until_parked();
 
         assert_eq!(*selected_branch.borrow(), Some(expected_branch));
         assert_eq!(
