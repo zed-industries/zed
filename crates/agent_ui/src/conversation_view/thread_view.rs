@@ -860,6 +860,16 @@ impl PromptHistory {
             .get(self.selected_index)
             .map(PromptHistoryEntry::preview)
     }
+
+    pub(super) fn select_previous(&mut self) {
+        self.selected_index = self.selected_index.saturating_sub(1);
+    }
+
+    pub(super) fn select_next(&mut self) {
+        if let Some(last_index) = self.entries.len().checked_sub(1) {
+            self.selected_index = self.selected_index.saturating_add(1).min(last_index);
+        }
+    }
 }
 
 impl ThreadView {
@@ -12860,6 +12870,37 @@ mod tests {
             Some("First prompt")
         );
         assert!(PromptHistory::from_prompts([]).is_none());
+    }
+
+    #[test]
+    fn test_prompt_history_navigation_clamps_at_boundaries() {
+        fn selected_text(history: &PromptHistory) -> Option<&str> {
+            let acp::ContentBlock::Text(text) = history.selected_chunks()?.first()? else {
+                return None;
+            };
+            Some(text.text.as_str())
+        }
+
+        let prompt = |text| vec![acp::ContentBlock::Text(acp::TextContent::new(text))];
+        let mut history =
+            PromptHistory::from_prompts([prompt("First"), prompt("Second"), prompt("Third")])
+                .expect("history should contain prompts");
+
+        assert_eq!(selected_text(&history), Some("Third"));
+
+        history.select_previous();
+        assert_eq!(selected_text(&history), Some("Second"));
+        history.select_previous();
+        assert_eq!(selected_text(&history), Some("First"));
+        history.select_previous();
+        assert_eq!(selected_text(&history), Some("First"));
+
+        history.select_next();
+        assert_eq!(selected_text(&history), Some("Second"));
+        history.select_next();
+        assert_eq!(selected_text(&history), Some("Third"));
+        history.select_next();
+        assert_eq!(selected_text(&history), Some("Third"));
     }
 
     #[gpui::test]
