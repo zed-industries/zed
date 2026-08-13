@@ -18,12 +18,37 @@ pub(crate) struct EditorState {
     pub _subscription: Subscription,
 }
 
-fn delimiter_from_extension(ext: &str) -> char {
-    match ext.to_lowercase().as_str() {
-        "tsv" => '\t',
-        "psv" => '|',
-        "ssv" => ';',
-        _ => ',',
+#[derive(Clone, Copy)]
+pub(crate) enum TabularFormat {
+    Csv,
+    Tsv,
+    Psv,
+    Ssv,
+}
+
+const TABULAR_FORMATS: &[(&str, TabularFormat)] = &[
+    ("csv", TabularFormat::Csv),
+    ("tsv", TabularFormat::Tsv),
+    ("psv", TabularFormat::Psv),
+    ("ssv", TabularFormat::Ssv),
+];
+
+impl TabularFormat {
+    pub(crate) fn from_extension(ext: &str) -> Option<Self> {
+        let lower = ext.to_lowercase();
+        TABULAR_FORMATS
+            .iter()
+            .find(|(name, _)| *name == lower)
+            .map(|(_, format)| *format)
+    }
+
+    fn delimiter(self) -> char {
+        match self {
+            TabularFormat::Csv => ',',
+            TabularFormat::Tsv => '\t',
+            TabularFormat::Psv => '|',
+            TabularFormat::Ssv => ';',
+        }
     }
 }
 
@@ -74,18 +99,25 @@ impl CsvPreviewView {
                     .as_singleton()
                     .map(|b| b.read(cx).text_snapshot());
 
-                let delimiter = editor
+                let extension = editor
                     .read(cx)
                     .buffer()
                     .read(cx)
                     .as_singleton()
                     .and_then(|buffer| buffer.read(cx).file())
-                    .and_then(|file| {
-                        file.path()
-                            .extension()
-                            .map(|ext_str| delimiter_from_extension(ext_str))
-                    })
-                    .unwrap_or(',');
+                    .and_then(|file| file.path().extension().map(ToOwned::to_owned));
+
+                let delimiter = extension
+                    .as_deref()
+                    .and_then(TabularFormat::from_extension)
+                    .map(TabularFormat::delimiter)
+                    .unwrap_or_else(|| {
+                        log::warn!(
+                            "unrecognized tabular data extension {:?}, defaulting to comma delimiter",
+                            extension
+                        );
+                        ','
+                    });
 
                 (buffer_ref, delimiter)
             })?;
