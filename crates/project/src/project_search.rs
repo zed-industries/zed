@@ -800,10 +800,7 @@ impl RequestHandler<'_> {
 
             let is_plain_utf8 = bom_encoding.is_none()
                 && byte_content == ByteContent::Unknown
-                && match std::str::from_utf8(file_start) {
-                    Ok(_) => true,
-                    Err(e) => e.error_len().is_none(),
-                };
+                && is_utf8_prefix(file_start);
 
             let line_hint = if is_plain_utf8 {
                 match self.query.detect(file).await {
@@ -894,6 +891,13 @@ impl RequestHandler<'_> {
             anyhow::Ok(())
         })
         .await;
+    }
+}
+
+fn is_utf8_prefix(bytes: &[u8]) -> bool {
+    match std::str::from_utf8(bytes) {
+        Ok(_) => true,
+        Err(error) => error.error_len().is_none(),
     }
 }
 

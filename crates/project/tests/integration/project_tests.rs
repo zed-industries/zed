@@ -9241,7 +9241,13 @@ async fn test_search_in_unopened_non_utf8_files(cx: &mut gpui::TestAppContext) {
 
     let text = "// 你好世界 hello\n// 这是一个中文注释，包含很多汉字，用来帮助编码检测器正确判断文件编码。\n// 编码检测需要足够多的中文内容才能可靠工作。\n";
 
-    let (gbk_bytes, _, had_errors) = encoding_rs::GBK.encode(text);
+    let gb2312 = encoding_rs::Encoding::for_label(b"gb2312").unwrap();
+    assert_eq!(gb2312, encoding_rs::GBK);
+    let (gbk_bytes, _, had_errors) = gb2312.encode(text);
+    assert!(!had_errors);
+
+    let korean_text = "// 안녕하세요 세계 hello\n// 이것은 한국어 주석입니다. 인코딩 감지기가 파일 인코딩을 올바르게 판단할 수 있도록 충분히 많은 한글 내용을 담고 있습니다.\n// 인코딩 감지는 충분한 한국어 내용이 있어야 안정적으로 작동합니다.\n";
+    let (euc_kr_bytes, _, had_errors) = encoding_rs::EUC_KR.encode(korean_text);
     assert!(!had_errors);
 
     let mut utf16_bytes = vec![0xFF, 0xFE];
@@ -9259,6 +9265,8 @@ async fn test_search_in_unopened_non_utf8_files(cx: &mut gpui::TestAppContext) {
     )
     .await;
     fs.insert_file(path!("/dir/gbk.rs"), gbk_bytes.into_owned())
+        .await;
+    fs.insert_file(path!("/dir/euc_kr.rs"), euc_kr_bytes.into_owned())
         .await;
     fs.insert_file(path!("/dir/utf16.rs"), utf16_bytes).await;
     fs.insert_file(path!("/dir/binary.dat"), binary_bytes).await;
@@ -9311,8 +9319,30 @@ async fn test_search_in_unopened_non_utf8_files(cx: &mut gpui::TestAppContext) {
         HashMap::from_iter([
             (path!("dir/utf8.rs").to_string(), vec![16..21]),
             (path!("dir/gbk.rs").to_string(), vec![16..21]),
+            (path!("dir/euc_kr.rs").to_string(), vec![26..31]),
             (path!("dir/utf16.rs").to_string(), vec![16..21]),
         ])
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "세계",
+                false,
+                true,
+                false,
+                PathMatcher::default(),
+                PathMatcher::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([(path!("dir/euc_kr.rs").to_string(), vec![19..25])])
     );
 }
 
