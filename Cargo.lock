@@ -11197,6 +11197,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "minidump"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a902ca21d9772a66d3d1b050b3436dcadb192694be01409e0219902dcf4bc1e8"
+dependencies = [
+ "debugid",
+ "encoding_rs",
+ "memmap2",
+ "minidump-common",
+ "num-traits",
+ "procfs-core",
+ "prost 0.13.5",
+ "range-map",
+ "scroll",
+ "thiserror 2.0.17",
+ "time",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "minidump-common"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14445,6 +14466,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "prost"
+version = "0.13.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2796faa41db3ec313a31f7624d9286acf277b52de526150b7e69f3debf891ee5"
+dependencies = [
+ "bytes 1.11.1",
+ "prost-derive 0.13.5",
+]
+
+[[package]]
 name = "prost-build"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14506,6 +14537,19 @@ checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
  "itertools 0.11.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "prost-derive"
+version = "0.13.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
+dependencies = [
+ "anyhow",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -23356,6 +23400,7 @@ dependencies = [
  "menu",
  "migrator",
  "mimalloc",
+ "minidump",
  "miniprofiler_ui",
  "node_runtime",
  "notifications",
@@ -23435,6 +23480,7 @@ dependencies = [
  "zed_env_vars",
  "zlog",
  "zlog_settings",
+ "zstd",
  "ztracing",
 ]
 
