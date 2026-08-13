@@ -48,6 +48,10 @@ impl PromptHistoryPopover {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        self.accept_selected(cx);
+    }
+
+    fn accept_selected(&self, cx: &mut Context<Self>) {
         if let Some(chunks) = self.history.selected_chunks() {
             cx.emit(PromptHistoryPopoverEvent::Accepted(chunks.to_vec()));
         }
@@ -99,15 +103,28 @@ impl Render for PromptHistoryPopover {
                             .iter()
                             .enumerate()
                             .map(|(index, entry)| {
-                                ListItem::new(("agent-prompt-history-entry", index))
-                                    .inset(true)
-                                    .toggle_state(index == selected_index)
+                                div()
+                                    .w_full()
+                                    .debug_selector(|| {
+                                        format!("agent-prompt-history-entry-{index}")
+                                    })
                                     .child(
-                                        h_flex().w_full().min_w_0().child(
-                                            Label::new(entry.preview().clone())
-                                                .size(LabelSize::Small)
-                                                .truncate(),
-                                        ),
+                                        ListItem::new(("agent-prompt-history-entry", index))
+                                            .inset(true)
+                                            .toggle_state(index == selected_index)
+                                            .on_click(cx.listener(
+                                                move |this, _event, _window, cx| {
+                                                    this.history.select(index);
+                                                    this.accept_selected(cx);
+                                                },
+                                            ))
+                                            .child(
+                                                h_flex().w_full().min_w_0().child(
+                                                    Label::new(entry.preview().clone())
+                                                        .size(LabelSize::Small)
+                                                        .truncate(),
+                                                ),
+                                            ),
                                     )
                             }),
                     ),

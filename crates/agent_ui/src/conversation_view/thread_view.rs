@@ -881,6 +881,12 @@ impl PromptHistory {
             self.selected_index = self.selected_index.saturating_add(1).min(last_index);
         }
     }
+
+    pub(super) fn select(&mut self, index: usize) {
+        if self.entries.get(index).is_some() {
+            self.selected_index = index;
+        }
+    }
 }
 
 impl ThreadView {
