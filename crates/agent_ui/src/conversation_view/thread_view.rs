@@ -851,6 +851,14 @@ impl PromptHistory {
         }))
     }
 
+    pub(super) fn entries(&self) -> &[PromptHistoryEntry] {
+        &self.entries
+    }
+
+    pub(super) fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
     pub(super) fn selected_chunks(&self) -> Option<&[acp::ContentBlock]> {
         self.entries
             .get(self.selected_index)
