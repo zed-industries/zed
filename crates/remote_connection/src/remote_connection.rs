@@ -394,7 +394,7 @@ impl Render for RemoteConnectionModal {
                         .child(Label::new("Cancel"))
                         .end_slot(
                             KeyBinding::for_action_in(&menu::Cancel, &self.focus_handle(cx), cx)
-                                .size(rems_from_px(12.)),
+                                .size(rems_from_px(12_f32)),
                         )
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.dismiss(&menu::Cancel, window, cx);

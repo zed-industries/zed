@@ -591,6 +591,13 @@
     },
   },
   {
+    "context": "Editor && (vim_mode == helix_normal || vim_mode == helix_select) && showing_code_actions",
+    "bindings": {
+      "tab": "editor::ContextMenuNext",
+      "shift-tab": "editor::ContextMenuPrevious",
+    },
+  },
+  {
     "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
     "bindings": {
       "ctrl-p": "editor::ShowWordCompletions",

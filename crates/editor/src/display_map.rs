@@ -162,7 +162,7 @@ pub enum HighlightKey {
     // Note we want semantic tokens > colorized brackets
     // to allow language server highlights to work over brackets.
     ColorizeBracket(usize),
-    SemanticToken,
+    SemanticToken(u32),
     // below is sorted lexicographically, as there is no relevant ordering for these aside from coming after the above
     BufferSearchHighlights,
     ConsoleAnsiHighlight(usize),
@@ -360,6 +360,7 @@ pub struct SemanticTokenHighlight {
     pub token_type: TokenType,
     pub token_modifiers: u32,
     pub server_id: lsp::LanguageServerId,
+    pub precedence: u32,
 }
 
 impl DisplayMap {
@@ -1547,7 +1548,7 @@ impl DisplaySnapshot {
     /// The column `point` sits at once tabs are expanded, which is where it appears
     /// on screen when the line isn't soft-wrapped. Unlike a display column this is
     /// counted from the start of the buffer row rather than the wrapped segment.
-    pub fn tab_expanded_column(&self, point: Point) -> u32 {
+    pub(crate) fn tab_expanded_column(&self, point: Point) -> u32 {
         self.tab_snapshot()
             .point_to_tab_point(point, Bias::Left)
             .0
@@ -1555,15 +1556,21 @@ impl DisplaySnapshot {
     }
 
     /// Inverse of [`Self::tab_expanded_column`], clamped to the end of the row.
-    pub fn point_for_tab_expanded_column(&self, row: u32, column: u32) -> Point {
-        let column = column.min(self.tab_snapshot().line_len(row));
-        self.tab_snapshot()
-            .tab_point_to_point(TabPoint(Point::new(row, column)), Bias::Left)
+    pub(crate) fn point_for_tab_expanded_column(
+        &self,
+        buffer_row: MultiBufferRow,
+        column: u32,
+    ) -> Point {
+        let tab_snapshot = self.tab_snapshot();
+        let tab_row = tab_snapshot.buffer_row_to_tab_row(buffer_row);
+        let column = column.min(tab_snapshot.line_len(tab_row));
+        tab_snapshot.tab_point_to_point(TabPoint(Point::new(tab_row, column)), Bias::Left)
     }
 
-    /// The length of `row` once tabs are expanded.
-    pub fn tab_expanded_line_len(&self, row: u32) -> u32 {
-        self.tab_snapshot().line_len(row)
+    /// The length of `buffer_row` once tabs are expanded.
+    pub(crate) fn tab_expanded_line_len(&self, buffer_row: MultiBufferRow) -> u32 {
+        let tab_snapshot = self.tab_snapshot();
+        tab_snapshot.line_len(tab_snapshot.buffer_row_to_tab_row(buffer_row))
     }
 
     pub fn fold_snapshot(&self) -> &FoldSnapshot {

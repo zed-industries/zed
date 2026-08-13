@@ -14,6 +14,9 @@ path = "src/input_latency_ui.rs"
 [dependencies]
 chrono.workspace = true
 collections.workspace = true
-gpui = { workspace = true, features = ["input-latency-histogram"] }
+gpui = { workspace = true, features = [
+    "frame-duration-histogram",
+    "input-latency-histogram",
+] }
 hdrhistogram.workspace = true
 telemetry.workspace = true
