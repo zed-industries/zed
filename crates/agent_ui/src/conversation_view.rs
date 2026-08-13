@@ -6803,6 +6803,57 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_prompt_history_enter_and_tab_restore_without_sending(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Recall this prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let entry_count = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, cx| view.thread.read(cx).entries().len());
+        let editor_focus = message_editor.read_with(cx, |editor, cx| editor.focus_handle(cx));
+
+        for confirm_key in ["enter", "tab"] {
+            cx.update(|window, cx| editor_focus.focus(window, cx));
+            cx.simulate_keystrokes("up");
+            cx.run_until_parked();
+            assert_eq!(
+                selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+                Some("Recall this prompt")
+            );
+
+            cx.simulate_keystrokes(confirm_key);
+            cx.run_until_parked();
+
+            assert_eq!(
+                message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+                "Recall this prompt"
+            );
+            assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+            active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+                assert_eq!(view.thread.read(cx).entries().len(), entry_count);
+                assert_eq!(view.thread.read(cx).status(), ThreadStatus::Idle);
+            });
+
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.clear(window, cx);
+            });
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
     async fn test_rewind_views(cx: &mut TestAppContext) {
         init_test(cx);
 

@@ -1,4 +1,5 @@
-use gpui::{App, FocusHandle, Focusable, IntoElement, Render, ScrollHandle, Window};
+use agent_client_protocol::schema::v1 as acp;
+use gpui::{App, EventEmitter, FocusHandle, Focusable, IntoElement, Render, ScrollHandle, Window};
 use ui::{ListItem, WithScrollbar, prelude::*};
 
 use super::PromptHistory;
@@ -8,6 +9,12 @@ pub(super) struct PromptHistoryPopover {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
 }
+
+pub(super) enum PromptHistoryPopoverEvent {
+    Accepted(Vec<acp::ContentBlock>),
+}
+
+impl EventEmitter<PromptHistoryPopoverEvent> for PromptHistoryPopover {}
 
 impl PromptHistoryPopover {
     pub(super) fn new(history: PromptHistory, cx: &mut Context<Self>) -> Self {
@@ -39,6 +46,12 @@ impl PromptHistoryPopover {
         cx.notify();
     }
 
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(chunks) = self.history.selected_chunks() {
+            cx.emit(PromptHistoryPopoverEvent::Accepted(chunks.to_vec()));
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn selected_preview(&self) -> Option<&str> {
         self.history
@@ -62,6 +75,7 @@ impl Render for PromptHistoryPopover {
             .key_context("AgentPromptHistory")
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::confirm))
             .w_full()
             .flex_shrink_1()
             .elevation_2(cx)
