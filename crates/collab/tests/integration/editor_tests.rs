@@ -8,12 +8,12 @@ use editor::{
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, CopyFileLocation,
         CopyFileName, CopyFileNameWithoutExtension, ExpandMacroRecursively, MoveToEnd, Redo,
-        Rename, SelectAll, ToggleCodeActions, Undo,
+        Rename, SelectAll, ToggleCodeActions, Undo, WrapWithAbbreviation,
     },
     code_context_menus::CodeContextMenu,
     test::{
         editor_test_context::{AssertionContextManager, EditorTestContext},
-        expand_macro_recursively,
+        expand_macro_recursively, wrap_with_abbreviation,
     },
 };
 use fs::Fs;
@@ -24,12 +24,16 @@ use gpui::{
     VisualTestContext,
 };
 use indoc::indoc;
-use language::{FakeLspAdapter, language_settings::LanguageSettings, rust_lang};
+use language::{
+    FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, language_settings::LanguageSettings,
+    rust_lang,
+};
 use lsp::DEFAULT_LSP_REQUEST_TIMEOUT;
 use multi_buffer::{AnchorRangeExt as _, MultiBufferRow};
 use pretty_assertions::assert_eq;
 use project::{
     ProgressToken, ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    lsp_store::emmet_ext::LspExpandAbbreviation,
     lsp_store::lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
     trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
@@ -5141,6 +5145,154 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
                 assert_eq!(editor.text(cx), "test_macro_expansion on the client");
             });
         })
+    });
+}
+
+#[gpui::test]
+async fn test_client_can_wrap_with_emmet_abbreviation(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_b.update(editor::init);
+
+    let html_lang = || {
+        Arc::new(Language::new(
+            LanguageConfig {
+                name: "HTML".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["html".into()],
+                    ..LanguageMatcher::default()
+                }
+                .into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ))
+    };
+    client_a.language_registry().add(html_lang());
+    client_b.language_registry().add(html_lang());
+    let mut fake_html_servers = client_a.language_registry().register_fake_lsp(
+        "HTML",
+        FakeLspAdapter {
+            name: "vscode-html-language-server",
+            ..FakeLspAdapter::default()
+        },
+    );
+    let mut fake_emmet_servers = client_a.language_registry().register_fake_lsp(
+        "HTML",
+        FakeLspAdapter {
+            name: "emmet-language-server",
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().register_fake_lsp_adapter(
+        "HTML",
+        FakeLspAdapter {
+            name: "emmet-language-server",
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "index.html": "<p>hello</p>",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let buffer_a = project_a
+        .update(cx_a, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("index.html")), cx)
+        })
+        .await
+        .unwrap();
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("index.html")),
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let _fake_html_server = fake_html_servers.next().await.unwrap();
+    let fake_emmet_server = fake_emmet_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let mut wrap_request = fake_emmet_server.set_request_handler::<LspExpandAbbreviation, _, _>(
+        |params, _| async move {
+            assert_eq!(params.abbreviation, "div.wrap");
+            assert_eq!(params.language, "html");
+            assert_eq!(params.options.text, Some(vec!["hello".to_string()]));
+            Ok(Some("<div class=\"wrap\">hello</div>".to_string()))
+        },
+    );
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 3)..Point::new(0, 8)])
+        });
+        wrap_with_abbreviation(editor, &WrapWithAbbreviation, window, cx);
+    });
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        let input = editor
+            .pending_inline_input()
+            .expect("emmet wrap input should be pending on the client")
+            .editor
+            .clone();
+        input.update(cx, |input, cx| input.set_text("div.wrap", window, cx));
+        editor.confirm_inline_input(window, cx);
+    });
+    wrap_request.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(editor.text(cx), "<p><div class=\"wrap\">hello</div></p>");
+    });
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "<p><div class=\"wrap\">hello</div></p>",
+            "the wrap edit should sync back to the host"
+        );
     });
 }
 

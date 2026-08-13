@@ -306,6 +306,21 @@ message LspExtExpandMacroResponse {
   string expansion = 2;
 }
 
+message LspExtExpandAbbreviation {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  string abbreviation = 3;
+  repeated string text = 4;
+  string language = 5;
+  optional uint64 server_id = 6;
+  bool comment_filter = 7;
+  bool bem_filter = 8;
+}
+
+message LspExtExpandAbbreviationResponse {
+  optional string expansion = 1;
+}
+
 message LspExtOpenDocs {
   uint64 project_id = 1;
   uint64 buffer_id = 2;
