@@ -7090,7 +7090,7 @@ impl fs::Watcher for NullWatcher {
     }
 }
 
-async fn decode_file_text(
+pub async fn decode_file_text(
     fs: &dyn Fs,
     abs_path: &Path,
 ) -> Result<(String, &'static Encoding, bool)> {
@@ -7140,7 +7140,7 @@ async fn decode_file_text(
     decode_byte_full(content, bom_encoding, byte_content)
 }
 
-fn decode_byte_header(prefix: &[u8]) -> (Option<&'static Encoding>, ByteContent) {
+pub fn decode_byte_header(prefix: &[u8]) -> (Option<&'static Encoding>, ByteContent) {
     if let Some((encoding, _bom_len)) = Encoding::for_bom(prefix) {
         return (Some(encoding), ByteContent::Unknown);
     }
