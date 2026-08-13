@@ -3671,8 +3671,8 @@ pub(crate) mod tests {
     use action_log::ActionLog;
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_servers::FakeAcpAgentServer;
-    use editor::MultiBufferOffset;
     use editor::actions::Paste;
+    use editor::{MultiBufferOffset, ToOffset};
     use feature_flags::{AcpBetaFeatureFlag, FeatureFlag as _, FeatureFlagAppExt as _};
     use fs::FakeFs;
     use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, point, size};
@@ -6797,6 +6797,17 @@ pub(crate) mod tests {
                 message_editor.read_with(cx, |editor, cx| editor.text(cx)),
                 "Recall this prompt"
             );
+            message_editor.read_with(cx, |message_editor, cx| {
+                let editor = message_editor.editor().read(cx);
+                let selection = editor.selections.newest_anchor();
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let expected_offset = MultiBufferOffset("Recall this prompt".len());
+                assert_eq!(selection.start.to_offset(&snapshot), expected_offset);
+                assert_eq!(selection.end.to_offset(&snapshot), expected_offset);
+            });
+            cx.update(|window, cx| {
+                assert!(message_editor.read(cx).focus_handle(cx).is_focused(window));
+            });
             assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
             active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
                 assert_eq!(view.thread.read(cx).entries().len(), entry_count);
