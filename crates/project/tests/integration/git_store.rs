@@ -1076,6 +1076,62 @@ mod git_traversal {
         );
     }
 
+    #[gpui::test]
+    async fn test_status_scans_with_more_repos_than_concurrency_limit(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+
+        // Deliberately more repositories than the concurrent scan limit, so that some scans only
+        // start once earlier ones have released their permit.
+        const REPO_COUNT: usize = 20;
+
+        let mut root = serde_json::Map::new();
+        for index in 0..REPO_COUNT {
+            root.insert(
+                format!("repo{index}"),
+                json!({
+                    ".git": {},
+                    "file.txt": "content",
+                }),
+            );
+        }
+        fs.insert_tree(path!("/root"), serde_json::Value::Object(root))
+            .await;
+
+        for index in 0..REPO_COUNT {
+            let dot_git_abs_path = Path::new(path!("/root"))
+                .join(format!("repo{index}"))
+                .join(".git");
+            fs.set_status_for_repo(
+                &dot_git_abs_path,
+                &[("file.txt", StatusCode::Modified.index())],
+            );
+        }
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
+            (
+                project.git_store().read(cx).repo_snapshots(cx),
+                project.worktrees(cx).next().unwrap().read(cx).snapshot(),
+            )
+        });
+
+        assert_eq!(repo_snapshots.len(), REPO_COUNT);
+
+        // Every repository must still report its status: waiting for a permit may delay a scan,
+        // but it must never drop or starve one.
+        let expected_paths = (0..REPO_COUNT)
+            .map(|index| format!("repo{index}/file.txt"))
+            .collect::<Vec<_>>();
+        let expected_statuses = expected_paths
+            .iter()
+            .map(|path| (path.as_str(), MODIFIED))
+            .collect::<Vec<_>>();
+        check_git_statuses(&repo_snapshots, &worktree_snapshot, &expected_statuses);
+    }
+
     fn init_test(cx: &mut gpui::TestAppContext) {
         zlog::init_test();
 

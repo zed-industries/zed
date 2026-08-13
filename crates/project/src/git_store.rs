@@ -66,7 +66,7 @@ use rpc::{
 use serde::Deserialize;
 use settings::{GitDiffBaseSetting, Settings, SettingsStore, WorktreeId};
 use smallvec::SmallVec;
-use smol::future::yield_now;
+use smol::{future::yield_now, lock::Semaphore};
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashSet, VecDeque, hash_map::Entry},
@@ -96,6 +96,14 @@ use worktree::{
 };
 use zeroize::Zeroize;
 
+/// A project can contain far more git repositories than a person is working in at once: a
+/// directory of `git worktree` checkouts, or vendored dependencies, can each add hundreds.
+/// Every repository schedules a status scan as soon as it is discovered, and each scan runs
+/// several git subprocesses, so scanning them all at once saturates CPU and IO on the whole
+/// machine. Permits bound how many repositories scan concurrently; a project with fewer
+/// repositories than this never waits.
+const MAX_CONCURRENT_REPOSITORY_SCANS: usize = 8;
+
 pub struct GitStore {
     state: GitStoreState,
     buffer_store: Entity<BufferStore>,
@@ -111,6 +119,7 @@ pub struct GitStore {
     diffs: HashMap<BufferId, Entity<BufferGitState>>,
     buffer_ids_by_index_text_buffer_id: HashMap<BufferId, BufferId>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
+    scan_semaphore: Arc<Semaphore>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -510,6 +519,9 @@ pub struct Repository {
     // For a local repository, holds paths that have had worktree events since the last status scan completed,
     // and that should be examined during the next status scan.
     paths_needing_status_update: Vec<Vec<RepoPath>>,
+    // Shared with every other repository in the project, so that status scans across all of them
+    // stay bounded. Only local repositories scan; remote ones receive updates from the host.
+    scan_semaphore: Arc<Semaphore>,
     job_sender: mpsc::UnboundedSender<GitJob>,
     _worker_task: Task<()>,
     active_jobs: HashMap<JobId, JobInfo>,
@@ -789,6 +801,7 @@ impl GitStore {
             shared_diffs: HashMap::default(),
             diffs: HashMap::default(),
             buffer_ids_by_index_text_buffer_id: HashMap::default(),
+            scan_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_REPOSITORY_SCANS)),
         }
     }
 
@@ -2367,6 +2380,7 @@ impl GitStore {
             {
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let git_store = cx.weak_entity();
+                let scan_semaphore = self.scan_semaphore.clone();
                 let repo = cx.new(|cx| {
                     let mut repo = Repository::local(
                         id,
@@ -2378,6 +2392,7 @@ impl GitStore {
                         fs.clone(),
                         is_trusted,
                         git_store,
+                        scan_semaphore,
                         cx,
                     );
                     if let Some(updates_tx) = updates_tx.as_ref() {
@@ -2803,6 +2818,7 @@ impl GitStore {
                 .map(|p| Path::new(p).into());
 
             let mut repo_subscription = None;
+            let scan_semaphore = this.scan_semaphore.clone();
             let repo = this.repositories.entry(id).or_insert_with(|| {
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
@@ -2815,6 +2831,7 @@ impl GitStore {
                         ProjectId(update.project_id),
                         client,
                         git_store,
+                        scan_semaphore,
                         cx,
                     )
                 });
@@ -5829,6 +5846,7 @@ impl Repository {
         fs: Arc<dyn Fs>,
         is_trusted: bool,
         git_store: WeakEntity<GitStore>,
+        scan_semaphore: Arc<Semaphore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let snapshot = RepositorySnapshot::empty(
@@ -5843,6 +5861,7 @@ impl Repository {
         let mut repo = Repository {
             this: cx.weak_entity(),
             git_store,
+            scan_semaphore,
             snapshot,
             pending_ops: Default::default(),
             repository_state: Task::ready(Err("not yet initialized".into())).shared(),
@@ -5873,6 +5892,7 @@ impl Repository {
         project_id: ProjectId,
         client: AnyProtoClient,
         git_store: WeakEntity<GitStore>,
+        scan_semaphore: Arc<Semaphore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let snapshot = RepositorySnapshot::empty(
@@ -5894,6 +5914,7 @@ impl Repository {
             snapshot,
             commit_message_buffer: None,
             git_store,
+            scan_semaphore,
             pending_ops: Default::default(),
             paths_needing_status_update: Default::default(),
             job_sender,
@@ -9288,6 +9309,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) {
         let this = cx.weak_entity();
+        let scan_semaphore = self.scan_semaphore.clone();
         let _ = self.send_keyed_job(
             "schedule_scan",
             Some(GitJobKey::ReloadGitState),
@@ -9301,6 +9323,9 @@ impl Repository {
                 let RepositoryState::Local(LocalRepositoryState { backend, .. }) = state else {
                     bail!("not a local repository")
                 };
+                // Held until this scan completes, so that discovering many repositories at once
+                // cannot spawn an unbounded number of concurrent git subprocesses.
+                let _scan_permit = scan_semaphore.acquire_arc().await;
                 let snapshot = compute_snapshot(this.clone(), backend.clone(), &mut cx).await;
                 this.update(&mut cx, |this, cx| {
                     this.clear_pending_ops(cx);
