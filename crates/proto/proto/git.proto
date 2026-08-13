@@ -378,6 +378,7 @@ message Stash {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   repeated string paths = 3;
+  optional string message = 4;
 }
 
 message StashPop {
@@ -547,6 +548,7 @@ message GetTreeDiff {
   bool is_merge = 3;
   string base = 4;
   string head = 5;
+  bool includes_worktree = 6;
 }
 
 message GetTreeDiffResponse {
