@@ -1563,7 +1563,7 @@ pub struct MarkdownElement {
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
     on_mermaid_zoom: Option<MermaidZoomCallback>,
-    image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
+    image_resolver: Option<Box<dyn Fn(&str, &App) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
     /// Test-only hook to observe the laid-out text when this element is
@@ -1681,7 +1681,7 @@ impl MarkdownElement {
 
     pub fn image_resolver(
         mut self,
-        resolver: impl Fn(&str) -> Option<ImageSource> + 'static,
+        resolver: impl Fn(&str, &App) -> Option<ImageSource> + 'static,
     ) -> Self {
         self.image_resolver = Some(Box::new(resolver));
         self
@@ -2551,7 +2551,7 @@ impl Element for MarkdownElement {
                             } else if let Some(source) = self
                                 .image_resolver
                                 .as_ref()
-                                .and_then(|resolve| resolve(dest_url.as_ref()))
+                                .and_then(|resolve| resolve(dest_url.as_ref(), cx))
                             {
                                 current_img_block_range = Some(range.clone());
                                 self.push_markdown_image(
@@ -2852,18 +2852,19 @@ impl Element for MarkdownElement {
                             builder.table.start(alignments.clone());
 
                             let column_count = alignments.len();
+                            builder.push_div(div().flex(), range, markdown_end);
                             builder.push_div(
                                 div()
                                     .id(("table", range.start))
+                                    .debug_selector(|| "markdown_table".into())
+                                    .min_w_0()
                                     .grid()
-                                    .grid_cols(column_count as u16)
                                     .when(self.style.table_columns_min_size, |this| {
-                                        this.grid_cols_min_content(column_count as u16)
+                                        this.w_full().grid_cols_min_content(column_count as u16)
                                     })
                                     .when(!self.style.table_columns_min_size, |this| {
-                                        this.grid_cols(column_count as u16)
+                                        this.grid_cols_max_content(column_count as u16)
                                     })
-                                    .w_full()
                                     .mb_2()
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
@@ -3052,6 +3053,7 @@ impl Element for MarkdownElement {
                         }
                     }
                     MarkdownTagEnd::Table => {
+                        builder.pop_div();
                         builder.pop_div();
                         builder.table.end();
                     }
@@ -4637,6 +4639,7 @@ mod tests {
         markdown: Entity<Markdown>,
         style: MarkdownStyle,
         code_span_link: Option<CodeSpanLinkCallback>,
+        width: Option<Pixels>,
         cx: &mut TestAppContext,
     ) -> RenderedText {
         let rendered_text = Rc::new(RefCell::new(None));
@@ -4649,6 +4652,9 @@ mod tests {
                 rendered_text,
             }
         });
+        if let Some(width) = width {
+            cx.simulate_resize(size(width, px(600.)));
+        }
         cx.run_until_parked();
 
         rendered_text
@@ -4840,7 +4846,7 @@ mod tests {
 
         let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
         cx.run_until_parked();
-        render_markdown_entity_in_view(markdown, style, Some(Arc::new(callback)), cx)
+        render_markdown_entity_in_view(markdown, style, Some(Arc::new(callback)), None, cx)
     }
 
     fn render_markdown_with_language_registry(
@@ -4849,6 +4855,18 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> RenderedText {
         render_markdown_with_options(markdown, language_registry, MarkdownOptions::default(), cx)
+    }
+
+    fn render_markdown_at_width(
+        markdown: &str,
+        width: Pixels,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        ensure_theme_initialized(cx);
+
+        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, Some(width), cx)
     }
 
     fn render_markdown_with_options(
@@ -4869,13 +4887,13 @@ mod tests {
             )
         });
         cx.run_until_parked();
-        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, cx)
+        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, None, cx)
     }
 
     fn render_markdown_with_image_resolver(
         markdown: &str,
         options: MarkdownOptions,
-        resolver: impl Fn(&str) -> Option<ImageSource> + 'static,
+        resolver: impl Fn(&str, &App) -> Option<ImageSource> + 'static,
         cx: &mut TestAppContext,
     ) -> RenderedText {
         ensure_theme_initialized(cx);
@@ -4918,7 +4936,7 @@ mod tests {
         let rendered = render_markdown_with_image_resolver(
             "Here is an image ![alt](https://example.com/a.png) and more text\nthat continues",
             MarkdownOptions::default(),
-            move |_| Some(ImageSource::Render(image.clone())),
+            move |_, _| Some(ImageSource::Render(image.clone())),
             cx,
         );
         let text: String = rendered
@@ -4942,7 +4960,7 @@ mod tests {
         let rendered = render_markdown_with_image_resolver(
             "![alt](https://example.com/a.png)\ncaption",
             MarkdownOptions::default(),
-            move |_| Some(ImageSource::Render(image.clone())),
+            move |_, _| Some(ImageSource::Render(image.clone())),
             cx,
         );
         let text: String = rendered
@@ -4965,7 +4983,7 @@ mod tests {
                 parse_html: true,
                 ..Default::default()
             },
-            move |_| Some(ImageSource::Render(image.clone())),
+            move |_, _| Some(ImageSource::Render(image.clone())),
             cx,
         );
         let stray_whitespace_line = rendered.lines.iter().find_map(|line| {
@@ -4988,7 +5006,7 @@ mod tests {
                 parse_html: true,
                 ..Default::default()
             },
-            move |_| Some(ImageSource::Render(image.clone())),
+            move |_, _| Some(ImageSource::Render(image.clone())),
             cx,
         );
         let text: String = rendered
@@ -5031,7 +5049,7 @@ mod tests {
                 size(px(600.0), px(600.0)),
                 |_window, _cx| {
                     MarkdownElement::new(markdown.clone(), style)
-                        .image_resolver(move |_| Some(ImageSource::Render(image.clone())))
+                        .image_resolver(move |_, _| Some(ImageSource::Render(image.clone())))
                         .code_block_renderer(CodeBlockRenderer::Default {
                             copy_button_visibility: CopyButtonVisibility::Hidden,
                             wrap_button_visibility: WrapButtonVisibility::Hidden,
@@ -5215,6 +5233,114 @@ mod tests {
 
         assert_eq!(first_word, "a");
         assert_eq!(second_word, "b");
+    }
+
+    const REVIEW_TABLE: &str = concat!(
+        "| ID | Sev | File | Line | Summary |\n",
+        "|---|---|---|---|---|\n",
+        "| R1 | High | src/main.rs | 42 | Unwrap on user input can panic |\n",
+        "| R2 | Low | src/lib.rs | 7 | Prefer iterators over index loops |\n",
+    );
+
+    #[gpui::test]
+    fn test_table_columns_are_sized_to_their_content(cx: &mut TestAppContext) {
+        fn cells(row: &str) -> impl Iterator<Item = &str> {
+            row.trim().trim_matches('|').split('|')
+        }
+
+        fn table_cell_widths(rendered: &RenderedText, column_count: usize) -> Vec<Pixels> {
+            rendered.lines[..column_count]
+                .iter()
+                .map(|line| line.layout.bounds().size.width)
+                .collect()
+        }
+
+        let header = REVIEW_TABLE.lines().next().unwrap();
+        let column_count = cells(header).count();
+
+        let expected: Vec<Pixels> = (0..column_count)
+            .map(|column| {
+                let source: String = REVIEW_TABLE
+                    .lines()
+                    .map(|row| format!("|{}|\n", cells(row).nth(column).unwrap()))
+                    .collect();
+                *table_cell_widths(&render_markdown_at_width(&source, px(800.), cx), 1)
+                    .first()
+                    .unwrap()
+            })
+            .collect();
+
+        let widths = table_cell_widths(
+            &render_markdown_at_width(REVIEW_TABLE, px(800.), cx),
+            column_count,
+        );
+        for (index, (width, expected)) in widths.iter().zip(&expected).enumerate() {
+            assert_eq!(
+                width, expected,
+                "column {index} width does not match expected width"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_table_never_renders_past_its_available_width(cx: &mut TestAppContext) {
+        for width in [800., 600., 500., 400., 300., 200.] {
+            let rendered = render_markdown_at_width(REVIEW_TABLE, px(width), cx);
+            for (index, line) in rendered.lines.iter().enumerate() {
+                let bounds = line.layout.bounds();
+                assert!(
+                    bounds.right() <= px(width),
+                    "cell {index} ends at {:?} which is past the available width of {width}px",
+                    bounds.right()
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_table_border_hugs_its_columns(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        struct TableView {
+            markdown: Entity<Markdown>,
+        }
+
+        impl Render for TableView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(MarkdownElement::new(
+                    self.markdown.clone(),
+                    MarkdownStyle::default(),
+                ))
+            }
+        }
+
+        let table_width = |width: f32, cx: &mut TestAppContext| {
+            let window = cx.open_window(size(px(width), px(600.)), |_, cx| {
+                let markdown = cx.new(|cx| Markdown::new(REVIEW_TABLE.into(), None, None, cx));
+                TableView { markdown }
+            });
+            cx.run_until_parked();
+            gpui::VisualTestContext::from_window(window.into(), cx)
+                .debug_bounds("markdown_table")
+                .expect("table should have been rendered")
+                .size
+                .width
+        };
+
+        assert!(
+            table_width(800., cx) < px(800.),
+            "the table should hug its columns instead of filling the window"
+        );
+        assert_eq!(
+            table_width(800., cx),
+            table_width(1200., cx),
+            "the table should keep its width when there is more room available"
+        );
+        assert_eq!(
+            table_width(400., cx),
+            px(400.),
+            "the table should shrink to the available width"
+        );
     }
 
     #[test]
@@ -5870,7 +5996,7 @@ mod tests {
                 let hovered_urls = self.hovered_urls.clone();
                 div().size_full().child(
                     MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
-                        .image_resolver(|_| Some(loaded_image_source()))
+                        .image_resolver(|_, _| Some(loaded_image_source()))
                         .on_url_hover(move |url, _, _| {
                             hovered_urls.borrow_mut().push(url);
                         }),
@@ -6013,7 +6139,7 @@ mod tests {
                 let image_source = self.image_source.clone();
                 div().size_full().child(
                     MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
-                        .image_resolver(move |_| Some(image_source.clone())),
+                        .image_resolver(move |_, _| Some(image_source.clone())),
                 )
             }
         }

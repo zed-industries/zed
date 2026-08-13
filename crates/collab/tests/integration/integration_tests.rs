@@ -5951,6 +5951,7 @@ async fn test_project_symbols(
         .unwrap();
     assert_eq!(symbols.len(), 1);
     assert_eq!(symbols[0].name, "TWO");
+    assert_eq!(symbols[0].kind, language::SymbolKind::Constant);
 
     // Open one of the returned symbols.
     let buffer_b_2 = project_b
