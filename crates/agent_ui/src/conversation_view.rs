@@ -6629,6 +6629,51 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_prompt_history_opens_from_empty_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-linux.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut bindings {
+                binding.set_meta(settings::KeybindSource::Default.meta());
+            }
+            cx.bind_keys(bindings);
+        });
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Remember this prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let editor_focus = message_editor.read_with(cx, |editor, cx| editor.focus_handle(cx));
+        cx.update(|window, cx| editor_focus.focus(window, cx));
+        cx.run_until_parked();
+        assert!(message_editor.read_with(cx, |editor, cx| editor.is_empty(cx)));
+
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        cx.update(|window, _cx| {
+            assert!(window.context_stack().iter().any(|context| {
+                context
+                    .primary()
+                    .is_some_and(|entry| entry.key.as_ref() == "AgentPromptHistory")
+            }));
+        });
+    }
+
+    #[gpui::test]
     async fn test_rewind_views(cx: &mut TestAppContext) {
         init_test(cx);
 
