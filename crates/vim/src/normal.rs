@@ -1431,6 +1431,7 @@ mod test {
     #[gpui::test]
     async fn test_gg(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_neovim_option("startofline").await;
         cx.simulate_at_each_offset(
             "g g",
             indoc! {"
@@ -1461,6 +1462,21 @@ mod test {
         )
         .await
         .assert_matches();
+        cx.simulate("g g", "    fiˇrst line\nsecond line")
+            .await
+            .assert_matches();
+        cx.simulate("1 g g", "    first line\nsecond lˇine")
+            .await
+            .assert_matches();
+        cx.simulate("2 g g", "first line\n    second line\nthird lˇine")
+            .await
+            .assert_matches();
+        cx.simulate("g g", "    \nsecond lˇine")
+            .await
+            .assert_matches();
+        cx.simulate("v g g", "    first line\nsecond lˇine")
+            .await
+            .assert_matches();
     }
 
     #[gpui::test]
