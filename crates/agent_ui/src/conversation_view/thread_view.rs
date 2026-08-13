@@ -866,6 +866,7 @@ impl PromptHistory {
             .map(|entry| entry.chunks.as_slice())
     }
 
+    #[cfg(test)]
     pub(super) fn selected_preview(&self) -> Option<&SharedString> {
         self.entries
             .get(self.selected_index)
