@@ -3785,7 +3785,7 @@ mod tests {
         terminal
     }
 
-    async fn init_terminal_test_with_window<'a>(
+    fn init_terminal_test_with_window<'a>(
         cx: &'a mut TestAppContext,
         initial_content: &[u8],
     ) -> (Entity<Terminal>, &'a mut VisualTestContext) {
@@ -3797,30 +3797,16 @@ mod tests {
         cx.executor().allow_parking();
 
         let window = cx.add_empty_window();
-        let builder = window
-            .update(|window, cx| {
-                let settings = TerminalSettings::get_global(cx);
-                const TEST_PATH_HYPERLINK_TIMEOUT_MS: u64 = 100;
-                TerminalBuilder::new(
-                    None,
-                    None,
-                    task::Shell::System,
-                    HashMap::default(),
-                    SettingsCursorShape::default(),
-                    AlternateScroll::On,
-                    None,
-                    settings.path_hyperlink_regexes.clone(),
-                    TEST_PATH_HYPERLINK_TIMEOUT_MS,
-                    false,
-                    window.window_handle().window_id().as_u64(),
-                    None,
-                    cx,
-                    vec![],
-                    PathStyle::local(),
-                )
-            })
-            .await
-            .unwrap();
+        let builder = window.update(|window, cx| {
+            TerminalBuilder::new_display_only(
+                SettingsCursorShape::default(),
+                AlternateScroll::On,
+                None,
+                window.window_handle().window_id().as_u64(),
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+        });
         let terminal = window.new(|cx| builder.subscribe(cx));
 
         terminal.update(window, |term, cx| {
@@ -5263,9 +5249,11 @@ mod tests {
             cx: &mut VisualTestContext,
             update: impl FnOnce(&mut HyperlinkVisualTestContext) -> Option<Expected>,
         ) {
-            if let Some(expected) = cx.update_window_entity(terminal, |terminal, window, cx| {
+            let expected = cx.update_window_entity(terminal, |terminal, window, cx| {
                 update(&mut HyperlinkVisualTestContext::new(terminal, window, cx))
-            }) {
+            });
+            cx.run_until_parked();
+            if let Some(expected) = expected {
                 assert_wakeups_and_notifies(expected, test_view, cx)
             }
         }
@@ -5273,7 +5261,7 @@ mod tests {
         async fn init_ctrl_hover_hyperlink_test_with_window(
             cx: &mut TestAppContext,
         ) -> (TestEntities, HoveredWord, &mut VisualTestContext) {
-            let (terminal, cx) = init_terminal_test_with_window(cx, b"").await;
+            let (terminal, cx) = init_terminal_test_with_window(cx, b"");
             let test_view = cx.new_window_entity(|window, cx| TestView::new(&terminal, window, cx));
             let test_entities = TestEntities::new(&terminal, &test_view);
             let expected_hovered_word: HoveredWord = (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
@@ -5397,12 +5385,14 @@ mod tests {
                 expected_hovered_word =
                     expected_hovered_word.with_line_and_id(-3, expected_hovered_word.id + 2);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
-                cx.write_output_lines(OUTPUT_ZED_DEV, 2);
+                // Use an odd number of lines so the previous grid coordinate contains
+                // OUTPUT_NONE after the scrollback coordinates shift.
+                cx.write_output_lines(OUTPUT_ZED_DEV, 1);
                 // All wakeups here are from write_output()
-                Some(Expected(Wakeups(4), Notifies(0)))
+                Some(Expected(Wakeups(2), Notifies(0)))
             });
             update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
-                cx.assert_display_offset(5);
+                cx.assert_display_offset(4);
                 cx.assert_visible_lines_match(vec![
                     OUTPUT_ZED_DEV,
                     OUTPUT_NONE,
@@ -5413,7 +5403,7 @@ mod tests {
                 ]);
                 // Existing hovered word IS reused (and adjusted) when total lines changed, but
                 // visible lines unchanged
-                expected_hovered_word = expected_hovered_word.with_line(-5);
+                expected_hovered_word = expected_hovered_word.with_line(-4);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
                 None
             });
@@ -5615,7 +5605,7 @@ mod tests {
         #[gpui::test]
         async fn scroll_long_line_benchmark(cx: &mut TestAppContext) {
             let (terminal, cx) =
-                init_terminal_test_with_window(cx, "long line ".repeat(1000).as_bytes()).await;
+                init_terminal_test_with_window(cx, "long line ".repeat(1000).as_bytes());
             let wobble = point(FIND_HYPERLINK_THROTTLE_PX, px(0.0));
             let mut scroll_by = |lines: i32| {
                 cx.update_window_entity(&terminal, |terminal, window, cx| {
