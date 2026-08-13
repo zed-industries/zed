@@ -51,6 +51,7 @@ use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
 };
+use super::prompt_history::PromptHistoryPopover;
 use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
@@ -621,6 +622,7 @@ pub struct ThreadView {
     pub in_flight_prompt: Option<Vec<acp::ContentBlock>>,
     pub _subscriptions: Vec<Subscription>,
     pub message_editor: Entity<MessageEditor>,
+    prompt_history_popover: Option<Entity<PromptHistoryPopover>>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub fast_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -1134,6 +1136,7 @@ impl ThreadView {
             hovered_edited_file_buttons: None,
             in_flight_prompt: None,
             message_editor,
+            prompt_history_popover: None,
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
             fast_mode_menu_handle: PopoverMenuHandle::default(),
@@ -2467,11 +2470,35 @@ impl ThreadView {
             cx.propagate();
             return;
         }
-        let Some(last_id) = self.message_queue.last_id() else {
-            cx.propagate();
+
+        if let Some(last_id) = self.message_queue.last_id() {
+            self.move_queued_message_to_main_editor(last_id, None, None, window, cx);
             return;
+        }
+
+        if !self.open_prompt_history(window, cx) {
+            cx.propagate();
+        }
+    }
+
+    fn open_prompt_history(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.is_subagent()
+            || !AgentSettings::get_global(cx).message_history_navigation
+            || !self.message_editor.focus_handle(cx).is_focused(window)
+            || !self.message_editor.read(cx).is_empty(cx)
+        {
+            return false;
+        }
+
+        let Some(history) = self.prompt_history(cx) else {
+            return false;
         };
-        self.move_queued_message_to_main_editor(last_id, None, None, window, cx);
+        let popover = cx.new(|cx| PromptHistoryPopover::new(history, cx));
+        let focus_handle = popover.focus_handle(cx);
+        self.prompt_history_popover = Some(popover);
+        focus_handle.focus(window, cx);
+        cx.notify();
+        true
     }
 
     // editor methods
@@ -4489,6 +4516,7 @@ impl ThreadView {
                             .when(fills_container, |this| this.flex_1())
                             .pt_1()
                             .pr_2p5()
+                            .children(self.prompt_history_popover.clone())
                             .child(self.message_editor.clone())
                             .when(has_messages, |this| {
                                 this.child(
