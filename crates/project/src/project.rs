@@ -6192,6 +6192,17 @@ impl Project {
         self.lsp_store.read(cx).supplementary_language_servers()
     }
 
+    /// Returns language servers for a buffer that advertise experimental runnables.
+    pub fn language_servers_supporting_runnables(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &App,
+    ) -> Vec<(LanguageServerId, LanguageServerName)> {
+        self.lsp_store
+            .read(cx)
+            .language_servers_supporting_runnables(buffer, cx)
+    }
+
     pub fn any_language_server_supports_inlay_hints(&self, buffer: &Buffer, cx: &mut App) -> bool {
         let Some(language) = buffer.language().cloned() else {
             return false;

@@ -606,6 +606,7 @@ pub struct ShellRunnableArgs {
 pub struct GetLspRunnables {
     pub buffer_id: BufferId,
     pub position: Option<text::Anchor>,
+    pub server_id: Option<LanguageServerId>,
 }
 
 #[derive(Debug, Default)]
@@ -677,6 +678,10 @@ impl LspCommand for GetLspRunnables {
         true
     }
 
+    fn language_server_id(&self) -> Option<LanguageServerId> {
+        self.server_id
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -723,6 +728,7 @@ impl LspCommand for GetLspRunnables {
             project_id,
             buffer_id: buffer.remote_id().to_proto(),
             position: self.position.as_ref().map(serialize_anchor),
+            server_id: self.server_id.map(LanguageServerId::to_proto),
         }
     }
 
@@ -737,6 +743,7 @@ impl LspCommand for GetLspRunnables {
         Ok(Self {
             buffer_id,
             position,
+            server_id: message.server_id.map(LanguageServerId::from_proto),
         })
     }
 

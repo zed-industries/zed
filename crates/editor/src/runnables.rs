@@ -7,7 +7,7 @@ use gpui::{
     MouseButton, Task, Window,
 };
 use language::{Buffer, BufferRow, Runnable};
-use lsp::LanguageServerName;
+use lsp::LanguageServerId;
 use multi_buffer::{Anchor, BufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
 use project::{Location, Project, TaskSourceKind, project_settings::ProjectSettings};
 use settings::Settings as _;
@@ -556,7 +556,7 @@ impl Editor {
         visible_only: bool,
         skip_cached: bool,
         cx: &mut Context<Self>,
-    ) -> HashMap<LanguageServerName, Vec<BufferId>> {
+    ) -> HashMap<LanguageServerId, Vec<BufferId>> {
         if !self.lsp_data_enabled() {
             return HashMap::default();
         }
@@ -574,38 +574,61 @@ impl Editor {
         buffers
             .into_iter()
             .filter_map(|buffer| {
-                let lsp_tasks_source = buffer
-                    .read(cx)
-                    .language()?
-                    .context_provider()?
-                    .lsp_task_source()?;
-                if lsp_settings
-                    .get(&lsp_tasks_source)
-                    .is_none_or(|s| s.enable_lsp_tasks)
-                {
-                    let buffer_id = buffer.read(cx).remote_id();
-                    if skip_cached
-                        && self
-                            .runnables
-                            .has_cached(buffer_id, &buffer.read(cx).version())
-                    {
-                        None
-                    } else {
-                        Some((lsp_tasks_source, buffer_id))
-                    }
-                } else {
-                    None
+                let buffer_read = buffer.read(cx);
+                let buffer_id = buffer_read.remote_id();
+                if skip_cached && self.runnables.has_cached(buffer_id, &buffer_read.version()) {
+                    return None;
                 }
-            })
-            .fold(
-                HashMap::default(),
-                |mut acc, (lsp_task_source, buffer_id)| {
-                    acc.entry(lsp_task_source)
+
+                let mut sources = HashMap::default();
+                if let Some(lsp_task_source) = buffer_read
+                    .language()
+                    .and_then(|language| language.context_provider())
+                    .and_then(|provider| provider.lsp_task_source())
+                    && lsp_settings
+                        .get(&lsp_task_source)
+                        .is_none_or(|settings| settings.enable_lsp_tasks)
+                    && let Some(server_id) = self.project().and_then(|project| {
+                        project.read(cx).language_server_id_for_name(
+                            &buffer_read,
+                            &lsp_task_source,
+                            cx,
+                        )
+                    })
+                {
+                    sources
+                        .entry(server_id)
                         .or_insert_with(Vec::new)
                         .push(buffer_id);
-                    acc
-                },
-            )
+                }
+
+                if let Some(project) = self.project() {
+                    for (server_id, server_name) in project
+                        .read(cx)
+                        .language_servers_supporting_runnables(&buffer, cx)
+                    {
+                        if lsp_settings
+                            .get(&server_name)
+                            .is_none_or(|settings| settings.enable_lsp_tasks)
+                        {
+                            let buffer_ids = sources.entry(server_id).or_insert_with(Vec::new);
+                            if !buffer_ids.contains(&buffer_id) {
+                                buffer_ids.push(buffer_id);
+                            }
+                        }
+                    }
+                }
+
+                Some(sources)
+            })
+            .fold(HashMap::default(), |mut acc, sources| {
+                for (server_id, buffer_ids) in sources {
+                    acc.entry(server_id)
+                        .or_insert_with(Vec::new)
+                        .extend(buffer_ids);
+                }
+                acc
+            })
     }
 
     pub fn find_enclosing_node_task(
@@ -865,7 +888,7 @@ mod tests {
     use project::{
         FakeFs, Project, ProjectPath,
         lsp_store::lsp_ext_command::{
-            CargoRunnableArgs, Runnable, RunnableArgs, ShellRunnableArgs,
+            CargoRunnableArgs, Runnable, RunnableArgs, Runnables, ShellRunnableArgs,
         },
     };
     use serde_json::json;
@@ -1231,6 +1254,92 @@ mod tests {
             labels,
             Vec::<(text::BufferId, language::BufferRow, Vec<String>)>::new(),
             "Runnables should be removed after #[test] is deleted and LSP returns empty"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_capability_advertised_lsp_runnables_without_language_context(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "main.rs": "fn main() {}\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+
+        let mut capabilities = lsp::ServerCapabilities::default();
+        capabilities.experimental = Some(json!({"runnables": true}));
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: FAKE_LSP_NAME,
+                capabilities,
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+        let editor = cx.add_window(|window, cx| {
+            build_editor_with_project(project.clone(), multi_buffer, window, cx)
+        });
+
+        let fake_server = fake_servers.next().await.expect("fake LSP server");
+        fake_server.set_request_handler::<Runnables, _, _>(move |params, _| async move {
+            let uri = params.text_document.uri;
+            Ok(vec![Runnable {
+                label: "LSP main".into(),
+                location: Some(lsp::LocationLink {
+                    origin_selection_range: None,
+                    target_uri: uri,
+                    target_range: lsp::Range::new(
+                        lsp::Position::new(0, 0),
+                        lsp::Position::new(0, 12),
+                    ),
+                    target_selection_range: lsp::Range::new(
+                        lsp::Position::new(0, 0),
+                        lsp::Position::new(0, 12),
+                    ),
+                }),
+                args: RunnableArgs::Shell(ShellRunnableArgs {
+                    environment: Default::default(),
+                    cwd: path!("/project").into(),
+                    program: "uv".into(),
+                    args: vec!["run".into(), "karva".into(), "test".into()],
+                }),
+            }])
+        });
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.refresh_runnables(None, window, cx);
+            })
+            .expect("editor update");
+        cx.executor().advance_clock(UPDATE_DEBOUNCE);
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            editor
+                .update(cx, |editor, _, _| collect_runnable_labels(editor))
+                .expect("editor update"),
+            vec![(buffer_id, 0, vec!["LSP main".to_string()])],
+            "capability-advertised LSP runnables should not need a language context provider"
         );
     }
 

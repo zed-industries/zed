@@ -98,7 +98,7 @@ async fn lsp_task_context(
 
 pub fn lsp_tasks(
     project: Entity<Project>,
-    task_sources: &HashMap<LanguageServerName, Vec<BufferId>>,
+    task_sources: &HashMap<LanguageServerId, Vec<BufferId>>,
     for_position: Option<text::Anchor>,
     cx: &mut App,
 ) -> Task<Vec<(TaskSourceKind, Vec<(Option<LocationLink>, ResolvedTask)>)>> {
@@ -113,13 +113,7 @@ pub fn lsp_tasks(
                 })
                 .filter_map(|&buffer_id| project.read(cx).buffer_for_id(buffer_id, cx))
                 .collect::<Vec<_>>();
-
-            let server_id = buffers.iter().find_map(|buffer| {
-                project.read_with(cx, |project, cx| {
-                    project.language_server_id_for_name(buffer.read(cx), name, cx)
-                })
-            });
-            server_id.zip(Some(buffers))
+            (!buffers.is_empty()).then_some((*name, buffers))
         })
         .collect::<Vec<_>>();
 
@@ -151,6 +145,7 @@ pub fn lsp_tasks(
                             GetLspRunnables {
                                 buffer_id,
                                 position: for_position,
+                                server_id: Some(server_id),
                             },
                             cx,
                         )

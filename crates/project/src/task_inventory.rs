@@ -17,7 +17,7 @@ use language::{
     Buffer, ContextLocation, ContextProvider, File, Language, LanguageToolchainStore, Location,
     language_settings::LanguageSettings,
 };
-use lsp::{LanguageServerId, LanguageServerName};
+use lsp::LanguageServerId;
 use paths::{debug_task_file_name, task_file_name};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
@@ -178,7 +178,7 @@ pub struct TaskContexts {
     pub active_worktree_context: Option<(WorktreeId, TaskContext)>,
     /// If there are multiple worktrees in the workspace, all non-active ones are included here.
     pub other_worktree_contexts: Vec<(WorktreeId, TaskContext)>,
-    pub lsp_task_sources: HashMap<LanguageServerName, Vec<BufferId>>,
+    pub lsp_task_sources: HashMap<LanguageServerId, Vec<BufferId>>,
     pub latest_selection: Option<text::Anchor>,
 }
 

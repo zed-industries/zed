@@ -99,6 +99,10 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
         None
     }
 
+    fn language_server_id(&self) -> Option<LanguageServerId> {
+        None
+    }
+
     fn to_lsp_params_or_response(
         &self,
         path: &Path,

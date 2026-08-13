@@ -5528,6 +5528,19 @@ impl LspStore {
             .collect()
     }
 
+    /// Returns language servers that advertise Zed's experimental runnable request.
+    pub fn language_servers_supporting_runnables(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &App,
+    ) -> Vec<(LanguageServerId, LanguageServerName)> {
+        self.all_capable_for_proto_request(
+            buffer,
+            |_, capabilities| server_capabilities_support_runnables(capabilities),
+            cx,
+        )
+    }
+
     pub fn request_lsp<R>(
         &mut self,
         buffer: Entity<Buffer>,
@@ -9669,14 +9682,13 @@ impl LspStore {
             cx.clone(),
         )
         .await?;
+        let server = request.language_server_id().map_or(
+            LanguageServerToQuery::FirstCapable,
+            LanguageServerToQuery::Other,
+        );
         let response = this
             .update(&mut cx, |this, cx| {
-                this.request_lsp(
-                    buffer_handle.clone(),
-                    LanguageServerToQuery::FirstCapable,
-                    request,
-                    cx,
-                )
+                this.request_lsp(buffer_handle.clone(), server, request, cx)
             })
             .await?;
         this.update(&mut cx, |this, cx| {
@@ -14956,6 +14968,20 @@ fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
     }
 }
 
+fn server_capabilities_support_runnables(capabilities: &lsp::ServerCapabilities) -> bool {
+    capabilities
+        .experimental
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|experimental| experimental.get("runnables"))
+        .and_then(|runnables| match runnables {
+            Value::Bool(enabled) => Some(*enabled),
+            Value::Object(_) => Some(true),
+            _ => None,
+        })
+        .unwrap_or(false)
+}
+
 /// Completion items are displayed in a `UniformList`.
 /// Usually, those items are single-line strings, but in LSP responses,
 /// completion items `label`, `detail` and `label_details.description` may contain newlines or long spaces.
@@ -15107,5 +15133,22 @@ mod tests {
             "Get diagnostics via rust-analyzer failed: Server reset the connection"
         ));
         assert!(should_log_lsp_request_failure("something else entirely"));
+    }
+
+    #[test]
+    fn runnable_capability_is_advertised_experimentally() {
+        let mut capabilities = lsp::ServerCapabilities::default();
+        assert!(!server_capabilities_support_runnables(&capabilities));
+
+        capabilities.experimental = Some(serde_json::json!({"runnables": true}));
+        assert!(server_capabilities_support_runnables(&capabilities));
+
+        capabilities.experimental = Some(serde_json::json!({
+            "runnables": {"kinds": ["shell"]}
+        }));
+        assert!(server_capabilities_support_runnables(&capabilities));
+
+        capabilities.experimental = Some(serde_json::json!({"runnables": false}));
+        assert!(!server_capabilities_support_runnables(&capabilities));
     }
 }
