@@ -795,6 +795,13 @@ impl DockerExecConnection {
         self.docker_command(docker_args)
     }
 
+    /// Kills the proxy child and nothing else. The host connection is shared —
+    /// the same SSH master may be carrying an ordinary remote project — so it
+    /// is left alone and released only when the last owner drops it.
+    ///
+    /// Killing the proxy child closes the stdin the remote `docker exec` is
+    /// reading from, which is what the in-container proxy exits on, so the
+    /// remote side is not orphaned by this.
     fn kill_inner(&self) -> Result<()> {
         if let Some(pid) = self.proxy_process.lock().take() {
             if let Ok(_) = util::command::new_command("kill")
@@ -1032,7 +1039,7 @@ mod tests {
     use crate::RemoteConnection;
     use crate::remote_client::CommandTemplate;
     use crate::remote_client::Interactive;
-    use crate::transport::mock::{MockConnection, MockConnectionRegistry};
+    use crate::transport::mock::{MockConnection, MockConnectionRegistry, MockRemoteConnection};
     use crate::transport::ssh::SshConnectionOptions;
     use gpui::TestAppContext;
     use parking_lot::Mutex;
@@ -1057,14 +1064,12 @@ mod tests {
     async fn mock_host(
         cx: &mut TestAppContext,
         server_cx: &mut TestAppContext,
-    ) -> Arc<dyn RemoteConnection> {
+    ) -> Arc<MockRemoteConnection> {
         let (options, _server_client, connect_guard) = MockConnection::new(cx, server_cx);
         connect_guard.send(()).ok();
-        let connection = cx
-            .update(|cx| cx.default_global::<MockConnectionRegistry>().take(&options))
+        cx.update(|cx| cx.default_global::<MockConnectionRegistry>().take(&options))
             .expect("the mock connection should be registered")
-            .await;
-        connection
+            .await
     }
 
     /// The argv the proxy child is spawned from, minus the `-e` pairs, which
@@ -1228,6 +1233,44 @@ mod tests {
                 "some-identifier",
                 "--reconnect",
             ]
+        );
+    }
+
+    /// The host may be carrying an ordinary remote project as well, so closing
+    /// a dev container must leave it running. Regression test for the shared
+    /// SSH master being torn down with the container.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn killing_a_dev_container_leaves_its_host_alive(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let host = mock_host(cx, server_cx).await;
+        let mut connection = local_connection(docker_options());
+        connection.host = Some(host.clone());
+
+        // Stand in for a running proxy child so that `kill` takes the branch
+        // that kills something. `u32::MAX` is not a live pid, so the signal
+        // lands nowhere.
+        *connection.proxy_process.lock() = Some(u32::MAX);
+        connection
+            .kill()
+            .await
+            .expect("killing the proxy should succeed");
+
+        assert!(
+            !host.was_killed(),
+            "killing the dev container must not kill the host connection"
+        );
+        assert!(
+            connection.proxy_process.lock().is_none(),
+            "the proxy must be forgotten so a later kill does not signal a reused pid"
+        );
+
+        drop(connection);
+        assert!(
+            !host.was_killed(),
+            "dropping the dev container must not kill the host connection"
         );
     }
 
