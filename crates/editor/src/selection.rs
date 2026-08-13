@@ -1600,6 +1600,7 @@ impl Editor {
         self.invalidate_autoclose_regions(&selection_anchors, buffer);
         self.snippet_stack.invalidate(&selection_anchors, buffer);
         self.take_rename(false, window, cx);
+        self.take_inline_input(window, cx);
 
         let newest_selection = self.selections.newest_anchor();
         let new_cursor_position = newest_selection.head();
