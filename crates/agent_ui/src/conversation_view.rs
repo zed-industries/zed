@@ -6928,6 +6928,48 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_prompt_history_non_empty_draft_preserves_move_up(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("History prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let draft = "First line\nOther line";
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text(draft, window, cx);
+            editor.set_cursor_offset(draft.len(), window, cx);
+            editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            draft
+        );
+        message_editor.read_with(cx, |message_editor, cx| {
+            let editor = message_editor.editor().read(cx);
+            let selection = editor.selections.newest_anchor();
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let expected_offset = MultiBufferOffset("First line".len());
+            assert_eq!(selection.start.to_offset(&snapshot), expected_offset);
+            assert_eq!(selection.end.to_offset(&snapshot), expected_offset);
+        });
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
     async fn test_rewind_views(cx: &mut TestAppContext) {
         init_test(cx);
 
