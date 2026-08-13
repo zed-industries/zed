@@ -75,10 +75,14 @@ pub struct CompactRequest {
 
 #[derive(Deserialize, Debug)]
 pub struct CompactedResponse {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub created_at: u64,
+    #[serde(default)]
     pub object: String,
     pub output: Vec<Value>,
+    #[serde(default)]
     pub usage: ResponseUsage,
 }
 
@@ -145,10 +149,21 @@ fn validate_compaction_items(items: &[Value]) -> Result<()> {
     if !items.iter().any(|item| {
         item.get("type")
             .and_then(Value::as_str)
-            .is_some_and(|item_type| item_type == "compaction")
+            .is_some_and(|item_type| {
+                matches!(
+                    item_type,
+                    "compaction" | "compaction_summary" | "context_compaction"
+                )
+            })
     }) {
+        let item_types = items
+            .iter()
+            .filter_map(|item| item.get("type").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(anyhow!(
-            "OpenAI compaction output did not contain a compaction item"
+            "OpenAI compaction output did not contain a recognized compaction item \
+             (output types: {item_types})"
         ));
     }
     Ok(())
@@ -181,6 +196,10 @@ impl ResponseInput {
     /// provider-native compaction state in the first place.
     pub fn retain(&mut self, predicate: impl FnMut(&ResponseInputItem) -> bool) {
         self.generated_items.retain(predicate);
+    }
+
+    pub fn push(&mut self, item: ResponseInputItem) {
+        self.generated_items.push(item);
     }
 }
 
@@ -227,6 +246,7 @@ pub enum ResponseInputItem {
     CustomToolCallOutput(ResponseCustomToolCallOutputItem),
     Reasoning(ResponseReasoningInputItem),
     Compaction(ResponseCompactionItem),
+    CompactionTrigger,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -494,6 +514,7 @@ pub enum StreamEvent {
     ReasoningSummaryTextDelta {
         item_id: String,
         output_index: usize,
+        summary_index: usize,
         delta: String,
     },
     #[serde(rename = "response.reasoning_summary_text.done")]
@@ -861,12 +882,15 @@ pub async fn stream_response(
                             }
                             ResponseOutputItem::Reasoning(reasoning) => {
                                 if let Some(ref item_id) = reasoning.id {
-                                    for part in &reasoning.summary {
+                                    for (summary_index, part) in
+                                        reasoning.summary.iter().enumerate()
+                                    {
                                         if let ReasoningSummaryPart::SummaryText { text } = part {
                                             all_events.push(
                                                 StreamEvent::ReasoningSummaryTextDelta {
                                                     item_id: item_id.clone(),
                                                     output_index,
+                                                    summary_index,
                                                     delta: text.clone(),
                                                 },
                                             );
@@ -1127,6 +1151,29 @@ mod tests {
             provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
             Some(output)
         );
+    }
+
+    #[test]
+    fn compacted_response_preserves_legacy_compaction_item_types() {
+        for item_type in ["compaction_summary", "context_compaction"] {
+            let output = vec![json!({
+                "type": item_type,
+                "encrypted_content": "opaque-state"
+            })];
+            let response: CompactedResponse =
+                serde_json::from_value(json!({ "output": &output })).unwrap();
+
+            let CompactedContext::ProviderState(state) = response
+                .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                .unwrap()
+            else {
+                panic!("expected provider state");
+            };
+            assert_eq!(
+                provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+                Some(output)
+            );
+        }
     }
 
     #[test]

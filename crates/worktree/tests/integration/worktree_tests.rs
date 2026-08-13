@@ -87,6 +87,140 @@ async fn test_traversal(cx: &mut TestAppContext) {
     })
 }
 
+#[gpui::test]
+async fn test_entry_id_is_reused_when_rename_events_are_split(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new(path!("/root")),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let old_entry_id = tree.read_with(cx, |tree, _| {
+        tree.entry_for_path(rel_path("one.rs")).unwrap().id
+    });
+
+    fs.pause_events();
+    fs.rename(
+        Path::new(path!("/root/one.rs")),
+        Path::new(path!("/root/three.rs")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(fs.buffered_event_count(), 2);
+    fs.flush_events(1);
+    cx.executor().run_until_parked();
+    fs.flush_events(1);
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.entry_for_path(rel_path("one.rs")), None);
+        assert_eq!(
+            tree.entry_for_path(rel_path("three.rs")).unwrap().id,
+            old_entry_id,
+            "a rename whose removal and creation events arrive in separate batches must reuse the entry id"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_rescan_requests_processed_before_root_creation_events(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+
+    let tree = Worktree::local(
+        Path::new(path!("/root")),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    fs.pause_events();
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {
+                "b": { "f1": "" },
+                "c": { "f2": "" },
+            }
+        }),
+    )
+    .await;
+
+    let mut refresh = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("a/b/f1").into()])
+    });
+    refresh.recv().await;
+    let mut refresh = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("a/c/f2").into()])
+    });
+    refresh.recv().await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("a"),
+                rel_path("a/b"),
+                rel_path("a/b/f1"),
+                rel_path("a/c"),
+                rel_path("a/c/f2"),
+            ]
+        );
+    });
+
+    fs.unpause_events_and_flush();
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("a"),
+                rel_path("a/b"),
+                rel_path("a/b/f1"),
+                rel_path("a/c"),
+                rel_path("a/c/f2"),
+            ]
+        );
+    });
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_circular_symlinks(cx: &mut TestAppContext) {
     init_test(cx);
@@ -3352,7 +3486,7 @@ fn randomly_mutate_worktree(
             } else {
                 log::info!(
                     "overwriting file {:?} ({})",
-                    &entry.path,
+                    entry.path,
                     entry.id.to_usize()
                 );
                 let task = worktree.write_file(
@@ -3795,6 +3929,62 @@ async fn test_repo_exclude_in_worktree(executor: BackgroundExecutor, cx: &mut Te
             WorktreeExpectations {
                 ignored_paths: &[".env.local"],
                 tracked_paths: &["not-ignored.txt"],
+                ..Default::default()
+            },
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_repo_exclude_naming_a_worktree_ancestor(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+
+    fs.insert_tree(
+        path!("/scratch/proj"),
+        json!({
+            ".git": {
+                "info": { "exclude": "scratch" }
+            },
+            "src": {
+                "main.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        path!("/scratch/proj").as_ref(),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        assert!(
+            !worktree.root_entry().unwrap().is_ignored,
+            "an exclude pattern matching an ancestor must not ignore the worktree"
+        );
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                tracked_paths: &["src/main.rs"],
                 ..Default::default()
             },
         );
@@ -6298,4 +6488,26 @@ async fn test_deferred_watch_symlinks_pointing_outside(cx: &mut TestAppContext) 
         })
     })
     .await;
+}
+
+#[test]
+fn test_repo_exclude_does_not_match_outside_its_work_directory() {
+    use ignore::gitignore::GitignoreBuilder;
+    use worktree::{IgnoreKind, IgnoreStack};
+
+    let mut builder = GitignoreBuilder::new("/repo/inner");
+    builder.add_line(None, "build").unwrap();
+    builder.add_line(None, "repo").unwrap();
+    let exclude = Arc::new(builder.build().unwrap());
+
+    let stack = IgnoreStack::none().append(IgnoreKind::RepoExclude, exclude);
+
+    assert!(
+        stack.is_abs_path_ignored(Path::new("/repo/inner/build"), true),
+        "patterns must apply within the repository's work directory"
+    );
+    assert!(
+        !stack.is_abs_path_ignored(Path::new("/repo"), true),
+        "patterns must not apply outside the repository's work directory"
+    );
 }

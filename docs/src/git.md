@@ -244,6 +244,8 @@ Git stash allows you to temporarily save your uncommitted changes and revert you
 
 To stash all your current changes, use the {#action git::StashAll} action. This will save both staged and unstaged changes to a new stash entry and clean your working directory.
 
+The action first prompts for an optional stash name. Confirming with an empty prompt lets git generate its usual `WIP on ...` description.
+
 ### Managing Stashes
 
 Zed provides a stash picker accessible via {#action git::ViewStash} or from the Git Panel's overflow menu. From the stash picker, you can:
