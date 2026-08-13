@@ -6865,6 +6865,49 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_prompt_history_escape_dismisses_without_restoring(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Do not restore this prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let entry_count = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, cx| view.thread.read(cx).entries().len());
+        let editor_focus = message_editor.read_with(cx, |editor, cx| editor.focus_handle(cx));
+        cx.update(|window, cx| editor_focus.focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Do not restore this prompt")
+        );
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        assert!(message_editor.read_with(cx, |editor, cx| editor.is_empty(cx)));
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+        cx.update(|window, cx| {
+            assert!(message_editor.read(cx).focus_handle(cx).is_focused(window));
+        });
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).entries().len(), entry_count);
+            assert_eq!(view.thread.read(cx).status(), ThreadStatus::Idle);
+        });
+    }
+
+    #[gpui::test]
     async fn test_rewind_views(cx: &mut TestAppContext) {
         init_test(cx);
 
