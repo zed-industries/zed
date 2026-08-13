@@ -60,6 +60,25 @@ pub trait FocusFollowsMouse<E: Focusable>: StatefulInteractiveElement {
                         handles: Some((window_handle, focus_handle)),
                         _debounce_task: Some(debounce_task),
                     });
+                } else {
+                    // The pointer can leave this element without entering another
+                    // focus-follows-mouse target, most notably when it leaves the window
+                    // entirely. Without this the pending focus would still be applied even
+                    // though the pointer never lingered here.
+                    //
+                    // Compare handles for equality rather than containment: hover
+                    // enter/exit handlers for different elements are not ordered within a
+                    // frame, so an ancestor's exit must never cancel a target a descendant
+                    // just scheduled.
+                    let focus_handle = this.focus_handle(cx);
+                    let is_pending_target = cx
+                        .try_global::<FfmState>()
+                        .and_then(|state| state.handles.as_ref())
+                        .is_some_and(|(_, pending)| *pending == focus_handle);
+
+                    if is_pending_target {
+                        cx.set_global(FfmState::default());
+                    }
                 }
             }))
         } else {
