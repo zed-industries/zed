@@ -3681,6 +3681,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::any::Any;
+    use std::cell::Cell;
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::Arc;
@@ -6966,6 +6967,35 @@ pub(crate) mod tests {
             assert_eq!(selection.start.to_offset(&snapshot), expected_offset);
             assert_eq!(selection.end.to_offset(&snapshot), expected_offset);
         });
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_move_up_propagates_without_history(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let move_up_propagated = Rc::new(Cell::new(false));
+        cx.update({
+            let move_up_propagated = move_up_propagated.clone();
+            move |cx| {
+                cx.on_action(move |_: &zed_actions::editor::MoveUp, _cx| {
+                    move_up_propagated.set(true)
+                });
+            }
+        });
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        cx.update(|window, cx| message_editor.focus_handle(cx).focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        assert!(move_up_propagated.get());
+        assert!(message_editor.read_with(cx, |editor, cx| editor.is_empty(cx)));
         assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
     }
 
