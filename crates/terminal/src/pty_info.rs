@@ -50,6 +50,17 @@ impl ProcessIdGetter {
         None
     }
 
+    /// Rebuilds the pre-#62095 hazard deterministically: a getter whose fd
+    /// number was recycled behaved exactly like one holding another live
+    /// terminal's PTY handle next to its own long-dead fallback pid.
+    #[cfg(test)]
+    pub(crate) fn with_fallback_pid(&self, fallback_pid: u32) -> ProcessIdGetter {
+        ProcessIdGetter {
+            handle: self.handle.clone(),
+            fallback_pid,
+        }
+    }
+
     fn foreground_process_group_id(&self) -> Option<libc::pid_t> {
         let handle = self.handle.as_ref()?;
         // Negative means error; zero means no foreground group is set or the

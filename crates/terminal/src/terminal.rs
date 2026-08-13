@@ -5283,6 +5283,78 @@ mod tests {
         );
     }
 
+    /// Deterministic counterpart to the rerun stress test: instead of looping
+    /// until the OS happens to recycle a freed master fd number
+    /// (<https://github.com/zed-industries/zed/issues/62095>), the
+    /// post-recycling state is constructed directly — stale process info whose
+    /// PTY handle is the replacement's live master while its fallback pid is
+    /// the dead child. The session guard must reject everything that handle
+    /// reads, so the real drop-path cleanup stays signal-free.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_stale_process_info_with_recycled_pty_fd_does_not_kill_replacement(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+
+        let (completed_terminal, completion_rx) = build_test_terminal(cx, "true", &[]).await;
+        completion_rx
+            .recv()
+            .await
+            .expect("completed terminal should report its exit status");
+        let dead_child_pid =
+            completed_terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+                TerminalType::Pty { info, .. } => info.pid_getter().fallback_pid().as_u32(),
+                TerminalType::DisplayOnly => panic!("expected a PTY-backed terminal"),
+            });
+        drop(completed_terminal);
+        cx.update(|_| {});
+        // The exit status arrives after the child watcher reaps the child, so
+        // the pid must already be fully dead, not a zombie (a zombie would
+        // still validate as its own session leader).
+        assert_ne!(
+            unsafe { libc::kill(dead_child_pid as i32, 0) },
+            0,
+            "the completed terminal's child should be dead and reaped"
+        );
+
+        let (replacement_terminal, replacement_completion_rx) =
+            build_test_terminal(cx, "sleep", &["300"]).await;
+        let (replacement_getter, replacement_shell_pid) =
+            replacement_terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+                TerminalType::Pty { info, .. } => (
+                    info.pid_getter().clone(),
+                    info.pid_getter().fallback_pid().as_u32() as i32,
+                ),
+                TerminalType::DisplayOnly => panic!("expected a PTY-backed terminal"),
+            });
+
+        let stale_info = Arc::new(PtyProcessInfo::new(
+            replacement_getter.with_fallback_pid(dead_child_pid),
+        ));
+        // Prove the hazard is really present: the stale handle reads a live
+        // group in the replacement's session, exactly what a recycled fd
+        // number exposed. Without this the test could silently degrade into
+        // exercising only the dead-fallback path.
+        let read_through_stale_handle = stale_info.pid().map(|pid| pid.as_u32() as libc::pid_t);
+        assert_eq!(
+            read_through_stale_handle.map(|pid| unsafe { libc::getsid(pid) }),
+            Some(replacement_shell_pid),
+            "the stale handle should read the replacement's foreground group"
+        );
+
+        terminate_processes_with_grace_period(stale_info, cx.background_executor.clone()).await;
+
+        let completed_early = replacement_completion_rx.try_recv().ok();
+        let replacement_alive = unsafe { libc::kill(replacement_shell_pid, 0) } == 0;
+        assert!(
+            replacement_alive && completed_early.is_none(),
+            "cleanup through stale process info signalled the replacement terminal whose PTY \
+             the recycled handle reads (alive: {replacement_alive}, completion: \
+             {completed_early:?})"
+        );
+    }
+
     /// Test that kill_active_task on a task that's not running is a no-op
     #[gpui::test]
     async fn test_kill_active_task_on_completed_task_is_noop(cx: &mut TestAppContext) {
