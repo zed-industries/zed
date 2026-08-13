@@ -12960,6 +12960,79 @@ mod tests {
     }
 
     #[test]
+    fn test_prompt_history_deduplicates_complete_structured_content_by_latest_occurrence() {
+        let resource_link = |uri| {
+            vec![
+                acp::ContentBlock::Text(acp::TextContent::new("Review:")),
+                acp::ContentBlock::ResourceLink(acp::ResourceLink::new("same.rs", uri)),
+            ]
+        };
+        let embedded_resource = |content| {
+            vec![
+                acp::ContentBlock::Text(acp::TextContent::new("Review:")),
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new(content, "file:///project/same.rs"),
+                    ),
+                )),
+            ]
+        };
+        let image = |data| {
+            vec![
+                acp::ContentBlock::Text(acp::TextContent::new("Review:")),
+                acp::ContentBlock::Image(
+                    acp::ImageContent::new(data, "image/png")
+                        .uri(Some("zed:///agent/pasted-image?name=Same".to_string())),
+                ),
+            ]
+        };
+
+        let link_a = resource_link("file:///project/a/same.rs");
+        let link_b = resource_link("file:///project/b/same.rs");
+        let resource_a = embedded_resource("first contents");
+        let resource_b = embedded_resource("second contents");
+        let image_a = image("first-image-data");
+        let image_b = image("second-image-data");
+
+        assert_eq!(
+            prompt_history_preview(&link_a),
+            prompt_history_preview(&link_b)
+        );
+        assert_eq!(
+            prompt_history_preview(&resource_a),
+            prompt_history_preview(&resource_b)
+        );
+        assert_eq!(
+            prompt_history_preview(&image_a),
+            prompt_history_preview(&image_b)
+        );
+
+        let history = PromptHistory::from_prompts([
+            link_a.clone(),
+            resource_a.clone(),
+            image_a.clone(),
+            link_b.clone(),
+            resource_b.clone(),
+            image_b.clone(),
+            link_a.clone(),
+            resource_a.clone(),
+            image_a.clone(),
+        ])
+        .expect("history should contain structured prompts");
+
+        let prompts = history
+            .entries()
+            .iter()
+            .map(|entry| entry.chunks.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            prompts,
+            vec![link_b, resource_b, image_b, link_a, resource_a, image_a]
+        );
+        assert_eq!(history.selected_index(), prompts.len() - 1);
+    }
+
+    #[test]
     fn test_prompt_history_navigation_clamps_at_boundaries() {
         fn selected_text(history: &PromptHistory) -> Option<&str> {
             let acp::ContentBlock::Text(text) = history.selected_chunks()?.first()? else {
