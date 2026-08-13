@@ -51,7 +51,7 @@ use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
 };
-use super::prompt_history::PromptHistoryPopover;
+use super::prompt_history::{PromptHistoryPopover, PromptHistoryPopoverEvent};
 use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
@@ -623,6 +623,7 @@ pub struct ThreadView {
     pub _subscriptions: Vec<Subscription>,
     pub message_editor: Entity<MessageEditor>,
     prompt_history_popover: Option<Entity<PromptHistoryPopover>>,
+    _prompt_history_subscription: Option<Subscription>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub fast_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -1145,6 +1146,7 @@ impl ThreadView {
             in_flight_prompt: None,
             message_editor,
             prompt_history_popover: None,
+            _prompt_history_subscription: None,
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
             fast_mode_menu_handle: PopoverMenuHandle::default(),
@@ -2513,11 +2515,35 @@ impl ThreadView {
             return false;
         };
         let popover = cx.new(|cx| PromptHistoryPopover::new(history, cx));
+        let subscription = cx.subscribe_in(
+            &popover,
+            window,
+            |this, _popover, event, window, cx| match event {
+                PromptHistoryPopoverEvent::Accepted(chunks) => {
+                    this.accept_prompt_history(chunks.clone(), window, cx);
+                }
+            },
+        );
         let focus_handle = popover.focus_handle(cx);
         self.prompt_history_popover = Some(popover);
+        self._prompt_history_subscription = Some(subscription);
         focus_handle.focus(window, cx);
         cx.notify();
         true
+    }
+
+    fn accept_prompt_history(
+        &mut self,
+        chunks: Vec<acp::ContentBlock>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.prompt_history_popover = None;
+        self._prompt_history_subscription = None;
+        self.message_editor.update(cx, |editor, cx| {
+            editor.set_message(chunks, window, cx);
+        });
+        cx.notify();
     }
 
     // editor methods
