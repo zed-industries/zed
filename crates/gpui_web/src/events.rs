@@ -393,6 +393,11 @@ impl WebWindowInner {
                 key_char: key_char.clone(),
             };
 
+            if is_paste_keystroke(&keystroke, this.is_mac) {
+                *this.pending_paste_keystroke.borrow_mut() = Some(keystroke);
+                return;
+            }
+
             let result = this.dispatch_input(PlatformInput::KeyDown(KeyDownEvent {
                 keystroke,
                 is_held,
@@ -455,6 +460,11 @@ impl WebWindowInner {
                 key_char,
             };
 
+            if is_paste_keystroke(&keystroke, this.is_mac) {
+                this.pending_paste_keystroke.borrow_mut().take();
+                return;
+            }
+
             let result = this.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
             if let Some(result) = result {
                 if !result.propagate {
@@ -464,11 +474,6 @@ impl WebWindowInner {
         })
     }
 
-    /// Paste is delivered through the DOM `paste` event rather than
-    /// `Platform::read_from_clipboard`: the browser's asynchronous clipboard
-    /// read API cannot fit that synchronous signature, while `ClipboardEvent`
-    /// exposes `clipboardData` synchronously inside the event. It fires for
-    /// any browser-initiated paste (keyboard, menu bar, context menu).
     fn register_paste(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("paste", move |event: JsValue| {
@@ -484,9 +489,18 @@ impl WebWindowInner {
             }
 
             event.prevent_default();
-            this.with_input_handler(|handler| {
-                handler.replace_text_in_range(None, &text);
-            });
+            let keystroke = this
+                .pending_paste_keystroke
+                .borrow_mut()
+                .take()
+                .unwrap_or_else(|| paste_keystroke(this.is_mac));
+            *this.pasting_clipboard_item.borrow_mut() = Some(gpui::ClipboardItem::new_string(text));
+            this.dispatch_input(PlatformInput::KeyDown(KeyDownEvent {
+                keystroke,
+                is_held: false,
+                prefer_character_input: false,
+            }));
+            this.pasting_clipboard_item.borrow_mut().take();
         })
     }
 
@@ -675,6 +689,44 @@ fn is_modifier_only_key(key: &str) -> bool {
     )
 }
 
+fn is_paste_keystroke(keystroke: &Keystroke, is_mac: bool) -> bool {
+    let Modifiers {
+        control,
+        alt,
+        shift,
+        platform,
+        function,
+    } = keystroke.modifiers;
+    if function || alt {
+        return false;
+    }
+
+    if is_mac {
+        keystroke.key == "v" && platform && !control
+    } else {
+        (keystroke.key == "v" && control && !platform)
+            || (keystroke.key == "insert" && shift && !control && !platform)
+    }
+}
+
+fn paste_keystroke(is_mac: bool) -> Keystroke {
+    Keystroke {
+        modifiers: if is_mac {
+            Modifiers {
+                platform: true,
+                ..Modifiers::default()
+            }
+        } else {
+            Modifiers {
+                control: true,
+                ..Modifiers::default()
+            }
+        },
+        key: "v".to_string(),
+        key_char: None,
+    }
+}
+
 /// Whether a keystroke with these modifiers produces text to insert.
 ///
 /// On macOS, Option participates in text entry (e.g. option-n composes "~"
@@ -725,4 +777,44 @@ fn pointer_position_in_element(event: &web_sys::PointerEvent) -> Point<Pixels> {
 fn mouse_position_in_element(event: &web_sys::MouseEvent) -> Point<Pixels> {
     // offset_x/offset_y give position relative to the target element's padding edge
     point(px(event.offset_x() as f32), px(event.offset_y() as f32))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_browser_paste_keystrokes() {
+        assert!(is_paste_keystroke(&paste_keystroke(true), true));
+        assert!(is_paste_keystroke(&paste_keystroke(false), false));
+
+        let mut plain_key = paste_keystroke(false);
+        plain_key.modifiers = Modifiers::default();
+        assert!(!is_paste_keystroke(&plain_key, false));
+
+        let mut wrong_platform = paste_keystroke(true);
+        wrong_platform.modifiers = Modifiers {
+            control: true,
+            ..Modifiers::default()
+        };
+        assert!(!is_paste_keystroke(&wrong_platform, true));
+    }
+
+    #[test]
+    fn recognizes_alternate_paste_bindings() {
+        let mut paste_without_formatting = paste_keystroke(false);
+        paste_without_formatting.modifiers.shift = true;
+        assert!(is_paste_keystroke(&paste_without_formatting, false));
+
+        let shift_insert = Keystroke {
+            modifiers: Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            },
+            key: "insert".to_string(),
+            key_char: None,
+        };
+        assert!(is_paste_keystroke(&shift_insert, false));
+        assert!(!is_paste_keystroke(&shift_insert, true));
+    }
 }
