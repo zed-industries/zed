@@ -197,6 +197,10 @@ impl ResponseInput {
     pub fn retain(&mut self, predicate: impl FnMut(&ResponseInputItem) -> bool) {
         self.generated_items.retain(predicate);
     }
+
+    pub fn push(&mut self, item: ResponseInputItem) {
+        self.generated_items.push(item);
+    }
 }
 
 impl Serialize for ResponseInput {
@@ -242,6 +246,7 @@ pub enum ResponseInputItem {
     CustomToolCallOutput(ResponseCustomToolCallOutputItem),
     Reasoning(ResponseReasoningInputItem),
     Compaction(ResponseCompactionItem),
+    CompactionTrigger,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

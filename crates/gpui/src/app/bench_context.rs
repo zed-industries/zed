@@ -415,6 +415,30 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             .run_until_idle();
     }
 
+    /// Alternates draining queued work with GPUI update cycles until neither
+    /// makes progress, so state dropped by benchmark code is fully released.
+    ///
+    /// Dropped entities are released only inside an update's effect flush, and
+    /// releases cascade: one flush drops the entities whose handles are gone,
+    /// their drops release further handles and can queue foreground work, and
+    /// a later flush collects those. Executor pumping alone never runs a
+    /// flush, so without this dropped state would linger in the entity map
+    /// until some woken task happened to run an update. Production gets this
+    /// cadence for free from frames and input events.
+    pub fn settle(&mut self) {
+        let dispatcher = self.background_executor.dispatcher().clone();
+        let dispatcher = dispatcher
+            .as_threaded()
+            .expect("validated in BenchAppContext::build");
+        loop {
+            self.run_until_idle();
+            self.update(|_| ());
+            if dispatcher.is_idle() {
+                return;
+            }
+        }
+    }
+
     /// Runs main-thread tasks until `ready` returns a value.
     ///
     /// Unlike [`Self::run_until_idle`], this returns as soon as `ready`
@@ -493,9 +517,16 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let report = self.report.clone();
 
         bencher.iter_batched_ref(
-            || MeasuredTaskInput {
-                input: setup(&mut setup_context),
-                frame_trace_scope: Some(FrameTraceScope::start()),
+            || {
+                // The previous iteration's input and output were just
+                // dropped; settling here releases their entities before the
+                // next setup, so per-iteration state cannot accumulate
+                // across a measurement.
+                setup_context.settle();
+                MeasuredTaskInput {
+                    input: setup(&mut setup_context),
+                    frame_trace_scope: Some(FrameTraceScope::start()),
+                }
             },
             |measured_input| {
                 let task = benchmark(&mut measured_input.input, &mut benchmark_context);
