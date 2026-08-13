@@ -7186,6 +7186,60 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_prompt_history_restores_resumed_acp_entry_without_client_id(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update(cx, |view, cx| {
+            view.thread.update(cx, |thread, cx| {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(
+                            "Restored ACP prompt".into(),
+                        )),
+                        cx,
+                    )
+                    .expect("restored ACP prompt should be applied");
+            });
+        });
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, cx| {
+            let Some(AgentThreadEntry::UserMessage(message)) =
+                view.thread.read(cx).entries().last()
+            else {
+                panic!("restored entry should be a user message");
+            };
+            assert!(message.client_id.is_none());
+        });
+
+        let message_editor = message_editor(&conversation_view, cx);
+        cx.update(|window, cx| message_editor.focus_handle(cx).focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Restored ACP prompt")
+        );
+
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "Restored ACP prompt"
+        );
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
     async fn test_prompt_history_only_opens_for_root_thread_input(cx: &mut TestAppContext) {
         init_test(cx);
         bind_default_linux_keymap(cx);
