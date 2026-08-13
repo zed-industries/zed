@@ -1362,6 +1362,15 @@ impl ThreadView {
         PromptHistory::from_thread_entries(self.thread.read(cx).entries())
     }
 
+    #[cfg(test)]
+    pub(super) fn selected_prompt_history_preview(&self, cx: &App) -> Option<String> {
+        self.prompt_history_popover
+            .as_ref()?
+            .read(cx)
+            .selected_preview()
+            .map(str::to_owned)
+    }
+
     // events
 
     pub fn handle_entry_view_event(

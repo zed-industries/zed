@@ -6629,9 +6629,15 @@ pub(crate) mod tests {
         cx.read(|cx| thread.read(cx).message_editor.clone())
     }
 
-    #[gpui::test]
-    async fn test_prompt_history_opens_from_empty_editor(cx: &mut TestAppContext) {
-        init_test(cx);
+    fn selected_prompt_history_preview(
+        conversation_view: &Entity<ConversationView>,
+        cx: &TestAppContext,
+    ) -> Option<String> {
+        active_thread(conversation_view, cx)
+            .read_with(cx, |view, cx| view.selected_prompt_history_preview(cx))
+    }
+
+    fn bind_default_linux_keymap(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let mut bindings = settings::KeymapFile::load_asset_allow_partial_failure(
                 "keymaps/default-linux.json",
@@ -6643,6 +6649,12 @@ pub(crate) mod tests {
             }
             cx.bind_keys(bindings);
         });
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_opens_from_empty_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
 
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::default_response(), cx).await;
@@ -6689,6 +6701,62 @@ pub(crate) mod tests {
                     .is_some_and(|entry| entry.key.as_ref() == "AgentPromptHistory")
             }));
         });
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_keyboard_navigation_clamps_at_boundaries(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        for prompt in ["First", "Second", "Third"] {
+            connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+                acp::ContentChunk::new("Response".into()),
+            )]);
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text(prompt, window, cx);
+            });
+            active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+                view.send(window, cx);
+            });
+            cx.run_until_parked();
+        }
+
+        let editor_focus = message_editor.read_with(cx, |editor, cx| editor.focus_handle(cx));
+        cx.update(|window, cx| editor_focus.focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Third")
+        );
+
+        cx.simulate_keystrokes("up up up");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("First")
+        );
+
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Second")
+        );
+
+        cx.simulate_keystrokes("down down");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Third")
+        );
     }
 
     #[gpui::test]
