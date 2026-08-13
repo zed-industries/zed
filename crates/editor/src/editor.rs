@@ -392,9 +392,8 @@ pub fn init(cx: &mut App) {
         .detach_and_log_err(cx);
     });
     _ = ui_input::ERASED_EDITOR_FACTORY.set(|window, cx| {
-        Arc::new(ErasedEditorImpl(
-            cx.new(|cx| Editor::single_line(window, cx)),
-        )) as Arc<dyn ErasedEditor>
+        cx.new(|cx| Editor::single_line(window, cx))
+            .update(cx, |editor, cx| editor.erased(cx))
     });
     _ = multi_buffer::EXCERPT_CONTEXT_LINES.set(multibuffer_context_lines);
 }
@@ -1729,6 +1728,10 @@ impl Editor {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::SingleLine, buffer, None, window, cx)
+    }
+
+    pub fn erased(&self, cx: &Context<Self>) -> Arc<dyn ErasedEditor> {
+        Arc::new(ErasedEditorImpl(cx.entity()))
     }
 
     pub fn multi_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -3529,7 +3532,7 @@ impl Editor {
 
         let provider = self.semantics_provider.clone()?;
         let buffer = self.buffer.read(cx);
-        let newest_selection = self.selections.newest_anchor().clone();
+        let newest_selection = *self.selections.newest_anchor();
         let cursor_position = newest_selection.head();
         let (cursor_buffer, cursor_buffer_position) =
             buffer.text_anchor_for_position(cursor_position, cx)?;
@@ -7786,7 +7789,7 @@ impl Editor {
             return None;
         }
         let provider = self.semantics_provider.clone()?;
-        let selection = self.selections.newest_anchor().clone();
+        let selection = *self.selections.newest_anchor();
         let cursor = self.rename_target_anchor(&selection, cx);
         let (cursor_buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
@@ -11539,14 +11542,14 @@ fn consume_contiguous_rows(
     display_map: &DisplaySnapshot,
     selections: &mut Peekable<std::slice::Iter<Selection<Point>>>,
 ) -> (MultiBufferRow, MultiBufferRow) {
-    contiguous_row_selections.push(selection.clone());
+    contiguous_row_selections.push(*selection);
     let start_row = starting_row(selection, display_map);
     let mut end_row = ending_row(selection, display_map);
 
     while let Some(next_selection) = selections.peek() {
         if next_selection.start.row <= end_row.0 {
             end_row = ending_row(next_selection, display_map);
-            contiguous_row_selections.push(selections.next().unwrap().clone());
+            contiguous_row_selections.push(*selections.next().unwrap());
         } else {
             break;
         }
