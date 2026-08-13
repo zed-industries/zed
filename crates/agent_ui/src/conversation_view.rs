@@ -7093,6 +7093,56 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_prompt_history_move_up_prefers_last_queued_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("History prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            for prompt in ["First queued", "Second queued"] {
+                view.add_to_queue(
+                    vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
+                    vec![],
+                    window,
+                    cx,
+                );
+            }
+        });
+        cx.run_until_parked();
+
+        assert!(
+            active_thread(&conversation_view, cx)
+                .read_with(cx, |view, cx| { view.prompt_history(cx).is_some() })
+        );
+        cx.update(|window, cx| message_editor.focus_handle(cx).focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "Second queued"
+        );
+        assert_eq!(
+            active_thread(&conversation_view, cx)
+                .read_with(cx, |view, _cx| view.message_queue.len()),
+            1
+        );
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
     async fn test_rewind_views(cx: &mut TestAppContext) {
         init_test(cx);
 
