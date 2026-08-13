@@ -7043,6 +7043,56 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_prompt_history_move_up_propagates_when_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let move_up_propagated = Rc::new(Cell::new(false));
+        cx.update({
+            let move_up_propagated = move_up_propagated.clone();
+            move |cx| {
+                cx.on_action(move |_: &zed_actions::editor::MoveUp, _cx| {
+                    move_up_propagated.set(true)
+                });
+            }
+        });
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Available history", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            active_thread(&conversation_view, cx)
+                .read_with(cx, |view, cx| { view.prompt_history(cx).is_some() })
+        );
+        cx.update(|window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    message_history_navigation: false,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+            message_editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        assert!(move_up_propagated.get());
+        assert!(message_editor.read_with(cx, |editor, cx| editor.is_empty(cx)));
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
     async fn test_rewind_views(cx: &mut TestAppContext) {
         init_test(cx);
 
