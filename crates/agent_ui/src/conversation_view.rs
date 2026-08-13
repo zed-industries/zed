@@ -7143,6 +7143,49 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_prompt_history_thread_focus_preserves_line_scrolling(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("History prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: 1,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        let scroll_top_before =
+            thread_view.read_with(cx, |view, _cx| view.list_state.logical_scroll_top());
+        assert_eq!(scroll_top_before.item_ix, 1);
+
+        let thread_focus = thread_view.read_with(cx, |view, _cx| view.focus_handle.clone());
+        cx.update(|window, cx| thread_focus.focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        let scroll_top_after =
+            thread_view.read_with(cx, |view, _cx| view.list_state.logical_scroll_top());
+        assert!(scroll_top_after.item_ix < scroll_top_before.item_ix);
+        assert!(message_editor.read_with(cx, |editor, cx| editor.is_empty(cx)));
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
     async fn test_rewind_views(cx: &mut TestAppContext) {
         init_test(cx);
 
