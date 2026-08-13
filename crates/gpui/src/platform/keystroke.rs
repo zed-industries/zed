@@ -5,7 +5,7 @@ use std::{
     fmt::{Display, Write},
 };
 
-use crate::PlatformKeyboardMapper;
+use crate::{MouseButton, NavigationDirection, PlatformKeyboardMapper, ScrollDelta};
 
 /// This is a helper trait so that we can simplify the implementation of some functions
 pub trait AsKeystroke {
@@ -80,6 +80,11 @@ impl Keystroke {
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
     pub fn should_match(&self, target: &KeybindingKeystroke) -> bool {
+        // Mouse and scroll keystrokes never participate in IME translation; match exact.
+        if is_pointer_key(&self.key) || is_pointer_key(&target.inner.key) {
+            return target.inner.modifiers == self.modifiers && target.inner.key == self.key;
+        }
+
         #[cfg(not(target_os = "windows"))]
         if let Some(key_char) = self
             .key_char
@@ -121,6 +126,7 @@ impl Keystroke {
         let mut modifiers = Modifiers::none();
         let mut key = None;
         let mut key_char = None;
+        let mut click_prefix: Option<&str> = None;
 
         let mut components = source.split('-').peekable();
         while let Some(component) = components.next() {
@@ -146,6 +152,14 @@ impl Keystroke {
                 } else {
                     modifiers.control = true;
                 };
+                continue;
+            }
+            if component.eq_ignore_ascii_case("double") {
+                click_prefix = Some("double");
+                continue;
+            }
+            if component.eq_ignore_ascii_case("triple") {
+                click_prefix = Some("triple");
                 continue;
             }
 
@@ -208,9 +222,19 @@ impl Keystroke {
             }
         });
 
-        let key = key.ok_or_else(|| InvalidKeystrokeError {
+        let mut key = key.ok_or_else(|| InvalidKeystrokeError {
             keystroke: source.to_owned(),
         })?;
+
+        if let Some(prefix) = click_prefix {
+            // `double`/`triple` are only meaningful in front of a mouse-button key.
+            if !is_mouse_button_key(&key) {
+                return Err(InvalidKeystrokeError {
+                    keystroke: source.to_owned(),
+                });
+            }
+            key = format!("{prefix}{key}");
+        }
 
         Ok(Keystroke {
             modifiers,
@@ -233,6 +257,54 @@ impl Keystroke {
                 || self.modifiers.control
                 || self.modifiers.function
                 || self.modifiers.alt)
+    }
+
+    /// Build a keystroke representing a mouse-button event.
+    /// `click_count` of 2 produces a `doubleleftclick`-style key; 3 → `tripleleftclick`.
+    pub fn from_mouse_button(
+        button: MouseButton,
+        modifiers: Modifiers,
+        click_count: usize,
+    ) -> Self {
+        let base = match button {
+            MouseButton::Left => "leftclick",
+            MouseButton::Right => "rightclick",
+            MouseButton::Middle => "middleclick",
+            MouseButton::Navigate(NavigationDirection::Back) => "backclick",
+            MouseButton::Navigate(NavigationDirection::Forward) => "forwardclick",
+        };
+        let key = match click_count {
+            2 => format!("double{base}"),
+            3 => format!("triple{base}"),
+            _ => base.to_string(),
+        };
+        Keystroke {
+            modifiers,
+            key,
+            key_char: None,
+        }
+    }
+
+    /// Build a keystroke representing a scroll-wheel event, or `None` if the
+    /// scroll delta has no clear vertical direction.
+    pub fn from_scroll(delta: ScrollDelta, modifiers: Modifiers) -> Option<Self> {
+        let dy = match delta {
+            ScrollDelta::Pixels(p) => p.y.0,
+            ScrollDelta::Lines(p) => p.y,
+        };
+        if dy == 0.0 {
+            return None;
+        }
+        let key = if dy > 0.0 {
+            "mousescrollup"
+        } else {
+            "mousescrolldown"
+        };
+        Some(Keystroke {
+            modifiers,
+            key: key.into(),
+            key_char: None,
+        })
     }
 
     /// Returns a new keystroke with the key_char filled.
@@ -375,7 +447,30 @@ impl KeybindingKeystroke {
     }
 }
 
+fn is_mouse_button_key(key: &str) -> bool {
+    matches!(
+        key,
+        "leftclick" | "rightclick" | "middleclick" | "backclick" | "forwardclick"
+    )
+}
+
+fn is_pointer_key(key: &str) -> bool {
+    if matches!(key, "mousescrollup" | "mousescrolldown") {
+        return true;
+    }
+    if is_mouse_button_key(key) {
+        return true;
+    }
+    if let Some((_, rest)) = split_click_prefix(key) {
+        return is_mouse_button_key(rest);
+    }
+    false
+}
+
 fn is_printable_key(key: &str) -> bool {
+    if is_pointer_key(key) {
+        return false;
+    }
     !matches!(
         key,
         "f1" | "f2"
@@ -771,6 +866,68 @@ fn unparse(modifiers: &Modifiers, key: &str) -> String {
     if modifiers.shift {
         result.push_str("shift-");
     }
-    result.push_str(&key);
+    if let Some((prefix, base)) = split_click_prefix(key) {
+        result.push_str(prefix);
+        result.push('-');
+        result.push_str(base);
+    } else {
+        result.push_str(key);
+    }
     result
+}
+
+/// If `key` is a `double`/`triple`-prefixed mouse-button key, return `(prefix, base)`.
+fn split_click_prefix(key: &str) -> Option<(&'static str, &str)> {
+    if let Some(rest) = key.strip_prefix("double") {
+        if is_mouse_button_key(rest) {
+            return Some(("double", rest));
+        }
+    }
+    if let Some(rest) = key.strip_prefix("triple") {
+        if is_mouse_button_key(rest) {
+            return Some(("triple", rest));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_mouse_button_keystrokes() {
+        let keystroke = Keystroke::parse("ctrl-middleclick").unwrap();
+        assert!(keystroke.modifiers.control);
+        assert_eq!(keystroke.key, "middleclick");
+        assert_eq!(keystroke.unparse(), "ctrl-middleclick");
+
+        let keystroke = Keystroke::parse("double-leftclick").unwrap();
+        assert_eq!(keystroke.key, "doubleleftclick");
+        assert_eq!(keystroke.unparse(), "double-leftclick");
+
+        let keystroke = Keystroke::parse("triple-rightclick").unwrap();
+        assert_eq!(keystroke.key, "triplerightclick");
+        assert_eq!(keystroke.unparse(), "triple-rightclick");
+    }
+
+    #[test]
+    fn parses_scroll_keystrokes() {
+        let keystroke = Keystroke::parse("ctrl-mousescrollup").unwrap();
+        assert!(keystroke.modifiers.control);
+        assert_eq!(keystroke.key, "mousescrollup");
+        assert_eq!(keystroke.unparse(), "ctrl-mousescrollup");
+
+        let keystroke = Keystroke::parse("alt-mousescrolldown").unwrap();
+        assert!(keystroke.modifiers.alt);
+        assert_eq!(keystroke.key, "mousescrolldown");
+        assert_eq!(keystroke.unparse(), "alt-mousescrolldown");
+    }
+
+    #[test]
+    fn rejects_click_count_prefix_for_non_mouse_buttons() {
+        assert!(Keystroke::parse("double-a").is_err());
+        assert!(Keystroke::parse("double-mousescrollup").is_err());
+        assert!(Keystroke::parse("triple-mousescrolldown").is_err());
+    }
 }
