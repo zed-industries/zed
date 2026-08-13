@@ -1148,6 +1148,7 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
         PythonEnvironmentKind::PyenvVirtualEnv => "Pyenv",
         PythonEnvironmentKind::Pipenv => "Pipenv",
         PythonEnvironmentKind::Poetry => "Poetry",
+        PythonEnvironmentKind::Hatch => "Hatch",
         PythonEnvironmentKind::MacPythonOrg => "global (Python.org)",
         PythonEnvironmentKind::MacCommandLineTools => "global (Command Line Tools for Xcode)",
         PythonEnvironmentKind::LinuxGlobal => "global",
@@ -1319,7 +1320,7 @@ impl ToolchainLister for PythonToolchainProvider {
         }
 
         let reporter = pet_reporter::collect::create_reporter();
-        pet::find::find_and_report_envs(&reporter, config, &locators, &environment, None);
+        pet::find::find_and_report_envs(&reporter, config, &locators, &environment, None, None);
 
         let mut toolchains = reporter
             .environments
