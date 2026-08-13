@@ -627,6 +627,26 @@ fn deserialize_anchor(anchor: proto::EditorAnchor, buffer: &MultiBufferSnapshot)
 impl Item for Editor {
     type Event = EditorEvent;
 
+    fn handle_drop(
+        &self,
+        _active_pane: &workspace::Pane,
+        dropped: &dyn std::any::Any,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        // Drops anywhere on a markdown buffer insert links (Obsidian-style);
+        // the pane's split zones cover wide edge bands that made insertion
+        // unreliable when they took precedence. Splitting is still available
+        // via the tab bar or with non-markdown drops.
+        if let Some(paths) = dropped.downcast_ref::<gpui::ExternalPaths>() {
+            return handle_image_drop_on_markdown(self, paths.paths(), cx);
+        }
+        if let Some(selection) = dropped.downcast_ref::<workspace::DraggedSelection>() {
+            return handle_project_entry_drop_on_markdown(self, selection, cx);
+        }
+        false
+    }
+
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
@@ -2455,6 +2475,267 @@ fn compute_modified_ranges(
         merged.push(expanded);
     }
     merged
+}
+
+/// Attachment formats accepted on drop, mirroring Obsidian's list. Images
+/// embed with `![](...)` (they render inline); the rest link with `[](...)`
+/// since neither live preview nor the markdown preview can embed them.
+const DROPPABLE_IMAGE_EXTENSIONS: &[&str] =
+    &["avif", "bmp", "gif", "jpeg", "jpg", "png", "svg", "webp"];
+const DROPPABLE_FILE_EXTENSIONS: &[&str] = &[
+    "flac", "m4a", "mp3", "ogg", "wav", "webm", "3gp", "mkv", "mov", "mp4", "ogv", "pdf",
+];
+
+/// Folder for dropped attachments, from `markdown_live_preview.attachments_folder`.
+#[derive(Clone, Debug, Default, settings::RegisterSetting)]
+struct MarkdownAttachmentSettings {
+    folder: String,
+}
+
+impl settings::Settings for MarkdownAttachmentSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let content = content.markdown_live_preview.clone().unwrap_or_default();
+        Self {
+            folder: content
+                .attachments_folder
+                .unwrap_or_else(|| "attachments".to_string()),
+        }
+    }
+}
+
+
+/// Inserts block-level markdown at the cursor, padded with blank lines so it
+/// cannot fuse with its neighbors: a following `---` would otherwise turn an
+/// inserted link line into a setext heading underline, and a preceding text
+/// line would absorb an inserted image into its paragraph.
+fn insert_dropped_markdown(editor: &Editor, mut markdown: String, cx: &mut App) {
+    use multi_buffer::{MultiBufferRow, ToOffset as _, ToPoint as _};
+
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let cursor = editor.selections.newest_anchor().head();
+    let offset = cursor.to_offset(&snapshot);
+    let point = cursor.to_point(&snapshot);
+
+    if point.column > 0 {
+        markdown.insert_str(0, "\n\n");
+    } else if point.row > 0 && snapshot.line_len(MultiBufferRow(point.row - 1)) > 0 {
+        markdown.insert(0, '\n');
+    }
+    let followed_by_text = snapshot
+        .chars_at(offset)
+        .next()
+        .is_some_and(|character| character != '\n');
+    if followed_by_text {
+        markdown.push('\n');
+    }
+
+    editor.buffer().update(cx, |multibuffer, cx| {
+        multibuffer.edit([(offset..offset, markdown)], None, cx);
+    });
+}
+
+/// The note's folder for a saved, local, singleton markdown buffer; the
+/// gate for all markdown drop handling.
+fn markdown_note_directory(editor: &Editor, cx: &App) -> Option<std::path::PathBuf> {
+    let buffer = editor.buffer().read(cx).as_singleton()?;
+    if buffer
+        .read(cx)
+        .language()
+        .is_none_or(|language| language.name().as_ref() != "Markdown")
+    {
+        return None;
+    }
+    let mut path = buffer.read(cx).file()?.as_local()?.abs_path(cx);
+    path.pop();
+    Some(path)
+}
+
+/// Obsidian-style note linking: project-panel entries dropped onto a markdown
+/// buffer insert relative links at the cursor (images embed with `![]`),
+/// instead of opening the files. The files already live in the project, so
+/// nothing is copied.
+fn handle_project_entry_drop_on_markdown(
+    editor: &Editor,
+    selection: &workspace::DraggedSelection,
+    cx: &mut App,
+) -> bool {
+    let Some(note_directory) = markdown_note_directory(editor, cx) else {
+        return false;
+    };
+    let Some(project) = editor.project().cloned() else {
+        return false;
+    };
+
+    let mut markdown_links = String::new();
+    for entry in selection.items() {
+        let Some(project_path) = project.read(cx).path_for_entry(entry.entry_id, cx) else {
+            continue;
+        };
+        let Some(absolute_path) = project.read(cx).absolute_path(&project_path, cx) else {
+            continue;
+        };
+        if absolute_path.is_dir() {
+            continue;
+        }
+        let relative = relative_path(&note_directory, &absolute_path);
+        let is_image = absolute_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                DROPPABLE_IMAGE_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
+            });
+        let link_name = absolute_path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let link_target = relative.to_string_lossy().replace(' ', "%20");
+        if is_image {
+            markdown_links.push_str(&format!("![]({link_target})\n"));
+        } else {
+            markdown_links.push_str(&format!("[{link_name}]({link_target})\n"));
+        }
+    }
+    if markdown_links.is_empty() {
+        return false;
+    }
+
+    insert_dropped_markdown(editor, markdown_links, cx);
+    true
+}
+
+/// A relative path from `from_directory` to `to`, using `..` where needed.
+fn relative_path(from_directory: &std::path::Path, to: &std::path::Path) -> std::path::PathBuf {
+    let from_components: Vec<_> = from_directory.components().collect();
+    let to_components: Vec<_> = to.components().collect();
+    let common = from_components
+        .iter()
+        .zip(&to_components)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut result = std::path::PathBuf::new();
+    for _ in common..from_components.len() {
+        result.push("..");
+    }
+    for component in &to_components[common..] {
+        result.push(component);
+    }
+    result
+}
+
+/// Obsidian-style attachment drop: accepted files dropped onto a markdown
+/// buffer are copied beside the note (into the configured attachments folder)
+/// and referenced at the cursor, instead of being opened as workspace items.
+fn handle_image_drop_on_markdown(
+    editor: &Editor,
+    paths: &[std::path::PathBuf],
+    cx: &mut App,
+) -> bool {
+
+    let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+        return false;
+    };
+    if buffer
+        .read(cx)
+        .language()
+        .is_none_or(|language| language.name().as_ref() != "Markdown")
+    {
+        return false;
+    }
+    let Some(note_directory) = buffer.read(cx).file().and_then(|file| {
+        let mut path = file.as_local()?.abs_path(cx);
+        path.pop();
+        Some(path)
+    }) else {
+        return false;
+    };
+
+    let extension_of = |path: &std::path::Path| {
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+    };
+    let all_attachments = !paths.is_empty()
+        && paths.iter().all(|path| {
+            extension_of(path).is_some_and(|extension| {
+                DROPPABLE_IMAGE_EXTENSIONS.contains(&extension.as_str())
+                    || DROPPABLE_FILE_EXTENSIONS.contains(&extension.as_str())
+            })
+        });
+    if !all_attachments {
+        return false;
+    }
+
+    let attachments_folder = <MarkdownAttachmentSettings as settings::Settings>::get_global(cx)
+        .folder
+        .trim()
+        .trim_matches('/')
+        .to_string();
+
+    let mut markdown_links = String::new();
+    for path in paths {
+        let link_target = if let Ok(relative) = path.strip_prefix(&note_directory) {
+            relative.to_path_buf()
+        } else {
+            let attachments_directory = if attachments_folder.is_empty() {
+                note_directory.clone()
+            } else {
+                note_directory.join(&attachments_folder)
+            };
+            if std::fs::create_dir_all(&attachments_directory)
+                .log_err()
+                .is_none()
+            {
+                continue;
+            }
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            let stem = std::path::Path::new(file_name)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("image");
+            let extension = std::path::Path::new(file_name)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or("png");
+            let mut candidate = attachments_directory.join(file_name);
+            let mut suffix = 1;
+            while candidate.exists() {
+                candidate = attachments_directory.join(format!("{stem}-{suffix}.{extension}"));
+                suffix += 1;
+            }
+            if std::fs::copy(path, &candidate).log_err().is_none() {
+                continue;
+            }
+            let copied_name = candidate
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if attachments_folder.is_empty() {
+                std::path::PathBuf::from(copied_name)
+            } else {
+                std::path::Path::new(&attachments_folder).join(copied_name)
+            }
+        };
+        let is_image = extension_of(&link_target)
+            .is_some_and(|extension| DROPPABLE_IMAGE_EXTENSIONS.contains(&extension.as_str()));
+        let link_name = link_target
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let link_target = link_target.to_string_lossy().replace(' ', "%20");
+        if is_image {
+            markdown_links.push_str(&format!("![]({link_target})\n"));
+        } else {
+            markdown_links.push_str(&format!("[{link_name}]({link_target})\n"));
+        }
+    }
+    if markdown_links.is_empty() {
+        return false;
+    }
+
+    insert_dropped_markdown(editor, markdown_links, cx);
+    true
 }
 
 #[cfg(test)]

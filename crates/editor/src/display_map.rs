@@ -86,6 +86,7 @@ pub use block_map::{
 };
 pub use crease_map::*;
 pub use fold_map::{
+    Concealment,
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
 pub use inlay_map::{InlayOffset, InlayPoint};
@@ -177,6 +178,7 @@ pub enum HighlightKey {
     HoveredLinkState,
     InlineAssist,
     InputComposition,
+    MarkdownLivePreview(usize),
     MatchingBracket,
     NavigationOverlay(NavigationOverlayKey),
     PendingInput,
@@ -786,6 +788,35 @@ impl DisplayMap {
             });
 
         self.block_map.write(snapshot, edits, None).insert(blocks);
+    }
+
+    /// Replaces the owner's entire set of rendering-only concealments.
+    #[instrument(skip_all)]
+    pub fn set_concealments(
+        &mut self,
+        owner: TypeId,
+        concealments: Vec<Concealment>,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits, None);
+
+        let (snapshot, edits) = fold_map.set_concealments(owner, concealments);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (new_wrap_snapshot, new_wrap_edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+
+        self.block_map.write(new_wrap_snapshot, new_wrap_edits, None);
     }
 
     /// Removes any folds with the given ranges.

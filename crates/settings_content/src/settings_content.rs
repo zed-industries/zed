@@ -208,6 +208,9 @@ pub struct SettingsContent {
     /// The settings for the markdown preview.
     pub markdown_preview: Option<MarkdownPreviewSettingsContent>,
 
+    /// The settings for markdown live preview in the editor.
+    pub markdown_live_preview: Option<MarkdownLivePreviewSettingsContent>,
+
     pub repl: Option<ReplSettingsContent>,
 
     /// Whether or not to enable Helix mode.
@@ -1211,6 +1214,24 @@ pub struct MarkdownPreviewSettingsContent {
     ///
     /// Default: 800
     pub max_width: Option<f32>,
+}
+
+/// The settings for markdown live preview in the editor.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+pub struct MarkdownLivePreviewSettingsContent {
+    /// Whether to render markdown inline in the editor (Obsidian-style live
+    /// preview): syntax markers are hidden, and elements like headings,
+    /// tables, and images are rendered, except on lines the cursor is on.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+    /// Folder for attachments dropped onto a markdown buffer, relative to
+    /// the note's folder. An empty string stores attachments directly in
+    /// the note's folder.
+    ///
+    /// Default: "attachments"
+    pub attachments_folder: Option<String>,
 }
 
 /// The settings for the image viewer.

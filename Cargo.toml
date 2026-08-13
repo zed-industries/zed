@@ -132,6 +132,7 @@ members = [
     "crates/lsp",
     "crates/lsp_locations",
     "crates/markdown",
+    "crates/markdown_live_preview",
     "crates/markdown_preview",
     "crates/mermaid_render",
     "crates/media",
@@ -397,6 +398,7 @@ lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 lsp_locations = { path = "crates/lsp_locations" }
 markdown = { path = "crates/markdown" }
+markdown_live_preview = { path = "crates/markdown_live_preview" }
 markdown_preview = { path = "crates/markdown_preview" }
 mermaid_render = { path = "crates/mermaid_render" }
 svg_preview = { path = "crates/svg_preview" }

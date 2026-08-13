@@ -126,6 +126,16 @@
     // limit_content_width is enabled.
     "max_width": 800,
   },
+  // Markdown live preview settings
+  "markdown_live_preview": {
+    // Whether to render markdown inline in the editor (Obsidian-style live
+    // preview): syntax markers are hidden, and elements like headings,
+    // tables, and images are rendered, except on lines the cursor is on.
+    "enabled": true,
+    // Folder for attachments dropped onto a markdown buffer, relative to the
+    // note's folder. An empty string stores attachments in the note's folder.
+    "attachments_folder": "attachments",
+  },
   // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
   //
   // 1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:

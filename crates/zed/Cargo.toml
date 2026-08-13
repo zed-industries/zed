@@ -158,6 +158,7 @@ line_ending_selector.workspace = true
 log.workspace = true
 lsp_locations.workspace = true
 markdown.workspace = true
+markdown_live_preview.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 migrator.workspace = true
@@ -285,7 +286,7 @@ repl = { workspace = true, features = ["test-support"] }
 
 
 
-[package.metadata.bundle-dev]
+[package.metadata.bundle]
 icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]
 identifier = "dev.zed.Zed-Dev"
 name = "Zed Dev"

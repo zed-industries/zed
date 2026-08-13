@@ -10824,6 +10824,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "markdown_live_preview"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "editor",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "markdown",
+ "multi_buffer",
+ "pretty_assertions",
+ "project",
+ "settings",
+ "text",
+ "theme",
+ "theme_settings",
+ "tree-sitter",
+ "tree-sitter-md",
+ "ui",
+ "urlencoding",
+ "util",
+ "workspace",
+ "zlog",
+]
+
+[[package]]
 name = "markdown_preview"
 version = "0.1.0"
 dependencies = [
@@ -23352,6 +23379,7 @@ dependencies = [
  "log",
  "lsp_locations",
  "markdown",
+ "markdown_live_preview",
  "markdown_preview",
  "menu",
  "migrator",
