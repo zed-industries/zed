@@ -29,20 +29,20 @@ use crate::{
     RemotePlatform,
     remote_client::{CommandTemplate, Interactive},
     transport::parse_platform,
+    transport::ssh::SshConnectionOptions,
 };
 
-#[derive(
-    Debug,
-    Default,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    serde::Serialize,
-    serde::Deserialize,
-)]
+/// Where the docker daemon that owns the container lives. `Local` is the
+/// client machine; `Ssh` is a host Zed already knows how to connect to, so the
+/// docker invocations can be routed through that connection.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum DockerHost {
+    #[default]
+    Local,
+    Ssh(SshConnectionOptions),
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
@@ -50,6 +50,8 @@ pub struct DockerConnectionOptions {
     pub upload_binary_over_docker_exec: bool,
     pub use_podman: bool,
     pub remote_env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub host: DockerHost,
 }
 
 pub(crate) struct DockerExecConnection {
@@ -873,5 +875,50 @@ impl RemoteConnection for DockerExecConnection {
 
     fn default_system_shell(&self) -> String {
         String::from("/bin/sh")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DockerConnectionOptions, DockerHost};
+    use crate::transport::ssh::SshConnectionOptions;
+
+    #[test]
+    fn options_without_host_deserialize_as_local() {
+        let legacy = r#"{
+            "name": "zed-dev",
+            "container_id": "container-123",
+            "remote_user": "anth",
+            "upload_binary_over_docker_exec": false,
+            "use_podman": false,
+            "remote_env": {}
+        }"#;
+
+        let options: DockerConnectionOptions =
+            serde_json::from_str(legacy).expect("legacy payload should deserialize");
+        assert_eq!(options.host, DockerHost::Local);
+    }
+
+    #[test]
+    fn options_with_ssh_host_round_trip() {
+        let options = DockerConnectionOptions {
+            name: "zed-dev".to_string(),
+            container_id: "container-123".to_string(),
+            remote_user: "anth".to_string(),
+            upload_binary_over_docker_exec: false,
+            use_podman: false,
+            remote_env: Default::default(),
+            host: DockerHost::Ssh(SshConnectionOptions {
+                host: "example.com".into(),
+                username: Some("anth".to_string()),
+                port: Some(2222),
+                ..Default::default()
+            }),
+        };
+
+        let encoded = serde_json::to_string(&options).expect("options should serialize");
+        let decoded: DockerConnectionOptions =
+            serde_json::from_str(&encoded).expect("options should deserialize");
+        assert_eq!(decoded, options);
     }
 }

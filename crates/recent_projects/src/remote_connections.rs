@@ -97,6 +97,7 @@ impl From<Connection> for RemoteConnectionOptions {
                     upload_binary_over_docker_exec: false,
                     use_podman: conn.use_podman,
                     remote_env: conn.remote_env,
+                    host: Default::default(),
                 })
             }
         }
