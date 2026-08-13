@@ -788,7 +788,7 @@ impl Object {
         around: bool,
         times: Option<usize>,
     ) -> bool {
-        if let Some(range) = self.range(map, selection.clone(), around, times) {
+        if let Some(range) = self.range(map, *selection, around, times) {
             selection.start = range.start;
             selection.end = range.end;
             true

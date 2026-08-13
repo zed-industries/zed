@@ -92,7 +92,7 @@ async-channel.workspace = true
 stacksafe.workspace = true
 strum.workspace = true
 sum_tree.workspace = true
-taffy = "=0.12.2"
+taffy = "=0.13.0"
 thiserror.workspace = true
 tracing.workspace = true
 gpui_util.workspace = true

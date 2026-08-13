@@ -633,7 +633,7 @@ impl EditorElement {
             let selection = newest_anchor.map(|anchor| anchor.to_display_point(&snapshot));
             if point_for_position.intersects_selection(&selection) {
                 editor.selection_drag_state = SelectionDragState::ReadyToDrag {
-                    selection: newest_anchor.clone(),
+                    selection: *newest_anchor,
                     click_position: event.position,
                     mouse_down_time: Instant::now(),
                 };
@@ -1081,7 +1081,7 @@ impl EditorElement {
                             goal: SelectionGoal::None,
                         };
                         editor.selection_drag_state = SelectionDragState::Dragging {
-                            selection: selection.clone(),
+                            selection: *selection,
                             drop_cursor,
                             hide_drop_cursor: false,
                         };
