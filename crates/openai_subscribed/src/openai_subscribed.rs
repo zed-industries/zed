@@ -403,7 +403,10 @@ impl OpenAiSubscribedLanguageModel {
     }
 }
 
-fn codex_extra_headers(credentials: &CodexCredentials) -> CustomHeaders {
+fn codex_extra_headers(
+    credentials: &CodexCredentials,
+    routing_cache_key: Option<&str>,
+) -> CustomHeaders {
     let mut header_pairs: Vec<(HeaderName, HeaderValue)> = vec![
         (
             HeaderName::from_static("originator"),
@@ -419,6 +422,12 @@ fn codex_extra_headers(credentials: &CodexCredentials) -> CustomHeaders {
         && let Ok(value) = HeaderValue::from_str(id)
     {
         header_pairs.push((HeaderName::from_static("chatgpt-account-id"), value));
+    }
+    if let Some(routing_cache_key) = routing_cache_key
+        && let Ok(value) = HeaderValue::from_str(routing_cache_key)
+    {
+        header_pairs.push((HeaderName::from_static("session-id"), value.clone()));
+        header_pairs.push((HeaderName::from_static("thread-id"), value));
     }
     CustomHeaders::new(header_pairs)
 }
@@ -492,7 +501,8 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
-            let extra_headers = codex_extra_headers(&creds);
+            let extra_headers =
+                codex_extra_headers(&creds, responses_request.prompt_cache_key.as_deref());
             let access_token = creds.access_token.clone();
             let response_stream = request_limiter
                 .stream(async move {
@@ -604,7 +614,8 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
-            let extra_headers = codex_extra_headers(&creds);
+            let extra_headers =
+                codex_extra_headers(&creds, responses_request.prompt_cache_key.as_deref());
 
             let access_token = creds.access_token.clone();
             request_limiter
@@ -1365,6 +1376,20 @@ mod tests {
                             .and_then(|value| value.to_str().ok()),
                         Some("account-123")
                     );
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get("session-id")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("thread-123")
+                    );
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get("thread-id")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("thread-123")
+                    );
                     let mut request_body = String::new();
                     smol::io::AsyncReadExt::read_to_string(
                         &mut request.into_body(),
@@ -1403,6 +1428,7 @@ mod tests {
                 reasoning_details: None,
             }],
             compact_at_tokens: Some(100_000),
+            thread_id: Some("thread-123".to_string()),
             ..Default::default()
         };
         let async_cx = cx.to_async();
@@ -1451,6 +1477,20 @@ mod tests {
                 request.uri().to_string(),
                 "https://chatgpt.com/backend-api/codex/responses"
             );
+            assert_eq!(
+                request
+                    .headers()
+                    .get("session-id")
+                    .and_then(|value| value.to_str().ok()),
+                Some("thread-123")
+            );
+            assert_eq!(
+                request
+                    .headers()
+                    .get("thread-id")
+                    .and_then(|value| value.to_str().ok()),
+                Some("thread-123")
+            );
             let mut request_body = String::new();
             smol::io::AsyncReadExt::read_to_string(&mut request.into_body(), &mut request_body)
                 .await?;
@@ -1478,6 +1518,7 @@ mod tests {
                 reasoning_details: None,
             }],
             compact_at_tokens: Some(100_000),
+            thread_id: Some("thread-123".to_string()),
             ..Default::default()
         };
 
