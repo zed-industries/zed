@@ -711,6 +711,12 @@ async fn resolve_open_behavior(
                     if let Ok(multi_workspace) = multi_workspace.read(cx) {
                         for workspace in multi_workspace.workspaces() {
                             let project = workspace.read(cx).project().read(cx);
+                            // CLI paths are local; a remote worktree with the
+                            // same absolute path must not count as containing
+                            // them.
+                            if !project.is_local() {
+                                continue;
+                            }
                             if project
                                 .visibility_for_paths(&paths_as_pathbufs, false, cx)
                                 .is_some()

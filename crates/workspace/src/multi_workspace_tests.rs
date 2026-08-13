@@ -1593,3 +1593,116 @@ async fn test_nearest_retained_workspace_skips_disconnected_workspace(cx: &mut T
         );
     });
 }
+
+#[gpui::test]
+async fn test_find_existing_workspace_requires_matching_location(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+    server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/project"), json!({ "file.txt": "" }))
+        .await;
+
+    let local_project =
+        Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(local_project, window, cx));
+    let local_workspace = window
+        .read_with(cx, |multi_workspace, _cx| {
+            multi_workspace.workspace().clone()
+        })
+        .unwrap();
+
+    // Hold a workspace connected to a mock remote host in the same window, so
+    // the window qualifies for that host's location while also holding a
+    // local workspace whose worktree contains the requested path.
+    let (opts, server_session, connect_guard) =
+        remote::RemoteClient::fake_server(cx, server_cx);
+    let ping_handler = server_cx.new(|_| ());
+    server_session.add_request_handler::<proto::Ping, _, _, _>(
+        ping_handler.downgrade(),
+        |_entity, _envelope, _cx| async { Ok(proto::Ack {}) },
+    );
+    drop(connect_guard);
+    let remote_client = remote::RemoteClient::connect_mock(opts.clone(), cx).await;
+    let remote_project = cx.update(|cx| {
+        Project::remote(
+            remote_client,
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            false,
+            cx,
+        )
+    });
+    window
+        .update(cx, |multi_workspace, window, cx| {
+            // Build the workspace on the shared app_state rather than via
+            // test_add_workspace: Workspace::test_new would register a second
+            // WorkspaceStore on app_state's client, which panics.
+            let remote_workspace = cx.new(|cx| {
+                Workspace::new(None, remote_project, app_state.clone(), window, cx)
+            });
+            multi_workspace.add(remote_workspace.clone(), window, cx);
+            multi_workspace.activate(remote_workspace, None, window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let (existing, _) = find_existing_workspace(
+        &[PathBuf::from(path!("/project"))],
+        &OpenOptions::default(),
+        &SerializedWorkspaceLocation::Remote(opts),
+        &mut cx.to_async(),
+    )
+    .await;
+    assert!(
+        existing.is_none(),
+        "a workspace at another location holding the requested path must not \
+         satisfy an open request for a remote host"
+    );
+
+    let (existing, _) = find_existing_workspace(
+        &[PathBuf::from(path!("/project"))],
+        &OpenOptions::default(),
+        &SerializedWorkspaceLocation::Local,
+        &mut cx.to_async(),
+    )
+    .await;
+    assert_eq!(
+        existing.map(|(_, workspace)| workspace),
+        Some(local_workspace.clone()),
+        "a local open request for the same path should still find the local workspace"
+    );
+
+    // With `wait: true` and the remote workspace displayed, the front-window
+    // override must fall back to the held local workspace and keep the
+    // wait invariant of opening the file invisibly.
+    let (existing, open_visible) = find_existing_workspace(
+        &[PathBuf::from(path!("/project/file.txt"))],
+        &OpenOptions {
+            wait: true,
+            ..Default::default()
+        },
+        &SerializedWorkspaceLocation::Local,
+        &mut cx.to_async(),
+    )
+    .await;
+    assert_eq!(
+        existing.map(|(_, workspace)| workspace),
+        Some(local_workspace),
+        "a waited local open in a window displaying a remote workspace should \
+         target the held local workspace"
+    );
+    assert!(
+        matches!(open_visible, OpenVisible::None),
+        "waited file opens must stay invisible even when the displayed \
+         workspace is at another location, got {open_visible:?}"
+    );
+}

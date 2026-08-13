@@ -10133,6 +10133,67 @@ pub fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<M
     })
 }
 
+fn locations_match(a: &SerializedWorkspaceLocation, b: &SerializedWorkspaceLocation) -> bool {
+    let same_host =
+        |left: &RemoteConnectionOptions, right: &RemoteConnectionOptions| match (left, right) {
+            (RemoteConnectionOptions::Ssh(a), RemoteConnectionOptions::Ssh(b)) => {
+                (&a.host, &a.username, &a.port) == (&b.host, &b.username, &b.port)
+            }
+            (RemoteConnectionOptions::Wsl(a), RemoteConnectionOptions::Wsl(b)) => {
+                // The WSL username is not consistently populated in the workspace location, so ignore it for now.
+                a.distro_name == b.distro_name
+            }
+            (RemoteConnectionOptions::Docker(a), RemoteConnectionOptions::Docker(b)) => {
+                a.container_id == b.container_id
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            (RemoteConnectionOptions::Mock(a), RemoteConnectionOptions::Mock(b)) => a.id == b.id,
+            _ => false,
+        };
+
+    match (a, b) {
+        (SerializedWorkspaceLocation::Local, SerializedWorkspaceLocation::Local) => true,
+        (SerializedWorkspaceLocation::Remote(a), SerializedWorkspaceLocation::Remote(b)) => {
+            same_host(a, b)
+        }
+        _ => false,
+    }
+}
+
+fn workspace_is_at_location(
+    workspace: &Entity<Workspace>,
+    location: &SerializedWorkspaceLocation,
+    cx: &App,
+) -> bool {
+    match workspace.read(cx).workspace_location(cx) {
+        WorkspaceLocation::Location(workspace_location, _) => {
+            locations_match(&workspace_location, location)
+        }
+        _ => false,
+    }
+}
+
+/// Picks the workspace to target within a window for a request at `location`:
+/// the displayed workspace when it matches, otherwise any held workspace at
+/// that location. A window can hold workspaces for several hosts, so the
+/// displayed one must not be used unchecked — a request for one host would
+/// resolve paths on another.
+fn workspace_at_location_in_window(
+    window: WindowHandle<MultiWorkspace>,
+    location: &SerializedWorkspaceLocation,
+    cx: &App,
+) -> Option<Entity<Workspace>> {
+    let multi_workspace = window.read(cx).ok()?;
+    let displayed = multi_workspace.workspace();
+    if workspace_is_at_location(displayed, location, cx) {
+        return Some(displayed.clone());
+    }
+    multi_workspace
+        .workspaces()
+        .find(|workspace| workspace_is_at_location(workspace, location, cx))
+        .cloned()
+}
+
 pub fn workspace_windows_for_location(
     serialized_location: &SerializedWorkspaceLocation,
     cx: &App,
@@ -10141,43 +10202,10 @@ pub fn workspace_windows_for_location(
         .into_iter()
         .filter_map(|window| window.downcast::<MultiWorkspace>())
         .filter(|multi_workspace| {
-            let same_host = |left: &RemoteConnectionOptions, right: &RemoteConnectionOptions| match (left, right) {
-                (RemoteConnectionOptions::Ssh(a), RemoteConnectionOptions::Ssh(b)) => {
-                    (&a.host, &a.username, &a.port) == (&b.host, &b.username, &b.port)
-                }
-                (RemoteConnectionOptions::Wsl(a), RemoteConnectionOptions::Wsl(b)) => {
-                    // The WSL username is not consistently populated in the workspace location, so ignore it for now.
-                    a.distro_name == b.distro_name
-                }
-                (RemoteConnectionOptions::Docker(a), RemoteConnectionOptions::Docker(b)) => {
-                    a.container_id == b.container_id
-                }
-                #[cfg(any(test, feature = "test-support"))]
-                (RemoteConnectionOptions::Mock(a), RemoteConnectionOptions::Mock(b)) => {
-                    a.id == b.id
-                }
-                _ => false,
-            };
-
             multi_workspace.read(cx).is_ok_and(|multi_workspace| {
-                multi_workspace.workspaces().any(|workspace| {
-                    match workspace.read(cx).workspace_location(cx) {
-                        WorkspaceLocation::Location(location, _) => {
-                            match (&location, serialized_location) {
-                                (
-                                    SerializedWorkspaceLocation::Local,
-                                    SerializedWorkspaceLocation::Local,
-                                ) => true,
-                                (
-                                    SerializedWorkspaceLocation::Remote(a),
-                                    SerializedWorkspaceLocation::Remote(b),
-                                ) => same_host(a, b),
-                                _ => false,
-                            }
-                        }
-                        _ => false,
-                    }
-                })
+                multi_workspace
+                    .workspaces()
+                    .any(|workspace| workspace_is_at_location(workspace, serialized_location, cx))
             })
         })
         .collect()
@@ -10201,6 +10229,14 @@ pub async fn find_existing_workspace(
             for window in workspace_windows_for_location(location, cx) {
                 if let Ok(multi_workspace) = window.read(cx) {
                     for workspace in multi_workspace.workspaces() {
+                        // A window qualifies if any of its held workspaces is at the
+                        // requested location, but it may also hold workspaces for
+                        // other hosts. Only path-match workspaces that are themselves
+                        // at the requested location, so a request for one host never
+                        // resolves to an identically-named path on another.
+                        if !workspace_is_at_location(workspace, location, cx) {
+                            continue;
+                        }
                         let project = workspace.read(cx).project.read(cx);
                         let m = match open_options.workspace_matching {
                             WorkspaceMatching::None => None,
@@ -10258,12 +10294,11 @@ pub async fn find_existing_workspace(
                     .and_then(|window| window.downcast::<MultiWorkspace>())
                     .filter(|window| windows.contains(window))
                     .or_else(|| windows.into_iter().next());
-                if let Some(window) = window {
-                    if let Ok(multi_workspace) = window.read(cx) {
-                        let active_workspace = multi_workspace.workspace().clone();
-                        existing = Some((window, active_workspace));
-                        open_visible = OpenVisible::None;
-                    }
+                if let Some(window) = window
+                    && let Some(workspace) = workspace_at_location_in_window(window, location, cx)
+                {
+                    existing = Some((window, workspace));
+                    open_visible = OpenVisible::None;
                 }
             });
         }
@@ -10497,12 +10532,15 @@ pub fn open_paths(
                         .and_then(|window| window.downcast::<MultiWorkspace>())
                         .filter(|window| windows.contains(window))
                         .or_else(|| windows.into_iter().next());
-                    if let Some(window) = window {
-                        if let Ok(multi_workspace) = window.read(cx) {
-                            let active_workspace = multi_workspace.workspace().clone();
-                            existing = Some((window, active_workspace));
-                            open_visible = OpenVisible::None;
-                        }
+                    if let Some(window) = window
+                        && let Some(workspace) = workspace_at_location_in_window(
+                            window,
+                            &SerializedWorkspaceLocation::Local,
+                            cx,
+                        )
+                    {
+                        existing = Some((window, workspace));
+                        open_visible = OpenVisible::None;
                     }
                 });
             }

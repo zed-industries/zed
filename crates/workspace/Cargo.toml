@@ -88,5 +88,7 @@ http_client = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 proptest.workspace = true
 proptest-derive.workspace = true
+release_channel.workspace = true
+semver.workspace = true
 tempfile.workspace = true
 zlog.workspace = true
