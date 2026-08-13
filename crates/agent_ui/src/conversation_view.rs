@@ -7143,6 +7143,90 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_prompt_history_only_opens_for_root_thread_input(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let root_message_editor = message_editor(&conversation_view, cx);
+        root_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Root history prompt", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.update(|window, cx| root_message_editor.focus_handle(cx).focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Root history prompt")
+        );
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        let root_thread = active_thread(&conversation_view, cx);
+        let (parent_session_id, connection, project, conversation) =
+            root_thread.read_with(cx, |view, cx| {
+                let thread = view.thread.read(cx);
+                (
+                    thread.session_id().clone(),
+                    thread.connection().clone(),
+                    thread.project().clone(),
+                    view.conversation.clone(),
+                )
+            });
+        let subagent_session_id = acp::SessionId::new("subagent-history");
+        let subagent_thread = cx.update(|_window, cx| {
+            create_test_acp_thread(
+                Some(parent_session_id),
+                "subagent-history",
+                connection,
+                project,
+                cx,
+            )
+        });
+        subagent_thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(
+                None,
+                acp::ContentBlock::Text(acp::TextContent::new("Subagent history prompt")),
+                cx,
+            );
+        });
+        conversation.update(cx, |conversation, cx| {
+            conversation.register_thread(subagent_thread.clone(), cx);
+        });
+        let subagent_view = conversation_view.update_in(cx, |view, window, cx| {
+            let subagent_view =
+                view.new_thread_view(subagent_thread, conversation, false, None, window, cx);
+            if let Some(connected) = view.as_connected_mut() {
+                connected
+                    .threads
+                    .insert(subagent_session_id.clone(), subagent_view.clone());
+            }
+            view.navigate_to_thread(subagent_session_id, window, cx);
+            subagent_view
+        });
+        cx.run_until_parked();
+
+        assert!(subagent_view.read_with(cx, |view, cx| view.prompt_history(cx).is_some()));
+        let subagent_focus = subagent_view.read_with(cx, |view, _cx| view.focus_handle.clone());
+        cx.update(|window, cx| subagent_focus.focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        assert!(subagent_view.read_with(cx, |view, cx| {
+            view.message_editor.read(cx).is_empty(cx)
+                && view.selected_prompt_history_preview(cx).is_none()
+        }));
+    }
+
+    #[gpui::test]
     async fn test_rewind_views(cx: &mut TestAppContext) {
         init_test(cx);
 
