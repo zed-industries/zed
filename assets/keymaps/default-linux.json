@@ -235,6 +235,16 @@
     },
   },
   {
+    "context": "AgentPromptHistory",
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
+      "enter": "menu::Confirm",
+      "tab": "menu::Confirm",
+      "escape": "menu::Cancel",
+    },
+  },
+  {
     "context": "AgentFeedbackMessageEditor > Editor",
     "bindings": {
       "escape": "menu::Cancel",
