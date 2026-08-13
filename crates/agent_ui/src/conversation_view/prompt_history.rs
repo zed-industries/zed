@@ -12,6 +12,7 @@ pub(super) struct PromptHistoryPopover {
 
 pub(super) enum PromptHistoryPopoverEvent {
     Accepted(Vec<acp::ContentBlock>),
+    Dismissed,
 }
 
 impl EventEmitter<PromptHistoryPopoverEvent> for PromptHistoryPopover {}
@@ -52,6 +53,10 @@ impl PromptHistoryPopover {
         }
     }
 
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(PromptHistoryPopoverEvent::Dismissed);
+    }
+
     #[cfg(test)]
     pub(super) fn selected_preview(&self) -> Option<&str> {
         self.history
@@ -76,6 +81,7 @@ impl Render for PromptHistoryPopover {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
             .w_full()
             .flex_shrink_1()
             .elevation_2(cx)

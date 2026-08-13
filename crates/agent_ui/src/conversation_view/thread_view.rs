@@ -2522,6 +2522,9 @@ impl ThreadView {
                 PromptHistoryPopoverEvent::Accepted(chunks) => {
                     this.accept_prompt_history(chunks.clone(), window, cx);
                 }
+                PromptHistoryPopoverEvent::Dismissed => {
+                    this.dismiss_prompt_history(window, cx);
+                }
             },
         );
         let focus_handle = popover.focus_handle(cx);
@@ -2538,14 +2541,18 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.prompt_history_popover = None;
-        self._prompt_history_subscription = None;
         self.message_editor.update(cx, |editor, cx| {
             editor.set_message(chunks, window, cx);
             let cursor_offset = editor.text(cx).len();
             editor.set_cursor_offset(cursor_offset, window, cx);
-            editor.focus_handle(cx).focus(window, cx);
         });
+        self.dismiss_prompt_history(window, cx);
+    }
+
+    fn dismiss_prompt_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_history_popover = None;
+        self._prompt_history_subscription = None;
+        self.message_editor.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
