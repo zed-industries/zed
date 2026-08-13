@@ -146,6 +146,40 @@ impl PtyProcessInfo {
         RwLockReadGuard::try_map(self.system.read(), |system| system.process(pid)).ok()
     }
 
+    pub(crate) fn has_foreground_or_descendant_process(&self) -> bool {
+        let fallback_pid = self.pid_getter.fallback_pid();
+
+        if self
+            .pid_getter
+            .pid()
+            .is_some_and(|process_id| process_id != fallback_pid)
+        {
+            return true;
+        }
+
+        let mut system = self.system.write();
+
+        system.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            true,
+            self.refresh_kind,
+        );
+
+        system.processes().values().any(|process| {
+            let mut parent_pid = process.parent();
+
+            while let Some(pid) = parent_pid {
+                if pid == fallback_pid {
+                    return true;
+                }
+
+                parent_pid = system.process(pid).and_then(Process::parent);
+            }
+
+            false
+        })
+    }
+
     #[cfg(unix)]
     pub(crate) fn kill_current_process(&self) -> bool {
         let Some(pid) = self.pid_getter.pid() else {
