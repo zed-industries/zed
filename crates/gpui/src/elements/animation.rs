@@ -1,5 +1,5 @@
 use scheduler::Instant;
-use std::{rc::Rc, time::Duration};
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 use crate::{
     AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
@@ -21,6 +21,9 @@ pub struct Animation {
     /// A function that takes a delta between 0 and 1 and returns a new delta
     /// between 0 and 1 based on the given easing function.
     pub easing: Rc<dyn Fn(f32) -> f32>,
+    /// The maximum number of times per second this animation re-renders.
+    /// When `None`, the animation re-renders on every frame.
+    pub max_fps: Option<f32>,
 }
 
 impl Animation {
@@ -32,6 +35,7 @@ impl Animation {
             oneshot: true,
             synced: false,
             easing: Rc::new(linear),
+            max_fps: None,
         }
     }
 
@@ -53,6 +57,15 @@ impl Animation {
     /// between 0 and 1
     pub fn with_easing(mut self, easing: impl Fn(f32) -> f32 + 'static) -> Self {
         self.easing = Rc::new(easing);
+        self
+    }
+
+    /// Limit how often this animation re-renders. Instead of re-rendering on
+    /// every frame, the animation schedules its next render `1 / max_fps`
+    /// seconds after the current one. Values that are not finite and positive
+    /// are ignored.
+    pub fn with_max_fps(mut self, max_fps: f32) -> Self {
+        self.max_fps = Some(max_fps);
         self
     }
 }
@@ -142,6 +155,9 @@ impl<E: IntoElement + 'static> IntoElement for AnimationElement<E> {
 struct AnimationState {
     start: Instant,
     animation_ix: usize,
+    /// Whether a throttled re-render (see [`Animation::with_max_fps`]) is
+    /// already scheduled, so overlapping renders don't stack extra timers.
+    delayed_frame_pending: Rc<Cell<bool>>,
 }
 
 impl<E: IntoElement + 'static> Element for AnimationElement<E> {
@@ -167,6 +183,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let mut state = state.unwrap_or_else(|| AnimationState {
                 start: Instant::now(),
                 animation_ix: 0,
+                delayed_frame_pending: Rc::new(Cell::new(false)),
             });
             let (animation_ix, delta, done) = if cx.reduce_motion() {
                 let animation_ix = self.animations.len() - 1;
@@ -216,7 +233,24 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let mut element = (self.animator)(element, animation_ix, delta).into_any_element();
 
             if !done {
-                window.request_animation_frame();
+                match self.animations[animation_ix].max_fps {
+                    Some(max_fps) if max_fps.is_finite() && max_fps > 0.0 => {
+                        if !state.delayed_frame_pending.get() {
+                            state.delayed_frame_pending.set(true);
+                            let delayed_frame_pending = state.delayed_frame_pending.clone();
+                            let view = window.current_view();
+                            let interval = Duration::from_secs_f32(1.0 / max_fps);
+                            window
+                                .spawn(cx, async move |cx| {
+                                    cx.background_executor().timer(interval).await;
+                                    delayed_frame_pending.set(false);
+                                    cx.update(move |_, cx| cx.notify(view)).ok();
+                                })
+                                .detach();
+                        }
+                    }
+                    _ => window.request_animation_frame(),
+                }
             }
 
             ((element.request_layout(window, cx), element), state)
@@ -318,6 +352,7 @@ mod tests {
 
     struct AnimationTestView {
         rendered_deltas: Rc<RefCell<Vec<f32>>>,
+        max_fps: Option<f32>,
     }
 
     struct SyncedAnimationTestView {
@@ -354,9 +389,17 @@ mod tests {
     impl Render for AnimationTestView {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             let rendered_deltas = self.rendered_deltas.clone();
+            // The throttled variant syncs to the shared clock so the deltas
+            // follow the test scheduler's clock rather than wall time.
+            let mut animation = Animation::new(Duration::from_secs(1));
+            if let Some(max_fps) = self.max_fps {
+                animation = animation.repeat_synced().with_max_fps(max_fps);
+            } else {
+                animation = animation.repeat();
+            }
             div().size_full().child(div().with_animation(
                 "repeating-animation",
-                Animation::new(Duration::from_secs(1)).repeat(),
+                animation,
                 move |this, delta| {
                     rendered_deltas.borrow_mut().push(delta);
                     this
@@ -368,10 +411,20 @@ mod tests {
     fn open_test_window(
         cx: &mut TestAppContext,
     ) -> (Rc<RefCell<Vec<f32>>>, WindowHandle<AnimationTestView>) {
+        open_test_window_with_max_fps(cx, None)
+    }
+
+    fn open_test_window_with_max_fps(
+        cx: &mut TestAppContext,
+        max_fps: Option<f32>,
+    ) -> (Rc<RefCell<Vec<f32>>>, WindowHandle<AnimationTestView>) {
         let rendered_deltas = Rc::new(RefCell::new(Vec::new()));
         let window = cx.open_window(size(px(100.), px(100.)), {
             let rendered_deltas = rendered_deltas.clone();
-            move |_, _| AnimationTestView { rendered_deltas }
+            move |_, _| AnimationTestView {
+                rendered_deltas,
+                max_fps,
+            }
         });
         cx.run_until_parked();
         (rendered_deltas, window)
@@ -416,6 +469,38 @@ mod tests {
             assert_eq!(simulate_next_frame(&window, cx), 1);
             assert_eq!(rendered_deltas.borrow().len(), expected_frames);
         }
+    }
+
+    #[gpui::test]
+    fn test_max_fps_schedules_timer_driven_frames(cx: &mut TestAppContext) {
+        let (rendered_deltas, window) = open_test_window_with_max_fps(cx, Some(10.0));
+
+        // The test scheduler's clock jitters forward slightly on each poll,
+        // so compare against expectations loosely.
+        let assert_deltas_approx_eq = |expected: &[f32]| {
+            let actual = rendered_deltas.borrow();
+            assert_eq!(actual.len(), expected.len(), "deltas: {actual:?}");
+            for (actual, expected) in actual.iter().zip(expected) {
+                assert!(
+                    (actual - expected).abs() < 1e-2,
+                    "expected {expected}, got {actual}"
+                );
+            }
+        };
+
+        assert_deltas_approx_eq(&[0.0]);
+
+        // No per-frame callback is scheduled; re-renders are timer-driven.
+        assert_eq!(simulate_next_frame(&window, cx), 0);
+        assert_deltas_approx_eq(&[0.0]);
+
+        cx.executor().advance_clock(Duration::from_millis(105));
+        cx.run_until_parked();
+        assert_deltas_approx_eq(&[0.0, 0.105]);
+
+        cx.executor().advance_clock(Duration::from_millis(105));
+        cx.run_until_parked();
+        assert_deltas_approx_eq(&[0.0, 0.105, 0.21]);
     }
 
     #[gpui::test]
