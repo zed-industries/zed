@@ -1290,7 +1290,7 @@ impl ConnectionPool {
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
                         RemoteConnectionOptions::Docker(opts) => {
-                            DockerExecConnection::new(opts, delegate, cx)
+                            DockerExecConnection::new(opts, None, delegate, cx)
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }

@@ -1,6 +1,5 @@
 use anyhow::Context;
 use anyhow::Result;
-use anyhow::anyhow;
 use async_trait::async_trait;
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -63,11 +62,15 @@ pub(crate) struct DockerExecConnection {
     os_version: Option<String>,
     path_style: Option<PathStyle>,
     shell: String,
+    /// Connection to the machine running the docker daemon, when it is not
+    /// this one. Every docker invocation is routed through it.
+    host: Option<Arc<dyn RemoteConnection>>,
 }
 
 impl DockerExecConnection {
     pub async fn new(
         connection_options: DockerConnectionOptions,
+        host: Option<Arc<dyn RemoteConnection>>,
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
@@ -80,6 +83,7 @@ impl DockerExecConnection {
             os_version: None,
             path_style: None,
             shell: "sh".to_owned(),
+            host,
         };
         let (release_channel, version, commit) = cx.update(|cx| {
             (
@@ -126,6 +130,27 @@ impl DockerExecConnection {
             "podman"
         } else {
             "docker"
+        }
+    }
+
+    /// The single place docker invocations are turned into a runnable command.
+    /// Without a host the template is the docker CLI itself; with one it is
+    /// whatever that host's transport uses to run the docker CLI over there.
+    fn docker_command(&self, args: Vec<String>) -> Result<CommandTemplate> {
+        match &self.host {
+            None => Ok(CommandTemplate {
+                program: self.docker_cli().to_string(),
+                args,
+                env: Default::default(),
+            }),
+            Some(host) => host.build_command(
+                Some(self.docker_cli().to_string()),
+                &args,
+                &Default::default(),
+                None,
+                None,
+                Interactive::No,
+            ),
         }
     }
 
@@ -431,19 +456,40 @@ impl DockerExecConnection {
         Ok(())
     }
 
+    fn upload_commands(
+        &self,
+        src_path: &str,
+        dst_path: &str,
+    ) -> Result<(CommandTemplate, CommandTemplate)> {
+        let container_id = &self.connection_options.container_id;
+        let remote_user = &self.connection_options.remote_user;
+
+        let copy_command = self.docker_command(vec![
+            "cp".to_string(),
+            "-a".to_string(),
+            src_path.to_string(),
+            format!("{container_id}:{dst_path}"),
+        ])?;
+        let chown_command = self.docker_command(vec![
+            "exec".to_string(),
+            container_id.to_string(),
+            "chown".to_string(),
+            format!("{remote_user}:{remote_user}"),
+            dst_path.to_string(),
+        ])?;
+
+        Ok((copy_command, chown_command))
+    }
+
+    /// Takes prebuilt templates rather than building them itself, because
+    /// `upload_directory` needs a `'static` future and cannot borrow `self`.
     async fn upload_and_chown(
-        docker_cli: String,
-        connection_options: DockerConnectionOptions,
+        copy_command: CommandTemplate,
+        chown_command: CommandTemplate,
         src_path: String,
         dst_path: String,
     ) -> Result<()> {
-        let mut command = util::command::new_command(&docker_cli);
-        command.arg("cp");
-        command.arg("-a");
-        command.arg(&src_path);
-        command.arg(format!("{}:{}", connection_options.container_id, dst_path));
-
-        let output = command.output().await?;
+        let output = copy_command.output().await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -455,16 +501,6 @@ impl DockerExecConnection {
                 stderr,
             );
         }
-
-        let mut chown_command = util::command::new_command(&docker_cli);
-        chown_command.arg("exec");
-        chown_command.arg(connection_options.container_id);
-        chown_command.arg("chown");
-        chown_command.arg(format!(
-            "{}:{}",
-            connection_options.remote_user, connection_options.remote_user,
-        ));
-        chown_command.arg(&dst_path);
 
         let output = chown_command.output().await?;
 
@@ -492,9 +528,12 @@ impl DockerExecConnection {
         let dest_path_str = dest_path.display(self.path_style());
         let full_server_path = format!("{}/{}", remote_dir_for_server, dest_path_str);
 
+        let (copy_command, chown_command) =
+            self.upload_commands(&src_path_display, &full_server_path)?;
+
         Self::upload_and_chown(
-            self.docker_cli().to_string(),
-            self.connection_options.clone(),
+            copy_command,
+            chown_command,
             src_path_display,
             full_server_path,
         )
@@ -506,11 +545,10 @@ impl DockerExecConnection {
         subcommand: &str,
         args: &[impl AsRef<str>],
     ) -> Result<String> {
-        let mut command = util::command::new_command(self.docker_cli());
-        command.arg(subcommand);
-        for arg in args {
-            command.arg(arg.as_ref());
-        }
+        let mut command_args = vec![subcommand.to_string()];
+        command_args.extend(args.iter().map(|arg| arg.as_ref().to_string()));
+
+        let command = self.docker_command(command_args)?;
         let output = command.output().await?;
         log::debug!("{:?}: {:?}", command, output);
         anyhow::ensure!(
@@ -628,6 +666,52 @@ impl DockerExecConnection {
         Ok(())
     }
 
+    /// The command whose stdio carries the RPC framing. Exactly one local child
+    /// is spawned from it; with a host, that child is the host transport rather
+    /// than the docker CLI.
+    fn proxy_command(&self, unique_identifier: String, reconnect: bool) -> Result<CommandTemplate> {
+        let remote_binary_relpath = self
+            .remote_binary_relpath
+            .clone()
+            .context("Remote binary path not set")?;
+
+        let mut docker_args = vec!["exec".to_string()];
+
+        for (k, v) in self.connection_options.remote_env.iter() {
+            docker_args.push("-e".to_string());
+            docker_args.push(format!("{k}={v}"));
+        }
+        for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
+            if let Some(value) = std::env::var(env_var).ok() {
+                docker_args.push("-e".to_string());
+                docker_args.push(format!("{env_var}={value}"));
+            }
+        }
+
+        docker_args.extend([
+            "-u".to_string(),
+            self.connection_options.remote_user.to_string(),
+            "-w".to_string(),
+            self.remote_dir_for_server.clone(),
+            "-i".to_string(),
+            self.connection_options.container_id.to_string(),
+        ]);
+
+        docker_args.push(
+            remote_binary_relpath
+                .display(self.path_style())
+                .into_owned(),
+        );
+        docker_args.push("proxy".to_string());
+        docker_args.push("--identifier".to_string());
+        docker_args.push(unique_identifier);
+        if reconnect {
+            docker_args.push("--reconnect".to_string());
+        }
+
+        self.docker_command(docker_args)
+    }
+
     fn kill_inner(&self) -> Result<()> {
         if let Some(pid) = self.proxy_process.lock().take() {
             if let Ok(_) = util::command::new_command("kill")
@@ -668,49 +752,19 @@ impl RemoteConnection for DockerExecConnection {
 
         delegate.set_status(Some("Starting proxy"), cx);
 
-        let Some(remote_binary_relpath) = self.remote_binary_relpath.clone() else {
-            return Task::ready(Err(anyhow!("Remote binary path not set")));
+        let proxy_command = match self.proxy_command(unique_identifier, reconnect) {
+            Ok(proxy_command) => proxy_command,
+            Err(error) => return Task::ready(Err(error)),
         };
 
-        let mut docker_args = vec!["exec".to_string()];
-
-        for (k, v) in self.connection_options.remote_env.iter() {
-            docker_args.push("-e".to_string());
-            docker_args.push(format!("{k}={v}"));
-        }
-        for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
-            if let Some(value) = std::env::var(env_var).ok() {
-                docker_args.push("-e".to_string());
-                docker_args.push(format!("{env_var}={value}"));
-            }
-        }
-
-        docker_args.extend([
-            "-u".to_string(),
-            self.connection_options.remote_user.to_string(),
-            "-w".to_string(),
-            self.remote_dir_for_server.clone(),
-            "-i".to_string(),
-            self.connection_options.container_id.to_string(),
-        ]);
-
-        let val = remote_binary_relpath
-            .display(self.path_style())
-            .into_owned();
-        docker_args.push(val);
-        docker_args.push("proxy".to_string());
-        docker_args.push("--identifier".to_string());
-        docker_args.push(unique_identifier);
-        if reconnect {
-            docker_args.push("--reconnect".to_string());
-        }
-        let mut command = util::command::new_command(self.docker_cli());
+        let mut command = util::command::new_command(&proxy_command.program);
         command
             .kill_on_drop(true)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .args(docker_args);
+            .args(&proxy_command.args)
+            .envs(&proxy_command.env);
 
         let Ok(child) = command.spawn() else {
             return Task::ready(Err(anyhow::anyhow!(
@@ -748,14 +802,18 @@ impl RemoteConnection for DockerExecConnection {
         let dest_path_str = dest_path.to_string();
         let src_path_display = src_path.display().to_string();
 
-        let upload_task = Self::upload_and_chown(
-            self.docker_cli().to_string(),
-            self.connection_options.clone(),
+        let (copy_command, chown_command) =
+            match self.upload_commands(&src_path_display, &dest_path_str) {
+                Ok(commands) => commands,
+                Err(error) => return Task::ready(Err(error)),
+            };
+
+        cx.background_spawn(Self::upload_and_chown(
+            copy_command,
+            chown_command,
             src_path_display,
             dest_path_str,
-        );
-
-        cx.background_spawn(upload_task)
+        ))
     }
 
     async fn kill(&self) -> Result<()> {
@@ -833,12 +891,9 @@ impl RemoteConnection for DockerExecConnection {
 
         docker_args.append(&mut inner_program);
 
-        Ok(CommandTemplate {
-            program: self.docker_cli().to_string(),
-            args: docker_args,
-            // Docker-exec pipes in environment via the "-e" argument
-            env: Default::default(),
-        })
+        // Docker-exec pipes in environment via the "-e" argument, so the
+        // template's own env stays empty.
+        self.docker_command(docker_args)
     }
 
     fn build_forward_ports_command(
@@ -880,8 +935,231 @@ impl RemoteConnection for DockerExecConnection {
 
 #[cfg(test)]
 mod tests {
-    use super::{DockerConnectionOptions, DockerHost};
+    use super::{DockerConnectionOptions, DockerExecConnection, DockerHost};
+    use crate::RemoteConnection;
+    use crate::remote_client::Interactive;
+    use crate::transport::mock::{MockConnection, MockConnectionRegistry};
     use crate::transport::ssh::SshConnectionOptions;
+    use gpui::TestAppContext;
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+    use util::paths::PathStyle;
+    use util::rel_path::RelPath;
+
+    fn local_connection(options: DockerConnectionOptions) -> DockerExecConnection {
+        DockerExecConnection {
+            proxy_process: Mutex::new(None),
+            remote_dir_for_server: "/home/anth".to_string(),
+            remote_binary_relpath: None,
+            connection_options: options,
+            remote_platform: None,
+            os_version: None,
+            path_style: Some(PathStyle::Unix),
+            shell: "/bin/bash".to_string(),
+            host: None,
+        }
+    }
+
+    async fn mock_host(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> Arc<dyn RemoteConnection> {
+        let (options, _server_client, connect_guard) = MockConnection::new(cx, server_cx);
+        connect_guard.send(()).ok();
+        let connection = cx
+            .update(|cx| cx.default_global::<MockConnectionRegistry>().take(&options))
+            .expect("the mock connection should be registered")
+            .await;
+        connection
+    }
+
+    /// The argv the proxy child is spawned from, minus the `-e` pairs, which
+    /// depend on which of `RUST_LOG` and friends the test process happens to
+    /// have set.
+    fn without_env_args(args: &[String]) -> Vec<String> {
+        let mut kept = Vec::new();
+        let mut args = args.iter();
+        while let Some(arg) = args.next() {
+            if arg == "-e" {
+                args.next();
+                continue;
+            }
+            kept.push(arg.clone());
+        }
+        kept
+    }
+
+    fn docker_options() -> DockerConnectionOptions {
+        DockerConnectionOptions {
+            name: "zed-dev".to_string(),
+            container_id: "container-123".to_string(),
+            remote_user: "anth".to_string(),
+            upload_binary_over_docker_exec: false,
+            use_podman: false,
+            remote_env: Default::default(),
+            host: DockerHost::Local,
+        }
+    }
+
+    #[test]
+    fn local_host_commands_are_unwrapped_docker_invocations() {
+        let connection = local_connection(docker_options());
+        let command = connection
+            .docker_command(vec!["ps".to_string(), "-a".to_string()])
+            .expect("building a local docker command should succeed");
+
+        assert_eq!(command.program, "docker");
+        assert_eq!(command.args, vec!["ps".to_string(), "-a".to_string()]);
+        assert!(command.env.is_empty());
+
+        let podman = local_connection(DockerConnectionOptions {
+            use_podman: true,
+            ..docker_options()
+        });
+        assert_eq!(
+            podman
+                .docker_command(vec!["ps".to_string()])
+                .expect("building a local podman command should succeed")
+                .program,
+            "podman"
+        );
+    }
+
+    #[test]
+    fn local_host_build_command_argv_is_unchanged() {
+        let connection = local_connection(DockerConnectionOptions {
+            remote_env: [("FOO".to_string(), "BAR".to_string())]
+                .into_iter()
+                .collect(),
+            ..docker_options()
+        });
+
+        let command = connection
+            .build_command(
+                Some("ls".to_string()),
+                &["-la".to_string()],
+                &Default::default(),
+                Some("~/project".to_string()),
+                None,
+                Interactive::No,
+            )
+            .expect("building a command for a local container should succeed");
+
+        assert_eq!(command.program, "docker");
+        assert_eq!(
+            command.args,
+            vec![
+                "exec",
+                "-u",
+                "anth",
+                "-w",
+                "/home/anth/project",
+                "-e",
+                "FOO=BAR",
+                "-i",
+                "container-123",
+                "ls",
+                "-la",
+            ]
+        );
+        assert!(command.env.is_empty());
+    }
+
+    #[test]
+    fn local_host_proxy_command_argv_is_unchanged() {
+        let mut connection = local_connection(docker_options());
+        connection.remote_binary_relpath = Some(
+            RelPath::from_unix_str("zed-remote-server")
+                .expect("a relative unix path should parse")
+                .into(),
+        );
+
+        let command = connection
+            .proxy_command("some-identifier".to_string(), false)
+            .expect("building the proxy command should succeed");
+
+        assert_eq!(command.program, "docker");
+        assert_eq!(
+            without_env_args(&command.args),
+            vec![
+                "exec",
+                "-u",
+                "anth",
+                "-w",
+                "/home/anth",
+                "-i",
+                "container-123",
+                "zed-remote-server",
+                "proxy",
+                "--identifier",
+                "some-identifier",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn proxy_command_runs_docker_on_the_host(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let mut connection = local_connection(docker_options());
+        connection.host = Some(mock_host(cx, server_cx).await);
+        connection.remote_binary_relpath = Some(
+            RelPath::from_unix_str("zed-remote-server")
+                .expect("a relative unix path should parse")
+                .into(),
+        );
+
+        let command = connection
+            .proxy_command("some-identifier".to_string(), true)
+            .expect("building the proxy command should succeed");
+
+        // The spawned child is the host transport; the docker CLI is the
+        // program it is asked to run over there.
+        assert_eq!(command.program, "mock");
+        assert_eq!(
+            without_env_args(&command.args),
+            vec![
+                "docker",
+                "exec",
+                "-u",
+                "anth",
+                "-w",
+                "/home/anth",
+                "-i",
+                "container-123",
+                "zed-remote-server",
+                "proxy",
+                "--identifier",
+                "some-identifier",
+                "--reconnect",
+            ]
+        );
+    }
+
+    #[test]
+    fn local_host_upload_commands_argv_is_unchanged() {
+        let connection = local_connection(docker_options());
+        let (copy_command, chown_command) = connection
+            .upload_commands("/tmp/src", "/home/anth/dst")
+            .expect("building upload commands should succeed");
+
+        assert_eq!(copy_command.program, "docker");
+        assert_eq!(
+            copy_command.args,
+            vec!["cp", "-a", "/tmp/src", "container-123:/home/anth/dst"]
+        );
+        assert_eq!(
+            chown_command.args,
+            vec![
+                "exec",
+                "container-123",
+                "chown",
+                "anth:anth",
+                "/home/anth/dst",
+            ]
+        );
+    }
 
     #[test]
     fn options_without_host_deserialize_as_local() {
