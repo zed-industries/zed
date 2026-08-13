@@ -5,7 +5,7 @@ use crate::{
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
-        docker::{DockerConnectionOptions, DockerExecConnection},
+        docker::{DockerConnectionOptions, DockerExecConnection, DockerHost},
         ssh::SshRemoteConnection,
         wsl::{WslConnectionOptions, WslRemoteConnection},
     },
@@ -1238,6 +1238,36 @@ struct ConnectionPool {
 impl Global for ConnectionPool {}
 
 impl ConnectionPool {
+    /// Rebuilds the connection to the machine running the docker daemon, so
+    /// that a dev container can be reconnected from its persisted options
+    /// alone. The host goes through the pool as well, so an already-open
+    /// connection to it is reused rather than authenticated a second time.
+    ///
+    /// `DockerHost` is not recursive, so this can nest at most one level deep.
+    async fn connect_docker_host(
+        host: &DockerHost,
+        delegate: Arc<dyn RemoteClientDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Result<Option<Arc<dyn RemoteConnection>>> {
+        let host_options = match host {
+            DockerHost::Local => return Ok(None),
+            DockerHost::Ssh(options) => RemoteConnectionOptions::Ssh(options.clone()),
+            #[cfg(any(test, feature = "test-support"))]
+            DockerHost::Mock(options) => RemoteConnectionOptions::Mock(options.clone()),
+        };
+
+        let connection = cx
+            .update(|cx| {
+                cx.update_default_global(|pool: &mut Self, cx| {
+                    pool.connect(host_options, delegate, cx)
+                })
+            })
+            .await
+            .map_err(|error| anyhow!("connecting to the dev container's host: {error}"))?;
+
+        Ok(Some(connection))
+    }
+
     fn connect(
         &mut self,
         opts: RemoteConnectionOptions,
@@ -1290,9 +1320,15 @@ impl ConnectionPool {
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
                         RemoteConnectionOptions::Docker(opts) => {
-                            DockerExecConnection::new(opts, None, delegate, cx)
-                                .await
-                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                            match Self::connect_docker_host(&opts.host, delegate.clone(), cx).await
+                            {
+                                Ok(host) => DockerExecConnection::new(opts, host, delegate, cx)
+                                    .await
+                                    .map(|connection| {
+                                        Arc::new(connection) as Arc<dyn RemoteConnection>
+                                    }),
+                                Err(error) => Err(error),
+                            }
                         }
                         #[cfg(any(test, feature = "test-support"))]
                         RemoteConnectionOptions::Mock(opts) => match cx.update(|cx| {
@@ -1389,6 +1425,65 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use rpc::{ErrorCodeExt, proto::ErrorCode};
+
+    #[gpui::test]
+    async fn docker_host_is_pooled_and_rebuilt_after_it_dies(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        use crate::transport::mock::{MockConnection, MockDelegate};
+
+        let delegate = Arc::new(MockDelegate) as Arc<dyn RemoteClientDelegate>;
+        let mut async_cx = cx.to_async();
+
+        assert!(
+            ConnectionPool::connect_docker_host(
+                &DockerHost::Local,
+                delegate.clone(),
+                &mut async_cx
+            )
+            .await
+            .expect("a local host should not need a connection")
+            .is_none()
+        );
+
+        let (host_options, _server_client, connect_guard) = MockConnection::new(cx, server_cx);
+        connect_guard.send(()).ok();
+        let host = DockerHost::Mock(host_options.clone());
+
+        let connection =
+            ConnectionPool::connect_docker_host(&host, delegate.clone(), &mut async_cx)
+                .await
+                .expect("connecting to the host should succeed")
+                .expect("a non-local host should produce a connection");
+
+        // The mock is registered once, so a second connection can only come
+        // from the pool.
+        let pooled = ConnectionPool::connect_docker_host(&host, delegate.clone(), &mut async_cx)
+            .await
+            .expect("the pooled host connection should be reused")
+            .expect("a non-local host should produce a connection");
+        assert!(Arc::ptr_eq(&connection, &pooled));
+
+        let dead = Arc::downgrade(&connection);
+        drop(connection);
+        drop(pooled);
+        assert!(
+            dead.upgrade().is_none(),
+            "the test should be the only owner of the host connection"
+        );
+
+        let (_server_client, connect_guard) =
+            MockConnection::new_with_opts(host_options, cx, server_cx);
+        connect_guard.send(()).ok();
+
+        let reconnected = ConnectionPool::connect_docker_host(&host, delegate, &mut async_cx)
+            .await
+            .expect("the host should be rebuilt from its options")
+            .expect("a non-local host should produce a connection");
+        assert!(dead.upgrade().is_none());
+        drop(reconnected);
+    }
 
     /// Callers branch on the exit status and read stdout, so both have to
     /// survive the round trip through `CommandTemplate::output`.

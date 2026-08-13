@@ -39,6 +39,8 @@ pub enum DockerHost {
     #[default]
     Local,
     Ssh(SshConnectionOptions),
+    #[cfg(any(test, feature = "test-support"))]
+    Mock(crate::transport::mock::MockConnectionOptions),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
