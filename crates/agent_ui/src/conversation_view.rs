@@ -6865,6 +6865,69 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_prompt_history_click_accepts_clicked_entry(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        for prompt in ["First", "Second", "Third"] {
+            connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+                acp::ContentChunk::new("Response".into()),
+            )]);
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text(prompt, window, cx);
+            });
+            active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+                view.send(window, cx);
+            });
+            cx.run_until_parked();
+        }
+
+        let entry_count = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, cx| view.thread.read(cx).entries().len());
+        let editor_focus = message_editor.read_with(cx, |editor, cx| editor.focus_handle(cx));
+        cx.update(|window, cx| editor_focus.focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+        assert_eq!(
+            selected_prompt_history_preview(&conversation_view, cx).as_deref(),
+            Some("Third")
+        );
+
+        let first_entry_bounds = cx
+            .debug_bounds("agent-prompt-history-entry-0")
+            .expect("first prompt history entry should be rendered");
+        cx.simulate_click(first_entry_bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "First"
+        );
+        message_editor.read_with(cx, |message_editor, cx| {
+            let editor = message_editor.editor().read(cx);
+            let selection = editor.selections.newest_anchor();
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let expected_offset = MultiBufferOffset("First".len());
+            assert_eq!(selection.start.to_offset(&snapshot), expected_offset);
+            assert_eq!(selection.end.to_offset(&snapshot), expected_offset);
+        });
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+        cx.update(|window, cx| {
+            assert!(message_editor.read(cx).focus_handle(cx).is_focused(window));
+        });
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).entries().len(), entry_count);
+            assert_eq!(view.thread.read(cx).status(), ThreadStatus::Idle);
+        });
+    }
+
+    #[gpui::test]
     async fn test_rewind_views(cx: &mut TestAppContext) {
         init_test(cx);
 
