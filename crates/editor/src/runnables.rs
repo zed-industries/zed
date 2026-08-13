@@ -576,7 +576,10 @@ impl Editor {
             .filter_map(|buffer| {
                 let buffer_read = buffer.read(cx);
                 let buffer_id = buffer_read.remote_id();
-                if skip_cached && self.runnables.has_cached(buffer_id, &buffer_read.version()) {
+                if skip_cached
+                    && !self.runnables.invalidate_buffer_data.contains(&buffer_id)
+                    && self.runnables.has_cached(buffer_id, &buffer_read.version())
+                {
                     return None;
                 }
 
@@ -1340,6 +1343,22 @@ mod tests {
                 .expect("editor update"),
             vec![(buffer_id, 0, vec!["LSP main".to_string()])],
             "capability-advertised LSP runnables should not need a language context provider"
+        );
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.refresh_runnables(Some(buffer_id), window, cx);
+            })
+            .expect("editor update");
+        cx.executor().advance_clock(UPDATE_DEBOUNCE);
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            editor
+                .update(cx, |editor, _, _| collect_runnable_labels(editor))
+                .expect("editor update"),
+            vec![(buffer_id, 0, vec!["LSP main".to_string()])],
+            "invalidating cached runnables should fetch LSP runnables again"
         );
     }
 
