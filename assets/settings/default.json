@@ -1290,6 +1290,10 @@
     //
     // Default: false
     "use_modifier_to_send": false,
+    // Whether pressing the up arrow in an empty agent message editor opens prompt history.
+    //
+    // Default: true
+    "message_history_navigation": true,
     // Minimum number of lines to display in the agent message editor.
     //
     // Default: 4
