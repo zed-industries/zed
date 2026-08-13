@@ -7240,6 +7240,71 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_prompt_history_restores_supported_structured_content(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let image_uri = acp_thread::MentionUri::PastedImage {
+            name: "History image".to_string(),
+        }
+        .to_uri()
+        .to_string();
+        let expected_blocks = vec![
+            acp::ContentBlock::Text(acp::TextContent::new("Before:")),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                "link.rs",
+                "file:///project/link.rs",
+            )),
+            acp::ContentBlock::Text(acp::TextContent::new(":Between:")),
+            acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents::new(
+                        "fn restored() {}",
+                        "file:///project/context.rs",
+                    ),
+                ),
+            )),
+            acp::ContentBlock::Text(acp::TextContent::new(":After:")),
+            acp::ContentBlock::Image(
+                acp::ImageContent::new(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+                    "image/png",
+                )
+                .uri(Some(image_uri)),
+            ),
+            acp::ContentBlock::Text(acp::TextContent::new(":Done")),
+        ];
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _cx| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            for block in expected_blocks.iter().cloned() {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(block)),
+                        cx,
+                    )
+                    .expect("restored structured ACP prompt should be applied");
+            }
+        });
+        cx.run_until_parked();
+
+        let message_editor = message_editor(&conversation_view, cx);
+        cx.update(|window, cx| message_editor.focus_handle(cx).focus(window, cx));
+        cx.simulate_keystrokes("up enter");
+        cx.run_until_parked();
+
+        let restored_blocks =
+            message_editor.read_with(cx, |editor, cx| editor.draft_content_blocks_snapshot(cx));
+        assert_eq!(restored_blocks, expected_blocks);
+        assert!(selected_prompt_history_preview(&conversation_view, cx).is_none());
+    }
+
+    #[gpui::test]
     async fn test_prompt_history_only_opens_for_root_thread_input(cx: &mut TestAppContext) {
         init_test(cx);
         bind_default_linux_keymap(cx);
