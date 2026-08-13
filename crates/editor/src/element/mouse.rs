@@ -538,19 +538,18 @@ impl EditorElement {
                         editor.update(cx, |editor, cx| {
                             let line_height = position_map.line_height;
                             let glyph_width = position_map.em_layout_width;
-                            let (delta, axis) = match delta {
+                            let delta = match delta {
                                 gpui::ScrollDelta::Pixels(mut pixels) => {
                                     //Trackpad
-                                    let axis =
-                                        position_map.snapshot.ongoing_scroll.filter(&mut pixels);
-                                    (pixels, axis)
+                                    editor
+                                        .scroll_manager
+                                        .filter_scroll_delta(&mut pixels, event.touch_phase);
+                                    pixels
                                 }
 
                                 gpui::ScrollDelta::Lines(lines) => {
                                     //Not trackpad
-                                    let pixels =
-                                        point(lines.x * glyph_width, lines.y * line_height);
-                                    (pixels, None)
+                                    point(lines.x * glyph_width, lines.y * line_height)
                                 }
                             };
 
@@ -572,17 +571,8 @@ impl EditorElement {
                             }
 
                             if scroll_position != current_scroll_position {
-                                editor.scroll(scroll_position, axis, window, cx);
+                                editor.scroll(scroll_position, window, cx);
                                 cx.stop_propagation();
-                            } else if y < 0. && !forbid_vertical_scroll {
-                                // Due to clamping, we may fail to detect cases of overscroll to the top;
-                                // We want the scroll manager to get an update in such cases and detect the change of direction
-                                // on the next frame.
-                                if editor.scroll_manager.should_notify_top_overscroll(axis) {
-                                    cx.notify();
-                                }
-                            } else {
-                                editor.scroll_manager.reset_top_overscroll_notification();
                             }
                         });
                     }
@@ -643,7 +633,7 @@ impl EditorElement {
             let selection = newest_anchor.map(|anchor| anchor.to_display_point(&snapshot));
             if point_for_position.intersects_selection(&selection) {
                 editor.selection_drag_state = SelectionDragState::ReadyToDrag {
-                    selection: newest_anchor.clone(),
+                    selection: *newest_anchor,
                     click_position: event.position,
                     mouse_down_time: Instant::now(),
                 };
@@ -1091,7 +1081,7 @@ impl EditorElement {
                             goal: SelectionGoal::None,
                         };
                         editor.selection_drag_state = SelectionDragState::Dragging {
-                            selection: selection.clone(),
+                            selection: *selection,
                             drop_cursor,
                             hide_drop_cursor: false,
                         };
@@ -1244,7 +1234,7 @@ mod tests {
         });
 
         cx.update_editor(|editor, window, cx| {
-            editor.scroll(gpui::Point { x: 0., y: 5.5 }, None, window, cx);
+            editor.scroll(gpui::Point { x: 0., y: 5.5 }, window, cx);
         });
         cx.run_until_parked();
 

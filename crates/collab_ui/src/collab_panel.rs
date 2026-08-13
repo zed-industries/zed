@@ -35,9 +35,9 @@ use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use ui::{
     Avatar, AvatarAvailabilityIndicator, CollabNotification, ContextMenu, CopyButton,
-    DecoratedIcon, Disclosure, Facepile, HighlightedLabel, IconButtonShape, IconDecoration,
-    IconDecorationKind, IndentGuideColors, Indicator, ListHeader, ListItem, ScrollAxes, Scrollbars,
-    Tab, TintColor, Tooltip, WithScrollbar, prelude::*, tooltip_container,
+    DecoratedIcon, Disclosure, DockSide, Facepile, HighlightedLabel, IconButtonShape,
+    IconDecoration, IconDecorationKind, IndentGuideColors, Indicator, ListHeader, ListItem,
+    ScrollAxes, Scrollbars, Tab, TintColor, Tooltip, WithScrollbar, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -56,7 +56,7 @@ const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 const TOAST_DURATION: Duration = Duration::from_secs(5);
 
 fn panel_row_height() -> Rems {
-    rems_from_px(26.)
+    rems_from_px(26_f32)
 }
 
 actions!(
@@ -396,7 +396,9 @@ impl CollabPanel {
                 &channel_name_editor,
                 window,
                 |this: &mut Self, _, event, window, cx| {
-                    if let editor::EditorEvent::Blurred = event {
+                    if let editor::EditorEvent::Blurred = event
+                        && window.is_window_active()
+                    {
                         if let Some(state) = &this.channel_editing_state
                             && state.pending_name().is_some()
                         {
@@ -1162,6 +1164,13 @@ impl CollabPanel {
         ))
     }
 
+    fn dock_side(&self, cx: &App) -> DockSide {
+        match CollaborationPanelSettings::get_global(cx).dock {
+            DockPosition::Right => DockSide::Right,
+            _ => DockSide::Left,
+        }
+    }
+
     fn render_call_participant(
         &self,
         user: &Arc<User>,
@@ -1205,7 +1214,8 @@ impl CollabPanel {
         ListItem::new(user.username.clone())
             .start_slot(Avatar::new(user.avatar_uri.clone()))
             .child(render_participant_name_and_handle(user))
-            .toggle_state(is_selected)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .end_slot(end_slot)
             .tooltip(Tooltip::text("Click to Follow"))
             .when_some(peer_id, |el, peer_id| {
@@ -1253,7 +1263,8 @@ impl CollabPanel {
 
         ListItem::new(project_id as usize)
             .height(panel_row_height())
-            .toggle_state(is_selected)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.workspace
                     .update(cx, |workspace, cx| {
@@ -1294,7 +1305,8 @@ impl CollabPanel {
 
         ListItem::new(("screen", id))
             .height(panel_row_height())
-            .toggle_state(is_selected)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .start_slot(
                 h_flex()
                     .gap_1p5()
@@ -1341,7 +1353,8 @@ impl CollabPanel {
 
         ListItem::new("channel-notes")
             .height(panel_row_height())
-            .toggle_state(is_selected)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_channel_notes(channel_id, window, cx);
             }))
@@ -2119,9 +2132,7 @@ impl CollabPanel {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let mut finder = ContactFinder::new(self.user_store.clone(), window, cx);
-                    finder.set_query(self.filter_editor.read(cx).text(cx), window, cx);
-                    finder
+                    ContactFinder::new(self.user_store.clone(), window, cx)
                 });
             });
         }
@@ -2755,7 +2766,9 @@ impl CollabPanel {
     ) -> AnyElement {
         let entry = self.entries[ix].clone();
 
-        let is_selected = self.selection == Some(ix);
+        let is_selected =
+            self.selection == Some(ix) && self.focus_handle.contains_focused(window, cx);
+
         match entry {
             ListEntry::Header(section) => {
                 let is_collapsed = self.collapsed_sections.contains(&section);
@@ -3100,7 +3113,8 @@ impl CollabPanel {
                 })
                 .inset(true)
                 .end_slot::<AnyElement>(button)
-                .toggle_state(is_selected),
+                .focused(is_selected)
+                .dock(self.dock_side(cx)),
         )
     }
 
@@ -3127,7 +3141,9 @@ impl CollabPanel {
         let item = ListItem::new(username.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
-            .toggle_state(is_selected || context_menu_open_via_row)
+            .toggle_state(context_menu_open_via_row)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -3203,15 +3219,15 @@ impl CollabPanel {
             .when(open_context_menu.is_none(), |this| {
                 this.tooltip(move |_, cx| {
                     let text = if !online {
-                        format!(" {} is Offline", &username)
+                        format!(" {username} is Offline")
                     } else if busy {
-                        format!(" {} is on a Call", &username)
+                        format!(" {username} is on a Call")
                     } else {
                         let room = ActiveCall::global(cx).read(cx).room();
                         if room.is_some() {
-                            format!("Invite {} to Join Call", &username)
+                            format!("Invite {username} to Join Call")
                         } else {
-                            format!("Call {}", &username)
+                            format!("Call {username}")
                         }
                     };
                     Tooltip::simple(text, cx)
@@ -3265,7 +3281,8 @@ impl CollabPanel {
         ListItem::new(username.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
-            .toggle_state(is_selected)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -3309,7 +3326,8 @@ impl CollabPanel {
         ];
 
         ListItem::new(("channel-invite", channel.id.0 as usize))
-            .toggle_state(is_selected)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -3328,7 +3346,8 @@ impl CollabPanel {
         ListItem::new("contact-placeholder")
             .child(Icon::new(IconName::Plus))
             .child(Label::new("Add a Contact"))
-            .toggle_state(is_selected)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .on_click(cx.listener(|this, _, window, cx| this.toggle_contact_finder(window, cx)))
     }
 
@@ -3510,7 +3529,9 @@ impl CollabPanel {
                     .height(height)
                     .indent_level(depth)
                     .indent_step_size(px(20.))
-                    .toggle_state(is_selected || is_active)
+                    .toggle_state(is_active)
+                    .focused(is_selected)
+                    .dock(self.dock_side(cx))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if is_active {
                             this.open_channel_notes(channel_id, window, cx)

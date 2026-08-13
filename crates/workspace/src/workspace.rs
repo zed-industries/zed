@@ -33,8 +33,8 @@ pub use dock::Panel;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MoveProjectToNewWindow,
     MultiWorkspace, MultiWorkspaceEvent, NewThread, NextProject, NextThread, PreviousProject,
-    PreviousThread, ProjectGroup, ProjectGroupKey, SerializedProjectGroupState, Sidebar,
-    SidebarEvent, SidebarHandle, SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
+    PreviousThread, ProjectGroup, ProjectGroupKey, RemovalIntent, SerializedProjectGroupState,
+    Sidebar, SidebarEvent, SidebarHandle, SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
     sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
@@ -9754,6 +9754,7 @@ pub async fn apply_restored_multiworkspace_state(
                 if key.host().is_none()
                     && let Some(common_dir) =
                         project::discover_root_repo_common_dir(path, fs.as_ref()).await
+                    && !project::is_submodule_git_dir(&common_dir)
                 {
                     let main_path = project::repo_identity_path(&common_dir);
                     resolved_paths.push(main_path.to_path_buf());
@@ -10738,7 +10739,7 @@ pub fn open_remote_project_with_new_connection(
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
     cx: &mut App,
-) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
+) -> Task<Result<(Option<Entity<Workspace>>, Vec<Option<Box<dyn ItemHandle>>>)>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
             deserialize_remote_project(remote_connection.connection_options(), paths.clone(), cx)
@@ -10757,7 +10758,7 @@ pub fn open_remote_project_with_new_connection(
             .await?
         {
             Some(result) => result,
-            None => return Ok(Vec::new()),
+            None => return Ok((None, Vec::new())),
         };
 
         let project = cx.update(|cx| {
@@ -10773,7 +10774,7 @@ pub fn open_remote_project_with_new_connection(
             )
         });
 
-        open_remote_project_inner(
+        let (workspace, items) = open_remote_project_inner(
             project,
             paths,
             workspace_id,
@@ -10784,7 +10785,8 @@ pub fn open_remote_project_with_new_connection(
             None,
             cx,
         )
-        .await
+        .await?;
+        Ok((Some(workspace), items))
     })
 }
 
@@ -10797,7 +10799,7 @@ pub fn open_remote_project_with_existing_connection(
     provisional_project_group_key: Option<ProjectGroupKey>,
     source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
-) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
+) -> Task<Result<(Entity<Workspace>, Vec<Option<Box<dyn ItemHandle>>>)>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
             deserialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
@@ -10827,7 +10829,7 @@ async fn open_remote_project_inner(
     provisional_project_group_key: Option<ProjectGroupKey>,
     source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
-) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
+) -> Result<(Entity<Workspace>, Vec<Option<Box<dyn ItemHandle>>>)> {
     let mut project_paths_to_open = vec![];
     let mut project_path_errors = vec![];
 
@@ -10926,7 +10928,10 @@ async fn open_remote_project_inner(
         }
     });
 
-    Ok(items.into_iter().map(|item| item?.ok()).collect())
+    Ok((
+        workspace,
+        items.into_iter().map(|item| item?.ok()).collect(),
+    ))
 }
 
 fn deserialize_remote_project(
@@ -11124,6 +11129,7 @@ pub fn client_side_decorations(
 ) -> Stateful<Div> {
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = window.window_decorations();
+    let is_resizable = window.is_resizable();
     let tiling = match decorations {
         Decorations::Server => Tiling::default(),
         Decorations::Client { tiling } => tiling,
@@ -11156,38 +11162,40 @@ pub fn client_side_decorations(
                 .when(!tiling.right, |div| {
                     div.pr(theme::CLIENT_SIDE_DECORATION_SHADOW)
                 })
-                .on_mouse_move(move |e, window, cx| {
-                    let size = window.window_bounds().get_bounds().size;
-                    let pos = e.position;
+                .when(is_resizable, |div| {
+                    div.on_mouse_move(move |e, window, cx| {
+                        let size = window.window_bounds().get_bounds().size;
+                        let pos = e.position;
 
-                    let new_edge =
-                        resize_edge(pos, theme::CLIENT_SIDE_DECORATION_SHADOW, size, tiling);
+                        let new_edge =
+                            resize_edge(pos, theme::CLIENT_SIDE_DECORATION_SHADOW, size, tiling);
 
-                    let edge = cx.try_global::<GlobalResizeEdge>();
-                    if new_edge != edge.map(|edge| edge.0) {
-                        window
-                            .window_handle()
-                            .update(cx, |workspace, _, cx| {
-                                cx.notify(workspace.entity_id());
-                            })
-                            .ok();
-                    }
-                })
-                .on_mouse_down(MouseButton::Left, move |e, window, _| {
-                    let size = window.window_bounds().get_bounds().size;
-                    let pos = e.position;
+                        let edge = cx.try_global::<GlobalResizeEdge>();
+                        if new_edge != edge.map(|edge| edge.0) {
+                            window
+                                .window_handle()
+                                .update(cx, |workspace, _, cx| {
+                                    cx.notify(workspace.entity_id());
+                                })
+                                .ok();
+                        }
+                    })
+                    .on_mouse_down(MouseButton::Left, move |e, window, _| {
+                        let size = window.window_bounds().get_bounds().size;
+                        let pos = e.position;
 
-                    let edge = match resize_edge(
-                        pos,
-                        theme::CLIENT_SIDE_DECORATION_SHADOW,
-                        size,
-                        tiling,
-                    ) {
-                        Some(value) => value,
-                        None => return,
-                    };
+                        let edge = match resize_edge(
+                            pos,
+                            theme::CLIENT_SIDE_DECORATION_SHADOW,
+                            size,
+                            tiling,
+                        ) {
+                            Some(value) => value,
+                            None => return,
+                        };
 
-                    window.start_window_resize(edge);
+                        window.start_window_resize(edge);
+                    })
                 }),
         })
         .size_full()
@@ -11227,7 +11235,7 @@ pub fn client_side_decorations(
         )
         .map(|div| match decorations {
             Decorations::Server => div,
-            Decorations::Client { tiling, .. } => div.child(
+            Decorations::Client { tiling, .. } if is_resizable => div.child(
                 canvas(
                     |_bounds, window, _| {
                         window.insert_hitbox(
@@ -11267,6 +11275,7 @@ pub fn client_side_decorations(
                 .size_full()
                 .absolute(),
             ),
+            Decorations::Client { .. } => div,
         })
 }
 
@@ -12047,7 +12056,12 @@ mod tests {
         // Try to remove workspace B. It should prompt because of the dirty item.
         let remove_task = multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                mw.remove([workspace_b.clone()], |_, _, _| unreachable!(), window, cx)
+                mw.remove(
+                    [workspace_b.clone()],
+                    RemovalIntent::CloseProject,
+                    window,
+                    cx,
+                )
             })
             .unwrap();
         cx.run_until_parked();
@@ -12085,7 +12099,12 @@ mod tests {
             .update(cx, |mw, window, cx| {
                 // First switch back to A.
                 mw.activate(workspace_a.clone(), None, window, cx);
-                mw.remove([workspace_b.clone()], |_, _, _| unreachable!(), window, cx)
+                mw.remove(
+                    [workspace_b.clone()],
+                    RemovalIntent::CloseProject,
+                    window,
+                    cx,
+                )
             })
             .unwrap();
         cx.run_until_parked();
@@ -14550,6 +14569,75 @@ mod tests {
                 );
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_default_size_change_resets_saved_size(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+            workspace.bounds.size.width = px(800.);
+        });
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Left, window, cx);
+            panel
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.resize_left_dock(px(350.), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let dock_size = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .left_dock()
+                .read(cx)
+                .panel::<TestPanel>()
+                .and_then(|panel| {
+                    workspace
+                        .left_dock()
+                        .read(cx)
+                        .stored_panel_size_state(&panel)
+                })
+                .and_then(|s| s.size)
+        });
+        assert_eq!(dock_size, Some(px(350.)));
+
+        panel.update(cx, |panel, cx| {
+            panel.default_size = px(500.);
+            cx.update_global::<SettingsStore, _>(|_, _| {});
+        });
+
+        cx.run_until_parked();
+
+        let dock_size = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .left_dock()
+                .read(cx)
+                .panel::<TestPanel>()
+                .and_then(|panel| {
+                    workspace
+                        .left_dock()
+                        .read(cx)
+                        .stored_panel_size_state(&panel)
+                })
+                .and_then(|s| s.size)
+        });
+        assert_eq!(
+            dock_size, None,
+            "saved size should be cleared after default_size changes"
+        );
     }
 
     #[gpui::test]

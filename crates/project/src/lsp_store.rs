@@ -1145,10 +1145,10 @@ impl LocalLspStore {
             .on_request::<lsp::request::WorkspaceDiagnosticRefresh, _, _>({
                 let this = lsp_store.clone();
                 move |(), cx| {
-                    let this = this.clone();
+                    let lsp_store = this.clone();
                     let mut cx = cx.clone();
                     async move {
-                        this.update(&mut cx, |lsp_store, cx| {
+                        lsp_store.update(&mut cx, |lsp_store, cx| {
                             lsp_store.pull_workspace_diagnostics(server_id);
                             lsp_store
                                 .downstream_client
@@ -1160,11 +1160,13 @@ impl LocalLspStore {
                                     })
                                 })
                                 .transpose()?;
-                            anyhow::Ok(
-                                lsp_store.pull_document_diagnostics_for_server(server_id, None, cx),
-                            )
-                        })??
-                        .await;
+                            // Respond before pulling: awaiting a round-trip to the same server
+                            // here can deadlock servers that bound their request concurrency
+                            // and await this response.
+                            let _ =
+                                lsp_store.pull_document_diagnostics_for_server(server_id, None, cx);
+                            anyhow::Ok(())
+                        })??;
                         Ok(())
                     }
                 }
@@ -3049,7 +3051,7 @@ impl LocalLspStore {
                         uri.clone(),
                         adapter.language_id(&language.name()),
                         0,
-                        initial_snapshot.text(),
+                        initial_snapshot.text_with_line_endings(),
                     );
 
                     vec![snapshot]
@@ -3545,6 +3547,35 @@ impl LocalLspStore {
 
                     fs.rename(&source_abs_path, &target_abs_path, options)
                         .await?;
+
+                    // Preserve the entry id across the rename so an open buffer follows it
+                    // to the new path, instead of being stranded at the old path when the
+                    // filesystem watcher reports the deletion before the creation. Only a
+                    // rename within one worktree can do this; anything else falls back to
+                    // the watcher.
+                    let refresh = this.update(cx, |this, cx| {
+                        let (source_worktree, source_rel_path) = this
+                            .worktree_store()
+                            .read(cx)
+                            .find_worktree(&source_abs_path, cx)?;
+                        let (target_worktree, target_rel_path) = this
+                            .worktree_store()
+                            .read(cx)
+                            .find_worktree(&target_abs_path, cx)?;
+                        if source_worktree != target_worktree {
+                            return None;
+                        }
+                        target_worktree.update(cx, |worktree, cx| {
+                            Some(worktree.as_local()?.refresh_entry(
+                                target_rel_path,
+                                Some(source_rel_path),
+                                cx,
+                            ))
+                        })
+                    });
+                    if let Some(refresh) = refresh {
+                        refresh.await?;
+                    }
                 }
 
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
@@ -4810,6 +4841,13 @@ impl LspStore {
     ) {
         match event {
             language::BufferEvent::Edited { .. } => {
+                self.on_buffer_edited(buffer, cx);
+            }
+
+            language::BufferEvent::Operation {
+                operation: language::Operation::UpdateLineEnding { .. },
+                ..
+            } => {
                 self.on_buffer_edited(buffer, cx);
             }
 
@@ -6253,11 +6291,14 @@ impl LspStore {
                         buffer.wait_for_edits(Some(position.timestamp()))
                     })
                     .await?;
-                this.update(cx, |this, cx| {
+                let Some(on_type_formatting) = this.update(cx, |this, cx| {
                     let position = position.to_point_utf16(buffer.read(cx));
                     this.on_type_format(buffer, position, trigger, false, cx)
                 })?
-                .await
+                else {
+                    return Ok(None);
+                };
+                on_type_formatting.await
             })
         } else {
             Task::ready(Err(anyhow!("No upstream client or local language server")))
@@ -6271,9 +6312,17 @@ impl LspStore {
         trigger: String,
         push_to_history: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Transaction>>> {
+    ) -> Option<Task<Result<Option<Transaction>>>> {
+        if !self.check_if_capable_for_proto_request(
+            &buffer,
+            |capabilities| OnTypeFormatting::supports_on_type_formatting(&trigger, capabilities),
+            cx,
+        ) {
+            return None;
+        }
+
         let position = position.to_point_utf16(buffer.read(cx));
-        self.on_type_format_impl(buffer, position, trigger, push_to_history, cx)
+        Some(self.on_type_format_impl(buffer, position, trigger, push_to_history, cx))
     }
 
     fn on_type_format_impl(
@@ -7290,18 +7339,7 @@ impl LspStore {
 
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
-        if completion.label.filter_text() == new_label.filter_text() {
-            completion.label = new_label;
-        } else {
-            log::error!(
-                "Resolved completion changed display label from {} to {}. \
-                 Refusing to apply this because it changes the fuzzy match text from {} to {}",
-                completion.label.text(),
-                new_label.text(),
-                completion.label.filter_text(),
-                new_label.filter_text()
-            );
-        }
+        completion.label = new_label;
 
         Ok(())
     }
@@ -8551,6 +8589,8 @@ impl LspStore {
             .with_context(|| format!("Failed to convert path to URI: {}", abs_path.display()))
             .log_err()?;
         let next_snapshot = buffer.text_snapshot();
+        let line_ending = next_snapshot.line_ending();
+
         for language_server in language_servers {
             let language_server = language_server.clone();
 
@@ -8560,6 +8600,19 @@ impl LspStore {
                 .get_mut(&buffer.remote_id())
                 .and_then(|m| m.get_mut(&language_server.server_id()))?;
             let previous_snapshot = buffer_snapshots.last()?;
+
+            // If the line ending differs from what this server was last sent, the LF-normalized
+            // rope is byte-identical so `edits_since` yields no diffs. We must resync the whole
+            // document, otherwise the server keeps the stale line endings indefinitely.
+            let line_ending_changed = line_ending != previous_snapshot.snapshot.line_ending();
+
+            let build_full_change = || {
+                vec![lsp::TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: next_snapshot.text_with_line_endings(),
+                }]
+            };
 
             let build_incremental_change = || {
                 buffer
@@ -8578,7 +8631,7 @@ impl LspStore {
                                 point_to_lsp(edit_end),
                             )),
                             range_length: None,
-                            text: new_text,
+                            text: line_ending.apply(new_text),
                         }
                     })
                     .collect()
@@ -8593,19 +8646,21 @@ impl LspStore {
                     lsp::TextDocumentSyncCapability::Options(options) => options.change,
                 });
 
-            let content_changes: Vec<_> = match document_sync_kind {
-                Some(lsp::TextDocumentSyncKind::FULL) => {
-                    vec![lsp::TextDocumentContentChangeEvent {
-                        range: None,
-                        range_length: None,
-                        text: next_snapshot.text(),
-                    }]
+            let build_change = || {
+                if line_ending_changed {
+                    build_full_change()
+                } else {
+                    build_incremental_change()
                 }
-                Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_incremental_change(),
+            };
+
+            let content_changes: Vec<_> = match document_sync_kind {
+                Some(lsp::TextDocumentSyncKind::FULL) => build_full_change(),
+                Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_change(),
                 _ => {
                     #[cfg(any(test, feature = "test-support"))]
                     {
-                        build_incremental_change()
+                        build_change()
                     }
 
                     #[cfg(not(any(test, feature = "test-support")))]
@@ -12420,7 +12475,7 @@ impl LspStore {
                         uri,
                         adapter.language_id(&language.name()),
                         version,
-                        initial_snapshot.text(),
+                        initial_snapshot.text_with_line_endings(),
                     );
                     buffer_paths_registered.push((buffer_id, abs_path));
                     local
@@ -12701,7 +12756,7 @@ impl LspStore {
             source_worktree_id: symbol.source_worktree_id.to_proto(),
             language_server_id: symbol.source_language_server_id.to_proto(),
             name: symbol.name.clone(),
-            kind: symbol.kind as i32,
+            kind: symbol.kind.to_proto(),
             start: Some(proto::PointUtf16 {
                 row: symbol.range.start.0.row,
                 column: symbol.range.start.0.column,
