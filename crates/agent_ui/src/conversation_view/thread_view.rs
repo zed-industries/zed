@@ -2540,6 +2540,9 @@ impl ThreadView {
         self._prompt_history_subscription = None;
         self.message_editor.update(cx, |editor, cx| {
             editor.set_message(chunks, window, cx);
+            let cursor_offset = editor.text(cx).len();
+            editor.set_cursor_offset(cursor_offset, window, cx);
+            editor.focus_handle(cx).focus(window, cx);
         });
         cx.notify();
     }
