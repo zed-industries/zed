@@ -59,6 +59,7 @@ use settings::{
 };
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     sync::{Arc, atomic},
 };
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -3328,6 +3329,44 @@ async fn test_scroll_page_up_page_down(cx: &mut TestAppContext) {
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_newest_selection_on_screen_with_multibyte_chars(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let multibyte_line = "ã".repeat(40);
+    cx.set_state(&format!("{multibyte_line}ˇx\n"));
+    cx.update_editor(|editor, window, cx| {
+        editor.set_visible_line_count(50., window, cx);
+        editor.set_visible_column_count(60.);
+        assert_eq!(
+            editor.newest_selection_on_screen(window, cx),
+            Ordering::Equal
+        );
+        editor.set_visible_column_count(20.);
+        assert_eq!(
+            editor.newest_selection_on_screen(window, cx),
+            Ordering::Greater
+        );
+    });
+
+    let ascii_line = "a".repeat(40);
+    cx.set_state(&format!("{ascii_line}ˇx\n"));
+    cx.update_editor(|editor, window, cx| {
+        editor.set_visible_line_count(50., window, cx);
+        editor.set_visible_column_count(60.);
+        assert_eq!(
+            editor.newest_selection_on_screen(window, cx),
+            Ordering::Equal
+        );
+        editor.set_visible_column_count(20.);
+        assert_eq!(
+            editor.newest_selection_on_screen(window, cx),
+            Ordering::Greater
         );
     });
 }
