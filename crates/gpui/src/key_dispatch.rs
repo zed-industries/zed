@@ -163,6 +163,46 @@ impl DispatchTree {
         self.nodes.len()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn snapshot_nodes(
+        &self,
+    ) -> impl Iterator<Item = (usize, Option<usize>, Option<&KeyContext>, bool, Vec<String>)> {
+        self.nodes.iter().enumerate().map(|(index, node)| {
+            let actions = node
+                .action_listeners
+                .iter()
+                .map(|listener| {
+                    self.action_registry
+                        .build_action_type(&listener.action_type)
+                        .map(|action| action.name().to_string())
+                        .unwrap_or_else(|_| format!("{:?}", listener.action_type))
+                })
+                .collect();
+            (
+                index,
+                node.parent.map(|parent| parent.0),
+                node.context.as_ref(),
+                node.focus_id.is_some(),
+                actions,
+            )
+        })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn snapshot_focus_path(&self, focus_id: FocusId) -> Vec<usize> {
+        self.focusable_node_ids
+            .get(&focus_id)
+            .copied()
+            .map(|node_id| {
+                self.dispatch_path(node_id)
+                    .into_iter()
+                    .filter(|node_id| self.node(*node_id).focus_id.is_some())
+                    .map(|node_id| node_id.0)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn push_node(&mut self) -> DispatchNodeId {
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());

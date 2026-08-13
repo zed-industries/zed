@@ -21,6 +21,10 @@ pub mod colors;
 mod element;
 mod elements;
 mod executor;
+#[cfg(any(test, feature = "test-support"))]
+mod frame_oracle;
+#[cfg(any(test, feature = "test-support"))]
+mod frame_snapshot;
 mod platform_scheduler;
 pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
@@ -98,6 +102,10 @@ pub use ctor::ctor;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use frame_oracle::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use frame_snapshot::*;
 pub use geometry::*;
 pub use gestures::*;
 pub use global::*;

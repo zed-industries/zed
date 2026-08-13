@@ -57,3 +57,7 @@ harness = false
 [[bench]]
 name = "markdown_renderer"
 harness = false
+
+[[bench]]
+name = "gpui_frame_production"
+harness = false

@@ -716,6 +716,10 @@ pub struct FrameTiming {
     pub invalidations: u64,
     /// When `Window::draw` started.
     pub draw_start: Instant,
+    /// When root layout and prepaint finished.
+    pub prepaint_end: Option<Instant>,
+    /// When scene assembly finished.
+    pub paint_end: Option<Instant>,
     /// When `Window::draw` finished.
     pub draw_end: Instant,
 }
@@ -724,6 +728,19 @@ impl FrameTiming {
     /// Time spent inside `Window::draw`.
     pub fn draw_duration(&self) -> Duration {
         self.draw_end.duration_since(self.draw_start)
+    }
+
+    /// Time spent in root layout and prepaint.
+    pub fn layout_duration(&self) -> Option<Duration> {
+        self.prepaint_end
+            .map(|prepaint_end| prepaint_end.duration_since(self.draw_start))
+    }
+
+    /// Time spent assembling the scene after prepaint.
+    pub fn paint_duration(&self) -> Option<Duration> {
+        self.prepaint_end
+            .zip(self.paint_end)
+            .map(|(prepaint_end, paint_end)| paint_end.duration_since(prepaint_end))
     }
 
     /// Time from the frame's first invalidation to the end of its draw, if the
