@@ -903,7 +903,14 @@ impl Model {
             ]),
 
             // SpaceXAI models
-            Self::Grok4_6 | Self::Grok4_5 => Some(vec![
+            Self::Grok4_6 => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ]),
+
+            Self::Grok4_5 => Some(vec![
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
