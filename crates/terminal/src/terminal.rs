@@ -5257,8 +5257,10 @@ mod tests {
             "replacement foreground process should run separately from its shell"
         );
 
-        let stale_info =
-            PtyProcessInfo::new(ProcessIdGetter::new(None, replacement_foreground_pid as u32));
+        let stale_info = PtyProcessInfo::new(ProcessIdGetter::new(
+            None,
+            replacement_foreground_pid as u32,
+        ));
         let cleanup_signal_sent = stale_info.capture_process_ids().terminate();
         // `kill_active_task` reaches the same stale pid via `kill_current_process`.
         let kill_task_signal_sent = stale_info.kill_current_process();
