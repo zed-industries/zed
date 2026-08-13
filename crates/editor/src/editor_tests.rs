@@ -41883,6 +41883,22 @@ async fn test_align_selections_with_multibyte_chars(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_align_selections_with_soft_wrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let before = "aaaaaaaaaaaaˇx\nbbbbbˇy";
+    let after = "aaaaaaaaaaaaˇx\nbbbbb       ˇy";
+    cx.set_state(before);
+    cx.update_editor(|e, _, cx| e.set_wrap_width(Some(100.0.into()), cx));
+    cx.update_editor(|e, window, cx| {
+        assert!(e.display_text(cx).lines().count() > 2);
+        e.align_selections(&AlignSelections, window, cx)
+    });
+    cx.assert_editor_state(after);
+}
+
+#[gpui::test]
 async fn test_custom_fallback_highlights(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

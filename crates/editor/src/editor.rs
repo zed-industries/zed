@@ -6213,10 +6213,6 @@ impl Editor {
         let display_snapshot = self.display_snapshot(cx);
         let text_layout_details = self.text_layout_details(window, cx);
 
-        // Cursors are aligned by their horizontal x offset within the laid-out
-        // display row, quantized to whole space advances - not by their buffer
-        // column, which counts bytes and so misaligns rows whose preceding text
-        // contains multi-byte characters or tabs.
         let font_id = text_layout_details
             .text_system
             .resolve_font(&text_layout_details.editor_style.text.font());
@@ -6235,6 +6231,8 @@ impl Editor {
         if space_width <= px(0.) {
             return;
         }
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let tab_size = display_snapshot.tab_snapshot().tab_size.get();
 
         struct CursorData {
             anchor: Anchor,
@@ -6251,13 +6249,30 @@ impl Editor {
                 } else {
                     selection.tail()
                 };
+                let point = anchor.to_point(buffer_snapshot);
+                let mut prefix = String::new();
+                let mut column = 0;
+                for chunk in buffer_snapshot.text_for_range(Point::new(point.row, 0)..point) {
+                    for ch in chunk.chars() {
+                        if ch == '\t' {
+                            let tab_len = tab_size - column % tab_size;
+                            prefix.extend(iter::repeat_n(' ', tab_len as usize));
+                            column += tab_len;
+                        } else {
+                            prefix.push(ch);
+                            column += 1;
+                        }
+                    }
+                }
+                let run = text_layout_details.editor_style.text.to_run(prefix.len());
+                let x = text_layout_details
+                    .text_system
+                    .layout_line(&prefix, font_size, &[run], None)
+                    .width;
                 CursorData {
-                    anchor: anchor,
-                    row: anchor.to_point(&display_snapshot.buffer_snapshot()).row,
-                    x: display_snapshot.x_for_display_point(
-                        anchor.to_display_point(&display_snapshot),
-                        &text_layout_details,
-                    ),
+                    anchor,
+                    row: point.row,
+                    x,
                 }
             })
             .collect();
