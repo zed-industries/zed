@@ -67,6 +67,14 @@ impl PromptHistoryPopover {
             .selected_preview()
             .map(|preview| preview.as_ref())
     }
+
+    #[cfg(test)]
+    pub(super) fn horizontal_scroll_state(&self) -> (gpui::Pixels, gpui::Pixels) {
+        (
+            self.scroll_handle.offset().x,
+            self.scroll_handle.max_offset().x,
+        )
+    }
 }
 
 impl Focusable for PromptHistoryPopover {
@@ -80,6 +88,7 @@ impl Render for PromptHistoryPopover {
         let selected_index = self.history.selected_index();
 
         v_flex()
+            .debug_selector(|| "agent-prompt-history-popover".to_string())
             .track_focus(&self.focus_handle)
             .key_context("AgentPromptHistory")
             .on_action(cx.listener(Self::select_previous))
@@ -87,14 +96,18 @@ impl Render for PromptHistoryPopover {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .w_full()
+            .min_w_0()
             .flex_shrink_1()
+            .overflow_x_hidden()
             .elevation_2(cx)
             .child(
                 v_flex()
                     .id("agent-prompt-history-list")
                     .w_full()
+                    .min_w_0()
                     .max_h_40()
                     .p_1()
+                    .overflow_x_hidden()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
                     .children(
@@ -105,6 +118,8 @@ impl Render for PromptHistoryPopover {
                             .map(|(index, entry)| {
                                 div()
                                     .w_full()
+                                    .min_w_0()
+                                    .overflow_x_hidden()
                                     .debug_selector(|| {
                                         format!("agent-prompt-history-entry-{index}")
                                     })
@@ -119,11 +134,21 @@ impl Render for PromptHistoryPopover {
                                                 },
                                             ))
                                             .child(
-                                                h_flex().w_full().min_w_0().child(
-                                                    Label::new(entry.preview().clone())
-                                                        .size(LabelSize::Small)
-                                                        .truncate(),
-                                                ),
+                                                h_flex()
+                                                    .w_full()
+                                                    .min_w_0()
+                                                    .overflow_x_hidden()
+                                                    .debug_selector(move || {
+                                                        format!(
+                                                            "agent-prompt-history-preview-{index}"
+                                                        )
+                                                    })
+                                                    .child(
+                                                        Label::new(entry.preview().clone())
+                                                            .size(LabelSize::Small)
+                                                            .flex_1()
+                                                            .truncate(),
+                                                    ),
                                             ),
                                     )
                             }),

@@ -1388,6 +1388,19 @@ impl ThreadView {
             .map(str::to_owned)
     }
 
+    #[cfg(test)]
+    pub(super) fn prompt_history_horizontal_scroll_state(
+        &self,
+        cx: &App,
+    ) -> Option<(Pixels, Pixels)> {
+        Some(
+            self.prompt_history_popover
+                .as_ref()?
+                .read(cx)
+                .horizontal_scroll_state(),
+        )
+    }
+
     // events
 
     pub fn handle_entry_view_event(
@@ -4545,6 +4558,8 @@ impl ThreadView {
         let fills_container = !has_messages || editor_expanded;
 
         h_flex()
+            .w_full()
+            .min_w_0()
             .py_2()
             .bg(editor_bg_color)
             .justify_center()
@@ -4561,6 +4576,7 @@ impl ThreadView {
             })
             .child(
                 v_flex()
+                    .min_w_0()
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
                     .when(max_content_width.is_none(), |this| this.w_full())
                     .min_w_0()
@@ -4574,6 +4590,7 @@ impl ThreadView {
                         v_flex()
                             .relative()
                             .w_full()
+                            .min_w_0()
                             .min_h_0()
                             .when(fills_container, |this| this.flex_1())
                             .pt_1()

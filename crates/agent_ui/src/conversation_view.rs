@@ -6638,6 +6638,15 @@ pub(crate) mod tests {
             .read_with(cx, |view, cx| view.selected_prompt_history_preview(cx))
     }
 
+    fn prompt_history_horizontal_scroll_state(
+        conversation_view: &Entity<ConversationView>,
+        cx: &TestAppContext,
+    ) -> Option<(Pixels, Pixels)> {
+        active_thread(conversation_view, cx).read_with(cx, |view, cx| {
+            view.prompt_history_horizontal_scroll_state(cx)
+        })
+    }
+
     fn bind_default_linux_keymap(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let mut bindings = settings::KeymapFile::load_asset_allow_partial_failure(
@@ -6926,6 +6935,85 @@ pub(crate) mod tests {
             assert_eq!(view.thread.read(cx).entries().len(), entry_count);
             assert_eq!(view.thread.read(cx).status(), ThreadStatus::Idle);
         });
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_long_preview_stays_within_popup_width(cx: &mut TestAppContext) {
+        init_test(cx);
+        bind_default_linux_keymap(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        cx.simulate_resize(size(px(500.), px(600.)));
+        cx.run_until_parked();
+
+        let long_prompt = (0..100)
+            .map(|index| format!("prompt-word-{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text(&long_prompt, window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let editor_focus = message_editor.read_with(cx, |editor, cx| editor.focus_handle(cx));
+        cx.update(|window, cx| editor_focus.focus(window, cx));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+
+        let assert_popup_is_width_constrained = |cx: &mut VisualTestContext| {
+            let window_bounds = cx.update(|window, _cx| window.bounds());
+            let popup_bounds = cx
+                .debug_bounds("agent-prompt-history-popover")
+                .expect("prompt history popup should be rendered");
+            let entry_bounds = cx
+                .debug_bounds("agent-prompt-history-entry-0")
+                .expect("prompt history entry should be rendered");
+            let preview_bounds = cx
+                .debug_bounds("agent-prompt-history-preview-0")
+                .expect("prompt history preview should be rendered");
+
+            assert!(
+                popup_bounds.left() >= window_bounds.left(),
+                "popup {popup_bounds:?} extends left of window {window_bounds:?}"
+            );
+            assert!(
+                popup_bounds.right() <= window_bounds.right(),
+                "popup {popup_bounds:?} extends right of window {window_bounds:?}"
+            );
+            assert!(entry_bounds.left() >= popup_bounds.left());
+            assert!(entry_bounds.right() <= popup_bounds.right());
+            assert!(preview_bounds.left() >= entry_bounds.left());
+            assert!(preview_bounds.right() <= entry_bounds.right());
+        };
+
+        assert_popup_is_width_constrained(cx);
+        let (horizontal_offset, horizontal_overflow) =
+            prompt_history_horizontal_scroll_state(&conversation_view, cx)
+                .expect("prompt history should be open");
+        assert_eq!(horizontal_offset, px(0.));
+        assert_eq!(horizontal_overflow, px(0.));
+
+        cx.simulate_resize(size(px(360.), px(600.)));
+        cx.run_until_parked();
+        assert_popup_is_width_constrained(cx);
+        let (horizontal_offset, horizontal_overflow) =
+            prompt_history_horizontal_scroll_state(&conversation_view, cx)
+                .expect("prompt history should remain open after resizing");
+        assert_eq!(horizontal_offset, px(0.));
+        assert_eq!(horizontal_overflow, px(0.));
+
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(
+            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+            long_prompt
+        );
     }
 
     #[gpui::test]
