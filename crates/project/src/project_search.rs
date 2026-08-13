@@ -1,7 +1,7 @@
 use std::{
     cell::LazyCell,
     collections::BTreeSet,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Cursor, ErrorKind, Read},
     ops::Range,
     path::{Path, PathBuf},
     pin::pin,
@@ -21,8 +21,12 @@ use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
 
+use language::ByteContent;
 use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
-use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
+use worktree::{
+    Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings, decode_byte_header,
+    decode_file_text,
+};
 
 use crate::{
     Project, ProjectItem, ProjectPath, RemotelyCreatedModels,
@@ -779,32 +783,42 @@ impl RequestHandler<'_> {
     async fn handle_find_first_match(&self, mut entry: MatchingEntry) {
         async move {
             let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
-            let Some(file) = self
+            let fs = self
                 .fs
-                .context("Trying to query filesystem in remote project search")?
-                .open_sync(&abs_path)
-                .await
-                .log_err()
-            else {
+                .context("Trying to query filesystem in remote project search")?;
+            let Some(file) = fs.open_sync(&abs_path).await.log_err() else {
                 return anyhow::Ok(());
             };
 
             let mut file = BufReader::new(file);
             let file_start = file.fill_buf()?;
-
-            if let Err(Some(starting_position)) =
-                std::str::from_utf8(file_start).map_err(|e| e.error_len())
-            {
-                // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
-                // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
-                log::debug!(
-                    "Invalid UTF-8 sequence in file {abs_path:?} \
-                    at byte position {starting_position}"
-                );
+            let (bom_encoding, byte_content) = decode_byte_header(file_start);
+            if byte_content == ByteContent::Binary {
+                log::debug!("Skipping binary file {abs_path:?}");
                 return Ok(());
             }
 
-            if let Some(line_hint) = self.query.detect(file).await.ok().flatten() {
+            let is_plain_utf8 = bom_encoding.is_none()
+                && byte_content == ByteContent::Unknown
+                && is_utf8_prefix(file_start);
+
+            let line_hint = if is_plain_utf8 {
+                match self.query.detect(file).await {
+                    Ok(line_hint) => line_hint,
+                    Err(error)
+                        if error
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|error| error.kind() == ErrorKind::InvalidData) =>
+                    {
+                        self.detect_in_decoded_file(fs, &abs_path).await?
+                    }
+                    Err(error) => return Err(error),
+                }
+            } else {
+                self.detect_in_decoded_file(fs, &abs_path).await?
+            };
+
+            if let Some(line_hint) = line_hint {
                 // Yes, we should scan the whole file.
                 entry.should_scan_tx.send((entry.path, line_hint)).await?;
             }
@@ -812,6 +826,16 @@ impl RequestHandler<'_> {
         }
         .await
         .ok();
+    }
+
+    async fn detect_in_decoded_file(
+        &self,
+        fs: &dyn Fs,
+        abs_path: &Path,
+    ) -> anyhow::Result<Option<MatchPositionHint>> {
+        let (text, _encoding, _has_bom) = decode_file_text(fs, abs_path).await?;
+        let reader: Box<dyn Read + Send + Sync> = Box::new(Cursor::new(text.into_bytes()));
+        self.query.detect(BufReader::new(reader)).await
     }
 
     async fn handle_scan_path(&self, req: InputPath) {
@@ -867,6 +891,13 @@ impl RequestHandler<'_> {
             anyhow::Ok(())
         })
         .await;
+    }
+}
+
+fn is_utf8_prefix(bytes: &[u8]) -> bool {
+    match std::str::from_utf8(bytes) {
+        Ok(_) => true,
+        Err(error) => error.error_len().is_none(),
     }
 }
 
