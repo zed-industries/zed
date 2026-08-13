@@ -246,3 +246,127 @@ pub fn retain_rows(
         .map(|(index, _)| DataRow(index))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::TableLikeContent;
+    use proptest::prelude::*;
+
+    fn small_value() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(&["a", "b", "c"])
+    }
+
+    /// Generates a small rectangular CSV table (header + data rows) built
+    /// from a tiny value alphabet, so duplicate values across rows/columns
+    /// are frequent enough to exercise cross-column blocking. Returns the
+    /// column count alongside the CSV text since callers need it to bound
+    /// generated column indices.
+    fn csv_table() -> impl Strategy<Value = (usize, String)> {
+        (2usize..=6, 2usize..=3).prop_flat_map(|(rows, cols)| {
+            prop::collection::vec(prop::collection::vec(small_value(), cols), rows).prop_map(
+                move |grid| {
+                    let header = (0..cols)
+                        .map(|c| format!("c{c}"))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let mut lines = vec![header];
+                    lines.extend(grid.into_iter().map(|row| row.join(",")));
+                    (cols, lines.join("\n"))
+                },
+            )
+        })
+    }
+
+    fn build_engine(csv_text: &str) -> TableDataEngine {
+        let mut engine = TableDataEngine::default();
+        engine.contents = Arc::new(TableLikeContent::from_str(csv_text.to_string()));
+        engine.calculate_available_filters();
+        engine
+    }
+
+    /// Resolves raw `(column_index, value_index)` pairs (generated modulo
+    /// nothing in particular, so out of range in general) into concrete,
+    /// deduplicated `(AnyColumn, value)` toggles by reading each column's
+    /// entries from an untouched engine and wrapping indices to valid ranges.
+    fn resolve_toggles(
+        engine: &TableDataEngine,
+        cols: usize,
+        raw: &[(usize, usize)],
+    ) -> Vec<(AnyColumn, Option<SharedString>)> {
+        let mut toggles = Vec::new();
+        for &(col_idx, value_idx) in raw {
+            let column = AnyColumn::new(col_idx % cols);
+            let entries = engine.get_filters_for_column(column).unwrap();
+            if entries.is_empty() {
+                continue;
+            }
+            let value = entries[value_idx % entries.len()].0.content.clone();
+            let pair = (column, value);
+            if !toggles.contains(&pair) {
+                toggles.push(pair);
+            }
+        }
+        toggles
+    }
+
+    /// Per-column `(value, is_available, is_applied)` triples, flattening
+    /// `FilterEntryState` for comparison while dropping `blocked_by`: any
+    /// other currently active column is an equally valid blocker, so its
+    /// *identity* legitimately differs across activation orders, but
+    /// availability and applied-ness must not.
+    type StateSnapshot = Vec<(AnyColumn, Vec<(Option<SharedString>, bool, bool)>)>;
+
+    fn apply_and_snapshot(
+        engine: &mut TableDataEngine,
+        cols: usize,
+        toggles: &[(AnyColumn, Option<SharedString>)],
+    ) -> StateSnapshot {
+        for (column, value) in toggles {
+            engine.toggle_filter(*column, value.clone()).unwrap();
+        }
+
+        (0..cols)
+            .map(|col_idx| {
+                let column = AnyColumn::new(col_idx);
+                let entries = engine.get_filters_for_column(column).unwrap();
+                let mut column_snapshot: Vec<(Option<SharedString>, bool, bool)> = entries
+                    .iter()
+                    .map(|(entry, state)| match *state {
+                        FilterEntryState::Available { is_applied } => {
+                            (entry.content.clone(), true, is_applied)
+                        }
+                        FilterEntryState::Unavailable { is_applied, .. } => {
+                            (entry.content.clone(), false, is_applied)
+                        }
+                    })
+                    .collect();
+                // `all_column_entries` comes from a `HashMap`, so its iteration
+                // order isn't stable across engine instances built from the
+                // same data; sort so that's not mistaken for a real divergence.
+                column_snapshot.sort();
+                (column, column_snapshot)
+            })
+            .collect()
+    }
+
+    proptest! {
+        #[test]
+        fn filter_states_are_order_independent(
+            (cols, csv_text) in csv_table(),
+            raw_toggles in prop::collection::vec((0usize..3, 0usize..3), 0..8),
+        ) {
+            let toggles = resolve_toggles(&build_engine(&csv_text), cols, &raw_toggles);
+
+            let mut forward_engine = build_engine(&csv_text);
+            let forward = apply_and_snapshot(&mut forward_engine, cols, &toggles);
+
+            let mut reversed = toggles.clone();
+            reversed.reverse();
+            let mut backward_engine = build_engine(&csv_text);
+            let backward = apply_and_snapshot(&mut backward_engine, cols, &reversed);
+
+            prop_assert_eq!(forward, backward);
+        }
+    }
+}
