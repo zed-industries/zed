@@ -87,6 +87,140 @@ async fn test_traversal(cx: &mut TestAppContext) {
     })
 }
 
+#[gpui::test]
+async fn test_entry_id_is_reused_when_rename_events_are_split(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new(path!("/root")),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let old_entry_id = tree.read_with(cx, |tree, _| {
+        tree.entry_for_path(rel_path("one.rs")).unwrap().id
+    });
+
+    fs.pause_events();
+    fs.rename(
+        Path::new(path!("/root/one.rs")),
+        Path::new(path!("/root/three.rs")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(fs.buffered_event_count(), 2);
+    fs.flush_events(1);
+    cx.executor().run_until_parked();
+    fs.flush_events(1);
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.entry_for_path(rel_path("one.rs")), None);
+        assert_eq!(
+            tree.entry_for_path(rel_path("three.rs")).unwrap().id,
+            old_entry_id,
+            "a rename whose removal and creation events arrive in separate batches must reuse the entry id"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_rescan_requests_processed_before_root_creation_events(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+
+    let tree = Worktree::local(
+        Path::new(path!("/root")),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    fs.pause_events();
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {
+                "b": { "f1": "" },
+                "c": { "f2": "" },
+            }
+        }),
+    )
+    .await;
+
+    let mut refresh = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("a/b/f1").into()])
+    });
+    refresh.recv().await;
+    let mut refresh = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("a/c/f2").into()])
+    });
+    refresh.recv().await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("a"),
+                rel_path("a/b"),
+                rel_path("a/b/f1"),
+                rel_path("a/c"),
+                rel_path("a/c/f2"),
+            ]
+        );
+    });
+
+    fs.unpause_events_and_flush();
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("a"),
+                rel_path("a/b"),
+                rel_path("a/b/f1"),
+                rel_path("a/c"),
+                rel_path("a/c/f2"),
+            ]
+        );
+    });
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_circular_symlinks(cx: &mut TestAppContext) {
     init_test(cx);

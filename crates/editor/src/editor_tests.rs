@@ -20309,6 +20309,68 @@ async fn test_completion_in_multibuffer_with_newest_selection_in_other_buffer(
 }
 
 #[gpui::test]
+async fn test_completion_filter_text_need_not_be_label_substring(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            ..Default::default()
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions::default()),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.lsp
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "rendered value".to_string(),
+                    filter_text: Some("typed_prefix".to_string()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "typed_prefix fallback".to_string(),
+                    ..Default::default()
+                },
+            ])))
+        });
+
+    cx.set_state("fn main() { typed_prefixˇ }");
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions, window, cx);
+    });
+
+    cx.run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+
+    cx.update_editor(|editor, _, _| {
+        let context_menu = editor.context_menu.borrow();
+        let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref() else {
+            panic!("expected completion menu to be open");
+        };
+
+        let completions = menu.completions.borrow();
+        let entries = menu.entries.borrow();
+        let completion = entries
+            .iter()
+            .filter_map(|entry| entry.as_match())
+            .map(|string_match| &completions[string_match.candidate_id])
+            .find(|completion| completion.label.text() == "rendered value")
+            .expect("completion should be matched using its non-substring filterText");
+
+        assert_eq!(completion.label.filter_text(), "rendered value");
+        assert_eq!(completion.filter_text(), "typed_prefix");
+    });
+}
+
+#[gpui::test]
 async fn test_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -24305,6 +24367,101 @@ async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppCon
     assert!(request.next().await.is_some());
     request.close();
     assert!(request.next().await.is_none());
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_not_scheduled_without_server_support(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.set_state("let a = bˇ;\n");
+
+    let task = cx.update_editor(|editor, window, cx| {
+        editor.trigger_on_type_formatting(".".to_owned(), window, cx)
+    });
+
+    assert!(task.is_none());
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_preserves_cursor_position(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: ".".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("let a = bˇ;\n");
+
+    let mut request =
+        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|_, params, _| async move {
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(0, 10)
+            );
+            Ok(Some(vec![lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 10), lsp::Position::new(0, 11)),
+                new_text: "c;".to_string(),
+            }]))
+        });
+
+    cx.simulate_keystroke(".");
+    cx.run_until_parked();
+
+    cx.assert_editor_state("let a = b.ˇc;\n");
+    assert!(request.next().await.is_some());
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_does_not_rewind_over_intervening_edits(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: ".".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("let a = bˇ;\n");
+
+    let (request_started_tx, request_started_rx) = oneshot::channel();
+    let (respond_tx, respond_rx) = oneshot::channel();
+    let mut request_started_tx = Some(request_started_tx);
+    let mut respond_rx = Some(respond_rx);
+    let _request =
+        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(move |_, _, _| {
+            request_started_tx.take().unwrap().send(()).unwrap();
+            let respond_rx = respond_rx.take().unwrap();
+            async move {
+                respond_rx.await.unwrap();
+                Ok(Some(vec![lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 10), lsp::Position::new(0, 10)),
+                    new_text: "c".to_string(),
+                }]))
+            }
+        });
+
+    cx.simulate_keystroke(".");
+    request_started_rx.await.unwrap();
+    cx.update_buffer(|buffer, cx| buffer.edit([(10..10, "x")], None, cx));
+    respond_tx.send(()).unwrap();
+    cx.run_until_parked();
+
+    cx.assert_editor_state("let a = b.cxˇ;\n");
 }
 
 #[gpui::test]
@@ -37424,6 +37581,116 @@ async fn test_paste_image_in_markdown_single_file_worktree_falls_through(cx: &mu
         fs.read_file_sync("/root/image.png").is_err(),
         "no image file should be created for a single-file worktree"
     );
+}
+
+#[gpui::test]
+async fn test_format_echoing_received_line_endings_keeps_cursor(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.ensure_final_newline_on_save = Some(false);
+    });
+
+    let lf_content = "// one\nstruct Foo {\n    bar: Bar,\n}\n\n// two\nstruct Bar {\n    foobar:u32,\n}\n\nfn main() {\n    let foo = 1;\n}\n";
+    let crlf_content = lf_content.replace('\n', "\r\n");
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), crlf_content.clone().into())
+        .await;
+
+    let project = Project::test(fs, [path!("/file.rs").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let server_side_texts = Arc::new(Mutex::new(Vec::<String>::new()));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            initializer: Some({
+                let server_side_texts = server_side_texts.clone();
+                Box::new(move |fake_server| {
+                    fake_server.handle_notification::<lsp::notification::DidOpenTextDocument, _>({
+                        let server_side_texts = server_side_texts.clone();
+                        move |params, _| {
+                            server_side_texts.lock().push(params.text_document.text);
+                        }
+                    });
+                })
+            }),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multi_buffer, window, cx)
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([Point::new(2, 4)..Point::new(2, 4)]);
+        });
+    });
+
+    let server_side_text = server_side_texts.lock().last().cloned().unwrap();
+    assert_eq!(
+        server_side_text, crlf_content,
+        "server should have received the CRLF text on DidOpenTextDocument",
+    );
+
+    let formatted_text = server_side_text.replace("foobar:u32", "foobar: u32");
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| {
+        let formatted_text = formatted_text.clone();
+        async move {
+            Ok(Some(vec![lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(13, 0)),
+                new_text: formatted_text,
+            }]))
+        }
+    });
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        lf_content.replace("foobar:u32", "foobar: u32"),
+        "only the minimal formatting change should be applied",
+    );
+    editor.update(cx, |editor, cx| {
+        let snapshot = editor.display_snapshot(cx);
+        let cursor = editor.selections.newest::<Point>(&snapshot).head();
+        assert_eq!(
+            cursor,
+            Point::new(2, 4),
+            "whole-document echo of the received line endings must not move the cursor",
+        );
+    });
 }
 
 #[gpui::test]

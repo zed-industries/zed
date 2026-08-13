@@ -320,6 +320,7 @@ where
     );
 }
 
+#[track_caller]
 pub fn log_err<E: std::fmt::Display>(error: &E) {
     log_error_with_caller(*Location::caller(), error, log::Level::Error);
 }
