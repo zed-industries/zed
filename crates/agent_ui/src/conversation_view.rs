@@ -6704,6 +6704,23 @@ pub(crate) mod tests {
         cx.run_until_parked();
         assert!(message_editor.read_with(cx, |editor, cx| editor.is_empty(cx)));
 
+        let history =
+            active_thread(&conversation_view, cx).read_with(cx, |view, cx| view.prompt_history(cx));
+        assert!(matches!(
+            history
+                .as_ref()
+                .and_then(|history| history.selected_chunks())
+                .and_then(|chunks| chunks.first()),
+            Some(acp::ContentBlock::Text(text)) if text.text == "Remember this prompt"
+        ));
+        assert_eq!(
+            history
+                .as_ref()
+                .and_then(|history| history.selected_preview())
+                .map(SharedString::as_ref),
+            Some("Remember this prompt")
+        );
+
         cx.simulate_keystrokes("up");
         cx.run_until_parked();
 
