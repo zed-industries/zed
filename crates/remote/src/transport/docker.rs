@@ -516,6 +516,81 @@ impl DockerExecConnection {
         );
     }
 
+    /// The argv that writes this connection's stdin into `dst_path` inside the
+    /// container, as the connection's remote user.
+    fn stream_into_container_command(&self, dst_path: &str) -> Result<CommandTemplate> {
+        self.docker_command(vec![
+            "exec".to_string(),
+            "-i".to_string(),
+            "-u".to_string(),
+            self.connection_options.remote_user.clone(),
+            self.connection_options.container_id.clone(),
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > \"$1\"".to_string(),
+            "zed-upload".to_string(),
+            dst_path.to_string(),
+        ])
+    }
+
+    /// Sends a file into the container over the connection's own stdin, which
+    /// works no matter which machine the daemon is on. `docker cp` cannot do
+    /// that when the daemon is remote, because the source path it is given is
+    /// resolved on the daemon's machine, not this one.
+    async fn stream_file_into_container(&self, src_path: &Path, dst_path: &str) -> Result<()> {
+        Self::stream_file_into(src_path, self.stream_into_container_command(dst_path)?).await
+    }
+
+    async fn stream_file_into(src_path: &Path, command: CommandTemplate) -> Result<()> {
+        let mut file = smol::fs::File::open(src_path).await.with_context(|| {
+            format!(
+                "opening {} to stream into the container",
+                src_path.display()
+            )
+        })?;
+
+        let mut child = util::command::new_command(&command.program)
+            .args(&command.args)
+            .envs(&command.env)
+            .kill_on_drop(true)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .with_context(|| {
+                format!(
+                    "spawning `{}` to stream into the container",
+                    command.program
+                )
+            })?;
+
+        let mut stdin = child
+            .stdin
+            .take()
+            .context("upload child did not expose stdin")?;
+
+        let copy_result = smol::io::copy(&mut file, &mut stdin).await;
+        let flush_result = smol::io::AsyncWriteExt::flush(&mut stdin).await;
+        drop(stdin);
+
+        let output = child
+            .output()
+            .await
+            .context("awaiting the container upload child")?;
+
+        copy_result
+            .with_context(|| format!("writing {} into the container", src_path.display()))?;
+        flush_result.context("flushing the container upload")?;
+
+        anyhow::ensure!(
+            output.status.success(),
+            "failed to stream {} into the container: {}",
+            src_path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        Ok(())
+    }
+
     async fn upload_file(
         &self,
         src_path: &Path,
@@ -527,6 +602,12 @@ impl DockerExecConnection {
         let src_path_display = src_path.display().to_string();
         let dest_path_str = dest_path.display(self.path_style());
         let full_server_path = format!("{}/{}", remote_dir_for_server, dest_path_str);
+
+        if self.host.is_some() {
+            return self
+                .stream_file_into_container(src_path, &full_server_path)
+                .await;
+        }
 
         let (copy_command, chown_command) =
             self.upload_commands(&src_path_display, &full_server_path)?;
@@ -802,6 +883,16 @@ impl RemoteConnection for DockerExecConnection {
         let dest_path_str = dest_path.to_string();
         let src_path_display = src_path.display().to_string();
 
+        if self.host.is_some() {
+            // `docker cp` would resolve the source on the host, where this
+            // directory does not exist. Streaming a whole directory needs an
+            // archiver in the container, so it is not the same fix as for a
+            // single file.
+            return Task::ready(Err(anyhow::anyhow!(
+                "uploading a directory into a container on a remote host is not supported yet"
+            )));
+        }
+
         let (copy_command, chown_command) =
             match self.upload_commands(&src_path_display, &dest_path_str) {
                 Ok(commands) => commands,
@@ -937,6 +1028,7 @@ impl RemoteConnection for DockerExecConnection {
 mod tests {
     use super::{DockerConnectionOptions, DockerExecConnection, DockerHost};
     use crate::RemoteConnection;
+    use crate::remote_client::CommandTemplate;
     use crate::remote_client::Interactive;
     use crate::transport::mock::{MockConnection, MockConnectionRegistry};
     use crate::transport::ssh::SshConnectionOptions;
@@ -1135,6 +1227,99 @@ mod tests {
                 "--reconnect",
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn server_binary_is_streamed_into_a_container_on_a_remote_host(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let mut connection = local_connection(docker_options());
+        connection.host = Some(mock_host(cx, server_cx).await);
+
+        let command = connection
+            .stream_into_container_command("/home/anth/.zed_server/zed-remote-server")
+            .expect("building the streaming command should succeed");
+
+        assert_eq!(command.program, "mock");
+        assert_eq!(
+            command.args,
+            vec![
+                "docker",
+                "exec",
+                "-i",
+                "-u",
+                "anth",
+                "container-123",
+                "sh",
+                "-c",
+                "cat > \"$1\"",
+                "zed-upload",
+                "/home/anth/.zed_server/zed-remote-server",
+            ]
+        );
+    }
+
+    /// The container is stood in for by the local shell, so that the piping
+    /// itself is exercised: the bytes have to reach the child's stdin and land
+    /// at the destination path.
+    ///
+    /// Deliberately not a `gpui::test`: spawning a real process parks the
+    /// thread, which the test scheduler forbids.
+    #[cfg(unix)]
+    #[test]
+    fn streaming_writes_the_source_file_to_the_destination_path() {
+        let source = tempfile::NamedTempFile::new().expect("creating a source file should succeed");
+        std::fs::write(source.path(), b"zed-remote-server bytes")
+            .expect("writing the source file should succeed");
+        let destination =
+            tempfile::NamedTempFile::new().expect("creating a destination file should succeed");
+
+        let command = CommandTemplate {
+            program: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "cat > \"$1\"".to_string(),
+                "zed-upload".to_string(),
+                destination.path().to_string_lossy().to_string(),
+            ],
+            env: Default::default(),
+        };
+
+        smol::block_on(DockerExecConnection::stream_file_into(
+            source.path(),
+            command,
+        ))
+        .expect("streaming into the destination should succeed");
+
+        assert_eq!(
+            std::fs::read(destination.path()).expect("reading the destination should succeed"),
+            b"zed-remote-server bytes"
+        );
+    }
+
+    /// A non-zero exit has to fail the upload rather than leave a truncated
+    /// server binary in place.
+    #[cfg(unix)]
+    #[test]
+    fn streaming_reports_a_failing_destination_command() {
+        let source = tempfile::NamedTempFile::new().expect("creating a source file should succeed");
+
+        let command = CommandTemplate {
+            program: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "cat > /dev/null; echo 'no such container' >&2; exit 1".to_string(),
+            ],
+            env: Default::default(),
+        };
+
+        let error = smol::block_on(DockerExecConnection::stream_file_into(
+            source.path(),
+            command,
+        ))
+        .expect_err("a failing destination command should fail the upload");
+        assert!(error.to_string().contains("no such container"));
     }
 
     #[test]
