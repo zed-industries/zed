@@ -1,18 +1,22 @@
-use gpui::{App, FocusHandle, Focusable, IntoElement, Render, Window};
-use ui::prelude::*;
+use gpui::{App, FocusHandle, Focusable, IntoElement, Render, ScrollHandle, Window};
+use ui::{ListItem, WithScrollbar, prelude::*};
 
 use super::PromptHistory;
 
 pub(super) struct PromptHistoryPopover {
     history: PromptHistory,
     focus_handle: FocusHandle,
+    scroll_handle: ScrollHandle,
 }
 
 impl PromptHistoryPopover {
     pub(super) fn new(history: PromptHistory, cx: &mut Context<Self>) -> Self {
+        let scroll_handle = ScrollHandle::new();
+        scroll_handle.scroll_to_item(history.selected_index());
         Self {
             history,
             focus_handle: cx.focus_handle(),
+            scroll_handle,
         }
     }
 
@@ -23,11 +27,15 @@ impl PromptHistoryPopover {
         cx: &mut Context<Self>,
     ) {
         self.history.select_previous();
+        self.scroll_handle
+            .scroll_to_item(self.history.selected_index());
         cx.notify();
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
         self.history.select_next();
+        self.scroll_handle
+            .scroll_to_item(self.history.selected_index());
         cx.notify();
     }
 
@@ -46,11 +54,44 @@ impl Focusable for PromptHistoryPopover {
 }
 
 impl Render for PromptHistoryPopover {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected_index = self.history.selected_index();
+
+        v_flex()
             .track_focus(&self.focus_handle)
             .key_context("AgentPromptHistory")
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
+            .w_full()
+            .flex_shrink_1()
+            .elevation_2(cx)
+            .child(
+                v_flex()
+                    .id("agent-prompt-history-list")
+                    .w_full()
+                    .max_h_40()
+                    .p_1()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .children(
+                        self.history
+                            .entries()
+                            .iter()
+                            .enumerate()
+                            .map(|(index, entry)| {
+                                ListItem::new(("agent-prompt-history-entry", index))
+                                    .inset(true)
+                                    .toggle_state(index == selected_index)
+                                    .child(
+                                        h_flex().w_full().min_w_0().child(
+                                            Label::new(entry.preview().clone())
+                                                .size(LabelSize::Small)
+                                                .truncate(),
+                                        ),
+                                    )
+                            }),
+                    ),
+            )
+            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
     }
 }
