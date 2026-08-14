@@ -43,6 +43,8 @@ enum HoverTarget {
     Submenu,
 }
 
+type ContextMenuHandler = Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>;
+
 pub enum ContextMenuItem {
     Separator,
     Header(SharedString),
@@ -88,14 +90,14 @@ pub struct ContextMenuEntry {
     icon_position: IconPosition,
     icon_size: IconSize,
     icon_color: Option<Color>,
-    handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>,
-    secondary_handler: Option<Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>>,
+    handler: ContextMenuHandler,
+    secondary_handler: Option<ContextMenuHandler>,
     action: Option<Box<dyn Action>>,
     disabled: bool,
     documentation_aside: Option<DocumentationAside>,
     end_slot_icon: Option<IconName>,
     end_slot_title: Option<SharedString>,
-    end_slot_handler: Option<Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>>,
+    end_slot_handler: Option<ContextMenuHandler>,
     show_end_slot_on_hover: bool,
 }
 
@@ -943,6 +945,37 @@ impl ContextMenu {
         self.selected_index
     }
 
+    fn defer_confirm(
+        &self,
+        handler: Option<ContextMenuHandler>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Confirmation actions run while the context menu entity is leased. Defer the handler so
+        // persistent menu handlers can safely update or dismiss the same menu.
+        let context = self.action_context.clone();
+        let menu = cx.entity().downgrade();
+
+        window.defer(cx, move |window, cx| {
+            if let Some(handler) = handler {
+                handler(context.as_ref(), window, cx);
+            }
+
+            menu.update(cx, |menu, cx| {
+                if menu.main_menu.is_some() && !menu.keep_open_on_confirm {
+                    menu.clicked = true;
+                }
+
+                if menu.keep_open_on_confirm {
+                    menu.rebuild(window, cx);
+                } else {
+                    cx.emit(DismissEvent);
+                }
+            })
+            .ok();
+        });
+    }
+
     pub fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.selected_index else {
             return;
@@ -969,29 +1002,17 @@ impl ContextMenu {
             return;
         }
 
-        let context = self.action_context.as_ref();
-
-        if let Some(
-            ContextMenuItem::Entry(ContextMenuEntry {
+        let handler = match self.items.get(ix) {
+            Some(ContextMenuItem::Entry(ContextMenuEntry {
                 handler,
                 disabled: false,
                 ..
-            })
-            | ContextMenuItem::CustomEntry { handler, .. },
-        ) = self.items.get(ix)
-        {
-            (handler)(context, window, cx)
-        }
+            }))
+            | Some(ContextMenuItem::CustomEntry { handler, .. }) => Some(handler.clone()),
+            _ => None,
+        };
 
-        if self.main_menu.is_some() && !self.keep_open_on_confirm {
-            self.clicked = true;
-        }
-
-        if self.keep_open_on_confirm {
-            self.rebuild(window, cx);
-        } else {
-            cx.emit(DismissEvent);
-        }
+        self.defer_confirm(handler, window, cx);
     }
 
     pub fn secondary_confirm(
@@ -1025,33 +1046,18 @@ impl ContextMenu {
             return;
         }
 
-        let context = self.action_context.as_ref();
+        let handler = match self.items.get(ix) {
+            Some(ContextMenuItem::Entry(ContextMenuEntry {
+                handler,
+                secondary_handler,
+                disabled: false,
+                ..
+            })) => Some(secondary_handler.as_ref().unwrap_or(handler).clone()),
+            Some(ContextMenuItem::CustomEntry { handler, .. }) => Some(handler.clone()),
+            _ => None,
+        };
 
-        if let Some(ContextMenuItem::Entry(ContextMenuEntry {
-            handler,
-            secondary_handler,
-            disabled: false,
-            ..
-        })) = self.items.get(ix)
-        {
-            if let Some(secondary) = secondary_handler {
-                (secondary)(context, window, cx)
-            } else {
-                (handler)(context, window, cx)
-            }
-        } else if let Some(ContextMenuItem::CustomEntry { handler, .. }) = self.items.get(ix) {
-            (handler)(context, window, cx)
-        }
-
-        if self.main_menu.is_some() && !self.keep_open_on_confirm {
-            self.clicked = true;
-        }
-
-        if self.keep_open_on_confirm {
-            self.rebuild(window, cx);
-        } else {
-            cx.emit(DismissEvent);
-        }
+        self.defer_confirm(handler, window, cx);
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
@@ -2436,6 +2442,60 @@ mod tests {
     use gpui::TestAppContext;
 
     use super::*;
+
+    #[gpui::test]
+    fn confirming_persistent_menu_entry_can_dismiss_menu(cx: &mut TestAppContext) {
+        let handler_called = Rc::new(Cell::new(false));
+        let cx = cx.add_empty_window();
+        let context_menu = cx.update(|window, cx| {
+            ContextMenu::build_persistent(window, cx, {
+                let handler_called = handler_called.clone();
+                move |menu, _, menu_cx| {
+                    let weak_menu = menu_cx.weak_entity();
+                    let handler_called = handler_called.clone();
+                    menu.entry("Dismiss", None, move |_, cx| {
+                        handler_called.set(true);
+                        weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                    })
+                }
+            })
+        });
+
+        context_menu.update_in(cx, |context_menu, window, cx| {
+            context_menu.select_first(&SelectFirst, window, cx);
+            context_menu.confirm(&menu::Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(handler_called.get());
+    }
+
+    #[gpui::test]
+    fn secondary_confirming_persistent_menu_entry_can_dismiss_menu(cx: &mut TestAppContext) {
+        let handler_called = Rc::new(Cell::new(false));
+        let cx = cx.add_empty_window();
+        let context_menu = cx.update(|window, cx| {
+            ContextMenu::build_persistent(window, cx, {
+                let handler_called = handler_called.clone();
+                move |menu, _, menu_cx| {
+                    let weak_menu = menu_cx.weak_entity();
+                    let handler_called = handler_called.clone();
+                    menu.entry("Dismiss", None, move |_, cx| {
+                        handler_called.set(true);
+                        weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                    })
+                }
+            })
+        });
+
+        context_menu.update_in(cx, |context_menu, window, cx| {
+            context_menu.select_first(&SelectFirst, window, cx);
+            context_menu.secondary_confirm(&menu::SecondaryConfirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(handler_called.get());
+    }
 
     #[gpui::test]
     fn can_navigate_back_over_headers(cx: &mut TestAppContext) {
