@@ -15,8 +15,9 @@ use gpui::{
     AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, Edges, GpuSpecs,
     Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
     PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size,
-    TextInputStateChange, TouchEvent, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowInsets, WindowParams, px, size,
+    TextInputStateChange, TouchEvent, TouchId, TouchPhase, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets, WindowParams, px,
+    size,
 };
 use gpui_apple::metal_renderer::{Context as MetalContext, MetalRenderer};
 use objc2::encode::{Encode, Encoding, RefEncode};
@@ -35,6 +36,13 @@ use std::{
 };
 
 const GPUI_WINDOW_IVAR: &str = "gpui_window_ptr";
+const KEYBOARD_DISMISS_DISTANCE: Pixels = px(24.);
+
+#[derive(Clone, Copy)]
+struct KeyboardDismissTouch {
+    id: TouchId,
+    start_position: Point<Pixels>,
+}
 
 static METAL_VIEW_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
 static VC_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
@@ -248,7 +256,6 @@ fn register_text_input_view_class() -> &'static AnyClass {
 
         // Store the IosWindow pointer so callbacks can reach the Rust window.
         decl.add_ivar::<*mut std::ffi::c_void>(c"gpui_window_ptr");
-        decl.add_ivar::<*mut AnyObject>(c"_gpuiInputAccessoryView");
 
         // UITextInputTraits property storage — UIView doesn't provide these,
         // but iOS reads them from the first responder to configure the keyboard.
@@ -292,26 +299,6 @@ fn register_text_input_view_class() -> &'static AnyClass {
         // canBecomeFirstResponder must return Bool::YES
         unsafe extern "C" fn can_become_first_responder(_this: *mut AnyObject, _sel: Sel) -> Bool {
             Bool::YES
-        }
-
-        #[allow(deprecated)]
-        unsafe extern "C" fn input_accessory_view(
-            this: *mut AnyObject,
-            _sel: Sel,
-        ) -> *mut AnyObject {
-            unsafe { *(*this).get_ivar::<*mut AnyObject>("_gpuiInputAccessoryView") }
-        }
-
-        unsafe extern "C" fn dismiss_keyboard(this: *mut AnyObject, _sel: Sel) {
-            let window_ptr: *mut std::ffi::c_void = unsafe {
-                #[allow(deprecated)]
-                *(*this).get_ivar(GPUI_WINDOW_IVAR)
-            };
-            if window_ptr.is_null() {
-                return;
-            }
-            let window = unsafe { &*(window_ptr as *const IosWindow) };
-            window.dismiss_keyboard();
         }
 
         // --- UITextInputTraits property accessors ---
@@ -367,15 +354,6 @@ fn register_text_input_view_class() -> &'static AnyClass {
                 sel!(canBecomeFirstResponder),
                 can_become_first_responder as unsafe extern "C" fn(*mut AnyObject, Sel) -> Bool,
             );
-            decl.add_method(
-                sel!(inputAccessoryView),
-                input_accessory_view as unsafe extern "C" fn(*mut AnyObject, Sel) -> *mut AnyObject,
-            );
-            decl.add_method(
-                sel!(gpuiDismissKeyboard),
-                dismiss_keyboard as unsafe extern "C" fn(*mut AnyObject, Sel),
-            );
-
             // UITextInputTraits property methods
             decl.add_method(
                 sel!(keyboardType),
@@ -443,7 +421,6 @@ pub(crate) struct IosWindow {
     view: *mut AnyObject,
     /// The hidden text input view for keyboard input
     text_input_view: *mut AnyObject,
-    keyboard_accessory_view: *mut AnyObject,
     /// Current bounds in pixels
     bounds: Cell<Bounds<Pixels>>,
     /// Scale factor
@@ -472,6 +449,7 @@ pub(crate) struct IosWindow {
     appearance_changed_callback: RefCell<Option<Box<dyn FnMut()>>>,
     insets_changed_callback: RefCell<Option<Box<dyn FnMut(WindowInsets)>>>,
     keyboard_dismiss_callback: RefCell<Option<Box<dyn FnMut()>>>,
+    keyboard_dismiss_touch: Cell<Option<KeyboardDismissTouch>>,
     keyboard_height: Cell<f32>,
     /// Current mouse position (from touch)
     mouse_position: Cell<Point<Pixels>>,
@@ -553,40 +531,6 @@ impl IosWindow {
             let _: () = msg_send![text_input_view, setUserInteractionEnabled: true];
             let _: () = msg_send![view, addSubview: text_input_view];
 
-            let keyboard_accessory_view: *mut AnyObject = msg_send![class!(UIToolbar), alloc];
-            let keyboard_accessory_view: *mut AnyObject = msg_send![
-                keyboard_accessory_view,
-                initWithFrame: ObjcCGRect::new(0.0, 0.0, screen_bounds_cg.width, 44.0)
-            ];
-            let flexible_space: *mut AnyObject = msg_send![class!(UIBarButtonItem), alloc];
-            let flexible_space: *mut AnyObject = msg_send![
-                flexible_space,
-                initWithBarButtonSystemItem: 5_isize,
-                target: ptr::null_mut::<AnyObject>(),
-                action: sel!(gpuiDismissKeyboard)
-            ];
-            let done_button: *mut AnyObject = msg_send![class!(UIBarButtonItem), alloc];
-            let done_button: *mut AnyObject = msg_send![
-                done_button,
-                initWithBarButtonSystemItem: 0_isize,
-                target: text_input_view,
-                action: sel!(gpuiDismissKeyboard)
-            ];
-            let toolbar_items: *mut AnyObject =
-                msg_send![class!(NSMutableArray), arrayWithCapacity: 2_usize];
-            let _: () = msg_send![toolbar_items, addObject: flexible_space];
-            let _: () = msg_send![toolbar_items, addObject: done_button];
-            let _: () =
-                msg_send![keyboard_accessory_view, setItems: toolbar_items, animated: false];
-            let _: () = msg_send![keyboard_accessory_view, sizeToFit];
-            let _: () = msg_send![flexible_space, release];
-            let _: () = msg_send![done_button, release];
-            #[allow(deprecated)]
-            {
-                *(*text_input_view).get_mut_ivar::<*mut AnyObject>("_gpuiInputAccessoryView") =
-                    ptr::null_mut();
-            }
-
             let pixel_w = (screen_bounds_cg.width * scale) as i32;
             let pixel_h = (screen_bounds_cg.height * scale) as i32;
             let mut renderer = MetalRenderer::from_layer(
@@ -601,7 +545,6 @@ impl IosWindow {
                 view_controller,
                 view,
                 text_input_view,
-                keyboard_accessory_view,
                 bounds: Cell::new(screen_bounds),
                 scale_factor: Cell::new(scale_factor),
                 input_handler: RefCell::new(None),
@@ -618,6 +561,7 @@ impl IosWindow {
                 appearance_changed_callback: RefCell::new(None),
                 insets_changed_callback: RefCell::new(None),
                 keyboard_dismiss_callback: RefCell::new(None),
+                keyboard_dismiss_touch: Cell::new(None),
                 keyboard_height: Cell::new(0.),
                 mouse_position: Cell::new(Point::default()),
                 modifiers: Cell::new(Modifiers::default()),
@@ -724,8 +668,49 @@ impl IosWindow {
             position,
             force: touch_force(touch),
         };
+        self.handle_keyboard_dismiss_touch(&event);
         if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
             callback(PlatformInput::Touch(event));
+        }
+    }
+
+    fn handle_keyboard_dismiss_touch(&self, event: &TouchEvent) {
+        if self.keyboard_height.get() <= 0. {
+            self.keyboard_dismiss_touch.set(None);
+            return;
+        }
+
+        match event.phase {
+            TouchPhase::Started if self.keyboard_dismiss_touch.get().is_none() => {
+                self.keyboard_dismiss_touch.set(Some(KeyboardDismissTouch {
+                    id: event.id,
+                    start_position: event.position,
+                }));
+            }
+            TouchPhase::Moved => {
+                let Some(touch) = self
+                    .keyboard_dismiss_touch
+                    .get()
+                    .filter(|touch| touch.id == event.id)
+                else {
+                    return;
+                };
+                let delta = event.position - touch.start_position;
+                if delta.y >= KEYBOARD_DISMISS_DISTANCE && delta.y.abs() > delta.x.abs() * 1.25 {
+                    self.keyboard_dismiss_touch.set(None);
+                    self.dismiss_keyboard();
+                }
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                if self
+                    .keyboard_dismiss_touch
+                    .get()
+                    .is_some_and(|touch| touch.id == event.id)
+                {
+                    self.keyboard_dismiss_touch.set(None);
+                }
+            }
+            TouchPhase::Started => {}
         }
     }
 
@@ -814,30 +799,14 @@ impl IosWindow {
 
     fn set_keyboard_height(&self, height: f32) {
         let height = height.max(0.);
-        self.set_keyboard_accessory_visible(height > 0.);
         if (self.keyboard_height.get() - height).abs() <= 0.5 {
             return;
         }
         self.keyboard_height.set(height);
-        self.notify_insets_changed();
-    }
-
-    fn set_keyboard_accessory_visible(&self, visible: bool) {
-        unsafe {
-            #[allow(deprecated)]
-            let accessory_view =
-                (*self.text_input_view).get_mut_ivar::<*mut AnyObject>("_gpuiInputAccessoryView");
-            let next_accessory_view = if visible {
-                self.keyboard_accessory_view
-            } else {
-                ptr::null_mut()
-            };
-            if *accessory_view == next_accessory_view {
-                return;
-            }
-            *accessory_view = next_accessory_view;
-            let _: () = msg_send![self.text_input_view, reloadInputViews];
+        if height <= 0. {
+            self.keyboard_dismiss_touch.set(None);
         }
+        self.notify_insets_changed();
     }
 
     /// Defers the UIKit responder transition to avoid synchronous layout callbacks
@@ -1032,7 +1001,6 @@ impl Drop for IosWindow {
             }
             let _: () = msg_send![self.text_input_view, removeFromSuperview];
             let _: () = msg_send![self.text_input_view, release];
-            let _: () = msg_send![self.keyboard_accessory_view, release];
             let _: () = msg_send![self.view, release];
             let _: () = msg_send![self.view_controller, release];
             let _: () = msg_send![self.window, release];
