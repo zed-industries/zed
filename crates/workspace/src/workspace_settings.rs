@@ -13,7 +13,8 @@ use settings::{CommandAliasTarget, SettingsStore};
 
 #[derive(RegisterSetting)]
 pub struct WorkspaceSettings {
-    pub active_pane_modifiers: ActivePanelModifiers,
+    pub active_pane_modifiers: ActivePaneModifiers,
+    pub active_panel_modifiers: ActivePanelModifiers,
     pub bottom_dock_layout: settings::BottomDockLayout,
     pub pane_split_direction_horizontal: settings::PaneSplitDirectionHorizontal,
     pub pane_split_direction_vertical: settings::PaneSplitDirectionVertical,
@@ -50,7 +51,7 @@ pub struct FocusFollowsMouse {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Default)]
-pub struct ActivePanelModifiers {
+pub struct ActivePaneModifiers {
     /// Size of the border surrounding the active pane.
     /// When set to 0, the active pane doesn't have any border.
     /// The border is drawn inset.
@@ -61,6 +62,25 @@ pub struct ActivePanelModifiers {
     /// Opacity of inactive panels.
     /// When set to 1.0, the inactive panes have the same opacity as the active one.
     /// If set to 0, the inactive panes content will not be visible at all.
+    /// Values are clamped to the [0.0, 1.0] range.
+    ///
+    /// Default: `1.0`
+    // TODO: make this not an option, it is never None
+    pub inactive_opacity: Option<InactiveOpacity>,
+}
+
+#[derive(Copy, Clone, PartialEq, Debug, Default)]
+pub struct ActivePanelModifiers {
+    /// Size of the border surrounding the focused dock panel.
+    /// When set to 0, the focused panel doesn't have any border.
+    /// The border is drawn inset.
+    ///
+    /// Default: `0.0`
+    // TODO: make this not an option, it is never None
+    pub border_size: Option<f32>,
+    /// Opacity of dock panels that don't currently have focus.
+    /// When set to 1.0, unfocused panels have the same opacity as the focused one.
+    /// If set to 0, unfocused panel content will not be visible at all.
     /// Values are clamped to the [0.0, 1.0] range.
     ///
     /// Default: `1.0`
@@ -80,7 +100,7 @@ impl Settings for WorkspaceSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let workspace = &content.workspace;
         Self {
-            active_pane_modifiers: ActivePanelModifiers {
+            active_pane_modifiers: ActivePaneModifiers {
                 border_size: Some(
                     workspace
                         .active_pane_modifiers
@@ -91,6 +111,22 @@ impl Settings for WorkspaceSettings {
                 inactive_opacity: Some(
                     workspace
                         .active_pane_modifiers
+                        .unwrap()
+                        .inactive_opacity
+                        .unwrap(),
+                ),
+            },
+            active_panel_modifiers: ActivePanelModifiers {
+                border_size: Some(
+                    workspace
+                        .active_panel_modifiers
+                        .unwrap()
+                        .border_size
+                        .unwrap(),
+                ),
+                inactive_opacity: Some(
+                    workspace
+                        .active_panel_modifiers
                         .unwrap()
                         .inactive_opacity
                         .unwrap(),
