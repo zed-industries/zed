@@ -5,7 +5,6 @@ use gpui::{App, AppContext as _, DismissEvent, Global, actions};
 use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-
 use util::{ResultExt as _, defer};
 use windows::Win32::Foundation::{VARIANT_BOOL, VARIANT_FALSE};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoInitializeEx};
