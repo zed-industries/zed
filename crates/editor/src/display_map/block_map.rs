@@ -4933,15 +4933,14 @@ mod tests {
     /// because the crash fires in diff-backed multibuffers like the project
     /// diff.
     ///
-    /// Deeper settings currently reproduce a different live crash family:
-    /// `SEED=36 OPERATIONS=40` panics in `InlayMap::sync` with "cannot
-    /// summarize backward" (rope.rs), because an inlay whose anchor predates
-    /// structural multibuffer changes no longer resolves monotonically
-    /// against the edits derived from the new snapshot. The same panic
-    /// message accounts for dozens of open Sentry issues whose stacks blame
-    /// other anchor consumers (`Excerpt::new` via find-all-references,
-    /// vim marks), suggesting a shared root cause in anchor resolution after
-    /// structural changes.
+    /// Deeper settings have found real bugs; run them locally when touching
+    /// this area, e.g. `ITERATIONS=1000 OPERATIONS=40`. Found so far:
+    /// `InlayMap::sync` panicking on inlays whose anchors predate a path key
+    /// reuse (minimized into `inlay_map`'s
+    /// `test_sync_after_path_key_reused_for_different_buffer`), and
+    /// a `FoldMap` canonical-form violation ("found adjacent isomorphic
+    /// transforms", `SEED=612 OPERATIONS=40`), which is test-only and still
+    /// unfixed.
     #[gpui::test(iterations = 20)]
     async fn test_random_excerpt_removal_with_diffs(
         cx: &mut gpui::TestAppContext,
