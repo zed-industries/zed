@@ -5009,7 +5009,15 @@ impl Window {
         )));
     }
 
-    pub(crate) fn on_touch_event<Event: 'static>(
+    /// Register a touch event listener on the window for the next frame. The type of event
+    /// is determined by the first parameter of the given listener. When the next frame is rendered
+    /// the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
+    /// a specific need to register a listener yourself.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn on_touch_event<Event: 'static>(
         &mut self,
         mut listener: impl FnMut(&Event, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {

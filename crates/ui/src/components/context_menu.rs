@@ -5,7 +5,7 @@ use crate::{
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Role,
-    Size, Subscription, TaskExt, anchored, canvas, prelude::*, px,
+    Size, Subscription, TaskExt, TouchClickEvent, anchored, canvas, prelude::*, px,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
 use std::{
@@ -1761,6 +1761,34 @@ impl ContextMenu {
         })
     }
 
+    fn dismiss_on_pointer_out(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(&self.submenu_state, SubmenuState::Open(_))
+            && self
+                .padded_submenu_bounds()
+                .is_some_and(|bounds| bounds.contains(&position))
+        {
+            return;
+        }
+
+        if let Some(parent) = &self.main_menu {
+            let overridden_by_parent_trigger = parent
+                .read(cx)
+                .submenu_trigger_bounds
+                .get()
+                .is_some_and(|bounds| bounds.contains(&position));
+            if overridden_by_parent_trigger {
+                return;
+            }
+        }
+
+        self.cancel(&menu::Cancel, window, cx);
+    }
+
     fn render_submenu_container(
         &self,
         ix: usize,
@@ -2312,26 +2340,12 @@ impl Render for ContextMenu {
                         }))
                         .on_mouse_down_out(cx.listener(
                             |this, event: &MouseDownEvent, window, cx| {
-                                if matches!(&this.submenu_state, SubmenuState::Open(_)) {
-                                    if let Some(padded_bounds) = this.padded_submenu_bounds() {
-                                        if padded_bounds.contains(&event.position) {
-                                            return;
-                                        }
-                                    }
-                                }
-
-                                if let Some(parent) = &this.main_menu {
-                                    let overridden_by_parent_trigger = parent
-                                        .read(cx)
-                                        .submenu_trigger_bounds
-                                        .get()
-                                        .is_some_and(|bounds| bounds.contains(&event.position));
-                                    if overridden_by_parent_trigger {
-                                        return;
-                                    }
-                                }
-
-                                this.cancel(&menu::Cancel, window, cx)
+                                this.dismiss_on_pointer_out(event.position, window, cx)
+                            },
+                        ))
+                        .on_touch_click_out(cx.listener(
+                            |this, event: &TouchClickEvent, window, cx| {
+                                this.dismiss_on_pointer_out(event.position, window, cx)
                             },
                         ))
                         .when_some(self.end_slot_action.as_ref(), |el, action| {

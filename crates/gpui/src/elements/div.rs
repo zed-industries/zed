@@ -271,6 +271,26 @@ impl Interactivity {
             }));
     }
 
+    /// Bind the given callback to a touch click during the capture phase when the touch is outside
+    /// the bounds of this element.
+    /// The imperative API equivalent to [`InteractiveElement::on_touch_click_out`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_touch_click_out(
+        &mut self,
+        listener: impl Fn(&TouchClickEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.touch_click_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Capture
+                    && !window.has_active_prompt()
+                    && !hitbox.bounds.contains(&event.position)
+                {
+                    (listener)(event, window, cx)
+                }
+            }));
+    }
+
     /// Bind the given callback to the mouse up event, for the given button, during the capture phase,
     /// when the mouse is outside of the bounds of this element.
     /// The imperative API equivalent to [`InteractiveElement::on_mouse_up_out`].
@@ -939,6 +959,19 @@ pub trait InteractiveElement: Sized {
         listener: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_mouse_down_out(listener);
+        self
+    }
+
+    /// Bind the given callback to a touch click during the capture phase when the touch is outside
+    /// the bounds of this element.
+    /// The fluent API equivalent to [`Interactivity::on_touch_click_out`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn on_touch_click_out(
+        mut self,
+        listener: impl Fn(&TouchClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_touch_click_out(listener);
         self
     }
 
@@ -1652,6 +1685,9 @@ pub(crate) type ScrollWheelListener =
 pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
+pub(crate) type TouchClickListener =
+    Box<dyn Fn(&TouchClickEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+
 pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 pub(crate) struct DragListener {
@@ -2062,6 +2098,7 @@ pub struct Interactivity {
     pub(crate) mouse_exit_listeners: Vec<MouseExitListener>,
     pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
     pub(crate) pinch_listeners: Vec<PinchListener>,
+    pub(crate) touch_click_listeners: Vec<TouchClickListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
     pub(crate) modifiers_changed_listeners: Vec<ModifiersChangedListener>,
@@ -2308,6 +2345,7 @@ impl Interactivity {
             || !self.aux_click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
             || self.has_pinch_listeners()
+            || !self.touch_click_listeners.is_empty()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
             || !self.drag_over_styles.is_empty()
@@ -2709,6 +2747,13 @@ impl Interactivity {
         for listener in self.pinch_listeners.drain(..) {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &PinchEvent, phase, window, cx| {
+                listener(event, phase, &hitbox, window, cx);
+            })
+        }
+
+        for listener in self.touch_click_listeners.drain(..) {
+            let hitbox = hitbox.clone();
+            window.on_touch_event(move |event: &TouchClickEvent, phase, window, cx| {
                 listener(event, phase, &hitbox, window, cx);
             })
         }
