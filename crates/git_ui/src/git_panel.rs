@@ -3007,24 +3007,31 @@ impl GitPanel {
         } else if message.trim().is_empty() {
             return None;
         }
-        let buffer = cx.new(|cx| {
-            let mut buffer = Buffer::local(message, cx);
-            buffer.set_language(git_commit_language, cx);
-            buffer
-        });
-        let editor = cx.new(|cx| Editor::for_buffer(buffer, None, window, cx));
-        let wrapped_message = editor.update(cx, |editor, cx| {
-            editor.select_all(&Default::default(), window, cx);
-            editor.rewrap(
-                RewrapOptions {
-                    override_language_settings: false,
-                    preserve_existing_whitespace: true,
-                    line_length: None,
-                },
-                cx,
-            );
-            editor.text(cx)
-        });
+        // Only rewrap multi-line messages. Rewrapping a single-line message
+        // splits it at the wrap column and indents continuation lines, which
+        // corrupts commit messages that are intentionally one line (#60333).
+        let wrapped_message = if message.lines().count() > 1 {
+            let buffer = cx.new(|cx| {
+                let mut buffer = Buffer::local(message, cx);
+                buffer.set_language(git_commit_language, cx);
+                buffer
+            });
+            let editor = cx.new(|cx| Editor::for_buffer(buffer, None, window, cx));
+            editor.update(cx, |editor, cx| {
+                editor.select_all(&Default::default(), window, cx);
+                editor.rewrap(
+                    RewrapOptions {
+                        override_language_settings: false,
+                        preserve_existing_whitespace: true,
+                        line_length: None,
+                    },
+                    cx,
+                );
+                editor.text(cx)
+            })
+        } else {
+            message
+        };
         if wrapped_message.trim().is_empty() {
             return None;
         }
@@ -12865,6 +12872,76 @@ mod tests {
         assert!(
             !detail.contains("unstaged.rs"),
             "prompt should NOT list unstaged.rs, got: {detail}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_single_line_commit_message_not_rewrapped(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "file.rs": "content\n",
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[("file.rs", StatusCode::Modified.worktree())],
+        );
+
+        let project =
+            Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+        cx.executor().run_until_parked();
+
+        let long_message = "feat: A quick brown fox jumps over the lazy dog and keeps going past the wrap column";
+        panel.update_in(cx, |panel, window, cx| {
+            panel.commit_editor.update(cx, |editor, cx| {
+                editor.set_text(long_message, window, cx);
+            });
+        });
+
+        let message = panel.update_in(cx, |panel, window, cx| {
+            panel.custom_or_suggested_commit_message(window, cx)
+        });
+        assert_eq!(
+            message.as_deref(),
+            Some(long_message),
+            "single-line commit message should not be rewrapped"
         );
     }
 }
