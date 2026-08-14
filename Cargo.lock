@@ -8008,6 +8008,7 @@ dependencies = [
  "objc2-user-notifications",
  "parking_lot",
  "pathfinder_geometry",
+ "proptest",
  "raw-window-handle",
  "semver",
  "smallvec",

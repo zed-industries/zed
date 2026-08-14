@@ -10,6 +10,8 @@ mod display_link;
 mod events;
 mod keyboard;
 mod pasteboard;
+#[cfg(test)]
+mod scene_damage_tests;
 mod system_notifications;
 
 #[cfg(feature = "screen-capture")]

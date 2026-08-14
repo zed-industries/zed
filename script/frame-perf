@@ -1,0 +1,398 @@
+#!/usr/bin/env bash
+
+# Records a structured performance trace of a locally built Zed while you
+# interact with it, for A/B comparison of rendering changes (present
+# skipping, damage tracking, ...).
+#
+# Usage:
+#   script/frame-perf record --label baseline [--duration N] [--warmup 5] [-- <zed args>]
+#   script/frame-perf compare perf-runs/*/run.json
+#
+# Recording runs until you close the zed window (or --duration seconds
+# elapse, if given, in which case zed is closed for you).
+#
+# Metrics recorded per run:
+#   - Zed's own GPU time (DRM fdinfo drm-engine-gfx, deduplicated by client id)
+#   - Zed's CPU time (utime+stime of the main process)
+#   - CPU package energy via RAPL, if readable (includes the iGPU; run
+#     `sudo chmod a+r /sys/class/powercap/intel-rapl:0/energy_uj` or run this
+#     script as root to enable)
+#   - Whole-GPU busy% time series (includes compositor and other apps)
+#
+# Configuration is inherited from the environment. The rendering
+# optimizations are opt-in, so A/B like:
+#   script/frame-perf record --label before
+#   GPUI_EXPERIMENTAL_PRESENT_SKIP=1 GPUI_EXPERIMENTAL_PARTIAL_RENDER=1 \
+#       GPUI_EXPERIMENTAL_ORDER_TOLERANT_DAMAGE=1 \
+#       script/frame-perf record --label after
+#   script/frame-perf compare perf-runs/before-*/run.json perf-runs/after-*/run.json
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ZED_BIN="${ZED_BIN:-$REPO_ROOT/target/release-fast/zed}"
+SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-0.5}"
+
+die() {
+    echo "error: $*" >&2
+    exit 1
+}
+
+# Pids whose resolved executable is exactly the binary under test. Matching
+# on /proc/<pid>/exe rather than the command line tolerates relative launch
+# paths and other Zed installs (e.g. a nightly running alongside): only
+# processes running this exact binary are ours.
+dev_zed_pids() {
+    local target pid exe
+    target=$(realpath "$ZED_BIN")
+    for pid in $(pgrep -f zed 2>/dev/null); do
+        exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || continue
+        if [[ "$exe" == "$target" ]]; then
+            echo "$pid"
+        fi
+    done
+}
+
+# Other Zed-looking processes (different binaries, e.g. a nightly install).
+# They don't affect the per-process metrics, but they do contribute to the
+# system-wide ones (whole-GPU busy%, RAPL package power).
+other_zed_instances() {
+    local target pid exe
+    target=$(realpath "$ZED_BIN")
+    for pid in $(pgrep -f zed 2>/dev/null); do
+        exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || continue
+        case "$(basename "$exe")" in
+            zed | zed-editor | .zed-editor-wrapped)
+                [[ "$exe" != "$target" ]] && echo "$pid $exe"
+                ;;
+        esac
+    done
+}
+
+usage() {
+    sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+    exit 1
+}
+
+# Samples Zed's cumulative GPU gfx-engine time per DRM client, appending
+# "client_key value" lines to the given file and printing the current total.
+#
+# GPU time must be accounted per client (not as a plain sum): each counter
+# lives in a DRM client that vanishes when zed closes that GPU handle -
+# including during shutdown, before the process exits - which would make a
+# naive sum go backwards. Multiple fds can map to the same client, so
+# deduplicate by device + drm-client-id.
+zed_gpu_sample() {
+    local pid=$1 clients_file=$2
+    awk -v out="$clients_file" '
+        FNR == 1 { id = ""; pdev = "" }
+        /^drm-pdev:/ { pdev = $2 }
+        /^drm-client-id:/ { id = $2 }
+        /^drm-engine-gfx:/ { gfx[pdev ":" id] = $2 }
+        END {
+            total = 0
+            for (key in gfx) {
+                total += gfx[key]
+                print key, gfx[key] >> out
+            }
+            printf "%d\n", total
+        }
+    ' /proc/"$pid"/fdinfo/* 2>/dev/null || echo 0
+}
+
+# Total GPU nanoseconds across all clients ever observed: sum of each
+# client's growth between its first and last sighting. Client-id reuse could
+# make a client appear to shrink; clamp to zero (under-counts, never lies).
+gpu_delta_ns() {
+    local clients_file=$1
+    awk '
+        {
+            if (!($1 in first)) first[$1] = $2
+            last[$1] = $2
+        }
+        END {
+            total = 0
+            for (key in first) {
+                delta = last[key] - first[key]
+                if (delta > 0) total += delta
+            }
+            printf "%d\n", total
+        }
+    ' "$clients_file" 2>/dev/null || echo 0
+}
+
+# Zed's cumulative CPU time (utime+stime) in clock ticks.
+zed_cpu_ticks() {
+    local pid=$1
+    awk '{
+        i = index($0, ")")
+        n = split(substr($0, i + 2), f, " ")
+        print f[12] + f[13]
+    }' /proc/"$pid"/stat 2>/dev/null || echo 0
+}
+
+find_gpu_busy_path() {
+    if [[ -n "${GPU_BUSY_PATH:-}" ]]; then
+        echo "$GPU_BUSY_PATH"
+        return
+    fi
+    local path
+    for path in /sys/class/drm/card*/device/gpu_busy_percent; do
+        if [[ -r "$path" ]]; then
+            echo "$path"
+            return
+        fi
+    done
+    echo ""
+}
+
+find_rapl_path() {
+    local path="/sys/class/powercap/intel-rapl:0/energy_uj"
+    if [[ -r "$path" ]] && cat "$path" >/dev/null 2>&1; then
+        echo "$path"
+    else
+        echo ""
+    fi
+}
+
+record() {
+    local label="" duration=0 warmup=5
+    local zed_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --label) label="$2"; shift 2 ;;
+            --duration) duration="$2"; shift 2 ;;
+            --warmup) warmup="$2"; shift 2 ;;
+            --) shift; zed_args=("$@"); break ;;
+            *) die "unknown argument: $1" ;;
+        esac
+    done
+    [[ -n "$label" ]] || die "--label is required"
+    [[ -x "$ZED_BIN" ]] || die "zed binary not found at $ZED_BIN; build with: cargo build --profile release-fast -p zed (or set ZED_BIN)"
+
+    if [[ -n "$(dev_zed_pids)" ]]; then
+        die "another instance of $ZED_BIN is already running; close it first so GPU/CPU accounting is unambiguous"
+    fi
+
+    local other_instances
+    other_instances=$(other_zed_instances)
+    if [[ -n "$other_instances" ]]; then
+        echo "note: other zed installs are running; per-process zed metrics are unaffected," >&2
+        echo "      but whole-GPU busy% and package power will include them:" >&2
+        while read -r line; do echo "        $line" >&2; done <<<"$other_instances"
+    fi
+
+    local out_dir="$REPO_ROOT/perf-runs/$label-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$out_dir"
+    local log_file="$out_dir/zed.log"
+    local samples_file="$out_dir/samples.csv"
+    local json_file="$out_dir/run.json"
+
+    local gpu_busy_path rapl_path
+    gpu_busy_path="$(find_gpu_busy_path)"
+    rapl_path="$(find_rapl_path)"
+    [[ -n "$gpu_busy_path" ]] || echo "warning: gpu_busy_percent not found; whole-GPU busy will be missing" >&2
+    [[ -n "$rapl_path" ]] || echo "warning: RAPL energy not readable; package power will be missing (try: sudo chmod a+r /sys/class/powercap/intel-rapl:0/energy_uj)" >&2
+
+    echo "launching $ZED_BIN (log: $log_file)"
+    "$ZED_BIN" "${zed_args[@]}" >"$log_file" 2>&1 &
+    local zed_pid=$!
+
+    # Kill by resolved executable rather than by remembered pid: robust
+    # against zed forking or re-executing itself, and guaranteed not to touch
+    # other Zed installs.
+    kill_zed() {
+        local pids
+        pids=$(dev_zed_pids)
+        [[ -n "$pids" ]] || return 0
+        kill -TERM $pids 2>/dev/null || true
+        for _ in $(seq 1 10); do
+            pids=$(dev_zed_pids)
+            [[ -n "$pids" ]] || return 0
+            sleep 0.5
+        done
+        kill -KILL $pids 2>/dev/null || true
+    }
+    trap kill_zed EXIT INT TERM
+
+    sleep "$warmup"
+    # Re-resolve the pid in case zed forked or re-executed during startup.
+    zed_pid=$(dev_zed_pids | head -1)
+    [[ -n "$zed_pid" ]] || die "zed exited during warmup; check $log_file"
+
+    local clients_file="$out_dir/gpu-clients.log"
+    : >"$clients_file"
+
+    local start_wall start_cpu_ticks start_energy_uj=""
+    start_wall=$(date +%s.%N)
+    zed_gpu_sample "$zed_pid" "$clients_file" >/dev/null
+    start_cpu_ticks=$(zed_cpu_ticks "$zed_pid")
+    [[ -n "$rapl_path" ]] && start_energy_uj=$(cat "$rapl_path")
+
+    echo ""
+    if [[ "$duration" != "0" ]]; then
+        echo ">>> GO: interact with the zed window; the capture ends when you close it (or after ${duration}s) <<<"
+    else
+        echo ">>> GO: interact with the zed window; close it to finish the capture <<<"
+    fi
+    echo ""
+
+    echo "elapsed_s,gpu_busy_pct,zed_gpu_ns_total,zed_cpu_ticks" >"$samples_file"
+    # Once zed exits its /proc entries vanish, so the last successful sample
+    # serves as the end-of-run reading. GPU time is accumulated per client
+    # in $clients_file; the CSV column is the raw sum (it can dip when
+    # clients close - use gpu_delta_ns for the true total).
+    local end_cpu_ticks="$start_cpu_ticks" actual_wall="0"
+    while kill -0 "$zed_pid" 2>/dev/null; do
+        local now elapsed gpu_ns cpu_ticks
+        now=$(date +%s.%N)
+        elapsed=$(awk -v n="$now" -v s="$start_wall" 'BEGIN { printf "%.3f", n - s }')
+        if [[ "$duration" != "0" ]] \
+            && awk -v e="$elapsed" -v d="$duration" 'BEGIN { exit !(e >= d) }'
+        then
+            echo "duration reached; closing zed"
+            kill_zed
+            break
+        fi
+        gpu_ns=$(zed_gpu_sample "$zed_pid" "$clients_file")
+        cpu_ticks=$(zed_cpu_ticks "$zed_pid")
+        # The process can exit mid-sample, yielding bogus zeros; the sample
+        # is only trustworthy if the process is still alive after the reads.
+        if kill -0 "$zed_pid" 2>/dev/null; then
+            end_cpu_ticks="$cpu_ticks"
+            actual_wall="$elapsed"
+            local busy=""
+            [[ -n "$gpu_busy_path" ]] && busy=$(cat "$gpu_busy_path" 2>/dev/null || echo "")
+            printf "%s,%s,%s,%s\n" "$elapsed" "$busy" "$gpu_ns" "$cpu_ticks" >>"$samples_file"
+        fi
+        sleep "$SAMPLE_INTERVAL"
+    done
+
+    local end_energy_uj=""
+    [[ -n "$rapl_path" ]] && end_energy_uj=$(cat "$rapl_path")
+
+    wait "$zed_pid" 2>/dev/null || true
+    trap - EXIT INT TERM
+
+    if [[ "$actual_wall" == "0" ]]; then
+        die "no samples were collected (zed exited immediately after GO?); check $log_file"
+    fi
+
+    local clk_tck gpu_seconds cpu_seconds gpu_util_pct busy_avg="null" joules="null" watts="null"
+    clk_tck=$(getconf CLK_TCK)
+    gpu_seconds=$(awk -v d="$(gpu_delta_ns "$clients_file")" 'BEGIN { printf "%.4f", d / 1e9 }')
+    cpu_seconds=$(awk -v a="$start_cpu_ticks" -v b="$end_cpu_ticks" -v t="$clk_tck" 'BEGIN { printf "%.3f", (b - a) / t }')
+    gpu_util_pct=$(awk -v g="$gpu_seconds" -v w="$actual_wall" 'BEGIN { printf "%.3f", 100 * g / w }')
+    if [[ -n "$gpu_busy_path" ]]; then
+        busy_avg=$(awk -F, 'NR > 1 && $2 != "" { sum += $2; n++ } END { if (n) printf "%.2f", sum / n; else print "null" }' "$samples_file")
+    fi
+    if [[ -n "$start_energy_uj" && -n "$end_energy_uj" ]]; then
+        local max_uj
+        max_uj=$(cat "$(dirname "$rapl_path")/max_energy_range_uj" 2>/dev/null || echo 0)
+        joules=$(awk -v a="$start_energy_uj" -v b="$end_energy_uj" -v m="$max_uj" \
+            'BEGIN { d = b - a; if (d < 0 && m > 0) d += m; printf "%.2f", d / 1e6 }')
+        watts=$(awk -v j="$joules" -v w="$actual_wall" 'BEGIN { printf "%.2f", j / w }')
+    fi
+
+    local git_rev
+    git_rev=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+
+    cat >"$json_file" <<EOF
+{
+  "label": "$label",
+  "timestamp": "$(date -Iseconds)",
+  "git_rev": "$git_rev",
+  "duration_s": $actual_wall,
+  "env": {
+    "GPUI_EXPERIMENTAL_PRESENT_SKIP": "${GPUI_EXPERIMENTAL_PRESENT_SKIP:-}",
+    "GPUI_EXPERIMENTAL_PARTIAL_RENDER": "${GPUI_EXPERIMENTAL_PARTIAL_RENDER:-}",
+    "GPUI_EXPERIMENTAL_ORDER_TOLERANT_DAMAGE": "${GPUI_EXPERIMENTAL_ORDER_TOLERANT_DAMAGE:-}"
+  },
+  "other_zed_instances": $(other_zed_instances | wc -l),
+  "metrics": {
+    "zed_gpu_seconds": $gpu_seconds,
+    "zed_gpu_util_pct": $gpu_util_pct,
+    "zed_cpu_seconds": $cpu_seconds,
+    "package_joules": $joules,
+    "package_watts_avg": $watts,
+    "gpu_busy_avg_pct": $busy_avg
+  },
+  "files": {
+    "samples": "$samples_file",
+    "captured_output": "$log_file"
+  }
+}
+EOF
+
+    echo ""
+    echo "wrote $json_file"
+    cat "$json_file"
+}
+
+compare() {
+    [[ $# -ge 2 ]] || die "compare needs at least two run.json files"
+    command -v python3 >/dev/null || die "compare requires python3"
+    python3 - "$@" <<'PYEOF'
+import json
+import sys
+
+runs = []
+for path in sys.argv[1:]:
+    with open(path) as f:
+        runs.append(json.load(f))
+
+# Cumulative counters are normalized by wall time so runs of different
+# lengths compare meaningfully; already-normalized metrics pass through.
+rows = [
+    ("zed GPU util %", lambda r: r["metrics"]["zed_gpu_util_pct"]),
+    ("zed CPU util %", lambda r: 100.0 * r["metrics"]["zed_cpu_seconds"] / r["duration_s"]),
+    ("package W avg", lambda r: r["metrics"]["package_watts_avg"]),
+    ("GPU busy avg %", lambda r: r["metrics"]["gpu_busy_avg_pct"]),
+]
+
+labels = [run["label"] for run in runs]
+width = max(len(name) for name, _ in rows) + 2
+col = max(max((len(label) for label in labels), default=0) + 2, 14)
+
+header = " " * width + "".join(label.rjust(col) for label in labels)
+if len(runs) == 2:
+    header += "delta vs first".rjust(col + 4)
+print(header)
+def get_value(row_get, run):
+    try:
+        value = row_get(run)
+    except (KeyError, TypeError, ZeroDivisionError):
+        return None
+    return None if value is None else round(value, 3)
+
+for name, get in rows:
+    values = [get_value(get, run) for run in runs]
+    line = name.ljust(width)
+    for value in values:
+        line += ("n/a" if value is None else f"{value:g}").rjust(col)
+    if len(runs) == 2 and values[0] not in (None, 0) and values[1] is not None:
+        pct = 100.0 * (values[1] - values[0]) / values[0]
+        line += f"{pct:+.1f}%".rjust(col + 4)
+    print(line)
+
+print()
+for run in runs:
+    env = {k: v for k, v in run["env"].items() if v}
+    print(f"{run['label']}: {run['duration_s']}s, rev {run['git_rev']}, env {env or 'default'}")
+
+durations = [run["duration_s"] for run in runs]
+if max(durations) > 1.25 * min(durations):
+    print()
+    print(
+        "note: run durations differ by more than 25%; rates above are\n"
+        "normalized, but consider re-recording with similar durations\n"
+        "(or --duration N) for a fairer comparison."
+    )
+PYEOF
+}
+
+case "${1:-}" in
+    record) shift; record "$@" ;;
+    compare) shift; compare "$@" ;;
+    *) usage ;;
+esac
