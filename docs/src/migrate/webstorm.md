@@ -86,28 +86,28 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 ### Common Shared Keybindings
 
-| Action                        | Shortcut                   |
-| ----------------------------- | -------------------------- |
-| Search Everywhere             | `Shift Shift`              |
-| Find Action / Command Palette | `Cmd + Shift + A`          |
-| Go to File                    | `Cmd + Shift + O`          |
-| Go to Symbol                  | `Cmd + O`                  |
-| Recent Files                  | `Cmd + E`                  |
-| Go to Definition              | `Cmd + B`                  |
-| Find Usages                   | `Alt + F7`                 |
-| Rename Symbol                 | `Shift + F6`               |
-| Reformat Code                 | `Cmd + Alt + L`            |
-| Toggle Project Panel          | `Cmd + 1`                  |
-| Toggle Terminal               | `Alt + F12`                |
-| Duplicate Line                | `Cmd + D`                  |
-| Delete Line                   | `Cmd + Backspace`          |
-| Move Line Up/Down             | `Shift + Alt + Up/Down`    |
-| Expand/Shrink Selection       | `Alt + Up/Down`            |
-| Move by subword               | `Alt + Left/Right`         |
-| Select by subword             | `Shift + Alt + Left/Right` |
-| Comment Line                  | `Cmd + /`                  |
-| Go Back / Forward             | `Cmd + [` / `Cmd + ]`      |
-| Toggle Breakpoint             | `Ctrl + F8`                |
+| Action                        | Zed Keybinding                                                                                        |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Search Everywhere             | {#kb:jetbrains command_palette::Toggle}                                                               |
+| Find Action / Command Palette | {#kb:jetbrains command_palette::Toggle}                                                               |
+| Go to File                    | {#kb:jetbrains file_finder::Toggle}                                                                   |
+| Go to Symbol                  | {#kb:jetbrains project_symbols::Toggle}                                                               |
+| Recent Files                  | {#kb:jetbrains file_finder::Toggle}                                                                   |
+| Go to Definition              | {#kb:jetbrains editor::GoToDefinition}                                                                |
+| Find Usages                   | {#kb:jetbrains editor::FindAllReferences}                                                             |
+| Rename Symbol                 | {#kb:jetbrains editor::Rename}                                                                        |
+| Reformat Code                 | {#kb:jetbrains editor::Format}                                                                        |
+| Toggle Project Panel          | {#kb:jetbrains project_panel::ToggleFocus}                                                            |
+| Toggle Terminal               | {#kb:jetbrains terminal_panel::Toggle}                                                                |
+| Duplicate Line                | {#kb:jetbrains editor::DuplicateSelection}                                                            |
+| Delete Line                   | {#kb:jetbrains editor::DeleteLine}                                                                    |
+| Move Line Up/Down             | {#kb:jetbrains editor::MoveLineUp} / {#kb:jetbrains editor::MoveLineDown}                             |
+| Expand/Shrink Selection       | {#kb:jetbrains editor::SelectLargerSyntaxNode} / {#kb:jetbrains editor::SelectSmallerSyntaxNode}      |
+| Move by subword               | {#kb:jetbrains editor::MoveToPreviousSubwordStart} / {#kb:jetbrains editor::MoveToNextSubwordEnd}     |
+| Select by subword             | {#kb:jetbrains editor::SelectToPreviousSubwordStart} / {#kb:jetbrains editor::SelectToNextSubwordEnd} |
+| Comment Line                  | {#kb:jetbrains editor::ToggleComments}                                                                |
+| Go Back / Forward             | {#kb:jetbrains pane::GoBack} / {#kb:jetbrains pane::GoForward}                                        |
+| Toggle Breakpoint             | {#kb:jetbrains editor::ToggleBreakpoint}                                                              |
 
 ### Different Keybindings (WebStorm → Zed)
 
