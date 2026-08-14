@@ -86,6 +86,8 @@ fn main() {
         if cfg!(target_env = "msvc") {
             // todo(windows): This is to avoid stack overflow. Remove it when solved.
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
+            println!("cargo:rustc-link-arg=/DELAYLOAD:windowsperformancerecordercontrol");
+            println!("cargo:rustc-link-lib=delayimp");
         }
 
         if cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64") {
