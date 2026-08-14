@@ -4976,6 +4976,7 @@ mod tests {
                     phase: TouchPhase::Started,
                     position: point(px(75.), px(75.)),
                     force: None,
+                    timestamp: None,
                 };
                 window.dispatch_event(started.clone().to_platform_input(), cx);
                 window.dispatch_event(

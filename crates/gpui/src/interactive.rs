@@ -3,7 +3,7 @@ use crate::{
     Window, point, seal::Sealed,
 };
 use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
+use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf, time::Duration};
 
 /// An event from a platform input source.
 pub trait InputEvent: Sealed + 'static {
@@ -125,6 +125,8 @@ pub struct TouchEvent {
     pub position: Point<Pixels>,
     /// Normalized touch force in `0.0..=1.0`, if the hardware reports it.
     pub force: Option<f32>,
+    /// Monotonic platform time at which the touch sample was recorded.
+    pub timestamp: Option<Duration>,
 }
 
 impl Sealed for TouchEvent {}

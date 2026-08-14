@@ -1,5 +1,7 @@
 //! Conversion from UIKit events to GPUI input events.
 
+use std::time::Duration;
+
 use gpui::{Pixels, Point, TouchId, TouchPhase, px};
 use objc2::msg_send;
 use objc2::runtime::AnyObject;
@@ -61,6 +63,14 @@ pub fn touch_phase(touch: *mut AnyObject) -> UITouchPhase {
 /// Returns an identifier stable for the lifetime of this UIKit touch.
 pub fn touch_id(touch: *mut AnyObject) -> TouchId {
     TouchId(touch as usize as u64)
+}
+
+/// Returns UIKit's monotonic timestamp for this touch sample.
+pub fn touch_timestamp(touch: *mut AnyObject) -> Duration {
+    unsafe {
+        let timestamp: f64 = msg_send![touch, timestamp];
+        Duration::from_secs_f64(timestamp)
+    }
 }
 
 /// Returns normalized pressure when UIKit reports a meaningful force range.
