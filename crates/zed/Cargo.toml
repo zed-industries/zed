@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "1.16.0"
+version = "1.17.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -260,6 +260,7 @@ image.workspace = true
 pkg-config = "0.3.22"
 
 [dev-dependencies]
+activity_indicator = { workspace = true, features = ["test-support"] }
 call = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
