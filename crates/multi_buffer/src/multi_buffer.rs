@@ -6882,6 +6882,16 @@ impl MultiBufferSnapshot {
                 excerpt.buffer_id
             );
             assert_eq!(
+                excerpt.range.context.start.buffer_id, excerpt.buffer_id,
+                "excerpt context start anchor belongs to a different buffer: {:#?}",
+                excerpt.range
+            );
+            assert_eq!(
+                excerpt.range.context.end.buffer_id, excerpt.buffer_id,
+                "excerpt context end anchor belongs to a different buffer: {:#?}",
+                excerpt.range
+            );
+            assert_eq!(
                 self.path_keys.get_index(excerpt.path_key_index.0 as usize),
                 Some(&excerpt.path_key),
                 "excerpt path key index does not match path key: {:#?}",

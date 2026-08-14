@@ -4929,8 +4929,19 @@ mod tests {
     /// boundary"): header blocks cache an `ExcerptBoundaryInfo`, so when a
     /// buffer leaves the multibuffer without the block map re-syncing the
     /// header's rows, the stale block panics at render time. Excerpt removal
-    /// is fuzzed together with diffs and folded buffers, because the crash
-    /// fires in diff-backed multibuffers like the project diff.
+    /// is fuzzed together with diffs, folded buffers, text folds, and inlays,
+    /// because the crash fires in diff-backed multibuffers like the project
+    /// diff.
+    ///
+    /// Deeper settings currently reproduce a different live crash family:
+    /// `SEED=36 OPERATIONS=40` panics in `InlayMap::sync` with "cannot
+    /// summarize backward" (rope.rs), because an inlay whose anchor predates
+    /// structural multibuffer changes no longer resolves monotonically
+    /// against the edits derived from the new snapshot. The same panic
+    /// message accounts for dozens of open Sentry issues whose stacks blame
+    /// other anchor consumers (`Excerpt::new` via find-all-references,
+    /// vim marks), suggesting a shared root cause in anchor resolution after
+    /// structural changes.
     #[gpui::test(iterations = 20)]
     async fn test_random_excerpt_removal_with_diffs(
         cx: &mut gpui::TestAppContext,
@@ -5030,6 +5041,7 @@ mod tests {
 
         let subscription = multibuffer.update(cx, |multibuffer, _| multibuffer.subscribe());
 
+        let mut next_inlay_id = 0;
         let mut operations_until_sync = 0;
         for _ in 0..operations {
             // Apply several mutations before syncing the display layers, so
@@ -5174,10 +5186,52 @@ mod tests {
                     .await;
                     cx.run_until_parked();
                 }
+                // Fold or unfold random text ranges, so that fold edits are
+                // propagated through the tab and wrap layers alongside the
+                // multibuffer mutations. Mutating the inlay and fold maps
+                // requires them to be current, as `DisplayMap` keeps them, so
+                // sync the pending mutations through first.
+                70..=81 => {
+                    buffer_snapshot =
+                        multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+                    let pending_edits = subscription.consume().into_inner();
+                    let (inlay_snapshot, inlay_edits) =
+                        inlay_map.sync(buffer_snapshot.clone(), pending_edits);
+                    let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+                    let (tab_snapshot, tab_edits) =
+                        tab_map.sync(fold_snapshot, fold_edits, tab_size);
+                    let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+                        wrap_map.sync(tab_snapshot, tab_edits, cx)
+                    });
+                    block_map.read(wraps_snapshot, wrap_edits, None);
+
+                    if rng.random_bool(0.5) {
+                        for (fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
+                            let (tab_snapshot, tab_edits) =
+                                tab_map.sync(fold_snapshot, fold_edits, tab_size);
+                            let (wraps_snapshot, wrap_edits) = wrap_map
+                                .update(cx, |wrap_map, cx| {
+                                    wrap_map.sync(tab_snapshot, tab_edits, cx)
+                                });
+                            block_map.read(wraps_snapshot, wrap_edits, None);
+                        }
+                    } else {
+                        let (inlay_snapshot, inlay_edits) =
+                            inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+                        let (fold_snapshot, fold_edits) =
+                            fold_map.read(inlay_snapshot, inlay_edits);
+                        let (tab_snapshot, tab_edits) =
+                            tab_map.sync(fold_snapshot, fold_edits, tab_size);
+                        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+                            wrap_map.sync(tab_snapshot, tab_edits, cx)
+                        });
+                        block_map.read(wraps_snapshot, wrap_edits, None);
+                    }
+                }
                 // Update a path's excerpts through `update_path_excerpts`,
                 // sometimes reusing a path key for a different buffer, as
                 // split diffs do when a file's diff base buffer is recreated.
-                70..=84 => {
+                82..=89 => {
                     let paths = multibuffer.read_with(cx, |multibuffer, cx| {
                         let snapshot = multibuffer.snapshot(cx);
                         snapshot
