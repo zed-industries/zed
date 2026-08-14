@@ -20,7 +20,7 @@ use project::{
     LspStore, LspStoreEvent, Worktree, lsp_store::log_store::GlobalLogStore,
     project_settings::ProjectSettings, trusted_worktrees::TrustedWorktrees,
 };
-use settings::{Settings as _, SettingsStore};
+use settings::{Settings as _, SettingsStore, WorktreeId};
 use ui::{
     ContextMenu, ContextMenuEntry, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
@@ -321,9 +321,23 @@ impl LanguageServerState {
                     .when(*separator, |menu| menu.separator())
                     .when_some(header.as_ref(), |menu, header| menu.header(header));
                 continue;
-            } else if let LspMenuItem::WithStoppedStatus { server_name } = item {
+            } else if let LspMenuItem::WithStoppedStatus {
+                server_name,
+                worktree_id,
+            } = item
+            {
                 let server_name = server_name.clone();
+                let worktree_id = *worktree_id;
+                let has_logs = lsp_logs
+                    .read(cx)
+                    .language_server_id_for_name_and_worktree(&server_name, worktree_id)
+                    .map_or(false, |id| {
+                        lsp_logs
+                            .read(cx)
+                            .has_server_logs(&LanguageServerSelector::Id(id))
+                    });
                 let state = cx.entity().downgrade();
+                let workspace = self.workspace.clone();
                 menu = menu.submenu_with_colored_icon(
                     server_name.0.clone(),
                     IconName::Circle,
@@ -331,6 +345,8 @@ impl LanguageServerState {
                     {
                         let state = state.clone();
                         let server_name = server_name.clone();
+                        let workspace = workspace.clone();
+                        let lsp_logs = lsp_logs.clone();
                         move |menu, _window, _cx| {
                             let mut submenu = menu;
                             let state_for_restart = state.clone();
@@ -345,6 +361,29 @@ impl LanguageServerState {
                                     })
                                     .ok();
                             });
+                            if has_logs {
+                                let workspace_for_logs = workspace.clone();
+                                let server_name_for_logs = server_name.clone();
+                                let lsp_logs_for_logs = lsp_logs.clone();
+                                submenu = submenu.entry("View Logs", None, move |window, cx| {
+                                    let Some(server_id) = lsp_logs_for_logs
+                                        .read(cx)
+                                        .language_server_id_for_name_and_worktree(
+                                            &server_name_for_logs,
+                                            worktree_id,
+                                        )
+                                    else {
+                                        return;
+                                    };
+                                    lsp_log_view::open(
+                                        &lsp_logs_for_logs,
+                                        workspace_for_logs.clone(),
+                                        LanguageServerSelector::Id(server_id),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
                             submenu
                         }
                     },
@@ -740,6 +779,7 @@ enum ServerData<'a> {
     },
     WithStoppedStatus {
         server_name: &'a LanguageServerName,
+        worktree_id: WorktreeId,
     },
 }
 
@@ -757,6 +797,7 @@ enum LspMenuItem {
     },
     WithStoppedStatus {
         server_name: LanguageServerName,
+        worktree_id: WorktreeId,
     },
     ToggleServersButton {
         restart: bool,
@@ -824,8 +865,12 @@ impl ServerData<'_> {
                 server_name: server_name.clone(),
                 binary_status: binary_status.clone(),
             },
-            Self::WithStoppedStatus { server_name, .. } => LspMenuItem::WithStoppedStatus {
+            Self::WithStoppedStatus {
+                server_name,
+                worktree_id,
+            } => LspMenuItem::WithStoppedStatus {
                 server_name: server_name.clone(),
+                worktree_id,
             },
         }
     }
@@ -1193,7 +1238,10 @@ impl LspButton {
                 servers_per_worktree
                     .entry(worktree_name.clone())
                     .or_default()
-                    .push(ServerData::WithStoppedStatus { server_name });
+                    .push(ServerData::WithStoppedStatus {
+                        server_name,
+                        worktree_id: worktree.read(cx).id(),
+                    });
             }
 
             let mut new_lsp_items = Vec::with_capacity(servers_per_worktree.len() + 1);
@@ -1457,6 +1505,7 @@ impl Render for LspButton {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::LspLogView;
     use futures::StreamExt;
     use gpui::TestAppContext;
     use language::{Buffer, FakeLspAdapter, rust_lang};
@@ -1670,7 +1719,7 @@ mod tests {
                 .items
                 .iter()
                 .filter_map(|item| match item {
-                    LspMenuItem::WithStoppedStatus { server_name } => {
+                    LspMenuItem::WithStoppedStatus { server_name, .. } => {
                         Some(server_name.0.to_string())
                     }
                     _ => None,
@@ -1960,6 +2009,132 @@ mod tests {
             running_server_names(&button_b, cx),
             vec!["the-rust-language-server".to_string()],
             "workspace B's server is still running",
+        );
+    }
+
+    /// Ensure the stopped servers logs can be retained
+    #[gpui::test]
+    async fn test_lsp_button_stopped_server_logs_viewable_after_stop(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let log_store = cx.update(|cx| lsp_store::log_store::init(false, cx));
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/the-root"),
+            json!({
+                "main.rs": "fn main() {}",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+        log_store.update(cx, |store, cx| store.add_project(&project, cx));
+
+        let (mut fake_servers, _buffer, _handle) =
+            start_fake_server(&project, path!("/the-root/main.rs"), cx).await;
+        let mut language_server = fake_servers.next().await.unwrap();
+        language_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await;
+        cx.run_until_parked();
+
+        language_server.notify::<lsp::notification::LogMessage>(lsp::LogMessageParams {
+            message: "hello from the server".into(),
+            typ: lsp::MessageType::INFO,
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let lsp_button = workspace_window
+            .update(cx, |workspace, window, cx| {
+                cx.new(|cx| LspButton::new(workspace, PopoverMenuHandle::default(), window, cx))
+            })
+            .unwrap();
+        pump_lsp_menu(cx);
+
+        let name = LanguageServerName("the-rust-language-server".into());
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let server_id = log_store
+            .read_with(cx, |store, _| {
+                store.language_server_id_for_name_and_worktree(&name, worktree_id)
+            })
+            .expect("the running server is tracked by the log store");
+
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        let stop = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.stop_language_servers_for_buffers(
+                Vec::new(),
+                HashSet::from_iter([LanguageServerSelector::Name(name.clone())]),
+                cx,
+            )
+        });
+        stop.await.unwrap();
+        cx.run_until_parked();
+        pump_lsp_menu(cx);
+
+        assert_eq!(
+            stopped_server_names(&lsp_button, cx),
+            vec!["the-rust-language-server".to_string()],
+            "the stopped server stays listed",
+        );
+        assert!(
+            log_store.read_with(cx, |store, _| store.contains_language_server(server_id)),
+            "the stopped server's log entry is retained",
+        );
+        assert!(
+            log_store.read_with(cx, |store, _| {
+                store.has_server_logs(&LanguageServerSelector::Id(server_id))
+            }),
+            "the retained entry keeps the logs recorded before the stop",
+        );
+
+        workspace_window
+            .update(cx, |workspace, window, cx| {
+                lsp_log_view::open(
+                    &log_store,
+                    workspace.weak_handle(),
+                    LanguageServerSelector::Id(server_id),
+                    window,
+                    cx,
+                );
+            })
+            .log_err();
+        cx.executor().run_until_parked();
+        cx.executor().run_until_parked();
+
+        let log_view = workspace_window
+            .read_with(cx, |workspace, cx| workspace.item_of_type::<LspLogView>(cx))
+            .expect("the workspace window is alive")
+            .expect("opening the logs creates the log view");
+        assert_eq!(
+            log_view.read_with(cx, |view, cx| view.editor.read(cx).text(cx)),
+            "hello from the server\n",
+            "the log view shows the stopped server's retained logs",
+        );
+
+        let server_state = lsp_button.read_with(cx, |button, _| button.server_state.clone());
+        server_state.update(cx, |state, cx| {
+            state.restart_server_by_name(server_name("the-rust-language-server"), cx)
+        });
+        let mut restarted_server = fake_servers.next().await.unwrap();
+        restarted_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await;
+        cx.run_until_parked();
+        pump_lsp_menu(cx);
+
+        assert!(
+            stopped_server_names(&lsp_button, cx).is_empty(),
+            "the stopped row is gone after a restart",
+        );
+        assert_eq!(
+            log_view.read_with(cx, |view, cx| view.editor.read(cx).text(cx)),
+            "hello from the server\n",
+            "the log view follows the restarted server and keeps the retained logs",
         );
     }
 }

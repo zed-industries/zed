@@ -103,6 +103,7 @@ pub(crate) struct LogMenuItem {
     pub selected_entry: LogKind,
     pub trace_level: lsp::TraceValue,
     pub server_kind: LanguageServerKind,
+    pub stopped: bool,
 }
 
 actions!(
@@ -157,7 +158,7 @@ impl LspLogView {
                 let first_server_id_for_project =
                     store.read(cx).server_ids_for_project(&weak_project).next();
                 if let Some(current_lsp) = this.current_server_id {
-                    if !store.read(cx).language_servers.contains_key(&current_lsp)
+                    if !store.read(cx).contains_language_server(current_lsp)
                         && let Some(server_id) = first_server_id_for_project
                     {
                         match this.active_entry_kind {
@@ -381,64 +382,88 @@ impl LspLogView {
             Some(())
         });
     }
+
+    fn build_row(
+        &self,
+        server_id: LanguageServerId,
+        state: &log_store::LanguageServerState,
+        stopped: bool,
+        cx: &App,
+    ) -> LogMenuItem {
+        let worktree_root_name = state
+            .worktree_id
+            .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
+            .map(|worktree| worktree.read(cx).root_name_str().to_string())
+            .unwrap_or_else(|| {
+                if matches!(&state.kind, LanguageServerKind::Global) {
+                    "supplementary".to_string()
+                } else {
+                    "Unknown worktree".to_string()
+                }
+            });
+
+        LogMenuItem {
+            server_id,
+            server_name: state
+                .name
+                .clone()
+                .unwrap_or(LanguageServerName::new_static("unknown server")),
+            server_kind: state.kind.clone(),
+            worktree_root_name,
+            rpc_trace_enabled: state.rpc_state.is_some(),
+            selected_entry: self.active_entry_kind,
+            trace_level: lsp::TraceValue::Off,
+            stopped,
+        }
+    }
+
     pub(crate) fn menu_items(&self, cx: &mut App) -> Option<Vec<LogMenuItem>> {
         self.try_ensure_copilot_for_project(cx);
-        let log_store = self.log_store.read(cx);
 
-        let unknown_server = LanguageServerName::new_static("unknown server");
+        let weak_project = self.project.downgrade();
+        let is_for_project = |kind: &LanguageServerKind| {
+            matches!(
+                kind,
+                LanguageServerKind::Global | LanguageServerKind::LocalSsh { .. }
+            ) || kind.project() == Some(&weak_project)
+        };
 
-        let mut rows = log_store
-            .language_servers
-            .iter()
-            .map(|(server_id, state)| match &state.kind {
-                LanguageServerKind::Local { .. }
-                | LanguageServerKind::Remote { .. }
-                | LanguageServerKind::LocalSsh { .. } => {
-                    let worktree_root_name = state
-                        .worktree_id
-                        .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
-                        .map(|worktree| worktree.read(cx).root_name_str().to_string())
-                        .unwrap_or_else(|| "Unknown worktree".to_string());
+        let mut rows = Vec::new();
 
-                    LogMenuItem {
-                        server_id: *server_id,
-                        server_name: state.name.clone().unwrap_or(unknown_server.clone()),
+        self.log_store.read_with(cx, |log_store, cx| {
+            log_store
+                .language_servers
+                .iter()
+                .filter(|(_, state)| is_for_project(&state.kind))
+                .for_each(|(id, state)| rows.push(self.build_row(*id, state, false, cx)));
+
+            log_store
+                .stopped_language_servers
+                .iter()
+                .filter(|(_, state)| is_for_project(&state.kind))
+                .for_each(|(server_id, state)| {
+                    rows.push(self.build_row(*server_id, state, true, cx))
+                });
+
+            self.project
+                .read(cx)
+                .supplementary_language_servers(cx)
+                .filter_map(|(server_id, name)| {
+                    let state = log_store.language_servers.get(&server_id)?;
+                    Some(LogMenuItem {
+                        server_id,
+                        server_name: name,
                         server_kind: state.kind.clone(),
-                        worktree_root_name,
+                        worktree_root_name: "supplementary".to_string(),
                         rpc_trace_enabled: state.rpc_state.is_some(),
                         selected_entry: self.active_entry_kind,
                         trace_level: lsp::TraceValue::Off,
-                    }
-                }
+                        stopped: false,
+                    })
+                })
+                .for_each(|m| rows.push(m));
+        });
 
-                LanguageServerKind::Global => LogMenuItem {
-                    server_id: *server_id,
-                    server_name: state.name.clone().unwrap_or(unknown_server.clone()),
-                    server_kind: state.kind.clone(),
-                    worktree_root_name: "supplementary".to_string(),
-                    rpc_trace_enabled: state.rpc_state.is_some(),
-                    selected_entry: self.active_entry_kind,
-                    trace_level: lsp::TraceValue::Off,
-                },
-            })
-            .chain(
-                self.project
-                    .read(cx)
-                    .supplementary_language_servers(cx)
-                    .filter_map(|(server_id, name)| {
-                        let state = log_store.language_servers.get(&server_id)?;
-                        Some(LogMenuItem {
-                            server_id,
-                            server_name: name,
-                            server_kind: state.kind.clone(),
-                            worktree_root_name: "supplementary".to_string(),
-                            rpc_trace_enabled: state.rpc_state.is_some(),
-                            selected_entry: self.active_entry_kind,
-                            trace_level: lsp::TraceValue::Off,
-                        })
-                    }),
-            )
-            .collect::<Vec<_>>();
         rows.sort_by_key(|row| row.server_id);
         rows.dedup_by_key(|row| row.server_id);
         Some(rows)
@@ -453,8 +478,7 @@ impl LspLogView {
         let typ = self
             .log_store
             .read(cx)
-            .language_servers
-            .get(&server_id)
+            .language_server_state(server_id)
             .map(|v| v.log_level)
             .unwrap_or(MessageType::LOG);
         let log_contents = self
@@ -956,6 +980,7 @@ impl Render for LspLogToolbarItemView {
                     row.server_name,
                     row.worktree_root_name,
                     row.selected_entry,
+                    row.stopped,
                 )
             })
             .collect();
@@ -970,10 +995,12 @@ impl Render for LspLogToolbarItemView {
                     current_server
                         .as_ref()
                         .map(|row| {
-                            Cow::Owned(format!(
-                                "{} ({})",
-                                row.server_name.0, row.worktree_root_name,
-                            ))
+                            let worktree_root_name = if row.stopped {
+                                format!("{}, stopped", row.worktree_root_name)
+                            } else {
+                                row.worktree_root_name.clone()
+                            };
+                            Cow::Owned(format!("{} ({})", row.server_name.0, worktree_root_name,))
                         })
                         .unwrap_or_else(|| "No server selected".into()),
                 )
@@ -988,10 +1015,14 @@ impl Render for LspLogToolbarItemView {
                 move |window, cx| {
                     let log_view = log_view.clone();
                     ContextMenu::build(window, cx, |mut menu, window, _| {
-                        for (server_id, name, worktree_root, active_entry_kind) in
+                        for (server_id, name, worktree_root, active_entry_kind, stopped) in
                             available_language_servers.iter()
                         {
-                            let label = format!("{name} ({worktree_root})");
+                            let label = if *stopped {
+                                format!("{name} ({worktree_root}, stopped)")
+                            } else {
+                                format!("{name} ({worktree_root})")
+                            };
                             let server_id = *server_id;
                             let active_entry_kind = *active_entry_kind;
                             menu = menu.entry(
