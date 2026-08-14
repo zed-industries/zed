@@ -225,6 +225,27 @@ fn register_metal_view_class() -> &'static AnyClass {
                 touches_cancelled
                     as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject),
             );
+            decl.add_method(
+                sel!(cut:),
+                edit_menu_cut as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            decl.add_method(
+                sel!(copy:),
+                edit_menu_copy as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            decl.add_method(
+                sel!(paste:),
+                edit_menu_paste as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            decl.add_method(
+                sel!(selectAll:),
+                edit_menu_select_all as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            decl.add_method(
+                sel!(canPerformAction:withSender:),
+                can_perform_edit_menu_action
+                    as unsafe extern "C" fn(*mut AnyObject, Sel, Sel, *mut AnyObject) -> Bool,
+            );
         }
 
         decl.register();
@@ -318,6 +339,64 @@ fn window_from_delegate(delegate: *mut AnyObject) -> Option<&'static IosWindow> 
     }
 }
 
+fn window_from_platform_view(view: *mut AnyObject) -> Option<&'static IosWindow> {
+    let window_ptr = unsafe {
+        #[allow(deprecated)]
+        *(*view).get_ivar::<*mut c_void>(GPUI_WINDOW_IVAR)
+    };
+    if window_ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { &*(window_ptr as *const IosWindow) })
+    }
+}
+
+unsafe extern "C" fn edit_menu_cut(view: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
+    if let Some(window) = window_from_platform_view(view) {
+        window.dispatch_edit_menu_shortcut("x");
+    }
+}
+
+unsafe extern "C" fn edit_menu_copy(view: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
+    if let Some(window) = window_from_platform_view(view) {
+        window.dispatch_edit_menu_shortcut("c");
+    }
+}
+
+unsafe extern "C" fn edit_menu_paste(view: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
+    if let Some(window) = window_from_platform_view(view) {
+        window.dispatch_edit_menu_shortcut("v");
+    }
+}
+
+unsafe extern "C" fn edit_menu_select_all(
+    view: *mut AnyObject,
+    _sel: Sel,
+    _sender: *mut AnyObject,
+) {
+    if let Some(window) = window_from_platform_view(view) {
+        window.dispatch_edit_menu_shortcut("a");
+    }
+}
+
+unsafe extern "C" fn can_perform_edit_menu_action(
+    view: *mut AnyObject,
+    _sel: Sel,
+    action: Sel,
+    _sender: *mut AnyObject,
+) -> Bool {
+    let Some(window) = window_from_platform_view(view) else {
+        return Bool::NO;
+    };
+    let actions = window.edit_menu_actions.get();
+    Bool::from(
+        (action == sel!(cut:) && actions.cut)
+            || (action == sel!(copy:) && actions.copy)
+            || (action == sel!(paste:) && actions.paste)
+            || (action == sel!(selectAll:) && actions.select_all),
+    )
+}
+
 /// Register a custom UIView subclass that implements UIKeyInput protocol.
 ///
 /// iOS requires the first-responder view to conform to `UIKeyInput` in order
@@ -389,48 +468,6 @@ fn register_text_input_view_class() -> &'static AnyClass {
             Bool::YES
         }
 
-        unsafe extern "C" fn cut(this: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
-            if let Some(window) = window_from_text_input(this) {
-                window.dispatch_edit_menu_shortcut("x");
-            }
-        }
-
-        unsafe extern "C" fn copy(this: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
-            if let Some(window) = window_from_text_input(this) {
-                window.dispatch_edit_menu_shortcut("c");
-            }
-        }
-
-        unsafe extern "C" fn paste(this: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
-            if let Some(window) = window_from_text_input(this) {
-                window.dispatch_edit_menu_shortcut("v");
-            }
-        }
-
-        unsafe extern "C" fn select_all(this: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
-            if let Some(window) = window_from_text_input(this) {
-                window.dispatch_edit_menu_shortcut("a");
-            }
-        }
-
-        unsafe extern "C" fn can_perform_action(
-            this: *mut AnyObject,
-            _sel: Sel,
-            action: Sel,
-            _sender: *mut AnyObject,
-        ) -> Bool {
-            let Some(window) = window_from_text_input(this) else {
-                return Bool::NO;
-            };
-            let actions = window.edit_menu_actions.get();
-            Bool::from(
-                (action == sel!(cut:) && actions.cut)
-                    || (action == sel!(copy:) && actions.copy)
-                    || (action == sel!(paste:) && actions.paste)
-                    || (action == sel!(selectAll:) && actions.select_all),
-            )
-        }
-
         // --- UITextInputTraits property accessors ---
         #[allow(deprecated)]
         unsafe extern "C" fn get_keyboard_type(this: *mut AnyObject, _sel: Sel) -> isize {
@@ -486,23 +523,23 @@ fn register_text_input_view_class() -> &'static AnyClass {
             );
             decl.add_method(
                 sel!(cut:),
-                cut as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+                edit_menu_cut as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
             );
             decl.add_method(
                 sel!(copy:),
-                copy as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+                edit_menu_copy as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
             );
             decl.add_method(
                 sel!(paste:),
-                paste as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+                edit_menu_paste as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
             );
             decl.add_method(
                 sel!(selectAll:),
-                select_all as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+                edit_menu_select_all as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
             );
             decl.add_method(
                 sel!(canPerformAction:withSender:),
-                can_perform_action
+                can_perform_edit_menu_action
                     as unsafe extern "C" fn(*mut AnyObject, Sel, Sel, *mut AnyObject) -> Bool,
             );
             // UITextInputTraits property methods
@@ -536,18 +573,6 @@ fn register_text_input_view_class() -> &'static AnyClass {
     });
 
     class!(GPUITextInputView)
-}
-
-fn window_from_text_input(view: *mut AnyObject) -> Option<&'static IosWindow> {
-    let window_ptr = unsafe {
-        #[allow(deprecated)]
-        *(*view).get_ivar::<*mut c_void>(GPUI_WINDOW_IVAR)
-    };
-    if window_ptr.is_null() {
-        None
-    } else {
-        Some(unsafe { &*(window_ptr as *const IosWindow) })
-    }
 }
 
 /// Handle touch events from the GPUIMetalView
@@ -1585,10 +1610,6 @@ impl PlatformWindow for IosWindow {
 
         self.edit_menu_actions.set(actions);
         unsafe {
-            let is_first_responder: Bool = msg_send![self.text_input_view, isFirstResponder];
-            if !is_first_responder.as_bool() {
-                let _: Bool = msg_send![self.text_input_view, becomeFirstResponder];
-            }
             let source_point = ObjcCGPoint {
                 x: f64::from(position.x),
                 y: f64::from(position.y),
