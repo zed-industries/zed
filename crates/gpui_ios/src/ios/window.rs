@@ -584,7 +584,7 @@ impl IosWindow {
             #[allow(deprecated)]
             {
                 *(*text_input_view).get_mut_ivar::<*mut AnyObject>("_gpuiInputAccessoryView") =
-                    keyboard_accessory_view;
+                    ptr::null_mut();
             }
 
             let pixel_w = (screen_bounds_cg.width * scale) as i32;
@@ -814,11 +814,30 @@ impl IosWindow {
 
     fn set_keyboard_height(&self, height: f32) {
         let height = height.max(0.);
+        self.set_keyboard_accessory_visible(height > 0.);
         if (self.keyboard_height.get() - height).abs() <= 0.5 {
             return;
         }
         self.keyboard_height.set(height);
         self.notify_insets_changed();
+    }
+
+    fn set_keyboard_accessory_visible(&self, visible: bool) {
+        unsafe {
+            #[allow(deprecated)]
+            let accessory_view =
+                (*self.text_input_view).get_mut_ivar::<*mut AnyObject>("_gpuiInputAccessoryView");
+            let next_accessory_view = if visible {
+                self.keyboard_accessory_view
+            } else {
+                ptr::null_mut()
+            };
+            if *accessory_view == next_accessory_view {
+                return;
+            }
+            *accessory_view = next_accessory_view;
+            let _: () = msg_send![self.text_input_view, reloadInputViews];
+        }
     }
 
     /// Defers the UIKit responder transition to avoid synchronous layout callbacks
