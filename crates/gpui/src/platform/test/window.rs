@@ -213,6 +213,7 @@ impl TestWindow {
         self.0.lock().start_external_drag_result = result;
     }
 
+    #[cfg(test)]
     pub(crate) fn text_input_state_changes(&self) -> Vec<TextInputStateChange> {
         self.0.lock().text_input_state_changes.clone()
     }
