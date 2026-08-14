@@ -450,20 +450,24 @@ impl Platform for IosPlatform {
                 query_attributes.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
                 query_attributes.set(kSecAttrServer as *const _, url.as_CFTypeRef());
 
-                let mut attributes = CFMutableDictionary::with_capacity(4);
-                attributes.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-                attributes.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-                attributes.set(kSecAttrAccount as *const _, username.as_CFTypeRef());
-                attributes.set(kSecValueData as *const _, password.as_CFTypeRef());
+                let mut updated_attributes = CFMutableDictionary::with_capacity(2);
+                updated_attributes.set(kSecAttrAccount as *const _, username.as_CFTypeRef());
+                updated_attributes.set(kSecValueData as *const _, password.as_CFTypeRef());
 
                 let mut operation = "updating";
                 let mut status = SecItemUpdate(
                     query_attributes.as_concrete_TypeRef(),
-                    attributes.as_concrete_TypeRef(),
+                    updated_attributes.as_concrete_TypeRef(),
                 );
                 if status == ERR_SEC_ITEM_NOT_FOUND {
                     operation = "creating";
-                    status = SecItemAdd(attributes.as_concrete_TypeRef(), ptr::null_mut());
+                    let mut new_item_attributes = CFMutableDictionary::with_capacity(4);
+                    new_item_attributes
+                        .set(kSecClass as *const _, kSecClassInternetPassword as *const _);
+                    new_item_attributes.set(kSecAttrServer as *const _, url.as_CFTypeRef());
+                    new_item_attributes.set(kSecAttrAccount as *const _, username.as_CFTypeRef());
+                    new_item_attributes.set(kSecValueData as *const _, password.as_CFTypeRef());
+                    status = SecItemAdd(new_item_attributes.as_concrete_TypeRef(), ptr::null_mut());
                 }
                 anyhow::ensure!(
                     status == ERR_SEC_SUCCESS,
