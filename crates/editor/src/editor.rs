@@ -8027,7 +8027,7 @@ impl Editor {
         }
         let rename = self.take_rename(false, window, cx)?;
         let new_name = rename.editor.read(cx).text(cx);
-        if new_name.is_empty() {
+        if new_name.trim().is_empty() {
             return Some(Task::ready(Ok(())));
         }
 

@@ -33219,6 +33219,14 @@ async fn test_empty_rename_is_no_op(cx: &mut TestAppContext) {
 
     cx.set_state("let aˇbc = 1;");
 
+    let rename_request_count = Arc::new(AtomicUsize::new(0));
+    let _rename_handler = cx.set_request_handler::<lsp::request::Rename, _, _>({
+        let rename_request_count = rename_request_count.clone();
+        move |_, _, _| {
+            rename_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+            async { Ok(None) }
+        }
+    });
     let mut prepare_rename_handler = cx
         .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
             move |_, _, _| async move {
@@ -33234,54 +33242,49 @@ async fn test_empty_rename_is_no_op(cx: &mut TestAppContext) {
                 })))
             },
         );
-    let prepare_rename_task = cx
-        .update_editor(|editor, window, cx| editor.rename(&Rename, window, cx))
-        .expect("Prepare rename was not started");
-    prepare_rename_handler.next().await.unwrap();
-    prepare_rename_task.await.expect("Prepare rename failed");
 
-    let rename_request_count = Arc::new(AtomicUsize::new(0));
-    let _rename_handler = cx.set_request_handler::<lsp::request::Rename, _, _>({
-        let rename_request_count = rename_request_count.clone();
-        move |_, _, _| {
-            rename_request_count.fetch_add(1, atomic::Ordering::SeqCst);
-            async { Ok(None) }
-        }
-    });
+    for new_name in ["", "   "] {
+        let prepare_rename_task = cx
+            .update_editor(|editor, window, cx| editor.rename(&Rename, window, cx))
+            .expect("Prepare rename was not started");
+        prepare_rename_handler.next().await.unwrap();
+        prepare_rename_task.await.expect("Prepare rename failed");
 
-    let rename_editor = cx.editor(|editor, _, _| {
-        editor
-            .pending_rename()
-            .expect("Rename should still be pending")
-            .editor
-            .clone()
-    });
-    rename_editor.update_in(&mut cx.cx.cx, |editor, window, cx| {
-        editor.backspace(&Backspace, window, cx)
-    });
-    assert_eq!(
-        cx.editor(|editor, _, cx| {
+        let rename_editor = cx.editor(|editor, _, _| {
             editor
                 .pending_rename()
                 .expect("Rename should still be pending")
                 .editor
-                .read(cx)
-                .text(cx)
-        }),
-        ""
-    );
+                .clone()
+        });
+        rename_editor.update_in(&mut cx.cx.cx, |editor, window, cx| {
+            editor.backspace(&Backspace, window, cx);
+            editor.insert(new_name, window, cx);
+        });
+        assert_eq!(
+            cx.editor(|editor, _, cx| {
+                editor
+                    .pending_rename()
+                    .expect("Rename should still be pending")
+                    .editor
+                    .read(cx)
+                    .text(cx)
+            }),
+            new_name
+        );
 
-    cx.update_editor(|editor, window, cx| {
-        editor
-            .confirm_rename(&ConfirmRename, window, cx)
-            .expect("Confirm rename should consume the action")
-    })
-    .await
-    .expect("Confirm rename failed");
+        cx.update_editor(|editor, window, cx| {
+            editor
+                .confirm_rename(&ConfirmRename, window, cx)
+                .expect("Confirm rename should consume the action")
+        })
+        .await
+        .expect("Confirm rename failed");
 
-    assert_eq!(rename_request_count.load(atomic::Ordering::SeqCst), 0);
-    assert!(cx.editor(|editor, _, _| editor.pending_rename().is_none()));
-    assert_eq!(cx.buffer_text(), "let abc = 1;");
+        assert_eq!(rename_request_count.load(atomic::Ordering::SeqCst), 0);
+        assert!(cx.editor(|editor, _, _| editor.pending_rename().is_none()));
+        assert_eq!(cx.buffer_text(), "let abc = 1;");
+    }
 }
 
 #[gpui::test]
