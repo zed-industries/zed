@@ -9236,6 +9236,117 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_search_in_unopened_non_utf8_files(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let text = "// 你好世界 hello\n// 这是一个中文注释，包含很多汉字，用来帮助编码检测器正确判断文件编码。\n// 编码检测需要足够多的中文内容才能可靠工作。\n";
+
+    let gb2312 = encoding_rs::Encoding::for_label(b"gb2312").unwrap();
+    assert_eq!(gb2312, encoding_rs::GBK);
+    let (gbk_bytes, _, had_errors) = gb2312.encode(text);
+    assert!(!had_errors);
+
+    let korean_text = "// 안녕하세요 세계 hello\n// 이것은 한국어 주석입니다. 인코딩 감지기가 파일 인코딩을 올바르게 판단할 수 있도록 충분히 많은 한글 내용을 담고 있습니다.\n// 인코딩 감지는 충분한 한국어 내용이 있어야 안정적으로 작동합니다.\n";
+    let (euc_kr_bytes, _, had_errors) = encoding_rs::EUC_KR.encode(korean_text);
+    assert!(!had_errors);
+
+    let mut utf16_bytes = vec![0xFF, 0xFE];
+    utf16_bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
+
+    let mut binary_bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    binary_bytes.extend_from_slice(text.as_bytes());
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "utf8.rs": text,
+        }),
+    )
+    .await;
+    fs.insert_file(path!("/dir/gbk.rs"), gbk_bytes.into_owned())
+        .await;
+    fs.insert_file(path!("/dir/euc_kr.rs"), euc_kr_bytes.into_owned())
+        .await;
+    fs.insert_file(path!("/dir/utf16.rs"), utf16_bytes).await;
+    fs.insert_file(path!("/dir/binary.dat"), binary_bytes).await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "世界",
+                false,
+                true,
+                false,
+                PathMatcher::default(),
+                PathMatcher::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            (path!("dir/utf8.rs").to_string(), vec![9..15]),
+            (path!("dir/gbk.rs").to_string(), vec![9..15]),
+            (path!("dir/utf16.rs").to_string(), vec![9..15]),
+        ])
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "HELLO",
+                false,
+                false,
+                false,
+                PathMatcher::default(),
+                PathMatcher::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            (path!("dir/utf8.rs").to_string(), vec![16..21]),
+            (path!("dir/gbk.rs").to_string(), vec![16..21]),
+            (path!("dir/euc_kr.rs").to_string(), vec![26..31]),
+            (path!("dir/utf16.rs").to_string(), vec![16..21]),
+        ])
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "세계",
+                false,
+                true,
+                false,
+                PathMatcher::default(),
+                PathMatcher::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([(path!("dir/euc_kr.rs").to_string(), vec![19..25])])
+    );
+}
+
+#[gpui::test]
 async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -13905,6 +14016,16 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+    let _buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(root_path.join("projects/project1/a"), cx)
+        })
+        .await
+        .unwrap();
     project
         .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;

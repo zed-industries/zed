@@ -1,9 +1,34 @@
 //! Table Cell Rendering
 
-use gpui::{AnyElement, ElementId};
-use ui::{SharedString, Tooltip, div, prelude::*};
+use gpui::{AnyElement, ClipboardItem, ElementId, MouseButton, StatefulInteractiveElement};
+use ui::{Color, Divider, Label, LabelSize, SharedString, Tooltip, div, prelude::*};
 
 use crate::{CsvPreviewView, settings::VerticalAlignment, types::DisplayCellId};
+
+/// Adds a right-click-to-copy handler and a tooltip showing `text` plus `hint`
+/// (e.g. "Right click to copy content") to a `Stateful` element.
+pub(crate) fn with_copy_on_right_click<E: StatefulInteractiveElement>(
+    element: E,
+    text: SharedString,
+    hint: &'static str,
+) -> E {
+    element
+        .on_mouse_down(MouseButton::Right, {
+            let text_to_copy = text.clone();
+            move |_event, _window, cx| {
+                cx.stop_propagation();
+                cx.write_to_clipboard(ClipboardItem::new_string(text_to_copy.to_string()));
+            }
+        })
+        .tooltip(Tooltip::element(move |_window, cx| {
+            v_flex()
+                .gap_1()
+                .child(div().font_buffer(cx).child(text.clone()))
+                .child(Divider::horizontal())
+                .child(Label::new(hint).size(LabelSize::Small).color(Color::Muted))
+                .into_any_element()
+        }))
+}
 
 impl CsvPreviewView {
     /// Create selectable table cell with mouse event handlers.
@@ -26,12 +51,11 @@ fn create_table_cell(
     vertical_alignment: VerticalAlignment,
     cx: &Context<'_, CsvPreviewView>,
 ) -> gpui::Stateful<Div> {
-    div()
+    let cell = div()
         .id(ElementId::NamedInteger(
             format!("csv-display-cell-{}", *display_cell_id.row).into(),
             *display_cell_id.col as u64,
         ))
-        .cursor_pointer()
         .flex()
         .h_full()
         .px_1()
@@ -40,7 +64,7 @@ fn create_table_cell(
             VerticalAlignment::Top => div.items_start(),
             VerticalAlignment::Center => div.items_center(),
         })
-        .font_buffer(cx)
-        .tooltip(Tooltip::text(cell_content.clone()))
+        .font_buffer(cx);
+    with_copy_on_right_click(cell, cell_content.clone(), "Right click to copy content")
         .child(div().child(cell_content))
 }
