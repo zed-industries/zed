@@ -30,10 +30,7 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
-#[cfg(any(
-    feature = "input-latency-histogram",
-    feature = "frame-duration-histogram"
-))]
+#[cfg(feature = "input-latency-histogram")]
 use hdrhistogram::Histogram;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
@@ -128,8 +125,8 @@ struct WindowInvalidatorInner {
 
 /// Per-frame invalidation bookkeeping, drained at draw time and emitted to the
 /// frame profiler. Tracks when the current frame first became dirty and how
-/// many invalidations were coalesced into it. Only populated while
-/// `profiler::frame_trace_enabled()` is set.
+/// many invalidations were coalesced into it. Populated while frame-duration
+/// histograms or frame tracing are enabled.
 #[derive(Default)]
 struct FrameDirtyAccumulator {
     dirty_at: Option<Instant>,
@@ -223,7 +220,7 @@ impl WindowInvalidator {
     }
 
     fn record_frame_dirty(inner: &mut WindowInvalidatorInner) {
-        if profiler::frame_trace_enabled() {
+        if cfg!(feature = "frame-duration-histogram") || profiler::frame_trace_enabled() {
             inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
             inner.frame_dirty.invalidations += 1;
         }
@@ -1319,18 +1316,6 @@ impl InputLatencyTracker {
     }
 }
 
-/// A point-in-time snapshot of the frame-duration histograms for a window,
-/// suitable for external formatting.
-#[cfg(feature = "frame-duration-histogram")]
-#[derive(Clone)]
-pub struct FrameDurationSnapshot {
-    /// Histogram of `Window::draw` durations, in nanoseconds.
-    pub draw_duration_histogram: Histogram<u64>,
-    /// Histogram of intervals between consecutively presented frames while the
-    /// window was animating, in nanoseconds.
-    pub present_interval_histogram: Histogram<u64>,
-}
-
 /// Records how long the window takes to produce frames: the duration of every
 /// draw, and the interval between consecutive presents while the window is
 /// animating (a next-frame callback was already scheduled when the previous
@@ -1342,11 +1327,7 @@ pub struct FrameDurationSnapshot {
 /// indistinguishable from missed frames.
 #[cfg(feature = "frame-duration-histogram")]
 struct FrameDurationTracker {
-    /// Histogram of `Window::draw` durations, in nanoseconds.
-    draw_duration_histogram: Histogram<u64>,
-    /// Histogram of intervals between consecutively presented frames while the
-    /// window was animating, in nanoseconds.
-    present_interval_histogram: Histogram<u64>,
+    snapshot: profiler::FrameDurationSnapshot,
     /// When the window last presented a newly drawn frame.
     last_present_at: Option<Instant>,
     /// Whether the window was animating (and active) when the last frame was
@@ -1362,20 +1343,15 @@ struct FrameDurationTracker {
 impl FrameDurationTracker {
     fn new() -> Result<Self> {
         Ok(Self {
-            draw_duration_histogram: Histogram::new(3)
-                .map_err(|e| anyhow!("Failed to create draw duration histogram: {e}"))?,
-            present_interval_histogram: Histogram::new(3)
-                .map_err(|e| anyhow!("Failed to create present interval histogram: {e}"))?,
+            snapshot: profiler::FrameDurationSnapshot::new()?,
             last_present_at: None,
             animating_at_last_present: false,
             drew_since_last_present: false,
         })
     }
 
-    fn record_draw(&mut self, duration: Duration) {
-        self.draw_duration_histogram
-            .record(duration.as_nanos() as u64)
-            .ok();
+    fn record_frame_timing(&mut self, timing: &profiler::FrameTiming) {
+        self.snapshot.record_frame_timing(timing);
         self.drew_since_last_present = true;
     }
 
@@ -1397,18 +1373,15 @@ impl FrameDurationTracker {
             && window_active
             && let Some(last_present_at) = self.last_present_at
         {
-            let interval_nanos = presented_at.duration_since(last_present_at).as_nanos() as u64;
-            self.present_interval_histogram.record(interval_nanos).ok();
+            self.snapshot
+                .record_present_interval(presented_at.duration_since(last_present_at));
         }
         self.last_present_at = Some(presented_at);
         self.animating_at_last_present = next_frame_scheduled && window_active;
     }
 
-    fn snapshot(&self) -> FrameDurationSnapshot {
-        FrameDurationSnapshot {
-            draw_duration_histogram: self.draw_duration_histogram.clone(),
-            present_interval_histogram: self.present_interval_histogram.clone(),
-        }
+    fn snapshot(&self) -> profiler::FrameDurationSnapshot {
+        self.snapshot.clone()
     }
 }
 
@@ -3090,16 +3063,17 @@ impl Window {
 
         if let Some(draw_start) = draw_started_at {
             let draw_end = Instant::now();
-            #[cfg(feature = "frame-duration-histogram")]
-            self.frame_duration_tracker
-                .record_draw(draw_end.duration_since(draw_start));
-            profiler::record_frame_timing(profiler::FrameTiming {
+            let frame_timing = profiler::FrameTiming {
                 window_id: self.handle.window_id(),
                 dirty_at: frame_dirty.dirty_at,
                 invalidations: frame_dirty.invalidations,
                 draw_start,
                 draw_end,
-            });
+            };
+            #[cfg(feature = "frame-duration-histogram")]
+            self.frame_duration_tracker
+                .record_frame_timing(&frame_timing);
+            profiler::record_frame_timing(frame_timing);
         }
 
         // Exit the scope to obtain the arena-clear token this draw owes; the
@@ -3167,7 +3141,7 @@ impl Window {
 
     /// Returns a snapshot of the current frame-duration histograms.
     #[cfg(feature = "frame-duration-histogram")]
-    pub fn frame_duration_snapshot(&self) -> FrameDurationSnapshot {
+    pub fn frame_duration_snapshot(&self) -> profiler::FrameDurationSnapshot {
         self.frame_duration_tracker.snapshot()
     }
 
@@ -7578,7 +7552,7 @@ mod tests {
 
     #[cfg(feature = "frame-duration-histogram")]
     mod frame_duration_tracker {
-        use crate::window::FrameDurationTracker;
+        use crate::{WindowId, profiler::FrameTiming, window::FrameDurationTracker};
         use scheduler::Instant;
         use std::time::Duration;
 
@@ -7590,7 +7564,7 @@ mod tests {
             window_active: bool,
             next_frame_scheduled: bool,
         ) {
-            tracker.record_draw(Duration::from_millis(2));
+            record_draw(tracker, Duration::from_millis(2));
             tracker.record_present(presented_at, window_active, next_frame_scheduled);
         }
 
@@ -7601,20 +7575,20 @@ mod tests {
 
             // The first frame has nothing to measure an interval against.
             draw_and_present(&mut tracker, start, true, true);
-            assert_eq!(tracker.present_interval_histogram.len(), 0);
+            assert_eq!(tracker.snapshot.present_interval_histogram.len(), 0);
 
             draw_and_present(&mut tracker, start + FRAME, true, true);
-            assert_eq!(tracker.present_interval_histogram.len(), 1);
+            assert_eq!(tracker.snapshot.present_interval_histogram.len(), 1);
 
             // The animation ends here: no next frame was scheduled when this
             // frame was presented.
             draw_and_present(&mut tracker, start + FRAME * 2, true, false);
-            assert_eq!(tracker.present_interval_histogram.len(), 2);
+            assert_eq!(tracker.snapshot.present_interval_histogram.len(), 2);
 
             // The window sat idle before an input-driven frame; the gap is not
             // an animation interval.
             draw_and_present(&mut tracker, start + FRAME * 100, true, true);
-            assert_eq!(tracker.present_interval_histogram.len(), 2);
+            assert_eq!(tracker.snapshot.present_interval_histogram.len(), 2);
         }
 
         #[test]
@@ -7625,7 +7599,7 @@ mod tests {
             draw_and_present(&mut tracker, start, true, true);
             draw_and_present(&mut tracker, start + FRAME * 5, true, true);
 
-            let recorded = tracker.present_interval_histogram.max();
+            let recorded = tracker.snapshot.present_interval_histogram.max();
             assert!(recorded >= (FRAME * 4).as_nanos() as u64);
         }
 
@@ -7641,9 +7615,12 @@ mod tests {
             tracker.record_present(start + FRAME / 2, true, true);
             draw_and_present(&mut tracker, start + FRAME, true, true);
 
-            assert_eq!(tracker.present_interval_histogram.len(), 1);
+            assert_eq!(tracker.snapshot.present_interval_histogram.len(), 1);
             // The interval spans from the drawn frame, not the re-present.
-            assert!(tracker.present_interval_histogram.max() >= (FRAME * 3 / 4).as_nanos() as u64);
+            assert!(
+                tracker.snapshot.present_interval_histogram.max()
+                    >= (FRAME * 3 / 4).as_nanos() as u64
+            );
         }
 
         #[test]
@@ -7653,27 +7630,57 @@ mod tests {
 
             draw_and_present(&mut tracker, start, false, true);
             draw_and_present(&mut tracker, start + FRAME, false, true);
-            assert_eq!(tracker.present_interval_histogram.len(), 0);
+            assert_eq!(tracker.snapshot.present_interval_histogram.len(), 0);
 
             // The first interval after reactivation began while the window was
             // inactive (and possibly throttled), so it is also skipped.
             draw_and_present(&mut tracker, start + FRAME * 2, true, true);
-            assert_eq!(tracker.present_interval_histogram.len(), 0);
+            assert_eq!(tracker.snapshot.present_interval_histogram.len(), 0);
 
             draw_and_present(&mut tracker, start + FRAME * 3, true, true);
-            assert_eq!(tracker.present_interval_histogram.len(), 1);
+            assert_eq!(tracker.snapshot.present_interval_histogram.len(), 1);
         }
 
         #[test]
         fn records_every_draw_duration() {
             let mut tracker = FrameDurationTracker::new().unwrap();
 
-            tracker.record_draw(Duration::from_millis(2));
-            tracker.record_draw(Duration::from_millis(40));
+            record_draw(&mut tracker, Duration::from_millis(2));
+            record_draw(&mut tracker, Duration::from_millis(40));
 
             let snapshot = tracker.snapshot();
             assert_eq!(snapshot.draw_duration_histogram.len(), 2);
             assert!(snapshot.draw_duration_histogram.max() >= 39_000_000);
+        }
+
+        #[test]
+        fn records_profiler_frame_details() {
+            let mut tracker = FrameDurationTracker::new().unwrap();
+            let draw_start = Instant::now();
+            let timing = FrameTiming {
+                window_id: WindowId::from(0),
+                dirty_at: Some(draw_start - Duration::from_millis(3)),
+                invalidations: 4,
+                draw_start,
+                draw_end: draw_start + Duration::from_millis(2),
+            };
+
+            tracker.record_frame_timing(&timing);
+
+            assert_eq!(tracker.snapshot.draw_duration_histogram.len(), 1);
+            assert_eq!(tracker.snapshot.dirty_to_draw_duration_histogram.len(), 1);
+            assert_eq!(tracker.snapshot.invalidations_per_frame_histogram.max(), 4);
+        }
+
+        fn record_draw(tracker: &mut FrameDurationTracker, duration: Duration) {
+            let draw_start = Instant::now();
+            tracker.record_frame_timing(&FrameTiming {
+                window_id: WindowId::from(0),
+                dirty_at: None,
+                invalidations: 0,
+                draw_start,
+                draw_end: draw_start + duration,
+            });
         }
     }
 }
