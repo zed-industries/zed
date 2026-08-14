@@ -20,7 +20,7 @@ use core_foundation::{
 use futures::channel::oneshot;
 use gpui::{
     Action, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem, CursorStyle,
-    DummyKeyboardMapper, ForegroundExecutor, GestureTuning, Keymap, Menu, MenuItem,
+    DummyKeyboardMapper, ForegroundExecutor, GestureKinds, GestureTuning, Keymap, Menu, MenuItem,
     PathPromptOptions, Platform, PlatformDisplay, PlatformGestures, PlatformKeyboardLayout,
     PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, Task, ThermalState,
     WindowAppearance, WindowParams,
@@ -44,6 +44,13 @@ impl PlatformGestures for IosGestures {
         GestureTuning {
             momentum_decay_per_ms: 0.99,
             ..GestureTuning::default()
+        }
+    }
+
+    fn native_recognizers(&self) -> GestureKinds {
+        GestureKinds {
+            pan: true,
+            ..GestureKinds::NONE
         }
     }
 }

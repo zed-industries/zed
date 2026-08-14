@@ -8,9 +8,9 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, EditMenuActions, Effect,
+    Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
+    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
     KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
     MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
@@ -1393,6 +1393,13 @@ impl Window {
             .and_then(|titlebar| titlebar.title.clone());
 
         let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
+        let platform_gestures = cx.platform.gestures();
+        let gesture_tuning = platform_gestures
+            .as_ref()
+            .map_or_else(GestureTuning::default, |gestures| gestures.tuning());
+        let native_recognizers = platform_gestures
+            .map(|gestures| gestures.native_recognizers())
+            .unwrap_or_default();
         let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
@@ -1905,11 +1912,8 @@ impl Window {
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
             last_input_modality: InputModality::Mouse,
-            touch_gestures: TouchGestureRecognizer::new(
-                cx.platform
-                    .gestures()
-                    .map_or_else(GestureTuning::default, |gestures| gestures.tuning()),
-            ),
+            touch_gestures: TouchGestureRecognizer::new(gesture_tuning)
+                .with_native_recognizers(native_recognizers),
             touch_prediction_enabled: true,
             long_press_timer: None,
             long_press_capture: None,
@@ -2579,6 +2583,13 @@ impl Window {
     /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
     pub fn show_window_menu(&self, position: Point<Pixels>) {
         self.platform_window.show_window_menu(position)
+    }
+
+    /// Presents the platform-native text editing menu when supported.
+    ///
+    /// Returns whether the platform accepted the request.
+    pub fn show_edit_menu(&self, position: Point<Pixels>, actions: EditMenuActions) -> bool {
+        self.platform_window.show_edit_menu(position, actions)
     }
 
     /// Handle window movement for Linux and macOS.
