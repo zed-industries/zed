@@ -270,8 +270,9 @@ impl RenderOnce for ThreadItem {
         };
 
         let hover_bg = apparent_bg.blend(color.ghost_element_hover);
+        let active_bg = apparent_bg.blend(color.ghost_element_active);
 
-        let gradient_overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
+        let gradient_overlay = GradientFade::new(base_bg, hover_bg, active_bg)
             .width(px(64.0))
             .right(px(-10.0))
             .gradient_stop(0.7)
@@ -437,6 +438,7 @@ impl RenderOnce for ThreadItem {
             .when(self.focused, |s| s.border_color(color.border_focused))
             .when(self.rounded, |s| s.rounded_sm())
             .hover(|s| s.bg(color.ghost_element_hover))
+            .active(|s| s.bg(color.ghost_element_active))
             .on_hover(self.on_hover)
             .child(
                 h_flex()
