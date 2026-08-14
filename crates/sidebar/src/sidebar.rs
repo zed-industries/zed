@@ -2347,7 +2347,7 @@ impl Sidebar {
             })
             .when(!has_filter, |this| {
                 this.hover(|s| s.bg(hover_solid))
-                    .active(|s| s.bg(active_solid))
+                    .group_active(&group_name, |s| s.bg(active_solid))
             })
             .child(
                 h_flex()

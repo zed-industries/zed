@@ -467,7 +467,7 @@ impl RenderOnce for ThreadItem {
                                     .pr_1p5()
                                     .when(opaque_window, |this| {
                                         this.child(
-                                            GradientFade::new(base_bg, hover_bg, hover_bg)
+                                            GradientFade::new(base_bg, hover_bg, active_bg)
                                                 .width(px(120.0))
                                                 .right(px(8.))
                                                 .gradient_stop(0.90)
