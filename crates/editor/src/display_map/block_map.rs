@@ -4853,6 +4853,95 @@ mod tests {
         }
     }
 
+    /// Deterministic demonstration of the root cause behind ZED-7G6's crash
+    /// family: multibuffer anchor comparison is not stable across diff base
+    /// text changes, which unsorts the fold map's persistent fold tree.
+    ///
+    /// Folds inside an expanded deleted hunk anchor at the same buffer
+    /// position and are ordered only by their `diff_base_anchor`s into the
+    /// diff's base text. When the base text changes and deletes the region
+    /// one anchor points into, that anchor becomes invalid, and comparing a
+    /// valid base anchor against an invalid one falls back to the text
+    /// anchor's bias. The comparator's answer is consistent with where the
+    /// anchors resolve *now*, but opposite to the answer it gave when the
+    /// folds were inserted, so the persistent tree is unsorted without
+    /// having been touched. Sync then walks it with forward-only cursors,
+    /// emitting edits that misdescribe the change, and the block map keeps
+    /// stale headers for rows that did change.
+    ///
+    /// This test fails until anchor comparison is made stable across diff
+    /// base changes, or anchor-sorted structures are re-sorted or
+    /// re-anchored when the base text changes.
+    #[gpui::test]
+    async fn test_folds_stay_sorted_when_diff_base_text_replaced(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "bbb\nccc\nddd\n";
+        let base_text = "DEL1\nDEL2\nbbb\nccc\nddd\n";
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let buffer_text_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        let diff =
+            cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer_text_snapshot, cx));
+
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+        multibuffer.update(cx, |multibuffer, cx| {
+            let max_point = buffer.read(cx).max_point();
+            multibuffer.set_excerpts_for_buffer(buffer.clone(), [Point::zero()..max_point], 0, cx);
+            multibuffer.add_diff(diff.clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let subscription = multibuffer.update(cx, |multibuffer, _| multibuffer.subscribe());
+        let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        assert_eq!(
+            snapshot.text(),
+            "DEL1\nDEL2\nbbb\nccc\nddd\n",
+            "expected the deleted hunk's rows to be materialized at the top"
+        );
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(snapshot.clone());
+        let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
+
+        // Two folds inside the deleted hunk share a buffer position and are
+        // ordered only by their anchors into the diff's base text: a narrow
+        // fold within "DEL1", then a wider fold from "DEL2" into the
+        // buffer's own content.
+        let (mut writer, ..) = fold_map.write(inlay_snapshot, Vec::new());
+        let (fold_snapshot, _) = writer.fold(vec![
+            (Point::new(0, 1)..Point::new(1, 0), FoldPlaceholder::test()),
+            (Point::new(1, 1)..Point::new(2, 2), FoldPlaceholder::test()),
+        ]);
+        drop(writer);
+        assert_eq!(
+            fold_snapshot.fold_count(),
+            2,
+            "both folds should anchor inside the expanded deleted hunk"
+        );
+
+        // Keep "DEL1" (the first fold's base anchors stay valid) but delete
+        // "DEL2" (the second fold's start anchor becomes invalid). Comparing
+        // a valid base anchor against an invalidated one falls back to the
+        // text anchor's bias, which reverses the two folds' relative order.
+        let new_base_text = "DEL1\nbbb\nccc\nddd\n";
+        diff.update(cx, |diff, cx| {
+            diff.set_base_text(Some(new_base_text.into()), buffer_text_snapshot.clone(), cx)
+        })
+        .await;
+        cx.run_until_parked();
+
+        let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        let edits = subscription.consume().into_inner();
+        let (inlay_snapshot, inlay_edits) = inlay_map.sync(snapshot, edits);
+        // `read` checks that the fold tree is still sorted. An unsorted tree
+        // makes subsequent syncs emit edits that misdescribe the actual
+        // changes, which is what leaves block map headers stale in
+        // production.
+        fold_map.read(inlay_snapshot, inlay_edits);
+    }
+
     /// Regression test for ZED-7G6 ("buffer snapshot not found for excerpt
     /// boundary"). Removing a buffer whose excerpts hold no text produces a
     /// zero-width edit, which `Patch::push` discards, so subscribers observe no
@@ -4882,7 +4971,7 @@ mod tests {
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (wrap_map, wrap_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, test_font(), px(14.0), None, cx));
-        let mut block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
+        let block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
 
         let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default(), None);
         assert!(

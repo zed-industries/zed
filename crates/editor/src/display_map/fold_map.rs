@@ -438,8 +438,20 @@ impl FoldMap {
             let mut folds = self.snapshot.folds.iter().peekable();
             while let Some(fold) = folds.next() {
                 if let Some(next_fold) = folds.peek() {
-                    let comparison = fold.range.cmp(&next_fold.range, self.snapshot.buffer());
-                    assert!(comparison.is_le());
+                    let buffer = self.snapshot.buffer();
+                    let comparison = fold.range.cmp(&next_fold.range, buffer);
+                    assert!(
+                        comparison.is_le(),
+                        "folds are out of order:\n\
+                         fold: {:?}\n  resolves to {:?}..{:?}\n\
+                         next_fold: {:?}\n  resolves to {:?}..{:?}",
+                        fold.range,
+                        fold.range.start.to_offset(buffer),
+                        fold.range.end.to_offset(buffer),
+                        next_fold.range,
+                        next_fold.range.start.to_offset(buffer),
+                        next_fold.range.end.to_offset(buffer),
+                    );
                 }
             }
         }
