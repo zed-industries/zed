@@ -4207,11 +4207,16 @@ pub mod tests {
 
         let rhs_multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer.set_show_deleted_hunks(false, cx);
             multibuffer.set_use_extended_diff_range(true, cx);
             multibuffer
         });
-        let lhs_multibuffer = cx.new(|_| MultiBuffer::new(language::Capability::ReadWrite));
+        let lhs_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
 
         /// Mirrors `SplittableEditor::sync_lhs_for_paths` for one file: the
         /// right side excerpts the main buffer, and the left side excerpts the
