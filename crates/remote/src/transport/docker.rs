@@ -43,6 +43,19 @@ pub enum DockerHost {
     Mock(crate::transport::mock::MockConnectionOptions),
 }
 
+impl DockerHost {
+    /// How Zed would connect to this host on its own, or `None` when the
+    /// daemon runs on the client machine.
+    pub fn connection_options(&self) -> Option<RemoteConnectionOptions> {
+        match self {
+            DockerHost::Local => None,
+            DockerHost::Ssh(options) => Some(RemoteConnectionOptions::Ssh(options.clone())),
+            #[cfg(any(test, feature = "test-support"))]
+            DockerHost::Mock(options) => Some(RemoteConnectionOptions::Mock(options.clone())),
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct DockerConnectionOptions {
     pub name: String,

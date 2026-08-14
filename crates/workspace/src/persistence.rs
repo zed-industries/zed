@@ -1721,6 +1721,7 @@ impl WorkspaceDb {
                 container_id: identity_container_id,
                 name: identity_name,
                 remote_user,
+                host: _,
             } => {
                 kind = RemoteConnectionKind::Docker;
                 container_id = Some(identity_container_id);

@@ -1249,11 +1249,8 @@ impl ConnectionPool {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Option<Arc<dyn RemoteConnection>>> {
-        let host_options = match host {
-            DockerHost::Local => return Ok(None),
-            DockerHost::Ssh(options) => RemoteConnectionOptions::Ssh(options.clone()),
-            #[cfg(any(test, feature = "test-support"))]
-            DockerHost::Mock(options) => RemoteConnectionOptions::Mock(options.clone()),
+        let Some(host_options) = host.connection_options() else {
+            return Ok(None);
         };
 
         let connection = cx
@@ -1390,10 +1387,14 @@ impl RemoteConnectionOptions {
                 .unwrap_or_else(|| opts.host.to_string()),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
             RemoteConnectionOptions::Docker(opts) => {
-                if opts.use_podman {
+                let name = if opts.use_podman {
                     format!("[podman] {}", opts.name)
                 } else {
                     opts.name.clone()
+                };
+                match opts.host.connection_options() {
+                    Some(host) => format!("{name} on {}", host.display_name()),
+                    None => name,
                 }
             }
             #[cfg(any(test, feature = "test-support"))]
@@ -1402,18 +1403,19 @@ impl RemoteConnectionOptions {
     }
 
     /// A stable identifier for the kind of remote connection, suitable for
-    /// telemetry (e.g. `"ssh"`, `"wsl"`, `"docker"`, `"podman"`).
+    /// telemetry (e.g. `"ssh"`, `"wsl"`, `"docker"`, `"podman"`). Containers
+    /// whose daemon lives on another machine are reported separately, so a
+    /// dashboard can tell the two-hop case apart.
     pub fn connection_type(&self) -> &'static str {
         match self {
             RemoteConnectionOptions::Ssh(_) => "ssh",
             RemoteConnectionOptions::Wsl(_) => "wsl",
-            RemoteConnectionOptions::Docker(opts) => {
-                if opts.use_podman {
-                    "podman"
-                } else {
-                    "docker"
-                }
-            }
+            RemoteConnectionOptions::Docker(opts) => match (opts.use_podman, &opts.host) {
+                (false, DockerHost::Ssh(_)) => "docker-ssh",
+                (true, DockerHost::Ssh(_)) => "podman-ssh",
+                (false, _) => "docker",
+                (true, _) => "podman",
+            },
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(_) => "mock",
         }
@@ -1425,6 +1427,58 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use rpc::{ErrorCodeExt, proto::ErrorCode};
+
+    #[test]
+    fn a_containers_host_shows_up_in_its_name_and_telemetry() {
+        let container = |use_podman: bool, host: DockerHost| {
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                name: "zed-dev".to_string(),
+                container_id: "container-123".to_string(),
+                remote_user: "anth".to_string(),
+                upload_binary_over_docker_exec: false,
+                use_podman,
+                remote_env: Default::default(),
+                host,
+            })
+        };
+        let ssh_host = |nickname: Option<&str>| {
+            DockerHost::Ssh(SshConnectionOptions {
+                host: "example.com".into(),
+                nickname: nickname.map(str::to_string),
+                ..Default::default()
+            })
+        };
+
+        assert_eq!(
+            container(false, DockerHost::Local).display_name(),
+            "zed-dev"
+        );
+        assert_eq!(
+            container(false, ssh_host(None)).display_name(),
+            "zed-dev on example.com"
+        );
+        assert_eq!(
+            container(true, ssh_host(Some("work"))).display_name(),
+            "[podman] zed-dev on work"
+        );
+
+        assert_eq!(
+            container(false, DockerHost::Local).connection_type(),
+            "docker"
+        );
+        assert_eq!(
+            container(true, DockerHost::Local).connection_type(),
+            "podman"
+        );
+        assert_eq!(
+            container(false, ssh_host(None)).connection_type(),
+            "docker-ssh"
+        );
+        assert_eq!(
+            container(true, ssh_host(None)).connection_type(),
+            "podman-ssh"
+        );
+    }
 
     #[gpui::test]
     async fn docker_host_is_pooled_and_rebuilt_after_it_dies(
