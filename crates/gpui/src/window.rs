@@ -2998,6 +2998,11 @@ impl Window {
         self.last_input_modality == InputModality::Keyboard
     }
 
+    /// Returns whether the last input event came from a touch screen.
+    pub fn last_input_was_touch(&self) -> bool {
+        self.last_input_modality == InputModality::Touch
+    }
+
     /// The current state of the keyboard's capslock
     pub fn capslock(&self) -> Capslock {
         self.capslock

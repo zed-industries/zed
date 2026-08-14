@@ -393,6 +393,24 @@ impl Interactivity {
             }));
     }
 
+    /// Bind the given callback to scroll wheel events during the capture phase.
+    /// The imperative API equivalent to [`InteractiveElement::capture_scroll_wheel`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn capture_scroll_wheel(
+        &mut self,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.scroll_wheel_listeners
+            .push(Box::new(move |event, phase, _hitbox, window, cx| {
+                if phase == DispatchPhase::Capture {
+                    (listener)(event, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            }));
+    }
+
     /// Bind the given callback to pinch gesture events during the bubble phase.
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -1037,6 +1055,18 @@ pub trait InteractiveElement: Sized {
         listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_scroll_wheel(listener);
+        self
+    }
+
+    /// Bind the given callback to scroll wheel events during the capture phase.
+    /// The fluent API equivalent to [`Interactivity::capture_scroll_wheel`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn capture_scroll_wheel(
+        mut self,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().capture_scroll_wheel(listener);
         self
     }
 
@@ -4306,7 +4336,7 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, InputEvent, Keystroke, MouseMoveEvent,
-        TestAppContext, canvas, util::FluentBuilder as _,
+        TestAppContext, TouchEvent, TouchId, TouchPhase, canvas, util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 
@@ -4832,20 +4862,27 @@ mod tests {
         assert!(active_tooltip.borrow().is_none());
     }
 
-    struct MouseDownOutOwner {
+    struct PointerOutOwner {
         mouse_down_out_count: Rc<RefCell<usize>>,
+        touch_click_out_count: Rc<RefCell<usize>>,
     }
 
-    impl Render for MouseDownOutOwner {
+    impl Render for PointerOutOwner {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             let mouse_down_out_count = self.mouse_down_out_count.clone();
-            div()
-                .size_full()
-                .child(div().id("target").w(px(50.)).h(px(50.)).on_mouse_down_out(
-                    move |_, _, _| {
+            let touch_click_out_count = self.touch_click_out_count.clone();
+            div().size_full().child(
+                div()
+                    .id("target")
+                    .w(px(50.))
+                    .h(px(50.))
+                    .on_mouse_down_out(move |_, _, _| {
                         *mouse_down_out_count.borrow_mut() += 1;
-                    },
-                ))
+                    })
+                    .on_touch_click_out(move |_, _, _| {
+                        *touch_click_out_count.borrow_mut() += 1;
+                    }),
+            )
         }
     }
 
@@ -4853,10 +4890,13 @@ mod tests {
     fn mouse_down_out_is_suppressed_while_window_prompt_is_active() {
         let mut test_app = TestAppContext::single();
         let mouse_down_out_count = Rc::new(RefCell::new(0));
+        let touch_click_out_count = Rc::new(RefCell::new(0));
         let window = test_app.add_window({
             let mouse_down_out_count = mouse_down_out_count.clone();
-            move |_, _| MouseDownOutOwner {
+            let touch_click_out_count = touch_click_out_count.clone();
+            move |_, _| PointerOutOwner {
                 mouse_down_out_count,
+                touch_click_out_count,
             }
         });
         let any_window: AnyWindowHandle = window.into();
@@ -4910,6 +4950,49 @@ mod tests {
             *mouse_down_out_count.borrow(),
             1,
             "mouse down over an active prompt should not fire mouse-down-out listeners"
+        );
+    }
+
+    #[test]
+    fn touch_click_out_fires_outside_the_element() {
+        let mut test_app = TestAppContext::single();
+        let mouse_down_out_count = Rc::new(RefCell::new(0));
+        let touch_click_out_count = Rc::new(RefCell::new(0));
+        let window = test_app.add_window({
+            let mouse_down_out_count = mouse_down_out_count.clone();
+            let touch_click_out_count = touch_click_out_count.clone();
+            move |_, _| PointerOutOwner {
+                mouse_down_out_count,
+                touch_click_out_count,
+            }
+        });
+        let any_window: AnyWindowHandle = window.into();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear(cx);
+                let started = TouchEvent {
+                    id: TouchId(1),
+                    phase: TouchPhase::Started,
+                    position: point(px(75.), px(75.)),
+                    force: None,
+                };
+                window.dispatch_event(started.clone().to_platform_input(), cx);
+                window.dispatch_event(
+                    TouchEvent {
+                        phase: TouchPhase::Ended,
+                        ..started
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        assert_eq!(
+            *touch_click_out_count.borrow(),
+            1,
+            "touch click outside the element should fire touch-click-out listeners"
         );
     }
 
