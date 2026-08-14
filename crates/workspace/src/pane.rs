@@ -282,6 +282,8 @@ actions!(
     [
         /// Activates the last item in the pane.
         ActivateLastItem,
+        /// Activates the most recently active item in the pane.
+        ToggleLastActiveItem,
         /// Switches to the alternate file.
         AlternateFile,
         /// Navigates back in history.
@@ -1595,6 +1597,24 @@ impl Pane {
     ) {
         let index = self.items.len().saturating_sub(1);
         self.activate_item(index, true, true, window, cx);
+    }
+
+    pub fn toggle_last_active_item(
+        &mut self,
+        _: &ToggleLastActiveItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let active_item_id = self.active_item().map(|item| item.item_id());
+        let target_item_index = self
+            .activation_history
+            .iter()
+            .rev()
+            .filter(|entry| Some(entry.entity_id) != active_item_id)
+            .find_map(|entry| self.index_for_item_id(entry.entity_id));
+        if let Some(target_item_index) = target_item_index {
+            self.activate_item(target_item_index, true, true, window, cx);
+        }
     }
 
     pub fn close_active_item(
@@ -4424,6 +4444,7 @@ impl Render for Pane {
             )
             .on_action(cx.listener(Self::alternate_file))
             .on_action(cx.listener(Self::activate_last_item))
+            .on_action(cx.listener(Self::toggle_last_active_item))
             .on_action(cx.listener(Self::activate_previous_item))
             .on_action(cx.listener(Self::activate_next_item))
             .on_action(cx.listener(Self::swap_item_left))
@@ -8936,6 +8957,105 @@ mod tests {
             pane.activate_next_item(&ActivateNextItem { wrap_around: false }, window, cx);
         });
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_toggle_last_active_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        assert_item_labels(&pane, ["A*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_last_active_item(&ToggleLastActiveItem, window, cx)
+        });
+        assert_item_labels(&pane, ["A*"], cx);
+
+        add_labeled_item(&pane, "B", false, cx);
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_last_active_item(&ToggleLastActiveItem, window, cx)
+        });
+        assert_item_labels(&pane, ["A*", "B"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_last_active_item(&ToggleLastActiveItem, window, cx)
+        });
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_last_active_item(&ToggleLastActiveItem, window, cx)
+        });
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_toggle_last_active_item_after_closing_items(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(1, false, false, window, cx)
+        });
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(2, false, false, window, cx)
+        });
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(1, false, false, window, cx)
+        });
+        assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_item_by_id(item_a.entity_id(), SaveIntent::Skip, window, cx)
+        })
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["B*", "C", "D"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_last_active_item(&ToggleLastActiveItem, window, cx)
+        });
+        assert_item_labels(&pane, ["B", "C*", "D"], cx);
+
+        // When the previously active item is closed, toggling falls back to the
+        // most recently activated item that is still open.
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["B*", "D"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_last_active_item(&ToggleLastActiveItem, window, cx)
+        });
+        assert_item_labels(&pane, ["B", "D*"], cx);
     }
 
     fn init_test(cx: &mut TestAppContext) {
