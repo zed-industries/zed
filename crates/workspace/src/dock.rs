@@ -1004,7 +1004,7 @@ impl Dock {
         cx.notify();
     }
 
-    pub fn resize_active_panel(
+    fn resize_active_panel(
         &mut self,
         size: Option<Pixels>,
         flex: Option<f32>,
@@ -1042,22 +1042,15 @@ impl Dock {
         }
     }
 
-    pub fn reset_active_panel_size(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn reset_panel_sizes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.should_resize_all_panels(cx) {
-            let Some(active_entry) = self.active_panel_entry() else {
-                return;
-            };
-            let size = (!panel_uses_flexible_width(
-                self.position,
-                active_entry.panel.as_ref(),
-                window,
-                cx,
-            ))
-            .then(|| active_entry.panel.default_size(window, cx));
-            self.resize_all_panels(size, None, window, cx);
-            return;
+            self.reset_all_panel_sizes(window, cx);
+        } else {
+            self.reset_active_panel_size(window, cx);
         }
+    }
 
+    fn reset_active_panel_size(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(entry) = self.active_panel_entry_mut() else {
             return;
         };
@@ -1074,6 +1067,16 @@ impl Dock {
             }
         });
         cx.notify();
+    }
+
+    fn reset_all_panel_sizes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_entry) = self.active_panel_entry() else {
+            return;
+        };
+        let size =
+            (!panel_uses_flexible_width(self.position, active_entry.panel.as_ref(), window, cx))
+                .then(|| active_entry.panel.default_size(window, cx));
+        self.resize_all_panels(size, None, window, cx);
     }
 
     fn should_resize_all_panels(&self, cx: &App) -> bool {
@@ -1209,7 +1212,7 @@ impl Render for Dock {
                         MouseButton::Left,
                         cx.listener(|dock, e: &MouseUpEvent, window, cx| {
                             if e.click_count == 2 {
-                                dock.reset_active_panel_size(window, cx);
+                                dock.reset_panel_sizes(window, cx);
                                 dock.workspace
                                     .update(cx, |workspace, cx| {
                                         workspace.serialize_workspace(window, cx);

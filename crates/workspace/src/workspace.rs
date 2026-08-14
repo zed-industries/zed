@@ -7693,13 +7693,10 @@ impl Workspace {
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ResetActiveDockSize, window, cx| {
-                    for dock in workspace.all_docks() {
-                        if dock.focus_handle(cx).contains_focused(window, cx) {
-                            dock.update(cx, |dock, cx| {
-                                dock.reset_active_panel_size(window, cx);
-                            });
-                            return;
-                        }
+                    if let Some(dock) = workspace.active_dock(window, cx).cloned() {
+                        dock.update(cx, |dock, cx| {
+                            dock.reset_panel_sizes(window, cx);
+                        });
                     }
                 },
             ))
@@ -7708,7 +7705,7 @@ impl Workspace {
                     for dock in workspace.all_docks() {
                         if dock.read(cx).visible_panel().is_some() {
                             dock.update(cx, |dock, cx| {
-                                dock.reset_active_panel_size(window, cx);
+                                dock.reset_panel_sizes(window, cx);
                             });
                         }
                     }
@@ -14689,7 +14686,7 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.resize_left_dock(px(350.), window, cx);
             workspace.left_dock().update(cx, |dock, cx| {
-                dock.reset_active_panel_size(window, cx);
+                dock.reset_panel_sizes(window, cx);
             });
             let dock = workspace.left_dock().read(cx);
             assert_eq!(
@@ -14719,7 +14716,7 @@ mod tests {
             });
             workspace.resize_left_dock(px(400.), window, cx);
             workspace.left_dock().update(cx, |dock, cx| {
-                dock.reset_active_panel_size(window, cx);
+                dock.reset_panel_sizes(window, cx);
             });
 
             let dock = workspace.left_dock().read(cx);
