@@ -8421,7 +8421,7 @@ impl Workspace {
 
         let flex_grow = self.dock_flex_for_size(DockPosition::Left, size, window, cx);
         self.left_dock.update(cx, |left_dock, cx| {
-            left_dock.resize_panels(Some(size), flex_grow, window, cx);
+            left_dock.resize_panel_sizes(Some(size), flex_grow, window, cx);
         });
     }
 
@@ -8438,14 +8438,14 @@ impl Workspace {
         });
         let flex_grow = self.dock_flex_for_size(DockPosition::Right, size, window, cx);
         self.right_dock.update(cx, |right_dock, cx| {
-            right_dock.resize_panels(Some(size), flex_grow, window, cx);
+            right_dock.resize_panel_sizes(Some(size), flex_grow, window, cx);
         });
     }
 
     fn resize_bottom_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
         let size = new_size.min(self.bounds.bottom() - RESIZE_HANDLE_SIZE - self.bounds.top());
         self.bottom_dock.update(cx, |bottom_dock, cx| {
-            bottom_dock.resize_panels(Some(size), None, window, cx);
+            bottom_dock.resize_panel_sizes(Some(size), None, window, cx);
         });
     }
 

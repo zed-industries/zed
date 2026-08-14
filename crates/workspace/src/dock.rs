@@ -1028,7 +1028,7 @@ impl Dock {
         }
     }
 
-    pub fn resize_panels(
+    pub fn resize_panel_sizes(
         &mut self,
         size: Option<Pixels>,
         flex: Option<f32>,
