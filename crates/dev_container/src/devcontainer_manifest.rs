@@ -956,6 +956,45 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         })
     }
 
+    /// Writes a generated compose override and returns the path the engine
+    /// will see.
+    ///
+    /// The override is an input to a `docker compose` run on the host, so it
+    /// is written into the staged build context rather than left in this
+    /// machine's temp directory, where a remote engine would find nothing.
+    async fn write_compose_override(
+        &self,
+        file_name: &str,
+        config: &DockerComposeConfig,
+    ) -> Result<PathBuf, DevContainerError> {
+        let directory = match &self.features_build_info {
+            Some(info) => info.features_content_dir.clone(),
+            None => local_staging_directory(),
+        };
+        let config_location = directory.join(file_name);
+
+        let config_json = serde_json_lenient::to_string(config).map_err(|e| {
+            log::error!("Error serializing docker compose override: {e}");
+            DevContainerError::DevContainerParseFailed
+        })?;
+
+        self.fs
+            .write(&config_location, config_json.as_bytes())
+            .await
+            .map_err(|e| {
+                log::error!("Error writing the compose override file: {e}");
+                DevContainerError::FilesystemError
+            })?;
+
+        Ok(self.host_build_path(&config_location))
+    }
+
+    /// Reads a file belonging to the project, which lives wherever the
+    /// container is built.
+    async fn read_project_file(&self, path: &Path) -> Result<Option<String>, DevContainerError> {
+        read_file_from_host(&self.host, &self.fs, &self.command_runner, path).await
+    }
+
     /// Translates a staged build input to the path the host's engine will see.
     ///
     /// Paths outside the staging directory are returned unchanged: under the
@@ -1275,23 +1314,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 volumes: HashMap::new(),
             };
 
-            let temp_base = local_staging_directory();
-            let config_location = temp_base.join("docker_compose_build.json");
-
-            let config_json = serde_json_lenient::to_string(&build_override).map_err(|e| {
-                log::error!("Error serializing docker compose runtime override: {e}");
-                DevContainerError::DevContainerParseFailed
-            })?;
-
-            self.fs
-                .write(&config_location, config_json.as_bytes())
-                .await
-                .map_err(|e| {
-                    log::error!("Error writing the runtime override file: {e}");
-                    DevContainerError::FilesystemError
-                })?;
-
+            let config_location = self
+                .write_compose_override("docker_compose_build.json", &build_override)
+                .await?;
             docker_compose_resources.files.push(config_location);
+            self.stage_build_context(cx).await?;
 
             let project_name = self.project_name().await?;
             let compose_services =
@@ -1374,23 +1401,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     volumes: HashMap::new(),
                 };
 
-                let temp_base = local_staging_directory();
-                let config_location = temp_base.join("docker_compose_build.json");
-
-                let config_json = serde_json_lenient::to_string(&build_override).map_err(|e| {
-                    log::error!("Error serializing docker compose runtime override: {e}");
-                    DevContainerError::DevContainerParseFailed
-                })?;
-
-                self.fs
-                    .write(&config_location, config_json.as_bytes())
-                    .await
-                    .map_err(|e| {
-                        log::error!("Error writing the runtime override file: {e}");
-                        DevContainerError::FilesystemError
-                    })?;
-
+                let config_location = self
+                    .write_compose_override("docker_compose_build.json", &build_override)
+                    .await?;
                 docker_compose_resources.files.push(config_location);
+                self.stage_build_context(cx).await?;
 
                 let project_name = self.project_name().await?;
                 let compose_services =
@@ -1429,6 +1444,9 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             .await?;
 
         docker_compose_resources.files.push(runtime_override_file);
+        // The runtime override is written after the build, so the staged
+        // context has to travel again before `docker compose up` reads it.
+        self.stage_build_context(cx).await?;
 
         Ok(docker_compose_resources)
     }
@@ -1441,23 +1459,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
     ) -> Result<PathBuf, DevContainerError> {
         let config =
             self.build_runtime_override(main_service_name, network_mode_service, resources)?;
-        let temp_base = local_staging_directory();
-        let config_location = temp_base.join("docker_compose_runtime.json");
-
-        let config_json = serde_json_lenient::to_string(&config).map_err(|e| {
-            log::error!("Error serializing docker compose runtime override: {e}");
-            DevContainerError::DevContainerParseFailed
-        })?;
-
-        self.fs
-            .write(&config_location, config_json.as_bytes())
+        self.write_compose_override("docker_compose_runtime.json", &config)
             .await
-            .map_err(|e| {
-                log::error!("Error writing the runtime override file: {e}");
-                DevContainerError::FilesystemError
-            })?;
-
-        Ok(config_location)
     }
 
     fn build_runtime_override(
@@ -2700,8 +2703,9 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 // scanning." Propagating an I/O error here would diverge
                 // from that policy and fail the whole devcontainer flow for
                 // a fragment the CLI would have silently skipped.
-                let contents = match self.fs.load(file).await {
-                    Ok(contents) => contents,
+                let contents = match self.read_project_file(file).await {
+                    Ok(Some(contents)) => contents,
+                    Ok(None) => continue,
                     Err(err) => {
                         log::warn!(
                             "Ignoring unreadable compose fragment `{}` while deriving project name: {err:?}",
@@ -2717,22 +2721,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             }
         }
         let dotenv_path = self.local_project_directory.join(".env");
-        let dotenv_contents = match self.fs.load(&dotenv_path).await {
-            Ok(contents) => Some(contents),
-            Err(err) if is_missing_file_error(&err) => None,
-            Err(err) => {
-                // Mirrors the CLI: `getProjectName` only swallows `ENOENT`/
-                // `EISDIR` on the `.env` read. Any other error (permission
-                // denied, I/O failure, …) must surface so we don't silently
-                // fall back to a non-canonical project name and create a
-                // second compose project for the same repo.
-                log::error!(
-                    "Failed to read workspace .env `{}` while deriving project name: {err:?}",
-                    dotenv_path.display()
-                );
-                return Err(DevContainerError::FilesystemError);
-            }
-        };
+        // Mirrors the CLI: `getProjectName` only swallows `ENOENT`/`EISDIR` on
+        // the `.env` read. Any other error (permission denied, I/O failure, …)
+        // must surface so we don't silently fall back to a non-canonical
+        // project name and create a second compose project for the same repo.
+        let dotenv_contents = self.read_project_file(&dotenv_path).await?;
         Ok(derive_project_name(
             &self.local_environment,
             dotenv_contents.as_deref(),
@@ -2768,10 +2761,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 .and_then(|b| b.args.clone())
                 .unwrap_or_default(),
         };
-        let contents = self.fs.load(&dockerfile_path).await.map_err(|e| {
-            log::error!("Failed to load Dockerfile: {e}");
-            DevContainerError::FilesystemError
-        })?;
+        let Some(contents) = self.read_project_file(&dockerfile_path).await? else {
+            log::error!("No Dockerfile at `{}`", dockerfile_path.display());
+            return Err(DevContainerError::FilesystemError);
+        };
         let mut parsed_lines: Vec<String> = Vec::new();
         let mut inline_args: Vec<(String, String)> = Vec::new();
         let key_regex = Regex::new(r"(?:^|\s)(\w+)=").expect("valid regex");
@@ -2869,37 +2862,88 @@ async fn load_devcontainer_contents(
     config_path: &Path,
     command_runner: &Arc<dyn CommandRunner>,
 ) -> Result<String, DevContainerError> {
-    let DevContainerHost::Remote(_) = &context.host else {
-        return context.fs.load(config_path).await.map_err(|e| {
-            log::error!("Unable to read devcontainer contents: {e}");
-            DevContainerError::DevContainerParseFailed
-        });
+    match read_file_from_host(&context.host, &context.fs, command_runner, config_path).await {
+        Ok(Some(contents)) => Ok(contents),
+        Ok(None) => {
+            log::error!(
+                "No devcontainer configuration at `{}`",
+                config_path.display()
+            );
+            Err(DevContainerError::DevContainerParseFailed)
+        }
+        Err(_) => Err(DevContainerError::DevContainerParseFailed),
+    }
+}
+
+/// Reads a file from the machine the container is built on.
+///
+/// `Ok(None)` means there is no readable regular file at that path, which
+/// several callers treat as a valid state rather than a failure. Under the
+/// remote model the project lives on the host, so Zed's client-side `Fs` —
+/// which only ever reaches this machine — cannot serve these reads.
+async fn read_file_from_host(
+    host: &DevContainerHost,
+    fs: &Arc<dyn Fs>,
+    command_runner: &Arc<dyn CommandRunner>,
+    path: &Path,
+) -> Result<Option<String>, DevContainerError> {
+    let DevContainerHost::Remote(_) = host else {
+        return match fs.load(path).await {
+            Ok(contents) => Ok(Some(contents)),
+            Err(err) if is_missing_file_error(&err) => Ok(None),
+            Err(err) => {
+                log::error!("Unable to read `{}`: {err:?}", path.display());
+                Err(DevContainerError::FilesystemError)
+            }
+        };
     };
 
-    // The configuration lives on the host, and Zed's client-side `Fs` only
-    // reaches this machine. Reading it through the host's own transport keeps
-    // the read on the same connection as everything else the host does.
-    let mut command = context.host.command(
-        "cat",
-        &[config_path.display().to_string()],
+    // `test -f` rather than reading and interpreting the failure: `cat` exits
+    // 1 both for a missing file and for one it cannot read, and those two must
+    // not be conflated. It also matches the local branch, where a directory
+    // counts as missing.
+    let mut probe = host.command(
+        "test",
+        &["-f".to_string(), path.display().to_string()],
         &HashMap::new(),
         None,
     )?;
+    let probe = command_runner
+        .run_command(&mut probe)
+        .await
+        .map_err(|err| {
+            log::error!(
+                "Unable to check for `{}` on the dev container host: {err}",
+                path.display()
+            );
+            DevContainerError::FilesystemError
+        })?;
+    if !probe.status.success() {
+        return Ok(None);
+    }
+
+    let mut command = host.command("cat", &[path.display().to_string()], &HashMap::new(), None)?;
     let output = command_runner
         .run_command(&mut command)
         .await
-        .map_err(|e| {
-            log::error!("Unable to read devcontainer contents from the host: {e}");
-            DevContainerError::DevContainerParseFailed
+        .map_err(|err| {
+            log::error!(
+                "Unable to read `{}` from the dev container host: {err}",
+                path.display()
+            );
+            DevContainerError::FilesystemError
         })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        log::error!("Unable to read devcontainer contents from the host: {stderr}");
-        return Err(DevContainerError::DevContainerParseFailed);
+        log::error!(
+            "Unable to read `{}` from the dev container host: {stderr}",
+            path.display()
+        );
+        return Err(DevContainerError::FilesystemError);
     }
-    String::from_utf8(output.stdout).map_err(|e| {
-        log::error!("The devcontainer configuration on the host is not valid UTF-8: {e}");
-        DevContainerError::DevContainerParseFailed
+    String::from_utf8(output.stdout).map(Some).map_err(|err| {
+        log::error!("`{}` on the host is not valid UTF-8: {err}", path.display());
+        DevContainerError::FilesystemError
     })
 }
 
@@ -3872,10 +3916,23 @@ mod test {
         // have failed rather than returning contents.
         assert!(fs.files().is_empty());
 
+        // Two commands: whether the file is there, then its contents. `cat`
+        // alone cannot distinguish a missing file from an unreadable one, and
+        // callers such as the `.env` read depend on that distinction.
         let recorded = command_runner.commands_by_program("ssh");
-        assert_eq!(recorded.len(), 1, "the read is a single host command");
+        assert_eq!(recorded.len(), 2, "the read is a probe and a read");
         assert_eq!(
             recorded[0].args,
+            vec![
+                "host".to_string(),
+                "--".to_string(),
+                "'test'".to_string(),
+                "'-f'".to_string(),
+                "'/home/dev/app/.devcontainer/devcontainer.json'".to_string(),
+            ],
+        );
+        assert_eq!(
+            recorded[1].args,
             vec![
                 "host".to_string(),
                 "--".to_string(),
@@ -3955,6 +4012,124 @@ mod test {
                 "the bind mount target is a path inside the container, always POSIX"
             );
         }
+    }
+
+    /// A compose run is assembled from two kinds of file: the project's own,
+    /// which already live on the host, and the overrides Zed generates, which
+    /// do not. Only the second kind needs moving — and it has to move, because
+    /// `docker compose -f` is resolved by the engine.
+    #[gpui::test]
+    async fn compose_overrides_are_staged_on_a_remote_host(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let connection = Arc::new(crate::FakeRemoteConnection::default());
+        let fs = FakeFs::new(cx.executor());
+        let (test_dependencies, mut devcontainer_manifest) = init_devcontainer_manifest(
+            cx,
+            fs.clone(),
+            fake_http_client(),
+            Arc::new(FakeDocker::new()),
+            Arc::new(TestCommandRunner::reading_from(fs.clone())),
+            HashMap::new(),
+            r#"
+            {
+              "name": "cli-remote-compose",
+              "dockerComposeFile": "docker-compose-plain.yml",
+              "service": "app",
+              "workspaceFolder": "/workspaces",
+              "updateRemoteUserUID": false,
+              "features": {
+                "./lsp-devtools": {
+                  "version": "0.1.0"
+                }
+              }
+            }
+            "#,
+            DevContainerHost::Remote(connection.clone()),
+        )
+        .await
+        .unwrap();
+
+        test_dependencies
+            .fs
+            .insert_tree(
+                format!("{TEST_PROJECT_PATH}/.devcontainer"),
+                serde_json::json!({
+                    "lsp-devtools": {
+                        "devcontainer-feature.json": r#"{
+                            "id": "lsp-devtools",
+                            "version": "0.1.0",
+                            "name": "LSP Devtools"
+                        }"#,
+                        "install.sh": "#!/bin/sh\nset -e\n",
+                    },
+                    "docker-compose-plain.yml": "services:\n  app:\n    image: test_image:latest\n",
+                }),
+            )
+            .await;
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
+
+        // The engine command is recorded unwrapped here: the fake engine
+        // client is what would have wrapped it for a remote host, and only the
+        // paths it carries are under test.
+        let engine_commands = test_dependencies
+            .command_runner
+            .commands_by_program("docker");
+        let compose_up = engine_commands
+            .iter()
+            .find(|command| command.args.contains(&"up".to_string()))
+            .expect("docker compose up recorded");
+
+        let compose_files: Vec<&String> = compose_up
+            .args
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                index
+                    .checked_sub(1)
+                    .and_then(|previous| compose_up.args.get(previous))
+                    == Some(&"-f".to_string())
+            })
+            .map(|(_, argument)| argument)
+            .collect();
+
+        assert!(
+            compose_files.iter().any(
+                |file| file.contains(&format!("{REMOTE_BUILD_CONTEXT_DIR}/"))
+                    && file.contains("docker_compose_runtime.json")
+            ),
+            "the generated override must be named at its path on the host, got {compose_files:?}"
+        );
+        assert!(
+            !compose_files
+                .iter()
+                .any(|file| file.contains(&local_staging_directory().display().to_string())),
+            "no compose file may name this machine's staging directory, got {compose_files:?}"
+        );
+        assert!(
+            compose_files
+                .iter()
+                .any(|file| file.contains("docker-compose-plain.yml")),
+            "the project's own compose file is already on the host and is passed through, got {compose_files:?}"
+        );
+
+        // The project's files are read over the host connection rather than
+        // through the client's filesystem, which cannot see them.
+        let host_commands = test_dependencies.command_runner.commands_by_program("ssh");
+        assert!(
+            host_commands.iter().any(|command| {
+                command.args.contains(&"'cat'".to_string())
+                    && command
+                        .args
+                        .iter()
+                        .any(|argument| argument.contains("docker-compose-plain.yml"))
+            }),
+            "the compose file must be read from the host"
+        );
     }
 
     /// Build inputs are generated locally — the OCI downloads and template
@@ -8282,13 +8457,75 @@ RUN echo $RUBY_VERSION2
 
     pub(crate) struct TestCommandRunner {
         commands_recorded: Mutex<Vec<TestCommand>>,
+        /// Stands in for the host's filesystem, so `test -f` and `cat` answer
+        /// from it. Opt-in: most tests only assert which commands were built,
+        /// and one asserts a read reached the host by leaving this unset and
+        /// the client's filesystem empty.
+        host_filesystem: Option<Arc<FakeFs>>,
     }
 
     impl TestCommandRunner {
         fn new() -> Self {
             Self {
                 commands_recorded: Mutex::new(Vec::new()),
+                host_filesystem: None,
             }
+        }
+
+        fn reading_from(fs: Arc<FakeFs>) -> Self {
+            Self {
+                commands_recorded: Mutex::new(Vec::new()),
+                host_filesystem: Some(fs),
+            }
+        }
+
+        /// The fake transport single-quotes what it forwards.
+        fn unquote(argument: &str) -> &str {
+            argument
+                .strip_prefix('\'')
+                .and_then(|argument| argument.strip_suffix('\''))
+                .unwrap_or(argument)
+        }
+
+        /// Answers the file reads `read_file_from_host` issues, when this
+        /// runner was given a filesystem to answer them from.
+        async fn read_host_filesystem(&self, args: &[String]) -> Option<Output> {
+            let fs = self.host_filesystem.as_ref()?;
+            let arguments: Vec<&str> = args.iter().map(|arg| Self::unquote(arg)).collect();
+            let position = arguments
+                .iter()
+                .position(|argument| *argument == "cat" || *argument == "test")?;
+
+            let (found, contents) = match arguments[position] {
+                "cat" => {
+                    let path = PathBuf::from(arguments.get(position + 1)?);
+                    match fs.load(&path).await {
+                        Ok(contents) => (true, contents.into_bytes()),
+                        Err(_) => (false, Vec::new()),
+                    }
+                }
+                _ => {
+                    let path = PathBuf::from(arguments.get(position + 2)?);
+                    (fs.is_file(&path).await, Vec::new())
+                }
+            };
+
+            Some(Output {
+                status: if found {
+                    ExitStatus::default()
+                } else {
+                    #[cfg(unix)]
+                    {
+                        std::os::unix::process::ExitStatusExt::from_raw(1 << 8)
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        std::os::windows::process::ExitStatusExt::from_raw(1)
+                    }
+                },
+                stdout: contents,
+                stderr: Vec::new(),
+            })
         }
 
         fn commands_by_program(&self, program: &str) -> Vec<TestCommand> {
@@ -8304,15 +8541,21 @@ RUN echo $RUBY_VERSION2
     #[async_trait]
     impl CommandRunner for TestCommandRunner {
         async fn run_command(&self, command: &mut Command) -> Result<Output, std::io::Error> {
-            let mut record = self.commands_recorded.lock().expect("poisoned");
+            let args: Vec<String> = command
+                .get_args()
+                .map(|a| a.display().to_string())
+                .collect();
+            self.commands_recorded
+                .lock()
+                .expect("poisoned")
+                .push(TestCommand {
+                    program: command.get_program().display().to_string(),
+                    args: args.clone(),
+                });
 
-            record.push(TestCommand {
-                program: command.get_program().display().to_string(),
-                args: command
-                    .get_args()
-                    .map(|a| a.display().to_string())
-                    .collect(),
-            });
+            if let Some(output) = self.read_host_filesystem(&args).await {
+                return Ok(output);
+            }
 
             Ok(Output {
                 status: ExitStatus::default(),
