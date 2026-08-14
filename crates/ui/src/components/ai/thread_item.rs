@@ -264,12 +264,12 @@ impl RenderOnce for ThreadItem {
         let apparent_bg = color.background.blend(raw_bg);
 
         let base_bg = if self.selected {
-            apparent_bg.blend(color.element_selected)
+            apparent_bg.blend(color.ghost_element_selected)
         } else {
             apparent_bg
         };
 
-        let hover_bg = apparent_bg.blend(color.element_hover);
+        let hover_bg = apparent_bg.blend(color.ghost_element_hover);
 
         let gradient_overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
             .width(px(64.0))
@@ -431,12 +431,12 @@ impl RenderOnce for ThreadItem {
             .w_full()
             .py_1()
             .px_1p5()
-            .when(self.selected, |s| s.bg(color.element_selected))
+            .when(self.selected, |s| s.bg(color.ghost_element_selected))
             .border_1()
             .border_color(gpui::transparent_black())
             .when(self.focused, |s| s.border_color(color.border_focused))
             .when(self.rounded, |s| s.rounded_sm())
-            .hover(|s| s.bg(color.element_hover))
+            .hover(|s| s.bg(color.ghost_element_hover))
             .on_hover(self.on_hover)
             .child(
                 h_flex()
