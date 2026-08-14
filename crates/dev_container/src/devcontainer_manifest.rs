@@ -989,6 +989,40 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         Ok(self.host_build_path(&config_location))
     }
 
+    /// Asks the machine the container is built on for the id its user runs
+    /// under, via `id <flag>`.
+    ///
+    /// It has to be that machine's: the container user's id is rewritten to
+    /// match the owner of the bind-mounted project, and the project's files
+    /// are owned on the host. Taking this machine's id instead produces a
+    /// container user that cannot write to its own workspace.
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
+    async fn host_id(&self, flag: &str) -> Result<u32, DevContainerError> {
+        let mut command = self
+            .host
+            .command("id", &[flag.to_string()], &HashMap::new(), None)?;
+        let output = self
+            .command_runner
+            .run_command(&mut command)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to run `id {flag}` on the dev container host: {e}");
+                DevContainerError::CommandFailed(format!("id {flag}"))
+            })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("`id {flag}` failed on the dev container host: {stderr}");
+            return Err(DevContainerError::CommandFailed(format!("id {flag}")));
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<u32>()
+            .map_err(|e| {
+                log::error!("Could not read `id {flag}` from the dev container host: {e}");
+                DevContainerError::CommandFailed(format!("id {flag}"))
+            })
+    }
+
     /// Reads a file belonging to the project, which lives wherever the
     /// container is built.
     async fn read_project_file(&self, path: &Path) -> Result<Option<String>, DevContainerError> {
@@ -1813,41 +1847,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             .unwrap_or("root")
             .to_string();
 
-        let host_uid = Command::new("id")
-            .arg("-u")
-            .output()
-            .await
-            .map_err(|e| {
-                log::error!("Failed to get host UID: {e}");
-                DevContainerError::CommandFailed("id -u".to_string())
-            })
-            .and_then(|output| {
-                String::from_utf8_lossy(&output.stdout)
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|e| {
-                        log::error!("Failed to parse host UID: {e}");
-                        DevContainerError::CommandFailed("id -u".to_string())
-                    })
-            })?;
-
-        let host_gid = Command::new("id")
-            .arg("-g")
-            .output()
-            .await
-            .map_err(|e| {
-                log::error!("Failed to get host GID: {e}");
-                DevContainerError::CommandFailed("id -g".to_string())
-            })
-            .and_then(|output| {
-                String::from_utf8_lossy(&output.stdout)
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|e| {
-                        log::error!("Failed to parse host GID: {e}");
-                        DevContainerError::CommandFailed("id -g".to_string())
-                    })
-            })?;
+        let host_uid = self.host_id("-u").await?;
+        let host_gid = self.host_id("-g").await?;
 
         let dockerfile_content = self.generate_update_uid_dockerfile();
 
@@ -3795,6 +3796,11 @@ mod test {
     #[cfg(target_os = "windows")]
     const TEST_PROJECT_PATH: &str = r#"C:\\path\to\local\project"#;
 
+    /// What the fake host answers `id` with. A fixed value on purpose: the
+    /// real `id` used to report whichever machine ran the suite, so an
+    /// assertion about the id could pass or fail depending on the developer.
+    const TEST_HOST_ID: u32 = 1000;
+
     async fn build_tarball(content: Vec<(&str, &str)>) -> Vec<u8> {
         let buffer = futures::io::Cursor::new(Vec::new());
         let mut builder = async_tar::Builder::new(buffer);
@@ -4129,6 +4135,87 @@ mod test {
                         .any(|argument| argument.contains("docker-compose-plain.yml"))
             }),
             "the compose file must be read from the host"
+        );
+    }
+
+    /// The container user's id is rewritten to match the owner of the
+    /// bind-mounted project. Those files are owned on the host, so taking this
+    /// machine's id builds a user that cannot write to its own workspace —
+    /// which is what a macOS client (501) against a Linux host (1000) does.
+    #[gpui::test]
+    async fn the_container_user_takes_its_id_from_the_host(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let fs = FakeFs::new(cx.executor());
+        let (test_dependencies, mut devcontainer_manifest) = init_devcontainer_manifest(
+            cx,
+            fs.clone(),
+            fake_http_client(),
+            Arc::new(FakeDocker::new()),
+            Arc::new(TestCommandRunner::reading_from(fs.clone())),
+            HashMap::new(),
+            r#"
+            {
+              "name": "cli-remote-uid",
+              "image": "test_image:latest",
+              "remoteUser": "vscode",
+              "features": {
+                "./lsp-devtools": {
+                  "version": "0.1.0"
+                }
+              }
+            }
+            "#,
+            DevContainerHost::Remote(Arc::new(crate::FakeRemoteConnection::default())),
+        )
+        .await
+        .unwrap();
+
+        test_dependencies
+            .fs
+            .insert_tree(
+                format!("{TEST_PROJECT_PATH}/.devcontainer/lsp-devtools"),
+                serde_json::json!({
+                    "devcontainer-feature.json": r#"{
+                        "id": "lsp-devtools",
+                        "version": "0.1.0",
+                        "name": "LSP Devtools"
+                    }"#,
+                    "install.sh": "#!/bin/sh\nset -e\n",
+                }),
+            )
+            .await;
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        devcontainer_manifest
+            .build_and_run(&mut cx.to_async())
+            .await
+            .unwrap();
+
+        let host_commands = test_dependencies.command_runner.commands_by_program("ssh");
+        assert!(
+            host_commands.iter().any(|command| {
+                command.args.contains(&"'id'".to_string())
+                    && command.args.contains(&"'-u'".to_string())
+            }),
+            "the id must be read from the host, got {host_commands:?}"
+        );
+
+        let uid_build = test_dependencies
+            .command_runner
+            .commands_by_program("docker")
+            .into_iter()
+            .find(|command| {
+                command
+                    .args
+                    .iter()
+                    .any(|argument| argument.starts_with("NEW_UID="))
+            })
+            .expect("a build that rewrites the container user's id");
+        assert!(
+            uid_build.args.contains(&format!("NEW_UID={TEST_HOST_ID}"))
+                && uid_build.args.contains(&format!("NEW_GID={TEST_HOST_ID}")),
+            "the build must carry the host's id, got {:?}",
+            uid_build.args
         );
     }
 
@@ -8555,6 +8642,18 @@ RUN echo $RUBY_VERSION2
 
             if let Some(output) = self.read_host_filesystem(&args).await {
                 return Ok(output);
+            }
+
+            // The host's user id, which the real `id` used to answer from
+            // whichever machine happened to run the suite.
+            if command.get_program().display().to_string() == "id"
+                || args.iter().any(|argument| Self::unquote(argument) == "id")
+            {
+                return Ok(Output {
+                    status: ExitStatus::default(),
+                    stdout: TEST_HOST_ID.to_string().into_bytes(),
+                    stderr: Vec::new(),
+                });
             }
 
             Ok(Output {

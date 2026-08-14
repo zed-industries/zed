@@ -215,10 +215,19 @@ impl RemoteConnection for MockRemoteConnection {
         env: &HashMap<String, String>,
         _working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
-        _interactive: Interactive,
+        interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let shell_program = program.unwrap_or_else(|| "sh".to_string());
         let mut shell_args = Vec::new();
+        // Mirrors the SSH transport's `-t`/`-T`, so a caller that has to agree
+        // with the far end about a TTY can be tested against this mock.
+        shell_args.push(
+            match interactive {
+                Interactive::Yes => "-t",
+                Interactive::No => "-T",
+            }
+            .to_string(),
+        );
         shell_args.push(shell_program);
         shell_args.extend(args.iter().cloned());
         Ok(CommandTemplate {

@@ -162,7 +162,16 @@ impl DockerExecConnection {
     /// The single place docker invocations are turned into a runnable command.
     /// Without a host the template is the docker CLI itself; with one it is
     /// whatever that host's transport uses to run the docker CLI over there.
-    fn docker_command(&self, args: Vec<String>) -> Result<CommandTemplate> {
+    ///
+    /// `interactive` has to match what the docker invocation itself asks for.
+    /// A `docker exec -it` reached over a host that was not also asked for a
+    /// TTY fails with "the input device is not a TTY", and a TTY on the
+    /// non-interactive paths would corrupt the framed stdio the proxy carries.
+    fn docker_command(
+        &self,
+        args: Vec<String>,
+        interactive: Interactive,
+    ) -> Result<CommandTemplate> {
         match &self.host {
             None => Ok(CommandTemplate {
                 program: self.docker_cli().to_string(),
@@ -175,7 +184,7 @@ impl DockerExecConnection {
                 &Default::default(),
                 None,
                 None,
-                Interactive::No,
+                interactive,
             ),
         }
     }
@@ -518,19 +527,25 @@ impl DockerExecConnection {
         let container_id = &self.connection_options.container_id;
         let remote_user = &self.connection_options.remote_user;
 
-        let copy_command = self.docker_command(vec![
-            "cp".to_string(),
-            "-a".to_string(),
-            src_path.to_string(),
-            format!("{container_id}:{dst_path}"),
-        ])?;
-        let chown_command = self.docker_command(vec![
-            "exec".to_string(),
-            container_id.to_string(),
-            "chown".to_string(),
-            format!("{remote_user}:{remote_user}"),
-            dst_path.to_string(),
-        ])?;
+        let copy_command = self.docker_command(
+            vec![
+                "cp".to_string(),
+                "-a".to_string(),
+                src_path.to_string(),
+                format!("{container_id}:{dst_path}"),
+            ],
+            Interactive::No,
+        )?;
+        let chown_command = self.docker_command(
+            vec![
+                "exec".to_string(),
+                container_id.to_string(),
+                "chown".to_string(),
+                format!("{remote_user}:{remote_user}"),
+                dst_path.to_string(),
+            ],
+            Interactive::No,
+        )?;
 
         Ok((copy_command, chown_command))
     }
@@ -573,18 +588,21 @@ impl DockerExecConnection {
     /// The argv that writes this connection's stdin into `dst_path` inside the
     /// container, as the connection's remote user.
     fn stream_into_container_command(&self, dst_path: &str) -> Result<CommandTemplate> {
-        self.docker_command(vec![
-            "exec".to_string(),
-            "-i".to_string(),
-            "-u".to_string(),
-            self.connection_options.remote_user.clone(),
-            self.connection_options.container_id.clone(),
-            "sh".to_string(),
-            "-c".to_string(),
-            "cat > \"$1\"".to_string(),
-            "zed-upload".to_string(),
-            dst_path.to_string(),
-        ])
+        self.docker_command(
+            vec![
+                "exec".to_string(),
+                "-i".to_string(),
+                "-u".to_string(),
+                self.connection_options.remote_user.clone(),
+                self.connection_options.container_id.clone(),
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > \"$1\"".to_string(),
+                "zed-upload".to_string(),
+                dst_path.to_string(),
+            ],
+            Interactive::No,
+        )
     }
 
     /// Sends a file into the container over the connection's own stdin, which
@@ -683,7 +701,7 @@ impl DockerExecConnection {
         let mut command_args = vec![subcommand.to_string()];
         command_args.extend(args.iter().map(|arg| arg.as_ref().to_string()));
 
-        let command = self.docker_command(command_args)?;
+        let command = self.docker_command(command_args, Interactive::No)?;
         let output = command.output().await?;
         log::debug!("{:?}: {:?}", command, output);
         anyhow::ensure!(
@@ -844,7 +862,9 @@ impl DockerExecConnection {
             docker_args.push("--reconnect".to_string());
         }
 
-        self.docker_command(docker_args)
+        // The proxy's stdio carries framed protobuf, so it must never be given
+        // a TTY no matter what the host connection is.
+        self.docker_command(docker_args, Interactive::No)
     }
 
     /// Kills the proxy child and nothing else. The host connection is shared —
@@ -1045,7 +1065,7 @@ impl RemoteConnection for DockerExecConnection {
 
         // Docker-exec pipes in environment via the "-e" argument, so the
         // template's own env stays empty.
-        self.docker_command(docker_args)
+        self.docker_command(docker_args, interactive)
     }
 
     /// Forwards through the machine running the daemon, which can reach the
@@ -1183,7 +1203,7 @@ mod tests {
     fn local_host_commands_are_unwrapped_docker_invocations() {
         let connection = local_connection(docker_options());
         let command = connection
-            .docker_command(vec!["ps".to_string(), "-a".to_string()])
+            .docker_command(vec!["ps".to_string(), "-a".to_string()], Interactive::No)
             .expect("building a local docker command should succeed");
 
         assert_eq!(command.program, "docker");
@@ -1196,7 +1216,7 @@ mod tests {
         });
         assert_eq!(
             podman
-                .docker_command(vec!["ps".to_string()])
+                .docker_command(vec!["ps".to_string()], Interactive::No)
                 .expect("building a local podman command should succeed")
                 .program,
             "podman"
@@ -1275,6 +1295,37 @@ mod tests {
         );
     }
 
+    /// A terminal is `docker exec -it`, and the hop that carries it has to ask
+    /// for a TTY as well — the docker CLI refuses with "the input device is
+    /// not a TTY" when its stdin is a pipe.
+    #[gpui::test]
+    async fn an_interactive_command_asks_the_host_for_a_tty(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let mut connection = local_connection(docker_options());
+        connection.host = Some(mock_host(cx, server_cx).await);
+
+        let interactive = connection
+            .build_command(None, &[], &Default::default(), None, None, Interactive::Yes)
+            .expect("building an interactive command should succeed");
+        assert_eq!(interactive.args.first().map(String::as_str), Some("-t"));
+        assert!(interactive.args.contains(&"-it".to_string()));
+
+        let batch = connection
+            .build_command(
+                Some("ls".to_string()),
+                &[],
+                &Default::default(),
+                None,
+                None,
+                Interactive::No,
+            )
+            .expect("building a non-interactive command should succeed");
+        assert_eq!(batch.args.first().map(String::as_str), Some("-T"));
+        assert!(batch.args.contains(&"-i".to_string()));
+    }
+
     /// The container's ports are not published on the daemon's machine, but
     /// they are reachable there at the container's own address, so the
     /// forward is the host's with its destination re-pointed.
@@ -1338,6 +1389,9 @@ mod tests {
         assert_eq!(
             without_env_args(&command.args),
             vec![
+                // The proxy's stdio is framed protobuf, so the hop must not
+                // allocate a TTY.
+                "-T",
                 "docker",
                 "exec",
                 "-u",
@@ -1409,6 +1463,7 @@ mod tests {
         assert_eq!(
             command.args,
             vec![
+                "-T",
                 "docker",
                 "exec",
                 "-i",

@@ -83,6 +83,16 @@ fn dismiss_path_for_worktree(
     }
 }
 
+/// Whether this project is already open inside a dev container.
+pub fn is_dev_container_project(project: &gpui::Entity<Project>, cx: &App) -> bool {
+    project.read(cx).remote_client().is_some_and(|client| {
+        matches!(
+            client.read(cx).connection_options(),
+            remote::RemoteConnectionOptions::Docker(_)
+        )
+    })
+}
+
 pub fn suggest_on_worktree_updated(
     workspace: &mut Workspace,
     worktree_id: WorktreeId,
@@ -108,6 +118,13 @@ pub fn suggest_on_worktree_updated(
     // A container is provisioned on the machine holding the project, which for a
     // collab guest is someone else's — there is no connection to build it over.
     if project.read(cx).is_via_collab() {
+        return;
+    }
+
+    // The project inside a dev container still contains the configuration that
+    // built it, so suggesting it again would offer to do what has already been
+    // done — and a container cannot host a container.
+    if is_dev_container_project(project, cx) {
         return;
     }
 
