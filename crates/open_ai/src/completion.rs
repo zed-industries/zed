@@ -73,6 +73,9 @@ pub fn into_open_ai(
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
     for message in request.messages {
+        let reasoning_details = interleaved_reasoning
+            .then(|| message.reasoning_details.clone())
+            .flatten();
         for content in message.content {
             match content {
                 MessageContent::Thinking { text, .. } if interleaved_reasoning => {
@@ -91,6 +94,7 @@ pub fn into_open_ai(
                             MessagePart::Text { text },
                             message.role,
                             &mut messages,
+                            reasoning_details.clone(),
                         );
                         if let Some(reasoning) = current_reasoning.take() {
                             if let Some(crate::RequestMessage::Assistant {
@@ -114,6 +118,7 @@ pub fn into_open_ai(
                         },
                         message.role,
                         &mut messages,
+                        reasoning_details.clone(),
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
@@ -129,12 +134,19 @@ pub fn into_open_ai(
                             function: FunctionContent {
                                 name: tool_use.name.to_string(),
                                 arguments: serde_json::to_string(input).unwrap_or_default(),
+                                thought_signature: interleaved_reasoning
+                                    .then(|| tool_use.thought_signature.clone())
+                                    .flatten(),
                             },
                         },
                     };
 
-                    if let Some(crate::RequestMessage::Assistant { tool_calls, .. }) =
-                        messages.last_mut()
+                    if let Some(crate::RequestMessage::Assistant {
+                        tool_calls,
+                        reasoning_details: existing_reasoning_details,
+                        ..
+                    }) = messages.last_mut()
+                        && existing_reasoning_details == &reasoning_details
                     {
                         tool_calls.push(tool_call);
                     } else {
@@ -142,6 +154,7 @@ pub fn into_open_ai(
                             content: None,
                             tool_calls: vec![tool_call],
                             reasoning_content: current_reasoning.take(),
+                            reasoning_details: reasoning_details.clone(),
                         });
                     }
                 }
@@ -679,17 +692,21 @@ fn add_message_content_part(
     new_part: MessagePart,
     role: Role,
     messages: &mut Vec<crate::RequestMessage>,
+    reasoning_details: Option<Arc<serde_json::Value>>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(crate::RequestMessage::User { content }))
-        | (
+        | (Role::System, Some(crate::RequestMessage::System { content, .. })) => {
+            content.push_part(new_part);
+        }
+        (
             Role::Assistant,
             Some(crate::RequestMessage::Assistant {
                 content: Some(content),
+                reasoning_details: existing_reasoning_details,
                 ..
             }),
-        )
-        | (Role::System, Some(crate::RequestMessage::System { content, .. })) => {
+        ) if existing_reasoning_details == &reasoning_details => {
             content.push_part(new_part);
         }
         _ => {
@@ -701,6 +718,7 @@ fn add_message_content_part(
                     content: Some(crate::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
                     reasoning_content: None,
+                    reasoning_details,
                 },
                 Role::System => crate::RequestMessage::System {
                     content: crate::MessageContent::from(vec![new_part]),
@@ -710,14 +728,70 @@ fn add_message_content_part(
     }
 }
 
+/// Accumulates structured reasoning metadata from compatible providers.
+///
+/// Array entries are matched by `index` and then `id`. Fragmented `text`,
+/// `summary`, and `data` fields are concatenated while other non-null fields
+/// replace their previous values.
+///
+/// # Examples
+///
+/// ```
+/// use open_ai::completion::ReasoningDetailsAccumulator;
+/// use serde_json::json;
+///
+/// let mut accumulator = ReasoningDetailsAccumulator::default();
+/// accumulator.push(json!([{"index": 0, "text": "first "}]));
+/// let details = accumulator
+///     .push(json!([{"index": 0, "text": "second"}]))
+///     .expect("non-empty reasoning details");
+///
+/// assert_eq!(details[0]["text"], "first second");
+/// ```
+#[derive(Debug, Default)]
+pub struct ReasoningDetailsAccumulator {
+    accumulated: Option<serde_json::Value>,
+}
+
+impl ReasoningDetailsAccumulator {
+    /// Merges `chunk` and returns the updated metadata snapshot.
+    ///
+    /// `null` and empty arrays do not replace previously accumulated metadata
+    /// and return `None`.
+    pub fn push(&mut self, chunk: serde_json::Value) -> Option<serde_json::Value> {
+        match chunk {
+            serde_json::Value::Null => None,
+            serde_json::Value::Array(chunks) if chunks.is_empty() => None,
+            serde_json::Value::Array(chunks) => {
+                let mut details = match self.accumulated.take() {
+                    Some(serde_json::Value::Array(details)) => details,
+                    _ => Vec::new(),
+                };
+                for chunk in chunks {
+                    merge_reasoning_detail(&mut details, chunk);
+                }
+                let accumulated = serde_json::Value::Array(details);
+                self.accumulated = Some(accumulated.clone());
+                Some(accumulated)
+            }
+            chunk => {
+                self.accumulated = Some(chunk.clone());
+                Some(chunk)
+            }
+        }
+    }
+}
+
 pub struct OpenAiEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
+    reasoning_details: ReasoningDetailsAccumulator,
 }
 
 impl OpenAiEventMapper {
     pub fn new() -> Self {
         Self {
             tool_calls_by_index: HashMap::default(),
+            reasoning_details: ReasoningDetailsAccumulator::default(),
         }
     }
 
@@ -743,11 +817,21 @@ impl OpenAiEventMapper {
             && let Some(prompt_tokens) = usage.prompt_tokens
             && let Some(completion_tokens) = usage.completion_tokens
         {
+            let cache_creation_input_tokens = usage
+                .prompt_tokens_details
+                .as_ref()
+                .map_or(0, |details| details.cache_write_tokens);
+            let cache_read_input_tokens = usage
+                .prompt_tokens_details
+                .as_ref()
+                .map_or(0, |details| details.cached_tokens);
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: prompt_tokens,
+                input_tokens: prompt_tokens
+                    .saturating_sub(cache_creation_input_tokens)
+                    .saturating_sub(cache_read_input_tokens),
                 output_tokens: completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
             })));
         }
 
@@ -756,6 +840,13 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            if let Some(reasoning_details) = delta.reasoning_details.clone()
+                && let Some(reasoning_details) = self.reasoning_details.push(reasoning_details)
+            {
+                events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(
+                    reasoning_details,
+                )));
+            }
             if let Some(reasoning) = delta.reasoning.clone() {
                 push_thinking_event(reasoning, &mut events);
             }
@@ -788,6 +879,10 @@ impl OpenAiEventMapper {
                         if let Some(arguments) = function.arguments.clone() {
                             entry.arguments.push_str(&arguments);
                         }
+
+                        if let Some(thought_signature) = function.thought_signature.clone() {
+                            entry.thought_signature = Some(thought_signature);
+                        }
                     }
 
                     if !entry.id.is_empty() && !entry.name.is_empty() {
@@ -801,7 +896,7 @@ impl OpenAiEventMapper {
                                     is_input_complete: false,
                                     input: LanguageModelToolUseInput::Json(input),
                                     raw_input: entry.arguments.clone(),
-                                    thought_signature: None,
+                                    thought_signature: entry.thought_signature.clone(),
                                 },
                             )));
                         }
@@ -824,7 +919,7 @@ impl OpenAiEventMapper {
                                 is_input_complete: true,
                                 input: LanguageModelToolUseInput::Json(input),
                                 raw_input: tool_call.arguments.clone(),
-                                thought_signature: None,
+                                thought_signature: tool_call.thought_signature.clone(),
                             },
                         )),
                         Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
@@ -861,11 +956,49 @@ fn push_thinking_event(
     }
 }
 
+fn merge_reasoning_detail(details: &mut Vec<serde_json::Value>, chunk: serde_json::Value) {
+    let index = chunk.get("index").and_then(serde_json::Value::as_u64);
+    let target_index = index
+        .and_then(|index| {
+            details.iter().position(|detail| {
+                detail.get("index").and_then(serde_json::Value::as_u64) == Some(index)
+            })
+        })
+        .or_else(|| {
+            let id = chunk.get("id").and_then(serde_json::Value::as_str)?;
+            details
+                .iter()
+                .position(|detail| detail.get("id").and_then(serde_json::Value::as_str) == Some(id))
+        });
+    let Some(target_index) = target_index else {
+        details.push(chunk);
+        return;
+    };
+    let (Some(target), Some(chunk)) = (details[target_index].as_object_mut(), chunk.as_object())
+    else {
+        return;
+    };
+    for (key, value) in chunk {
+        if matches!(key.as_str(), "text" | "summary" | "data")
+            && let Some(fragment) = value.as_str()
+            && let Some(existing) = target.get(key).and_then(serde_json::Value::as_str)
+        {
+            target.insert(
+                key.clone(),
+                serde_json::Value::String(format!("{existing}{fragment}")),
+            );
+        } else if !value.is_null() {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 #[derive(Default)]
 struct RawToolCall {
     id: String,
     name: String,
     arguments: String,
+    thought_signature: Option<String>,
 }
 
 pub struct OpenAiResponseEventMapper {
@@ -3930,7 +4063,7 @@ mod tests {
             raw_input: tool_arguments.clone(),
             input: LanguageModelToolUseInput::Json(tool_input),
             is_input_complete: true,
-            thought_signature: None,
+            thought_signature: Some("thought-signature".into()),
         };
         let tool_result = LanguageModelToolResult {
             tool_use_id: tool_use_id,
@@ -3961,7 +4094,11 @@ mod tests {
                         MessageContent::ToolUse(tool_use),
                     ],
                     cache: false,
-                    reasoning_details: None,
+                    reasoning_details: Some(Arc::new(json!([{
+                        "id": "reasoning-1",
+                        "type": "reasoning.encrypted",
+                        "data": "encrypted"
+                    }]))),
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
@@ -3998,8 +4135,13 @@ mod tests {
                 {
                     "role": "assistant",
                     "content": "Searching now.",
-                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments}}],
-                    "reasoning_content": "I should search"
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments, "thought_signature": "thought-signature"}}],
+                    "reasoning_content": "I should search",
+                    "reasoning_details": [{
+                        "id": "reasoning-1",
+                        "type": "reasoning.encrypted",
+                        "data": "encrypted"
+                    }]
                 },
                 {"role": "tool", "content": "result", "tool_call_id": "call-1"}
             ])
@@ -4044,6 +4186,7 @@ mod tests {
                     reasoning: Some("thinking".into()),
                     tool_calls: None,
                     reasoning_content: None,
+                    reasoning_details: None,
                 }),
                 finish_reason: None,
             }],
@@ -4056,6 +4199,110 @@ mod tests {
                 text: "thinking".into(),
                 signature: None,
             }]
+        );
+    }
+
+    #[test]
+    fn stream_merges_reasoning_details_and_maps_compatible_usage_and_signatures() {
+        let response_events = serde_json::from_value(json!([
+            {
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "reasoning_details": [{
+                            "id": "reasoning-1",
+                            "index": 0,
+                            "type": "reasoning.text",
+                            "text": "first "
+                        }],
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call-1",
+                            "function": {
+                                "name": "search",
+                                "arguments": "{",
+                                "thought_signature": "signature"
+                            }
+                        }]
+                    },
+                    "finish_reason": null
+                }],
+                "usage": null
+            },
+            {
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "reasoning_details": [{
+                            "id": "reasoning-1",
+                            "index": 0,
+                            "text": "second"
+                        }],
+                        "tool_calls": [{
+                            "index": 0,
+                            "function": {
+                                "arguments": "}"
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }],
+                "usage": null
+            },
+            {
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 10000,
+                    "completion_tokens": 500,
+                    "total_tokens": 10500,
+                    "prompt_tokens_details": {
+                        "cached_tokens": 6000,
+                        "cache_write_tokens": 1000
+                    }
+                }
+            }
+        ]))
+        .expect("valid compatible Chat Completions events");
+        let events = map_completion_events(response_events);
+
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::ReasoningDetails(details)
+                    if details[0]["text"] == "first second"
+            )
+        }));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::ToolUse(tool_use)
+                    if tool_use.is_input_complete
+                        && tool_use.thought_signature.as_deref() == Some("signature")
+            )
+        }));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: 3_000,
+                    output_tokens: 500,
+                    cache_creation_input_tokens: 1_000,
+                    cache_read_input_tokens: 6_000,
+                })
+            )
+        }));
+    }
+
+    #[test]
+    fn reasoning_details_accumulator_replaces_an_incompatible_previous_shape() {
+        let mut accumulator = ReasoningDetailsAccumulator::default();
+        assert_eq!(
+            accumulator.push(json!({"summary": "provider-defined"})),
+            Some(json!({"summary": "provider-defined"}))
+        );
+        assert_eq!(
+            accumulator.push(json!([{"index": 0, "text": "reasoning"}])),
+            Some(json!([{"index": 0, "text": "reasoning"}]))
         );
     }
 
@@ -4080,9 +4327,11 @@ mod tests {
                             function: Some(FunctionChunk {
                                 name: Some("list_directory".into()),
                                 arguments: Some("".into()),
+                                thought_signature: None,
                             }),
                         }]),
                         reasoning_content: None,
+                        reasoning_details: None,
                     }),
                     finish_reason: None,
                 }],
@@ -4102,9 +4351,11 @@ mod tests {
                             function: Some(FunctionChunk {
                                 name: Some("".into()),
                                 arguments: Some("{\"path\": \"".into()),
+                                thought_signature: None,
                             }),
                         }]),
                         reasoning_content: None,
+                        reasoning_details: None,
                     }),
                     finish_reason: None,
                 }],
@@ -4123,9 +4374,11 @@ mod tests {
                             function: Some(FunctionChunk {
                                 name: Some("".into()),
                                 arguments: Some("blog-scraper\"}".into()),
+                                thought_signature: None,
                             }),
                         }]),
                         reasoning_content: None,
+                        reasoning_details: None,
                     }),
                     finish_reason: None,
                 }],
