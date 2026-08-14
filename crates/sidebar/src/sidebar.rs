@@ -2313,10 +2313,7 @@ impl Sidebar {
 
         let base_bg = color.background.blend(sidebar_base_bg);
 
-        let hover_base = color
-            .element_active
-            .blend(color.element_background.opacity(0.2));
-        let hover_solid = base_bg.blend(hover_base);
+        let hover_solid = base_bg.blend(color.ghost_element_hover);
 
         let group_name_for_gradient = group_name.clone();
         let gradient_overlay = move || {
