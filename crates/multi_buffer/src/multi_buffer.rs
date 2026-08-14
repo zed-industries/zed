@@ -763,9 +763,42 @@ impl ExcerptBoundaryInfo {
         self.start_text_anchor().buffer_id
     }
     pub fn buffer<'a>(&self, snapshot: &'a MultiBufferSnapshot) -> &'a BufferSnapshot {
-        snapshot
-            .buffer_for_id(self.buffer_id())
-            .expect("buffer snapshot not found for excerpt boundary")
+        let buffer_id = self.buffer_id();
+        snapshot.buffer_for_id(buffer_id).unwrap_or_else(|| {
+            // This state has crashed in the field for months without local
+            // reproduction, so describe it thoroughly: the panic message is
+            // the only diagnostic that comes back in crash reports.
+            let mut excerpt_buffer_ids = Vec::new();
+            for excerpt in snapshot.excerpts.iter() {
+                let excerpt_ids = (
+                    excerpt.buffer_id,
+                    excerpt.range.context.start.buffer_id,
+                    excerpt.path_key_index,
+                );
+                if excerpt_buffer_ids.last() != Some(&excerpt_ids) {
+                    excerpt_buffer_ids.push(excerpt_ids);
+                }
+            }
+            let present_buffer_ids = snapshot
+                .buffers
+                .iter()
+                .map(|(id, state)| (*id, state.path_key_index))
+                .collect::<Vec<_>>();
+            panic!(
+                "buffer snapshot not found for excerpt boundary: sought buffer {buffer_id} at \
+                 path index {:?}; buffers present (id, path index): {present_buffer_ids:?}; \
+                 excerpts present (buffer id, anchor buffer id, path index): \
+                 {excerpt_buffer_ids:?}; singleton={}, has_inverted_diff={}, \
+                 trailing_excerpt_update_count={}",
+                match self.start_anchor {
+                    Anchor::Excerpt(anchor) => Some(anchor.path),
+                    Anchor::Min | Anchor::Max => None,
+                },
+                snapshot.singleton,
+                snapshot.has_inverted_diff,
+                snapshot.trailing_excerpt_update_count,
+            )
+        })
     }
 }
 
