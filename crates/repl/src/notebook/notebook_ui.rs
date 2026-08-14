@@ -109,6 +109,11 @@ pub struct NotebookEditor {
     kernel_picker_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
 }
 
+enum SaveDestination {
+    CurrentPath,
+    NewPath(ProjectPath),
+}
+
 impl NotebookEditor {
     pub fn new(
         project: Entity<Project>,
@@ -335,6 +340,59 @@ impl NotebookEditor {
             }
         }
         cx.notify();
+    }
+
+    /// Writes the notebook through the project rather than through the client's
+    /// own filesystem, so that a remote notebook's path is resolved on the
+    /// remote instead of against the local machine.
+    fn save_impl(
+        &mut self,
+        destination: SaveDestination,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let notebook = self.to_notebook(cx);
+        let project_path = self.notebook_item.read(cx).project_path.clone();
+
+        self.mark_as_saved(cx);
+
+        cx.spawn(async move |this, cx| {
+            let json =
+                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
+            let buffer = project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                .await?;
+            buffer.update(cx, |buffer, cx| buffer.set_text(json, cx));
+
+            match destination {
+                SaveDestination::CurrentPath => {
+                    project
+                        .update(cx, |project, cx| project.save_buffer(buffer, cx))
+                        .await
+                }
+                SaveDestination::NewPath(new_path) => {
+                    project
+                        .update(cx, |project, cx| {
+                            project.save_buffer_as(buffer, new_path.clone(), cx)
+                        })
+                        .await?;
+
+                    // The buffer now lives at the new path, so the notebook has
+                    // to follow it or the next save writes to the old file.
+                    let entry_id = project.read_with(cx, |project, cx| {
+                        project.entry_for_path(&new_path, cx).map(|entry| entry.id)
+                    });
+                    this.update(cx, |this, cx| {
+                        this.notebook_item.update(cx, |notebook_item, _| {
+                            notebook_item.project_path = new_path;
+                            if let Some(entry_id) = entry_id {
+                                notebook_item.id = entry_id;
+                            }
+                        })
+                    })
+                }
+            }
+        })
     }
 
     fn launch_kernel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1856,22 +1914,7 @@ impl Item for NotebookEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let notebook = self.to_notebook(cx);
-        let project_path = self.notebook_item.read(cx).project_path.clone();
-
-        self.mark_as_saved(cx);
-
-        cx.spawn(async move |_this, cx| {
-            let json =
-                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
-            let buffer = project
-                .update(cx, |project, cx| project.open_buffer(project_path, cx))
-                .await?;
-            buffer.update(cx, |buffer, cx| buffer.set_text(json, cx));
-            project
-                .update(cx, |project, cx| project.save_buffer(buffer, cx))
-                .await
-        })
+        self.save_impl(SaveDestination::CurrentPath, project, cx)
     }
 
     fn save_as(
@@ -1881,36 +1924,7 @@ impl Item for NotebookEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let notebook = self.to_notebook(cx);
-        let project_path = self.notebook_item.read(cx).project_path.clone();
-
-        self.mark_as_saved(cx);
-
-        cx.spawn(async move |this, cx| {
-            let json =
-                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
-            let buffer = project
-                .update(cx, |project, cx| project.open_buffer(project_path, cx))
-                .await?;
-            buffer.update(cx, |buffer, cx| buffer.set_text(json, cx));
-            project
-                .update(cx, |project, cx| {
-                    project.save_buffer_as(buffer, path.clone(), cx)
-                })
-                .await?;
-
-            let entry_id = project.read_with(cx, |project, cx| {
-                project.entry_for_path(&path, cx).map(|entry| entry.id)
-            });
-            this.update(cx, |this, cx| {
-                this.notebook_item.update(cx, |notebook_item, _| {
-                    notebook_item.project_path = path;
-                    if let Some(entry_id) = entry_id {
-                        notebook_item.id = entry_id;
-                    }
-                })
-            })
-        })
+        self.save_impl(SaveDestination::NewPath(path), project, cx)
     }
 
     fn reload(
