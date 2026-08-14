@@ -1035,7 +1035,7 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.resizes_all_panels(cx) {
+        if self.should_resize_all_panels(cx) {
             self.resize_all_panels(size, flex, window, cx);
         } else {
             self.resize_active_panel(size, flex, window, cx);
@@ -1043,7 +1043,7 @@ impl Dock {
     }
 
     pub fn reset_active_panel_size(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.resizes_all_panels(cx) {
+        if self.should_resize_all_panels(cx) {
             let Some(active_entry) = self.active_panel_entry() else {
                 return;
             };
@@ -1076,7 +1076,7 @@ impl Dock {
         cx.notify();
     }
 
-    fn resizes_all_panels(&self, cx: &App) -> bool {
+    fn should_resize_all_panels(&self, cx: &App) -> bool {
         WorkspaceSettings::get_global(cx)
             .resize_all_panels_in_dock
             .contains(&self.position)
