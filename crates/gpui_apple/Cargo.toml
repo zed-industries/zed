@@ -1,0 +1,40 @@
+[package]
+name = "gpui_apple"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_apple.rs"
+
+[features]
+default = []
+test-support = ["gpui/test-support"]
+runtime_shaders = []
+
+[dependencies]
+gpui.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+anyhow.workspace = true
+block.workspace = true
+collections.workspace = true
+core-foundation.workspace = true
+core-graphics.workspace = true
+core-video.workspace = true
+derive_more.workspace = true
+etagere.workspace = true
+foreign-types.workspace = true
+image.workspace = true
+log.workspace = true
+metal.workspace = true
+objc.workspace = true
+parking_lot.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.build-dependencies]
+cbindgen.workspace = true
+gpui.workspace = true

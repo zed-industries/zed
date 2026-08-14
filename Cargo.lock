@@ -7918,6 +7918,61 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui_apple"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "block",
+ "cbindgen",
+ "collections",
+ "core-foundation 0.10.0",
+ "core-graphics 0.24.0",
+ "core-video",
+ "derive_more",
+ "etagere",
+ "foreign-types 0.5.0",
+ "gpui",
+ "image",
+ "log",
+ "metal",
+ "objc",
+ "parking_lot",
+]
+
+[[package]]
+name = "gpui_ios"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "block2 0.6.2",
+ "core-foundation 0.10.0",
+ "core-foundation-sys",
+ "core-graphics 0.24.0",
+ "core-text",
+ "futures 0.3.32",
+ "gpui",
+ "gpui_apple",
+ "log",
+ "metal",
+ "objc2 0.6.3",
+ "parking_lot",
+ "pathfinder_geometry",
+ "raw-window-handle",
+ "smallvec",
+ "uuid",
+ "zed-font-kit",
+]
+
+[[package]]
+name = "gpui_ios_example"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui_ios",
+ "log",
+]
+
+[[package]]
 name = "gpui_linux"
 version = "0.1.0"
 dependencies = [
@@ -7978,7 +8033,6 @@ dependencies = [
  "async-task",
  "block",
  "block2 0.6.2",
- "cbindgen",
  "cocoa 0.26.0",
  "collections",
  "core-foundation 0.10.0",
@@ -7993,6 +8047,7 @@ dependencies = [
  "foreign-types 0.5.0",
  "futures 0.3.32",
  "gpui",
+ "gpui_apple",
  "gpui_util",
  "image",
  "itertools 0.14.0",

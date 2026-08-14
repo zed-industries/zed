@@ -1,0 +1,42 @@
+name: GPUIIosExample
+options:
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    ARCHS: arm64
+    CODE_SIGNING_ALLOWED: NO
+    ONLY_ACTIVE_ARCH: YES
+targets:
+  GPUIIosExample:
+    type: application
+    platform: iOS
+    sources:
+      - main.m
+    info:
+      path: Info.plist
+      properties:
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.zed.gpui-ios-example
+        PRODUCT_NAME: GPUIIosExample
+        LIBRARY_SEARCH_PATHS:
+          - "$(SRCROOT)/../../../../../target/aarch64-apple-ios-sim/debug"
+        OTHER_LDFLAGS:
+          - "-Wl,-force_load,$(SRCROOT)/../../../../../target/aarch64-apple-ios-sim/debug/libgpui_ios_example.a"
+    dependencies:
+      - sdk: CoreFoundation.framework
+      - sdk: CoreGraphics.framework
+      - sdk: CoreText.framework
+      - sdk: Foundation.framework
+      - sdk: Metal.framework
+      - sdk: QuartzCore.framework
+      - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
+      - sdk: UIKit.framework

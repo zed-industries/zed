@@ -12,7 +12,12 @@
 
 use std::time::{Duration, Instant};
 
-use crate::{Axis, IsZero, Pixels, Point, TouchPhase, px};
+use smallvec::{SmallVec, smallvec};
+
+use crate::{
+    Axis, IsZero, Modifiers, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
+    TouchClickEvent, TouchEvent, TouchId, TouchPhase, px,
+};
 
 const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
 
@@ -122,6 +127,114 @@ impl Default for GestureTuning {
     }
 }
 
+pub(crate) struct TouchGestureArena {
+    tuning: GestureTuning,
+    active_touch: Option<ActiveTouch>,
+}
+
+pub(crate) enum TouchGestureOutput {
+    PlatformInput(PlatformInput),
+    Click(TouchClickEvent),
+}
+
+struct ActiveTouch {
+    id: TouchId,
+    start_position: Point<Pixels>,
+    last_position: Point<Pixels>,
+    is_panning: bool,
+}
+
+impl TouchGestureArena {
+    pub(crate) fn new(tuning: GestureTuning) -> Self {
+        Self {
+            tuning,
+            active_touch: None,
+        }
+    }
+
+    pub(crate) fn handle(&mut self, event: &TouchEvent) -> SmallVec<[TouchGestureOutput; 1]> {
+        match event.phase {
+            TouchPhase::Started => {
+                if self.active_touch.is_none() {
+                    self.active_touch = Some(ActiveTouch {
+                        id: event.id,
+                        start_position: event.position,
+                        last_position: event.position,
+                        is_panning: false,
+                    });
+                }
+                SmallVec::new()
+            }
+            TouchPhase::Moved => {
+                let Some(active_touch) = self
+                    .active_touch
+                    .as_mut()
+                    .filter(|active_touch| active_touch.id == event.id)
+                else {
+                    return SmallVec::new();
+                };
+
+                let mut touch_phase = TouchPhase::Moved;
+                let delta = if active_touch.is_panning {
+                    event.position - active_touch.last_position
+                } else if (event.position - active_touch.start_position).magnitude()
+                    > self.tuning.touch_slop.into()
+                {
+                    active_touch.is_panning = true;
+                    touch_phase = TouchPhase::Started;
+                    event.position - active_touch.start_position
+                } else {
+                    active_touch.last_position = event.position;
+                    return SmallVec::new();
+                };
+                active_touch.last_position = event.position;
+
+                smallvec![TouchGestureOutput::PlatformInput(
+                    PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position: event.position,
+                        delta: ScrollDelta::Pixels(delta),
+                        modifiers: Modifiers::default(),
+                        touch_phase,
+                    })
+                )]
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                if self
+                    .active_touch
+                    .as_ref()
+                    .is_none_or(|active_touch| active_touch.id != event.id)
+                {
+                    return SmallVec::new();
+                }
+                let Some(active_touch) = self.active_touch.take() else {
+                    return SmallVec::new();
+                };
+
+                if active_touch.is_panning {
+                    return smallvec![TouchGestureOutput::PlatformInput(
+                        PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            position: event.position,
+                            delta: ScrollDelta::Pixels(event.position - active_touch.last_position),
+                            modifiers: Modifiers::default(),
+                            touch_phase: event.phase,
+                        })
+                    )];
+                }
+
+                if event.phase == TouchPhase::Cancelled {
+                    return SmallVec::new();
+                }
+
+                smallvec![TouchGestureOutput::Click(TouchClickEvent {
+                    position: active_touch.start_position,
+                    tap_count: 1,
+                    long_press: false,
+                })]
+            }
+        }
+    }
+}
+
 /// The set of gesture kinds that participate in recognition.
 ///
 /// Used by [`PlatformGestures::native_recognizers`] to declare which gestures
@@ -197,6 +310,100 @@ impl PlatformGestures for NullPlatformGestures {}
 mod tests {
     use super::*;
     use crate::point;
+
+    #[test]
+    fn touch_gesture_arena_recognizes_tap() {
+        let mut arena = TouchGestureArena::new(GestureTuning::default());
+        let position = point(px(10.), px(20.));
+        let started = TouchEvent {
+            id: TouchId(1),
+            phase: TouchPhase::Started,
+            position,
+            force: None,
+        };
+        assert!(arena.handle(&started).is_empty());
+
+        let ended = TouchEvent {
+            phase: TouchPhase::Ended,
+            ..started
+        };
+        let output = arena.handle(&ended);
+        let Some(TouchGestureOutput::Click(click)) = output.first() else {
+            panic!("tap should produce a touch click");
+        };
+        assert_eq!(click.position, position);
+        assert_eq!(click.tap_count, 1);
+        assert!(!click.long_press);
+    }
+
+    #[test]
+    fn touch_gesture_arena_promotes_movement_to_scroll() {
+        let mut arena = TouchGestureArena::new(GestureTuning::default());
+        let started = TouchEvent {
+            id: TouchId(1),
+            phase: TouchPhase::Started,
+            position: point(px(10.), px(20.)),
+            force: None,
+        };
+        arena.handle(&started);
+
+        let moved = TouchEvent {
+            phase: TouchPhase::Moved,
+            position: point(px(10.), px(40.)),
+            ..started.clone()
+        };
+        let output = arena.handle(&moved);
+        let Some(TouchGestureOutput::PlatformInput(PlatformInput::ScrollWheel(scroll))) =
+            output.first()
+        else {
+            panic!("pan should produce a scroll event");
+        };
+        assert_eq!(scroll.touch_phase, TouchPhase::Started);
+        let ScrollDelta::Pixels(delta) = scroll.delta else {
+            panic!("touch pan should scroll in pixels");
+        };
+        assert_eq!(delta, point(px(0.), px(20.)));
+
+        let ended = TouchEvent {
+            phase: TouchPhase::Ended,
+            ..moved
+        };
+        let output = arena.handle(&ended);
+        let Some(TouchGestureOutput::PlatformInput(PlatformInput::ScrollWheel(scroll))) =
+            output.first()
+        else {
+            panic!("ending a pan should end the scroll");
+        };
+        assert_eq!(scroll.touch_phase, TouchPhase::Ended);
+    }
+
+    #[test]
+    fn secondary_touch_does_not_cancel_primary_touch() {
+        let mut arena = TouchGestureArena::new(GestureTuning::default());
+        let primary = TouchEvent {
+            id: TouchId(1),
+            phase: TouchPhase::Started,
+            position: point(px(10.), px(20.)),
+            force: None,
+        };
+        arena.handle(&primary);
+
+        let secondary_ended = TouchEvent {
+            id: TouchId(2),
+            phase: TouchPhase::Ended,
+            ..primary.clone()
+        };
+        assert!(arena.handle(&secondary_ended).is_empty());
+
+        let primary_ended = TouchEvent {
+            phase: TouchPhase::Ended,
+            ..primary
+        };
+        assert!(matches!(
+            arena.handle(&primary_ended).first(),
+            Some(TouchGestureOutput::Click(_))
+        ));
+    }
 
     #[test]
     fn ongoing_scroll_locks_to_dominant_axis() {

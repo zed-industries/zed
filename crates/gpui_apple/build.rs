@@ -1,12 +1,12 @@
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 
 fn main() {
-    #[cfg(target_os = "macos")]
-    macos_build::run();
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    apple_build::run();
 }
 
-#[cfg(target_os = "macos")]
-mod macos_build {
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod apple_build {
     use std::{
         env,
         path::{Path, PathBuf},
@@ -25,8 +25,7 @@ mod macos_build {
 
     fn generate_shader_bindings() -> PathBuf {
         let output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("scene.h");
-
-        let gpui_dir = find_gpui_crate_dir();
+        let gpui_dir: PathBuf = gpui::GPUI_MANIFEST_DIR.into();
 
         let mut config = Config {
             include_guard: Some("SCENE_H".into()),
@@ -63,14 +62,9 @@ mod macos_build {
             "SurfaceBounds".into(),
             "TransformationMatrix".into(),
         ]);
-        config.no_includes = true;
         config.enumeration.prefix_with_name = true;
 
-        let mut builder = cbindgen::Builder::new();
-
         let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-
-        // Source files from gpui that define types used in shaders
         let gpui_src_paths = [
             gpui_dir.join("src/scene.rs"),
             gpui_dir.join("src/geometry.rs"),
@@ -78,10 +72,9 @@ mod macos_build {
             gpui_dir.join("src/window.rs"),
             gpui_dir.join("src/platform.rs"),
         ];
-
-        // Source files from this crate
         let local_src_paths = [crate_dir.join("src/metal_renderer.rs")];
 
+        let mut builder = cbindgen::Builder::new();
         for src_path in gpui_src_paths.iter().chain(local_src_paths.iter()) {
             println!("cargo:rerun-if-changed={}", src_path.display());
             builder = builder.with_src(src_path);
@@ -96,51 +89,50 @@ mod macos_build {
         output_path
     }
 
-    /// Locate the gpui crate directory relative to this crate.
-    fn find_gpui_crate_dir() -> PathBuf {
-        gpui::GPUI_MANIFEST_DIR.into()
-    }
-
-    /// To enable runtime compilation, we need to "stitch" the shaders file with the generated header
-    /// so that it is self-contained.
     #[cfg(feature = "runtime_shaders")]
     fn emit_stitched_shaders(header_path: &Path) {
-        fn stitch_header(header: &Path, shader_path: &Path) -> std::io::Result<PathBuf> {
-            let header_contents = std::fs::read_to_string(header)?;
-            let shader_contents = std::fs::read_to_string(shader_path)?;
-            let stitched_contents = format!("{header_contents}\n{shader_contents}");
-            let out_path =
-                PathBuf::from(env::var("OUT_DIR").unwrap()).join("stitched_shaders.metal");
-            std::fs::write(&out_path, stitched_contents)?;
-            Ok(out_path)
-        }
-        let shader_source_path = "./src/shaders.metal";
-        let shader_path = PathBuf::from(shader_source_path);
-        stitch_header(header_path, &shader_path).unwrap();
-        println!("cargo:rerun-if-changed={shader_source_path}");
+        let header_contents = std::fs::read_to_string(header_path).unwrap();
+        let shader_path = Path::new("./src/shaders.metal");
+        let shader_contents = std::fs::read_to_string(shader_path).unwrap();
+        let output_path =
+            PathBuf::from(env::var("OUT_DIR").unwrap()).join("stitched_shaders.metal");
+        std::fs::write(output_path, format!("{header_contents}\n{shader_contents}")).unwrap();
+        println!("cargo:rerun-if-changed={}", shader_path.display());
     }
 
     #[cfg(not(feature = "runtime_shaders"))]
     fn compile_metal_shaders(header_path: &Path) {
         use std::process::{self, Command};
+
+        let target = env::var("TARGET").unwrap();
+        let (sdk, minimum_version_argument) = if target.contains("apple-ios") {
+            if target.ends_with("-sim") {
+                ("iphonesimulator", "-mios-simulator-version-min=15.0")
+            } else {
+                ("iphoneos", "-mios-version-min=15.0")
+            }
+        } else {
+            ("macosx", "-mmacosx-version-min=10.15.7")
+        };
+
         let shader_path = "./src/shaders.metal";
         let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");
         let metallib_output_path =
             PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metallib");
-        println!("cargo:rerun-if-changed={}", shader_path);
+        println!("cargo:rerun-if-changed={shader_path}");
 
         let output = Command::new("xcrun")
             .args([
                 "-sdk",
-                "macosx",
+                sdk,
                 "metal",
                 "-gline-tables-only",
-                "-mmacosx-version-min=10.15.7",
+                minimum_version_argument,
                 "-MO",
                 "-c",
                 shader_path,
                 "-include",
-                (header_path.to_str().unwrap()),
+                header_path.to_str().unwrap(),
                 "-o",
             ])
             .arg(&air_output_path)
@@ -156,7 +148,7 @@ mod macos_build {
         }
 
         let output = Command::new("xcrun")
-            .args(["-sdk", "macosx", "metallib"])
+            .args(["-sdk", sdk, "metallib"])
             .arg(air_output_path)
             .arg("-o")
             .arg(metallib_output_path)
