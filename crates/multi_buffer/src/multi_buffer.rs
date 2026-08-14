@@ -6876,6 +6876,11 @@ impl MultiBufferSnapshot {
                 "excerpt path key not found in active path keys: {:#?}",
                 excerpt.path_key
             );
+            assert!(
+                self.buffers.get(&excerpt.buffer_id).is_some(),
+                "excerpt references buffer {:#?}, which has no snapshot",
+                excerpt.buffer_id
+            );
             assert_eq!(
                 self.path_keys.get_index(excerpt.path_key_index.0 as usize),
                 Some(&excerpt.path_key),

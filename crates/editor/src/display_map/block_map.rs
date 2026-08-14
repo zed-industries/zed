@@ -4846,6 +4846,8 @@ mod tests {
                 )
             });
 
+            assert_excerpts_resolve(&rhs.buffer_snapshot);
+            assert_excerpts_resolve(&lhs.buffer_snapshot);
             assert_headers_resolve(&rhs_blocks.snapshot, &rhs.buffer_snapshot, "right");
             assert_headers_resolve(&lhs_blocks.snapshot, &lhs.buffer_snapshot, "left");
         }
@@ -5256,6 +5258,7 @@ mod tests {
             });
             let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits, None);
             log::info!("blocks text: {:?}", blocks_snapshot.text());
+            assert_excerpts_resolve(&buffer_snapshot);
 
             let max_row = blocks_snapshot.max_point().row;
             for (row, block) in blocks_snapshot.blocks_in_range(BlockRow(0)..BlockRow(max_row + 1))
@@ -5798,6 +5801,21 @@ mod tests {
             self.wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tab_snapshot, tab_edits, cx)
             })
+        }
+    }
+
+    /// Every excerpt must resolve its buffer, independently of any block: a
+    /// snapshot holding an excerpt whose buffer is absent would panic even when
+    /// the header rendering it was just computed.
+    #[track_caller]
+    fn assert_excerpts_resolve(buffer_snapshot: &MultiBufferSnapshot) {
+        for excerpt in buffer_snapshot.excerpts() {
+            let buffer_id = excerpt.context.start.buffer_id;
+            assert!(
+                buffer_snapshot.buffer_for_id(buffer_id).is_some(),
+                "multibuffer snapshot holds an excerpt for buffer {buffer_id:?}, \
+                 which is absent from its buffers",
+            );
         }
     }
 
