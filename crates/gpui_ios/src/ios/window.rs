@@ -12,19 +12,19 @@
 use super::IosDisplay;
 use super::events::*;
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, Edges, GpuSpecs,
-    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size,
-    TextInputStateChange, TouchEvent, TouchId, TouchPhase, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets, WindowParams, px,
-    size,
+    AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, Edges, EditMenuActions,
+    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    Scene, ScrollDelta, ScrollWheelEvent, Size, TextInputStateChange, TouchEvent, TouchId,
+    TouchPhase, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowInsets, WindowParams, px, size,
 };
 use gpui_apple::metal_renderer::{Context as MetalContext, MetalRenderer};
 use objc2::encode::{Encode, Encoding, RefEncode};
 use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
 use objc2::{class, msg_send, sel};
 
-use super::cg_types::ObjcCGRect;
+use super::cg_types::{ObjcCGPoint, ObjcCGRect, ObjcCGSize};
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, UiKitDisplayHandle, UiKitWindowHandle};
 use std::{
@@ -37,6 +37,8 @@ use std::{
 
 const GPUI_WINDOW_IVAR: &str = "gpui_window_ptr";
 const KEYBOARD_DISMISS_DISTANCE: Pixels = px(24.);
+const SCROLL_PROXY_CONTENT_HEIGHT: f64 = 1_000_000.;
+const SCROLL_PROXY_INITIAL_OFFSET: f64 = SCROLL_PROXY_CONTENT_HEIGHT / 2.;
 
 #[derive(Clone, Copy)]
 struct KeyboardDismissTouch {
@@ -48,6 +50,7 @@ static METAL_VIEW_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
 static VC_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
 static TEXT_INPUT_VIEW_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
 static KEYBOARD_OBSERVERS_REGISTERED: std::sync::Once = std::sync::Once::new();
+static SCROLL_VIEW_DELEGATE_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
 
 /// Global storage for the current status bar style.
 /// 0 = default (dark content), 1 = light content.
@@ -230,6 +233,91 @@ fn register_metal_view_class() -> &'static AnyClass {
     class!(GPUIMetalView)
 }
 
+fn register_scroll_view_delegate_class() -> &'static AnyClass {
+    SCROLL_VIEW_DELEGATE_CLASS_REGISTERED.call_once(|| {
+        let Some(mut decl) = ClassBuilder::new(c"GPUIScrollViewDelegate", class!(NSObject)) else {
+            return;
+        };
+        decl.add_ivar::<*mut c_void>(c"gpui_window_ptr");
+        if let Some(protocol) = objc2::runtime::AnyProtocol::get(c"UIScrollViewDelegate") {
+            decl.add_protocol(protocol);
+        }
+
+        extern "C" fn did_scroll(this: *mut AnyObject, _sel: Sel, scroll_view: *mut AnyObject) {
+            if let Some(window) = window_from_delegate(this) {
+                window.handle_native_scroll(scroll_view);
+            }
+        }
+
+        extern "C" fn will_begin_dragging(
+            this: *mut AnyObject,
+            _sel: Sel,
+            scroll_view: *mut AnyObject,
+        ) {
+            if let Some(window) = window_from_delegate(this) {
+                window.handle_native_scroll_start(scroll_view);
+            }
+        }
+
+        extern "C" fn did_end_dragging(
+            this: *mut AnyObject,
+            _sel: Sel,
+            scroll_view: *mut AnyObject,
+            decelerate: Bool,
+        ) {
+            if let Some(window) = window_from_delegate(this)
+                && decelerate == Bool::NO
+            {
+                window.handle_native_scroll_end(scroll_view);
+            }
+        }
+
+        extern "C" fn did_end_decelerating(
+            this: *mut AnyObject,
+            _sel: Sel,
+            scroll_view: *mut AnyObject,
+        ) {
+            if let Some(window) = window_from_delegate(this) {
+                window.handle_native_scroll_end(scroll_view);
+            }
+        }
+
+        unsafe {
+            decl.add_method(
+                sel!(scrollViewDidScroll:),
+                did_scroll as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            decl.add_method(
+                sel!(scrollViewWillBeginDragging:),
+                will_begin_dragging as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            decl.add_method(
+                sel!(scrollViewDidEndDragging:willDecelerate:),
+                did_end_dragging as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, Bool),
+            );
+            decl.add_method(
+                sel!(scrollViewDidEndDecelerating:),
+                did_end_decelerating as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+        }
+        decl.register();
+    });
+
+    class!(GPUIScrollViewDelegate)
+}
+
+fn window_from_delegate(delegate: *mut AnyObject) -> Option<&'static IosWindow> {
+    let window_ptr = unsafe {
+        #[allow(deprecated)]
+        *(*delegate).get_ivar::<*mut c_void>(GPUI_WINDOW_IVAR)
+    };
+    if window_ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { &*(window_ptr as *const IosWindow) })
+    }
+}
+
 /// Register a custom UIView subclass that implements UIKeyInput protocol.
 ///
 /// iOS requires the first-responder view to conform to `UIKeyInput` in order
@@ -301,6 +389,48 @@ fn register_text_input_view_class() -> &'static AnyClass {
             Bool::YES
         }
 
+        unsafe extern "C" fn cut(this: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
+            if let Some(window) = window_from_text_input(this) {
+                window.dispatch_edit_menu_shortcut("x");
+            }
+        }
+
+        unsafe extern "C" fn copy(this: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
+            if let Some(window) = window_from_text_input(this) {
+                window.dispatch_edit_menu_shortcut("c");
+            }
+        }
+
+        unsafe extern "C" fn paste(this: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
+            if let Some(window) = window_from_text_input(this) {
+                window.dispatch_edit_menu_shortcut("v");
+            }
+        }
+
+        unsafe extern "C" fn select_all(this: *mut AnyObject, _sel: Sel, _sender: *mut AnyObject) {
+            if let Some(window) = window_from_text_input(this) {
+                window.dispatch_edit_menu_shortcut("a");
+            }
+        }
+
+        unsafe extern "C" fn can_perform_action(
+            this: *mut AnyObject,
+            _sel: Sel,
+            action: Sel,
+            _sender: *mut AnyObject,
+        ) -> Bool {
+            let Some(window) = window_from_text_input(this) else {
+                return Bool::NO;
+            };
+            let actions = window.edit_menu_actions.get();
+            Bool::from(
+                (action == sel!(cut:) && actions.cut)
+                    || (action == sel!(copy:) && actions.copy)
+                    || (action == sel!(paste:) && actions.paste)
+                    || (action == sel!(selectAll:) && actions.select_all),
+            )
+        }
+
         // --- UITextInputTraits property accessors ---
         #[allow(deprecated)]
         unsafe extern "C" fn get_keyboard_type(this: *mut AnyObject, _sel: Sel) -> isize {
@@ -354,6 +484,27 @@ fn register_text_input_view_class() -> &'static AnyClass {
                 sel!(canBecomeFirstResponder),
                 can_become_first_responder as unsafe extern "C" fn(*mut AnyObject, Sel) -> Bool,
             );
+            decl.add_method(
+                sel!(cut:),
+                cut as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            decl.add_method(
+                sel!(copy:),
+                copy as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            decl.add_method(
+                sel!(paste:),
+                paste as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            decl.add_method(
+                sel!(selectAll:),
+                select_all as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            decl.add_method(
+                sel!(canPerformAction:withSender:),
+                can_perform_action
+                    as unsafe extern "C" fn(*mut AnyObject, Sel, Sel, *mut AnyObject) -> Bool,
+            );
             // UITextInputTraits property methods
             decl.add_method(
                 sel!(keyboardType),
@@ -387,6 +538,18 @@ fn register_text_input_view_class() -> &'static AnyClass {
     class!(GPUITextInputView)
 }
 
+fn window_from_text_input(view: *mut AnyObject) -> Option<&'static IosWindow> {
+    let window_ptr = unsafe {
+        #[allow(deprecated)]
+        *(*view).get_ivar::<*mut c_void>(GPUI_WINDOW_IVAR)
+    };
+    if window_ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { &*(window_ptr as *const IosWindow) })
+    }
+}
+
 /// Handle touch events from the GPUIMetalView
 fn handle_touches(view: *mut AnyObject, touches: *mut AnyObject, event: *mut AnyObject) {
     unsafe {
@@ -417,10 +580,16 @@ pub(crate) struct IosWindow {
     window: *mut AnyObject,
     /// The UIViewController
     view_controller: *mut AnyObject,
+    scroll_view: *mut AnyObject,
+    scroll_view_delegate: *mut AnyObject,
+    scroll_view_last_offset: Cell<Point<Pixels>>,
+    scroll_view_event_started: Cell<bool>,
     /// The Metal-backed UIView
     view: *mut AnyObject,
     /// The hidden text input view for keyboard input
     text_input_view: *mut AnyObject,
+    edit_menu_interaction: *mut AnyObject,
+    edit_menu_actions: Cell<EditMenuActions>,
     /// Current bounds in pixels
     bounds: Cell<Bounds<Pixels>>,
     /// Scale factor
@@ -493,10 +662,39 @@ impl IosWindow {
             let view_controller: *mut AnyObject = msg_send![vc_class, alloc];
             let view_controller: *mut AnyObject = msg_send![view_controller, init];
 
-            // Create our custom Metal view using the registered class
+            let scroll_view: *mut AnyObject = msg_send![class!(UIScrollView), alloc];
+            let scroll_view: *mut AnyObject =
+                msg_send![scroll_view, initWithFrame: screen_bounds_cg];
+            let content_size = ObjcCGSize {
+                width: screen_bounds_cg.width,
+                height: SCROLL_PROXY_CONTENT_HEIGHT,
+            };
+            let _: () = msg_send![scroll_view, setContentSize: content_size];
+            let initial_content_offset = ObjcCGPoint {
+                x: 0.,
+                y: SCROLL_PROXY_INITIAL_OFFSET,
+            };
+            let _: () =
+                msg_send![scroll_view, setContentOffset: initial_content_offset, animated: false];
+            let _: () = msg_send![scroll_view, setDirectionalLockEnabled: true];
+            let _: () = msg_send![scroll_view, setAlwaysBounceHorizontal: false];
+            let _: () = msg_send![scroll_view, setShowsHorizontalScrollIndicator: false];
+            let _: () = msg_send![scroll_view, setShowsVerticalScrollIndicator: false];
+            let _: () = msg_send![scroll_view, setDelaysContentTouches: false];
+            let _: () = msg_send![scroll_view, setContentInsetAdjustmentBehavior: 2_isize];
+            let _: () = msg_send![scroll_view, setKeyboardDismissMode: 2_isize];
+            let pan_gesture: *mut AnyObject = msg_send![scroll_view, panGestureRecognizer];
+            let _: () = msg_send![pan_gesture, setCancelsTouchesInView: false];
+
             let metal_view_class = register_metal_view_class();
             let view: *mut AnyObject = msg_send![metal_view_class, alloc];
-            let view: *mut AnyObject = msg_send![view, initWithFrame: screen_bounds_cg];
+            let metal_frame = ObjcCGRect::new(
+                0.,
+                SCROLL_PROXY_INITIAL_OFFSET,
+                screen_bounds_cg.width,
+                screen_bounds_cg.height,
+            );
+            let view: *mut AnyObject = msg_send![view, initWithFrame: metal_frame];
 
             let layer: *mut AnyObject = msg_send![view, layer];
             let scale: core_graphics::base::CGFloat = msg_send![screen_obj, scale];
@@ -510,8 +708,8 @@ impl IosWindow {
             let _: () = msg_send![view, setUserInteractionEnabled: true];
             let _: () = msg_send![view, setMultipleTouchEnabled: true];
 
-            // Set the view as the view controller's view
-            let _: () = msg_send![view_controller, setView: view];
+            let _: () = msg_send![scroll_view, addSubview: view];
+            let _: () = msg_send![view_controller, setView: scroll_view];
 
             // Set the root view controller
             let _: () = msg_send![window, setRootViewController: view_controller];
@@ -531,6 +729,20 @@ impl IosWindow {
             let _: () = msg_send![text_input_view, setUserInteractionEnabled: true];
             let _: () = msg_send![view, addSubview: text_input_view];
 
+            let edit_menu_interaction =
+                if let Some(edit_menu_class) = AnyClass::get(c"UIEditMenuInteraction") {
+                    let interaction: *mut AnyObject = msg_send![edit_menu_class, alloc];
+                    let interaction: *mut AnyObject =
+                        msg_send![interaction, initWithDelegate: ptr::null::<AnyObject>()];
+                    let _: () = msg_send![view, addInteraction: interaction];
+                    interaction
+                } else {
+                    ptr::null_mut()
+                };
+
+            let scroll_view_delegate_class = register_scroll_view_delegate_class();
+            let scroll_view_delegate: *mut AnyObject = msg_send![scroll_view_delegate_class, new];
+
             let pixel_w = (screen_bounds_cg.width * scale) as i32;
             let pixel_h = (screen_bounds_cg.height * scale) as i32;
             let mut renderer = MetalRenderer::from_layer(
@@ -543,8 +755,17 @@ impl IosWindow {
             let ios_window = Self {
                 window,
                 view_controller,
+                scroll_view,
+                scroll_view_delegate,
+                scroll_view_last_offset: Cell::new(Point::new(
+                    px(0.),
+                    px(SCROLL_PROXY_INITIAL_OFFSET as f32),
+                )),
+                scroll_view_event_started: Cell::new(false),
                 view,
                 text_input_view,
+                edit_menu_interaction,
+                edit_menu_actions: Cell::new(EditMenuActions::default()),
                 bounds: Cell::new(screen_bounds),
                 scale_factor: Cell::new(scale_factor),
                 input_handler: RefCell::new(None),
@@ -590,6 +811,12 @@ impl IosWindow {
             {
                 *(*self.text_input_view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) = window_ptr;
             }
+            #[allow(deprecated)]
+            {
+                *(*self.scroll_view_delegate).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) =
+                    window_ptr;
+            }
+            let _: () = msg_send![self.scroll_view, setDelegate: self.scroll_view_delegate];
             log::info!(
                 "GPUI iOS: Set window pointer {:p} on view {:p} and text input {:p}",
                 window_ptr,
@@ -696,6 +923,71 @@ impl IosWindow {
         }
     }
 
+    fn handle_native_scroll_start(&self, scroll_view: *mut AnyObject) {
+        self.scroll_view_last_offset
+            .set(Self::native_scroll_offset(scroll_view));
+        self.scroll_view_event_started.set(false);
+    }
+
+    fn handle_native_scroll(&self, scroll_view: *mut AnyObject) {
+        let offset = Self::native_scroll_offset(scroll_view);
+        self.position_metal_view(offset);
+        let previous_offset = self.scroll_view_last_offset.replace(offset);
+        let delta = previous_offset - offset;
+        if delta == Point::default() {
+            return;
+        }
+
+        let touch_phase = if self.scroll_view_event_started.replace(true) {
+            TouchPhase::Moved
+        } else {
+            TouchPhase::Started
+        };
+        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
+            callback(PlatformInput::ScrollWheel(ScrollWheelEvent {
+                position: self.mouse_position.get(),
+                delta: ScrollDelta::Pixels(delta),
+                modifiers: self.modifiers.get(),
+                touch_phase,
+            }));
+        }
+    }
+
+    fn handle_native_scroll_end(&self, scroll_view: *mut AnyObject) {
+        self.scroll_view_last_offset
+            .set(Self::native_scroll_offset(scroll_view));
+        if !self.scroll_view_event_started.replace(false) {
+            return;
+        }
+
+        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
+            callback(PlatformInput::ScrollWheel(ScrollWheelEvent {
+                position: self.mouse_position.get(),
+                delta: ScrollDelta::Pixels(Point::default()),
+                modifiers: self.modifiers.get(),
+                touch_phase: TouchPhase::Ended,
+            }));
+        }
+    }
+
+    fn native_scroll_offset(scroll_view: *mut AnyObject) -> Point<Pixels> {
+        let offset: ObjcCGPoint = unsafe { msg_send![scroll_view, contentOffset] };
+        Point::new(px(offset.x as f32), px(offset.y as f32))
+    }
+
+    fn position_metal_view(&self, offset: Point<Pixels>) {
+        let size = self.bounds.get().size;
+        let frame = ObjcCGRect::new(
+            f64::from(offset.x),
+            f64::from(offset.y),
+            f64::from(size.width),
+            f64::from(size.height),
+        );
+        unsafe {
+            let _: () = msg_send![self.view, setFrame: frame];
+        }
+    }
+
     fn handle_keyboard_dismiss_touch(&self, event: &TouchEvent) {
         if self.keyboard_height.get() <= 0. {
             self.keyboard_dismiss_touch.set(None);
@@ -757,7 +1049,7 @@ impl IosWindow {
     /// These represent the areas occupied by system UI (status bar,
     /// home indicator, camera notch) that content should avoid.
     fn safe_area_insets(&self) -> (f32, f32, f32, f32) {
-        if self.view.is_null() {
+        if self.scroll_view.is_null() {
             return (0.0, 0.0, 0.0, 0.0);
         }
         unsafe {
@@ -787,7 +1079,7 @@ impl IosWindow {
                 const ENCODING_REF: Encoding = Encoding::Pointer(&Self::ENCODING);
             }
 
-            let insets: UIEdgeInsets = msg_send![self.view, safeAreaInsets];
+            let insets: UIEdgeInsets = msg_send![self.scroll_view, safeAreaInsets];
             (
                 insets.top as f32,
                 insets.bottom as f32,
@@ -923,6 +1215,24 @@ impl IosWindow {
         }
     }
 
+    fn dispatch_edit_menu_shortcut(&self, key: &str) {
+        let event = PlatformInput::KeyDown(gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke {
+                modifiers: Modifiers {
+                    platform: true,
+                    ..Modifiers::default()
+                },
+                key: key.to_string(),
+                key_char: Some(key.to_string()),
+            },
+            is_held: false,
+            prefer_character_input: false,
+        });
+        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
+            callback(event);
+        }
+    }
+
     pub fn handle_key_event(&self, key_code: u32, modifier_flags: u32, is_key_down: bool) {
         use super::text_input::{key_code_to_key_down, key_code_to_key_up};
 
@@ -951,7 +1261,7 @@ impl IosWindow {
 
     pub fn handle_layout_change(&self) {
         unsafe {
-            let view_bounds: ObjcCGRect = msg_send![self.view, bounds];
+            let view_bounds: ObjcCGRect = msg_send![self.scroll_view, bounds];
             let screen: *mut AnyObject = msg_send![class!(UIScreen), mainScreen];
             let scale: core_graphics::base::CGFloat = msg_send![screen, scale];
 
@@ -984,6 +1294,12 @@ impl IosWindow {
             };
             self.bounds.set(new_bounds);
             self.scale_factor.set(new_scale);
+            let content_size = ObjcCGSize {
+                width: view_bounds.width,
+                height: SCROLL_PROXY_CONTENT_HEIGHT,
+            };
+            let _: () = msg_send![self.scroll_view, setContentSize: content_size];
+            self.position_metal_view(Self::native_scroll_offset(self.scroll_view));
 
             // Update the Metal layer's contentsScale so the drawable has the
             // correct pixel dimensions.
@@ -1020,10 +1336,19 @@ impl Drop for IosWindow {
                 *(*self.view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) = ptr::null_mut();
                 *(*self.text_input_view).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) =
                     ptr::null_mut();
+                *(*self.scroll_view_delegate).get_mut_ivar::<*mut c_void>(GPUI_WINDOW_IVAR) =
+                    ptr::null_mut();
             }
+            let _: () = msg_send![self.scroll_view, setDelegate: ptr::null::<AnyObject>()];
             let _: () = msg_send![self.text_input_view, removeFromSuperview];
             let _: () = msg_send![self.text_input_view, release];
+            if !self.edit_menu_interaction.is_null() {
+                let _: () = msg_send![self.view, removeInteraction: self.edit_menu_interaction];
+                let _: () = msg_send![self.edit_menu_interaction, release];
+            }
+            let _: () = msg_send![self.scroll_view_delegate, release];
             let _: () = msg_send![self.view, release];
+            let _: () = msg_send![self.scroll_view, release];
             let _: () = msg_send![self.view_controller, release];
             let _: () = msg_send![self.window, release];
         }
@@ -1248,6 +1573,41 @@ impl PlatformWindow for IosWindow {
 
     fn set_keyboard_dismiss_handler(&self, callback: Box<dyn FnMut()>) {
         *self.keyboard_dismiss_callback.borrow_mut() = Some(callback);
+    }
+
+    fn show_edit_menu(&self, position: Point<Pixels>, actions: EditMenuActions) -> bool {
+        if self.edit_menu_interaction.is_null() {
+            return false;
+        }
+        let Some(configuration_class) = AnyClass::get(c"UIEditMenuConfiguration") else {
+            return false;
+        };
+
+        self.edit_menu_actions.set(actions);
+        unsafe {
+            let is_first_responder: Bool = msg_send![self.text_input_view, isFirstResponder];
+            if !is_first_responder.as_bool() {
+                let _: Bool = msg_send![self.text_input_view, becomeFirstResponder];
+            }
+            let source_point = ObjcCGPoint {
+                x: f64::from(position.x),
+                y: f64::from(position.y),
+            };
+            let configuration: *mut AnyObject = msg_send![
+                configuration_class,
+                configurationWithIdentifier: ptr::null::<AnyObject>(),
+                sourcePoint: source_point
+            ];
+            if configuration.is_null() {
+                return false;
+            }
+            let _: () = msg_send![self.edit_menu_interaction, dismissMenu];
+            let _: () = msg_send![
+                self.edit_menu_interaction,
+                presentEditMenuWithConfiguration: configuration
+            ];
+        }
+        true
     }
 
     fn text_input_state_changed(&self, change: TextInputStateChange) {

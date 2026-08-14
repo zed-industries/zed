@@ -4,14 +4,14 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, EditMenuActions,
+    Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId,
+    GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputStateChange,
@@ -1543,10 +1543,13 @@ impl Window {
             .and_then(|titlebar| titlebar.title.clone());
 
         let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
-        let gesture_tuning = cx
-            .platform
-            .gestures()
+        let platform_gestures = cx.platform.gestures();
+        let gesture_tuning = platform_gestures
+            .as_ref()
             .map(|gestures| gestures.tuning())
+            .unwrap_or_default();
+        let native_gestures = platform_gestures
+            .map(|gestures| gestures.native_recognizers())
             .unwrap_or_default();
         let mut platform_window = cx.platform.open_window(
             handle,
@@ -2055,7 +2058,7 @@ impl Window {
             #[cfg(feature = "frame-duration-histogram")]
             frame_duration_tracker: FrameDurationTracker::new()?,
             last_input_modality: InputModality::Mouse,
-            touch_gesture_arena: TouchGestureArena::new(gesture_tuning),
+            touch_gesture_arena: TouchGestureArena::new(gesture_tuning, native_gestures),
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
@@ -2701,6 +2704,13 @@ impl Window {
     /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
     pub fn show_window_menu(&self, position: Point<Pixels>) {
         self.platform_window.show_window_menu(position)
+    }
+
+    /// Presents the platform-native text editing menu when supported.
+    ///
+    /// Returns whether the platform accepted the request.
+    pub fn show_edit_menu(&self, position: Point<Pixels>, actions: EditMenuActions) -> bool {
+        self.platform_window.show_edit_menu(position, actions)
     }
 
     /// Handle window movement for Linux and macOS.
