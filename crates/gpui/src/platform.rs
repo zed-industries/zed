@@ -1827,6 +1827,11 @@ pub struct WindowOptions {
     /// Leave this `false` for windows that rely on AppKit's native titlebar dragging.
     pub app_owns_titlebar_drag: bool,
 
+    /// The minimum interval between animation frames while the window is inactive.
+    ///
+    /// Set to `None` to disable inactive-window animation frame throttling.
+    pub inactive_frame_interval: Option<Duration>,
+
     /// Whether the window should be resizable by the user
     pub is_resizable: bool,
 
@@ -1971,6 +1976,7 @@ impl Default for WindowOptions {
             kind: WindowKind::Normal,
             is_movable: true,
             app_owns_titlebar_drag: false,
+            inactive_frame_interval: Some(Duration::from_micros(33_333)),
             is_resizable: true,
             is_minimizable: true,
             display_id: None,
