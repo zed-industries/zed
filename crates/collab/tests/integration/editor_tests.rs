@@ -4214,7 +4214,10 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .into_iter()
         .map(|(sha, message)| (sha.parse().unwrap(), message.into()))
         .collect(),
-        tag_names: Default::default(),
+        tag_names: [("1b1b1b", vec!["v1.0.0".to_string()])]
+            .into_iter()
+            .map(|(sha, tag_names)| (sha.parse().unwrap(), tag_names))
+            .collect(),
     };
     client_a.fs().set_blame_for_repo(
         Path::new(path!("/my-repo/.git")),
@@ -4300,6 +4303,10 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
                 let details = blame.details_for_entry(*buffer, entry).unwrap();
                 assert_eq!(details.message, format!("message for idx-{}", idx));
             }
+            assert_eq!(
+                blame.tag_names_for_entry(buffer_id_b, &blame_entry("1b1b1b", 0..1)),
+                vec![SharedString::from("v1.0.0")]
+            );
         });
     });
 
@@ -4375,6 +4382,61 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             ]
         );
     });
+
+    let revision = "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d"
+        .parse::<git::Oid>()
+        .unwrap();
+    let content_at_revision = "old line1\nold line2\n";
+    let blame_at_revision = git::blame::Blame {
+        entries: vec![blame_entry("1b1b1b", 0..1), blame_entry("0d0d0d", 1..2)],
+        messages: [
+            ("1b1b1b", "message for idx-0"),
+            ("0d0d0d", "message for idx-1"),
+        ]
+        .into_iter()
+        .map(|(sha, message)| (sha.parse().unwrap(), message.into()))
+        .collect(),
+        tag_names: [("0d0d0d", vec!["v1.0.0".to_string()])]
+            .into_iter()
+            .map(|(sha, tag_names)| (sha.parse().unwrap(), tag_names))
+            .collect(),
+    };
+    client_a
+        .fs()
+        .with_git_state(Path::new(path!("/my-repo/.git")), true, |state| {
+            state.refs.insert("HEAD".into(), revision.to_string());
+            state
+                .head_contents
+                .insert(repo_path("file.txt"), content_at_revision.to_string());
+            state
+                .blames_at_revision
+                .insert((repo_path("file.txt"), revision), blame_at_revision.clone());
+        })
+        .unwrap();
+
+    cx_a.executor().run_until_parked();
+    cx_b.executor().run_until_parked();
+
+    let repository_b = project_b.read_with(cx_b, |project, cx| {
+        project
+            .git_store()
+            .read(cx)
+            .repositories()
+            .values()
+            .next()
+            .unwrap()
+            .clone()
+    });
+
+    let (content, forwarded_blame) = repository_b
+        .update(cx_b, |repository, cx| {
+            repository.blame_buffer_at_revision(repo_path("file.txt"), revision, cx)
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(content, content_at_revision);
+    assert_eq!(forwarded_blame, blame_at_revision);
 }
 
 #[gpui::test(iterations = 30)]

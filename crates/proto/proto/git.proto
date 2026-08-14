@@ -378,6 +378,7 @@ message Stash {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   repeated string paths = 3;
+  optional string message = 4;
 }
 
 message StashPop {
@@ -524,11 +525,31 @@ message BlameBufferResponse {
     repeated CommitMessage messages = 2;
     reserved 3;
     reserved 4;
+    repeated CommitTagNames tag_names = 5;
   }
 
   optional BlameResponse blame_response = 5;
 
   reserved 1 to 4;
+}
+
+message BlameBufferAtRevision {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string path = 3;
+  string revision = 4;
+}
+
+message BlameBufferAtRevisionResponse {
+  string content = 1;
+  repeated BlameEntry entries = 2;
+  repeated CommitMessage messages = 3;
+  repeated CommitTagNames tag_names = 4;
+}
+
+message CommitTagNames {
+  bytes oid = 1;
+  repeated string tag_names = 2;
 }
 
 message GetDefaultBranch {

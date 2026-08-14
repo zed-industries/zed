@@ -623,7 +623,7 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> (String, StyleRef
         let before_change = style.clone();
         style = method.invoke(style);
         if before_change != style {
-            let _ = write!(code, "\n        .{}()", &method.name);
+            let _ = write!(code, "\n        .{}()", method.name);
         }
     }
     code.push_str("\n}");
