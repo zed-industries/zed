@@ -55,6 +55,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             "Toggle GPUI Inspector",
             dev::ToggleInspector,
         ));
+        view_items.push(MenuItem::action(
+            "Toggle FPS Overlay",
+            dev::ToggleFpsOverlay,
+        ));
         view_items.push(MenuItem::separator());
     }
 

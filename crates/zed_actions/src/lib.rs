@@ -248,7 +248,10 @@ pub mod dev {
         dev,
         [
             /// Toggles the developer inspector for debugging UI elements.
-            ToggleInspector
+            ToggleInspector,
+            /// Cycles the debug FPS overlay between hidden, FPS-only, and detailed
+            /// frame-time statistics.
+            ToggleFpsOverlay
         ]
     );
 }

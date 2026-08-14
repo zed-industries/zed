@@ -3,15 +3,15 @@ use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
-    Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    Capslock, Context, Corners, CursorHideMode, CursorStyle, DebugFrameOverlayMode, Decorations,
+    DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
+    Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
+    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
@@ -1182,6 +1182,7 @@ pub struct Window {
     captured_hitbox: Option<HitboxId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
+    debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay,
     pub(crate) a11y: A11y,
 }
 
@@ -2037,6 +2038,7 @@ impl Window {
             captured_hitbox: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
+            debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay::new(),
             a11y: A11y::new(
                 a11y_active_flag,
                 accessibility_force_disabled,
@@ -2980,7 +2982,9 @@ impl Window {
         #[cfg(feature = "frame-duration-histogram")]
         let draw_started_at = Some(Instant::now());
         #[cfg(not(feature = "frame-duration-histogram"))]
-        let draw_started_at = profiler::frame_trace_enabled().then(Instant::now);
+        let draw_started_at = (profiler::frame_trace_enabled()
+            || self.debug_frame_overlay.is_enabled())
+        .then(Instant::now);
 
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
@@ -3011,6 +3015,10 @@ impl Window {
         }
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
+            let viewport_size = self.viewport_size;
+            let scale_factor = self.scale_factor();
+            self.debug_frame_overlay
+                .paint(&mut self.next_frame.scene, viewport_size, scale_factor);
         }
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
@@ -3093,6 +3101,8 @@ impl Window {
             #[cfg(feature = "frame-duration-histogram")]
             self.frame_duration_tracker
                 .record_draw(draw_end.duration_since(draw_start));
+            self.debug_frame_overlay
+                .record_frame(draw_end.duration_since(draw_start));
             profiler::record_frame_timing(profiler::FrameTiming {
                 window_id: self.handle.window_id(),
                 dirty_at: frame_dirty.dirty_at,
@@ -3169,6 +3179,23 @@ impl Window {
     #[cfg(feature = "frame-duration-histogram")]
     pub fn frame_duration_snapshot(&self) -> FrameDurationSnapshot {
         self.frame_duration_tracker.snapshot()
+    }
+
+    /// Returns the current mode of the debug frame overlay.
+    pub fn debug_frame_overlay_mode(&self) -> DebugFrameOverlayMode {
+        self.debug_frame_overlay.mode()
+    }
+
+    /// Sets the mode of the debug frame overlay and schedules a redraw.
+    pub fn set_debug_frame_overlay_mode(&mut self, mode: DebugFrameOverlayMode) {
+        self.debug_frame_overlay.set_mode(mode);
+        self.refresh();
+    }
+
+    /// Advances the debug frame overlay through its hidden, FPS-only, and
+    /// detailed modes.
+    pub fn cycle_debug_frame_overlay_mode(&mut self) {
+        self.set_debug_frame_overlay_mode(self.debug_frame_overlay.mode().next());
     }
 
     fn draw_roots(&mut self, cx: &mut App) {
