@@ -4710,30 +4710,17 @@ mod tests {
                 )
             });
             let base_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
-            files.push((main_buffer, base_buffer, diff));
+            let path_key = cx.update(|cx| PathKey::for_buffer(&main_buffer, cx));
+            files.push(SplitDiffFile {
+                main_buffer,
+                base_buffer,
+                diff,
+                path_key,
+            });
         }
 
-        for (main_buffer, base_buffer, diff) in &files {
-            rhs_multibuffer.update(cx, |multibuffer, cx| {
-                let max_point = main_buffer.read(cx).max_point();
-                multibuffer.set_excerpts_for_buffer(
-                    main_buffer.clone(),
-                    [Point::zero()..max_point],
-                    0,
-                    cx,
-                );
-                multibuffer.add_diff(diff.clone(), cx);
-            });
-            lhs_multibuffer.update(cx, |multibuffer, cx| {
-                let max_point = base_buffer.read(cx).max_point();
-                multibuffer.set_excerpts_for_buffer(
-                    base_buffer.clone(),
-                    [Point::zero()..max_point],
-                    0,
-                    cx,
-                );
-                multibuffer.add_inverted_diff(diff.clone(), main_buffer.clone(), cx);
-            });
+        for file in &files {
+            add_split_diff_file(&lhs_multibuffer, &rhs_multibuffer, file, cx);
         }
 
         let rhs_display_map_id = rhs_multibuffer.entity_id();
@@ -4748,56 +4735,71 @@ mod tests {
                 // Remove a file from both sides, as `sync_lhs_for_paths` does
                 // when a file no longer has changes.
                 0..=29 if !files.is_empty() => {
-                    let (main_buffer, base_buffer, _) = files.choose(&mut rng).unwrap().clone();
-                    let (main_id, base_id) = cx.update(|cx| {
-                        (
-                            main_buffer.read(cx).remote_id(),
-                            base_buffer.read(cx).remote_id(),
-                        )
-                    });
-                    log::info!("Removing file (main {main_id:?}, base {base_id:?})");
+                    let file = files.choose(&mut rng).unwrap().clone();
+                    log::info!("Removing file at {:?}", file.path_key);
                     rhs_multibuffer.update(cx, |multibuffer, cx| {
-                        multibuffer.remove_excerpts_for_buffer(main_id, cx);
+                        multibuffer.remove_excerpts(file.path_key.clone(), cx);
                     });
                     lhs_multibuffer.update(cx, |multibuffer, cx| {
-                        multibuffer.remove_excerpts_for_buffer(base_id, cx);
+                        multibuffer.remove_excerpts(file.path_key.clone(), cx);
                     });
                 }
                 // Restore a file on both sides.
                 30..=49 if !files.is_empty() => {
-                    let (main_buffer, base_buffer, diff) = files.choose(&mut rng).unwrap().clone();
+                    let file = files.choose(&mut rng).unwrap().clone();
                     log::info!("Restoring a file");
-                    rhs_multibuffer.update(cx, |multibuffer, cx| {
-                        let max_point = main_buffer.read(cx).max_point();
-                        multibuffer.set_excerpts_for_buffer(
-                            main_buffer.clone(),
-                            [Point::zero()..max_point],
-                            0,
-                            cx,
-                        );
-                        multibuffer.add_diff(diff.clone(), cx);
-                    });
-                    lhs_multibuffer.update(cx, |multibuffer, cx| {
-                        let max_point = base_buffer.read(cx).max_point();
-                        multibuffer.set_excerpts_for_buffer(
-                            base_buffer.clone(),
-                            [Point::zero()..max_point],
-                            0,
-                            cx,
-                        );
-                        multibuffer.add_inverted_diff(diff.clone(), main_buffer.clone(), cx);
-                    });
+                    add_split_diff_file(&lhs_multibuffer, &rhs_multibuffer, &file, cx);
                 }
                 // Edit a main buffer and recalculate its diff, which reshapes
                 // the deleted-hunk spacers on both sides.
                 50..=79 if !files.is_empty() => {
-                    let (main_buffer, _, diff) = files.choose(&mut rng).unwrap().clone();
-                    main_buffer.update(cx, |buffer, cx| {
+                    let file = files.choose(&mut rng).unwrap().clone();
+                    file.main_buffer.update(cx, |buffer, cx| {
                         let edit_count = rng.random_range(1..=3);
                         buffer.randomly_edit(&mut rng, edit_count, cx);
                     });
-                    let snapshot = main_buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-                    diff.update(cx, |diff, cx| diff.recalculate_diff_sync(&snapshot, cx));
+                    let snapshot = file
+                        .main_buffer
+                        .read_with(cx, |buffer, _| buffer.text_snapshot());
+                    file.diff
+                        .update(cx, |diff, cx| diff.recalculate_diff_sync(&snapshot, cx));
+                    // The left side re-derives its excerpts from the right
+                    // side's whenever the diff changes.
+                    add_split_diff_file(&lhs_multibuffer, &rhs_multibuffer, &file, cx);
+                }
+                // Fold or unfold a file on one side.
+                80..=94 => {
+                    let fold_rhs = rng.random_bool(0.5);
+                    let (side, multibuffer) = if fold_rhs {
+                        (&mut rhs, &rhs_multibuffer)
+                    } else {
+                        (&mut lhs, &lhs_multibuffer)
+                    };
+                    let (wrap_snapshot, wrap_edits) = side.sync(multibuffer, tab_size, cx);
+                    let mut writer = side.block_map.write(wrap_snapshot, wrap_edits, None);
+                    let folded = writer
+                        .block_map
+                        .folded_buffers
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let mut unfolded = side
+                        .buffer_snapshot
+                        .all_buffer_ids()
+                        .filter(|id| !folded.contains(id))
+                        .collect::<Vec<_>>();
+                    unfolded.dedup();
+                    multibuffer.read_with(cx, |multibuffer, cx| {
+                        if !unfolded.is_empty() && (folded.is_empty() || rng.random_bool(0.5)) {
+                            let to_fold = *unfolded.choose(&mut rng).unwrap();
+                            log::info!("Folding {to_fold:?}");
+                            writer.fold_buffers([to_fold], multibuffer, cx);
+                        } else if !folded.is_empty() {
+                            let to_unfold = *folded.choose(&mut rng).unwrap();
+                            log::info!("Unfolding {to_unfold:?}");
+                            writer.unfold_buffers([to_unfold], multibuffer, cx);
+                        }
+                    });
                 }
                 _ => {
                     let wrap_width = if rng.random_bool(0.3) {
@@ -5682,6 +5684,64 @@ mod tests {
         cx.set_global(settings);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         assets::Assets.load_test_fonts(cx);
+    }
+
+    /// One file in a split diff: the right side excerpts `main_buffer`, and the
+    /// left side excerpts the diff's base text buffer under the same path key.
+    #[derive(Clone)]
+    struct SplitDiffFile {
+        main_buffer: Entity<Buffer>,
+        base_buffer: Entity<Buffer>,
+        diff: Entity<BufferDiff>,
+        path_key: PathKey,
+    }
+
+    /// Excerpts a file into both sides of a split diff the way
+    /// `SplittableEditor::sync_lhs_for_paths` does: the right side takes the
+    /// buffer's own rows, and the left side takes the corresponding base text
+    /// rows, under the right side's path key so the two pair up positionally.
+    fn add_split_diff_file(
+        lhs_multibuffer: &Entity<MultiBuffer>,
+        rhs_multibuffer: &Entity<MultiBuffer>,
+        file: &SplitDiffFile,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        rhs_multibuffer.update(cx, |multibuffer, cx| {
+            let max_point = file.main_buffer.read(cx).max_point();
+            multibuffer.set_excerpts_for_path(
+                file.path_key.clone(),
+                file.main_buffer.clone(),
+                [Point::zero()..max_point],
+                0,
+                cx,
+            );
+            multibuffer.add_diff(file.diff.clone(), cx);
+        });
+
+        let lhs_range = cx.update(|cx| {
+            let diff_snapshot = file.diff.read(cx).snapshot(cx);
+            let main_snapshot = file.main_buffer.read(cx).text_snapshot();
+            let rhs_range = Point::zero()..file.main_buffer.read(cx).max_point();
+            let start = diff_snapshot
+                .buffer_point_to_base_text_range(Point::new(rhs_range.start.row, 0), &main_snapshot)
+                .start;
+            let end = diff_snapshot
+                .buffer_point_to_base_text_range(Point::new(rhs_range.end.row, 0), &main_snapshot)
+                .end;
+            let end_column = diff_snapshot.base_text().line_len(end.row);
+            Point::new(start.row, 0)..Point::new(end.row, end_column)
+        });
+
+        lhs_multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                file.path_key.clone(),
+                file.base_buffer.clone(),
+                [lhs_range],
+                0,
+                cx,
+            );
+            multibuffer.add_inverted_diff(file.diff.clone(), file.main_buffer.clone(), cx);
+        });
     }
 
     /// The display map layers for one side of a split diff.
