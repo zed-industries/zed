@@ -21,7 +21,7 @@ use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::form_urlencoded;
 use util::ResultExt as _;
 
@@ -38,6 +38,8 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 const CREDENTIALS_KEY: &str = "https://chatgpt.com/backend-api/codex";
 const TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
+// Codex applies the same bound because model discovery is a startup-critical request.
+const MODEL_CATALOG_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct CodexCredentials {
@@ -222,7 +224,17 @@ impl State {
                 let credentials = get_fresh_credentials(&this, &http_client, cx)
                     .await
                     .map_err(|error| anyhow!("{error}"))?;
-                list_models(http_client.as_ref(), &credentials, client_version.as_ref()).await
+                let request =
+                    list_models(http_client.as_ref(), &credentials, client_version.as_ref());
+                let timeout = cx
+                    .background_executor()
+                    .timer(MODEL_CATALOG_REQUEST_TIMEOUT);
+                futures::select! {
+                    result = request.fuse() => result,
+                    () = timeout.fuse() => Err(anyhow!(
+                        "ChatGPT models request timed out after {MODEL_CATALOG_REQUEST_TIMEOUT:?}"
+                    )),
+                }
             }
             .await;
 
@@ -616,7 +628,7 @@ impl From<CatalogModel> for ChatGptModel {
             .additional_speed_tiers
             .iter()
             .any(|tier| tier == "fast")
-            || model.service_tiers.iter().any(|tier| tier.id == "fast");
+            || model.service_tiers.iter().any(|tier| tier.id == "priority");
         let supports_images = model
             .input_modalities
             .as_ref()
@@ -1707,7 +1719,7 @@ mod tests {
                                 "visibility": "list",
                                 "priority": 2,
                                 "additional_speed_tiers": [],
-                                "service_tiers": [{"id": "fast"}],
+                                "service_tiers": [{"id": "priority"}],
                                 "context_window": 372_000,
                                 "max_context_window": null,
                                 "input_modalities": ["text", "image"]
@@ -1815,6 +1827,27 @@ mod tests {
                     .is_some_and(|error| error.contains("backend unavailable"))
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_model_catalog_request_times_out(cx: &mut TestAppContext) {
+        let http_client = FakeHttpClient::create(|_| {
+            futures::future::pending::<Result<http_client::Response<AsyncBody>>>()
+        });
+        let state = make_state(http_client, Some(make_fresh_credentials()), cx);
+
+        let refresh_task = state.update(cx, |state, cx| state.refresh_model_catalog(cx));
+        cx.run_until_parked();
+        cx.executor().advance_clock(MODEL_CATALOG_REQUEST_TIMEOUT);
+        cx.run_until_parked();
+
+        let error = refresh_task
+            .await
+            .expect_err("model discovery should time out");
+        assert!(
+            error.to_string().contains("timed out after 5s"),
+            "unexpected model discovery error: {error:#}"
+        );
     }
 
     #[gpui::test]
