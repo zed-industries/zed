@@ -151,6 +151,8 @@ pub enum Model {
     Glm5_1,
     #[serde(rename = "glm-5.2")]
     Glm5_2,
+    #[serde(rename = "glm-5.3")]
+    Glm5_3,
     #[serde(rename = "grok-build-0.1")]
     GrokBuild0_1,
     #[serde(rename = "grok-4.5")]
@@ -246,6 +248,7 @@ impl Model {
             // Go-only models
             Self::MimoV2_5Pro
             | Self::MimoV2_5
+            | Self::Glm5_3
             | Self::Qwen3_7Plus
             | Self::Qwen3_7Max
             | Self::Qwen3_8Max
@@ -315,6 +318,7 @@ impl Model {
             Self::Glm5 => "glm-5",
             Self::Glm5_1 => "glm-5.1",
             Self::Glm5_2 => "glm-5.2",
+            Self::Glm5_3 => "glm-5.3",
             Self::GrokBuild0_1 => "grok-build-0.1",
             Self::Grok4_5 => "grok-4.5",
             Self::Grok4_6 => "grok-4.6",
@@ -388,6 +392,7 @@ impl Model {
             Self::Glm5 => "GLM 5",
             Self::Glm5_1 => "GLM 5.1",
             Self::Glm5_2 => "GLM 5.2",
+            Self::Glm5_3 => "GLM 5.3",
             Self::GrokBuild0_1 => "Grok Build 0.1",
             Self::Grok4_5 => "Grok 4.5",
             Self::Grok4_6 => "Grok 4.6",
@@ -476,6 +481,7 @@ impl Model {
             Self::Glm5
             | Self::Glm5_1
             | Self::Glm5_2
+            | Self::Glm5_3
             | Self::GrokBuild0_1
             | Self::KimiK2_5
             | Self::KimiK2_6
@@ -508,6 +514,7 @@ impl Model {
             | Self::Glm5
             | Self::Glm5_1
             | Self::Glm5_2
+            | Self::Glm5_3
             | Self::MiniMaxM2_5
             | Self::MiniMaxM2_7
             | Self::MiniMaxM3
@@ -572,7 +579,7 @@ impl Model {
                     204_800
                 }
             }
-            Self::Glm5_2 => 1_000_000,
+            Self::Glm5_3 | Self::Glm5_2 => 1_000_000,
             Self::KimiK2_6 | Self::KimiK2_5 | Self::KimiK2_7Code => 262_144,
             Self::KimiK3 => 1_048_576,
             Self::GrokBuild0_1 => 256_000,
@@ -665,7 +672,7 @@ impl Model {
                     Some(131_072)
                 }
             }
-            Self::Glm5_2 => Some(131_072),
+            Self::Glm5_3 | Self::Glm5_2 => Some(131_072),
             Self::BigPickle => Some(32_000),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::KimiK2_7Code => Some(262_144),
@@ -760,6 +767,7 @@ impl Model {
             | Self::Glm5
             | Self::Glm5_1
             | Self::Glm5_2
+            | Self::Glm5_3
             | Self::MiniMaxM2_7
             | Self::MimoV2_5Pro
             | Self::DeepSeekV4Pro
@@ -909,6 +917,12 @@ impl Model {
 
             // Z AI models
             Self::Glm5_2 => Some(vec![ReasoningEffort::High, ReasoningEffort::Max]),
+
+            Self::Glm5_3 => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::High,
+                ReasoningEffort::Max,
+            ]),
 
             // Tencent models
             Self::Hy3 => Some(vec![
