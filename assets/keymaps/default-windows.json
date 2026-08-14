@@ -1576,8 +1576,15 @@
     "context": "NotebookEditor && notebook_mode == command",
     "bindings": {
       "enter": "notebook::EnterEditMode",
+      "d d": "notebook::DeleteCell",
+      "backspace": "notebook::DeleteCell",
       "down": "menu::SelectNext",
       "up": "menu::SelectPrevious",
+      "c": ["notebook::ChangeCellType", { "cell_type": "code" }],
+      "m": ["notebook::ChangeCellType", { "cell_type": "markdown" }],
+      "r": ["notebook::ChangeCellType", { "cell_type": "raw" }],
+      "o": "notebook::ToggleCellOutput",
+      "ctrl-shift-d": "notebook::DuplicateCell",
     },
   },
   {

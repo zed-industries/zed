@@ -1230,6 +1230,11 @@
       "enter": "notebook::EnterEditMode",
       "shift-enter": "notebook::RunAndAdvance",
       "ctrl-enter": "notebook::Run",
+      "c": ["notebook::ChangeCellType", { "cell_type": "code" }],
+      "y": ["notebook::ChangeCellType", { "cell_type": "code" }],
+      "m": ["notebook::ChangeCellType", { "cell_type": "markdown" }],
+      "r": ["notebook::ChangeCellType", { "cell_type": "raw" }],
+      "o": "notebook::ToggleCellOutput",
     },
   },
   {

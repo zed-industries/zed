@@ -933,7 +933,9 @@ pub mod agents_sidebar {
 }
 
 pub mod notebook {
-    use gpui::actions;
+    use gpui::{Action, actions};
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
 
     actions!(
         notebook,
@@ -958,10 +960,14 @@ pub mod notebook {
             AddCodeBlock,
             /// Deletes the current cell.
             DeleteCell,
+            /// Duplicates the current cell, inserting the copy directly below it.
+            DuplicateCell,
             /// Restarts the kernel.
             RestartKernel,
             /// Interrupts the current execution.
             InterruptKernel,
+            /// Toggles whether the selected cell's outputs are collapsed.
+            ToggleCellOutput,
             /// Move down in cells.
             NotebookMoveDown,
             /// Move up in cells.
@@ -972,6 +978,23 @@ pub mod notebook {
             EnterCommandMode,
         ]
     );
+
+    /// The target cell type for a [`ChangeCellType`] action.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+    #[serde(rename_all = "snake_case")]
+    pub enum NotebookCellType {
+        Code,
+        Markdown,
+        Raw,
+    }
+
+    /// Converts the current cell to the given cell type.
+    #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = notebook)]
+    #[serde(deny_unknown_fields)]
+    pub struct ChangeCellType {
+        pub cell_type: NotebookCellType,
+    }
 }
 
 pub mod git_panel {

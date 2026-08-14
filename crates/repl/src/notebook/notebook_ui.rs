@@ -7,6 +7,7 @@ use client::proto::ViewId;
 use collections::HashMap;
 use editor::DisplayPoint;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
+use futures::channel::oneshot;
 use futures::FutureExt;
 use futures::future::Shared;
 use gpui::{
@@ -14,7 +15,7 @@ use gpui::{
     ListState, Point, Task, TaskExt, actions, list, prelude::*,
 };
 use jupyter_protocol::JupyterKernelspec;
-use language::{Language, LanguageRegistry};
+use language::{Buffer, BufferEvent, Language, LanguageRegistry};
 use log;
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
@@ -39,13 +40,14 @@ use crate::notebook::MovementDirection;
 use crate::repl_store::ReplStore;
 
 use picker::Picker;
-use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
+use runtimelib::{CompleteReply, ExecuteRequest, InspectReply, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
 use zed_actions::editor::{MoveDown, MoveUp};
 use zed_actions::notebook::{
-    AddCodeBlock, AddMarkdownBlock, ClearOutputs, DeleteCell, EnterCommandMode, EnterEditMode,
-    InterruptKernel, MoveCellDown, MoveCellUp, NotebookMoveDown, NotebookMoveUp, OpenNotebook,
-    RestartKernel, Run, RunAll, RunAndAdvance,
+    AddCodeBlock, AddMarkdownBlock, ChangeCellType, ClearOutputs, DeleteCell, DuplicateCell,
+    EnterCommandMode, EnterEditMode, InterruptKernel, MoveCellDown, MoveCellUp, NotebookCellType,
+    NotebookMoveDown, NotebookMoveUp, OpenNotebook, RestartKernel, Run, RunAll, RunAndAdvance,
+    ToggleCellOutput,
 };
 
 /// Whether the notebook is in command mode (navigating cells) or edit mode (editing a cell).
@@ -106,6 +108,8 @@ pub struct NotebookEditor {
     kernel: Kernel,
     kernel_specification: Option<KernelSpecification>,
     execution_requests: HashMap<String, CellId>,
+    pending_completions: HashMap<String, oneshot::Sender<CompleteReply>>,
+    pending_inspects: HashMap<String, oneshot::Sender<InspectReply>>,
     kernel_picker_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
 }
 
@@ -135,7 +139,14 @@ impl NotebookEditor {
             let cell = notebook_item.read(cx).notebook.cells[index].clone();
             let cell_id = cell.id();
             cell_order.push(cell_id.clone());
-            let cell_entity = Cell::load(&cell, &languages, notebook_language.clone(), window, cx);
+            let cell_entity = Cell::load(
+                &cell,
+                &languages,
+                notebook_language.clone(),
+                cx.entity().downgrade(),
+                window,
+                cx,
+            );
 
             match &cell_entity {
                 Cell::Code(code_cell) => {
@@ -221,18 +232,39 @@ impl NotebookEditor {
             kernel: Kernel::Shutdown,
             kernel_specification: None,
             execution_requests: HashMap::default(),
+            pending_completions: HashMap::default(),
+            pending_inspects: HashMap::default(),
             kernel_picker_handle: PopoverMenuHandle::default(),
         };
         editor.launch_kernel(window, cx);
         editor.refresh_language(cx);
         editor.refresh_kernelspecs(cx);
 
-        cx.subscribe(&notebook_item, |this, _item, _event, cx| {
+        cx.subscribe(&notebook_item, |this, _item, _event: &(), cx| {
             this.refresh_language(cx);
         })
         .detach();
 
+        editor.subscribe_to_notebook_item_reloads(window, cx);
+
         editor
+    }
+
+    /// Watches the notebook file for external changes and reloads the editor
+    /// contents when the file changes on disk, as long as there are no local
+    /// unsaved edits that reloading would clobber.
+    fn subscribe_to_notebook_item_reloads(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let notebook_item = self.notebook_item.clone();
+        cx.subscribe_in(
+            &notebook_item,
+            window,
+            |this, _item, event: &NotebookItemEvent, window, cx| {
+                if matches!(event, NotebookItemEvent::Reloaded) && !this.is_dirty(cx) {
+                    this.reload_notebook(window, cx).detach_and_log_err(cx);
+                }
+            },
+        )
+        .detach();
     }
 
     fn refresh_kernelspecs(&mut self, cx: &mut Context<Self>) {
@@ -486,6 +518,8 @@ impl NotebookEditor {
         }
 
         self.execution_requests.clear();
+        self.pending_completions.clear();
+        self.pending_inspects.clear();
 
         self.launch_kernel_with_spec(spec, window, cx);
     }
@@ -497,6 +531,8 @@ impl NotebookEditor {
             }
 
             self.kernel = Kernel::Restarting;
+            self.pending_completions.clear();
+            self.pending_inspects.clear();
             cx.notify();
 
             self.launch_kernel_with_spec(spec, window, cx);
@@ -565,6 +601,59 @@ impl NotebookEditor {
             log::error!("notebook: cannot execute cell: {error}");
         } else {
             self.execution_requests.insert(msg_id, cell_id.clone());
+        }
+    }
+
+    pub(crate) fn request_completions(
+        &mut self,
+        message: JupyterMessage,
+        reply: oneshot::Sender<CompleteReply>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let msg_id = message.header.msg_id.clone();
+        match &mut self.kernel {
+            Kernel::RunningKernel(kernel) => {
+                kernel.request_tx().try_send(message).map_err(|err| {
+                    anyhow::anyhow!("failed to send completion request to kernel: {err}")
+                })?;
+                self.pending_completions.insert(msg_id, reply);
+                Ok(())
+            }
+            Kernel::StartingKernel(_) => Err(anyhow::anyhow!("the kernel is still starting")),
+            Kernel::ErroredLaunch(error) => {
+                Err(anyhow::anyhow!("the kernel failed to launch: {error}"))
+            }
+            Kernel::ShuttingDown | Kernel::Shutdown => {
+                Err(anyhow::anyhow!("the kernel is shut down"))
+            }
+            Kernel::Restarting => Err(anyhow::anyhow!("the kernel is restarting")),
+        }
+    }
+
+    pub(crate) fn request_inspect(
+        &mut self,
+        message: JupyterMessage,
+        reply: oneshot::Sender<InspectReply>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let msg_id = message.header.msg_id.clone();
+        match &mut self.kernel {
+            Kernel::RunningKernel(kernel) => {
+                kernel
+                    .request_tx()
+                    .try_send(message)
+                    .map_err(|err| anyhow::anyhow!("failed to send inspect request to kernel: {err}"))?;
+                self.pending_inspects.insert(msg_id, reply);
+                Ok(())
+            }
+            Kernel::StartingKernel(_) => Err(anyhow::anyhow!("the kernel is still starting")),
+            Kernel::ErroredLaunch(error) => {
+                Err(anyhow::anyhow!("the kernel failed to launch: {error}"))
+            }
+            Kernel::ShuttingDown | Kernel::Shutdown => {
+                Err(anyhow::anyhow!("the kernel is shut down"))
+            }
+            Kernel::Restarting => Err(anyhow::anyhow!("the kernel is restarting")),
         }
     }
 
@@ -783,6 +872,178 @@ impl NotebookEditor {
         cx.notify();
     }
 
+    /// Subscribes the notebook editor to a cell's events so that running cells,
+    /// markdown re-parsing, and editor focus updates keep working regardless of
+    /// how the cell was created (loaded, inserted, converted, duplicated, reloaded).
+    fn subscribe_to_cell_events(
+        &mut self,
+        cell_id: &CellId,
+        cell: &Cell,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match cell {
+            Cell::Code(code_cell) => {
+                let cell_id_for_run = cell_id.clone();
+                cx.subscribe_in(
+                    code_cell,
+                    window,
+                    move |this, _cell, event, window, cx| match event {
+                        CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), window, cx),
+                        CellEvent::FocusedIn(_) => this.select_cell_by_id(&cell_id_for_run, cx),
+                    },
+                )
+                .detach();
+
+                let cell_id_for_editor = cell_id.clone();
+                let editor = code_cell.read(cx).editor().clone();
+                cx.subscribe(&editor, move |this, _editor, event, cx| {
+                    if let editor::EditorEvent::Focused = event {
+                        this.select_cell_by_id(&cell_id_for_editor, cx);
+                    }
+                })
+                .detach();
+            }
+            Cell::Markdown(markdown_cell) => {
+                cx.subscribe(
+                    markdown_cell,
+                    move |_this, cell, event: &MarkdownCellEvent, cx| match event {
+                        MarkdownCellEvent::FinishedEditing | MarkdownCellEvent::Run(_) => {
+                            cell.update(cx, |cell, cx| {
+                                cell.reparse_markdown(cx);
+                            });
+                        }
+                    },
+                )
+                .detach();
+
+                let cell_id_for_editor = cell_id.clone();
+                let editor = markdown_cell.read(cx).editor().clone();
+                cx.subscribe(&editor, move |this, _editor, event, cx| {
+                    if let editor::EditorEvent::Focused = event {
+                        this.select_cell_by_id(&cell_id_for_editor, cx);
+                    }
+                })
+                .detach();
+            }
+            Cell::Raw(_) => {}
+        }
+    }
+
+    fn change_cell_type(
+        &mut self,
+        action: &ChangeCellType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(cell_id) = self.cell_order.get(self.selected_cell_index).cloned() else {
+            return;
+        };
+        let Some(cell) = self.cell_map.get(&cell_id) else {
+            return;
+        };
+
+        let target_type = match action.cell_type {
+            NotebookCellType::Code => nbformat::v4::CellType::Code,
+            NotebookCellType::Markdown => nbformat::v4::CellType::Markdown,
+            NotebookCellType::Raw => nbformat::v4::CellType::Raw,
+        };
+        if cell.cell_type(cx) == target_type {
+            return;
+        }
+
+        let source = cell.current_source(cx);
+        let metadata = cell.metadata(cx);
+        let source_lines: Vec<String> = source.lines().map(|l| format!("{}\n", l)).collect();
+
+        // A converted cell starts fresh: outputs and execution count are dropped,
+        // matching the behavior of other Jupyter clients when a cell type changes.
+        let nb_cell = match target_type {
+            nbformat::v4::CellType::Code => nbformat::v4::Cell::Code {
+                id: cell_id.clone(),
+                metadata,
+                execution_count: None,
+                source: source_lines,
+                outputs: vec![],
+            },
+            nbformat::v4::CellType::Markdown => nbformat::v4::Cell::Markdown {
+                id: cell_id.clone(),
+                metadata,
+                source: source_lines,
+                attachments: None,
+            },
+            nbformat::v4::CellType::Raw => nbformat::v4::Cell::Raw {
+                id: cell_id.clone(),
+                metadata,
+                source: source_lines,
+            },
+        };
+
+        let new_cell = Cell::load(
+            &nb_cell,
+            &self.languages,
+            self.notebook_language.clone(),
+            cx.entity().downgrade(),
+            window,
+            cx,
+        );
+        self.execution_requests
+            .retain(|_message_id, id| id != &cell_id);
+        self.cell_map.insert(cell_id.clone(), new_cell);
+        let new_cell = self.cell_map.get(&cell_id).cloned().unwrap();
+        self.subscribe_to_cell_events(&cell_id, &new_cell, window, cx);
+
+        self.enter_command_mode(window, cx);
+        cx.notify();
+    }
+
+    fn duplicate_cell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(cell_id) = self.cell_order.get(self.selected_cell_index).cloned() else {
+            return;
+        };
+        let Some(cell) = self.cell_map.get(&cell_id) else {
+            return;
+        };
+
+        let new_cell_id: CellId = Uuid::new_v4().into();
+        // Preserve source, outputs, and metadata of the original cell.
+        let mut nb_cell = cell.to_nbformat_cell(cx);
+        match &mut nb_cell {
+            nbformat::v4::Cell::Code { id, .. } => *id = new_cell_id.clone(),
+            nbformat::v4::Cell::Markdown { id, .. } => *id = new_cell_id.clone(),
+            nbformat::v4::Cell::Raw { id, .. } => *id = new_cell_id.clone(),
+        }
+
+        let new_cell = Cell::load(
+            &nb_cell,
+            &self.languages,
+            self.notebook_language.clone(),
+            cx.entity().downgrade(),
+            window,
+            cx,
+        );
+        self.insert_cell_at_current_position(new_cell_id.clone(), new_cell);
+        let new_cell = self.cell_map.get(&new_cell_id).cloned().unwrap();
+        self.subscribe_to_cell_events(&new_cell_id, &new_cell, window, cx);
+        cx.notify();
+    }
+
+    fn toggle_cell_output(
+        &mut self,
+        _: &ToggleCellOutput,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(cell) = self.get_selected_cell() else {
+            return;
+        };
+        if let Cell::Code(code_cell) = cell {
+            code_cell.update(cx, |cell, cx| {
+                cell.toggle_outputs_collapsed(cx);
+            });
+        }
+    }
+
     fn insert_cell_at_current_position(&mut self, cell_id: CellId, cell: Cell) {
         let insert_index = if self.cell_order.is_empty() {
             0
@@ -850,6 +1111,7 @@ impl NotebookEditor {
         let notebook_language = self.notebook_language.clone();
         let metadata: nbformat::v4::CellMetadata =
             serde_json::from_str("{}").expect("empty object should parse");
+        let notebook_editor = cx.entity().downgrade();
 
         let code_cell = cx.new(|cx| {
             super::CodeCell::new(
@@ -858,6 +1120,7 @@ impl NotebookEditor {
                 metadata,
                 String::new(),
                 notebook_language,
+                notebook_editor,
                 window,
                 cx,
             )
@@ -1441,6 +1704,15 @@ impl Render for NotebookEditor {
                 cx.listener(|this, _: &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
             )
             .on_action(cx.listener(|this, _: &DeleteCell, window, cx| this.delete_cell(window, cx)))
+            .on_action(cx.listener(|this, action: &ChangeCellType, window, cx| {
+                this.change_cell_type(action, window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &DuplicateCell, window, cx| this.duplicate_cell(window, cx)),
+            )
+            .on_action(cx.listener(|this, action: &ToggleCellOutput, window, cx| {
+                this.toggle_cell_output(action, window, cx)
+            }))
             .on_action(
                 cx.listener(|this, action, window, cx| this.enter_edit_mode(action, window, cx)),
             )
@@ -1585,7 +1857,20 @@ pub struct NotebookItem {
     notebook: nbformat::v4::Notebook,
     // Store our version of the notebook in memory (cell_order, cell_map)
     id: ProjectEntryId,
+    /// The buffer backing the notebook file on disk. It is kept alive so the
+    /// project's existing file-watching machinery can notify us when the file
+    /// changes externally.
+    _buffer: Entity<Buffer>,
 }
+
+/// Events emitted by a [`NotebookItem`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotebookItemEvent {
+    /// The underlying notebook file changed on disk and was reloaded.
+    Reloaded,
+}
+
+impl EventEmitter<NotebookItemEvent> for NotebookItem {}
 
 impl project::ProjectItem for NotebookItem {
     fn try_open(
@@ -1667,12 +1952,25 @@ impl project::ProjectItem for NotebookItem {
                     })
                     .context("Entry not found")?;
 
-                Ok(cx.new(|_| NotebookItem {
-                    path: abs_path,
-                    project_path: path,
-                    languages,
-                    notebook,
-                    id,
+                Ok(cx.new(|cx| {
+                    // When the notebook file changes on disk, the project
+                    // reloads the backing buffer. Surface that to open editors
+                    // so they can re-read the notebook content.
+                    cx.subscribe(&buffer, move |_this, _buffer, event, cx| {
+                        if let BufferEvent::Reloaded = event {
+                            cx.emit(NotebookItemEvent::Reloaded);
+                        }
+                    })
+                    .detach();
+
+                    NotebookItem {
+                        path: abs_path,
+                        project_path: path,
+                        languages,
+                        notebook,
+                        id,
+                        _buffer: buffer,
+                    }
                 }))
             }))
         } else {
@@ -1901,10 +2199,23 @@ impl Item for NotebookEditor {
 
     fn reload(
         &mut self,
-        project: Entity<Project>,
+        _project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        self.reload_notebook(window, cx)
+    }
+
+    fn is_dirty(&self, cx: &App) -> bool {
+        self.has_structural_changes() || self.has_content_changes(cx)
+    }
+}
+
+impl NotebookEditor {
+    /// Re-reads the notebook file from disk and rebuilds the editor's cells.
+    /// Also invoked when the file changes externally while there are no local
+    /// unsaved edits.
+    fn reload_notebook(&self, window: &mut Window, cx: &mut Context<Self>) -> Task<Result<()>> {
         let project_path = self.notebook_item.read(cx).project_path.clone();
         let languages = self.languages.clone();
         let notebook_language = self.notebook_language.clone();
@@ -1943,6 +2254,7 @@ impl Item for NotebookEditor {
                 }
             };
 
+            let notebook_editor = this.clone();
             this.update_in(cx, |this, window, cx| {
                 let mut cell_order = vec![];
                 let mut cell_map = HashMap::default();
@@ -1950,9 +2262,19 @@ impl Item for NotebookEditor {
                 for cell in notebook.cells.iter() {
                     let cell_id = cell.id();
                     cell_order.push(cell_id.clone());
-                    let cell_entity =
-                        Cell::load(cell, &languages, notebook_language.clone(), window, cx);
+                    let cell_entity = Cell::load(
+                        cell,
+                        &languages,
+                        notebook_language.clone(),
+                        notebook_editor.clone(),
+                        window,
+                        cx,
+                    );
                     cell_map.insert(cell_id.clone(), cell_entity);
+                }
+
+                for (cell_id, cell) in cell_map.iter() {
+                    this.subscribe_to_cell_events(cell_id, cell, window, cx);
                 }
 
                 this.cell_order = cell_order.clone();
@@ -1960,6 +2282,12 @@ impl Item for NotebookEditor {
                 this.cell_map = cell_map;
                 this.cell_list =
                     ListState::new(this.cell_order.len(), gpui::ListAlignment::Top, px(1000.));
+                // Keep the item's metadata (and cells) in sync with what was read
+                // from disk so that a subsequent save reflects the reloaded file.
+                this.notebook_item.update(cx, |item, cx| {
+                    item.notebook = notebook.clone();
+                    cx.emit(());
+                });
                 cx.notify();
             })?;
 
@@ -2015,6 +2343,22 @@ impl KernelSession for NotebookEditor {
                     cell.update(cx, |cell, cx| {
                         cell.handle_message(message, window, cx);
                     });
+                }
+            }
+        }
+
+        if let JupyterMessageContent::CompleteReply(reply) = &message.content {
+            if let Some(parent_header) = &message.parent_header {
+                if let Some(sender) = self.pending_completions.remove(&parent_header.msg_id) {
+                    sender.send(reply.clone()).ok();
+                }
+            }
+        }
+
+        if let JupyterMessageContent::InspectReply(reply) = &message.content {
+            if let Some(parent_header) = &message.parent_header {
+                if let Some(sender) = self.pending_inspects.remove(&parent_header.msg_id) {
+                    sender.send(reply.clone()).ok();
                 }
             }
         }
@@ -2245,6 +2589,180 @@ mod tests {
 
         notebook_item.read_with(cx, |item, _| {
             assert_eq!(item.notebook.cells.len(), 1);
+        });
+    }
+
+    /// `DuplicateCell`, `ChangeCellType`, and `ToggleCellOutput` operate on the
+    /// selected cell and keep the editor's cell map/order in sync.
+    #[gpui::test]
+    async fn test_structural_cell_operations(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let notebook_with_outputs = r##"{
+            "metadata": {
+                "kernelspec": {
+                    "display_name": "Python 3",
+                    "language": "python",
+                    "name": "python3"
+                },
+                "language_info": { "name": "python" }
+            },
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "id": "cell-one",
+                    "metadata": {},
+                    "execution_count": 1,
+                    "outputs": [
+                        { "output_type": "stream", "name": "stdout", "text": "hello\n" }
+                    ],
+                    "source": ["print('hello')"]
+                },
+                {
+                    "cell_type": "markdown",
+                    "id": "cell-two",
+                    "metadata": {},
+                    "source": ["# Title"]
+                }
+            ]
+}"##;
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/notebooks"),
+            json!({ "ops.ipynb": notebook_with_outputs }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/notebooks").as_ref()], cx).await;
+        cx.update(|cx| ReplStore::init(fs.clone(), cx));
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        // Point the kernel at a missing interpreter so the launch errors
+        // deterministically instead of starting a real kernel.
+        let missing_interpreter = path!("/nonexistent/python3");
+        let broken_spec = KernelSpecification::Jupyter(LocalKernelSpecification {
+            name: "python3".to_string(),
+            path: PathBuf::from(missing_interpreter),
+            kernelspec: JupyterKernelspec {
+                argv: vec![
+                    missing_interpreter.to_string(),
+                    "-m".to_string(),
+                    "ipykernel_launcher".to_string(),
+                    "-f".to_string(),
+                    "{connection_file}".to_string(),
+                ],
+                display_name: "Python 3".to_string(),
+                language: "python".to_string(),
+                interrupt_mode: None,
+                metadata: None,
+                env: None,
+            },
+        });
+        cx.update(|cx| {
+            ReplStore::global(cx).update(cx, |store, cx| {
+                store.set_active_kernelspec(worktree_id, broken_spec, cx);
+            })
+        });
+
+        let notebook_item = cx
+            .update(|cx| {
+                NotebookItem::try_open(
+                    &project,
+                    &ProjectPath {
+                        worktree_id,
+                        path: rel_path("ops.ipynb").into(),
+                    },
+                    cx,
+                )
+                .expect("ipynb files should be openable as notebooks")
+            })
+            .await
+            .expect("notebook should parse");
+
+        let cx = cx.add_empty_window();
+        cx.executor().allow_parking();
+
+        let editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+        // Resolve the (failing) kernel launch so no foreground task leaks.
+        let pending_kernel = editor.read_with(cx, |editor, _| match &editor.kernel {
+            Kernel::StartingKernel(task) => task.clone(),
+            _ => panic!("kernel should be starting right after the editor is created"),
+        });
+        pending_kernel.await;
+        editor.read_with(cx, |editor, _| {
+            assert!(matches!(editor.kernel, Kernel::ErroredLaunch(_)));
+        });
+
+        // Two cells loaded, code first.
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.cell_order.len(), 2);
+            assert_eq!(editor.selected_cell_index, 0);
+            let cell = editor.cell_map.get(&editor.cell_order[0]).unwrap();
+            assert_eq!(cell.cell_type(cx), nbformat::v4::CellType::Code);
+        });
+
+        // Duplicating the selected cell inserts a copy right after it.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.duplicate_cell(window, cx);
+        });
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.cell_order.len(), 3);
+            assert_eq!(editor.selected_cell_index, 1);
+            let dup = editor.cell_map.get(&editor.cell_order[1]).unwrap();
+            assert_eq!(dup.cell_type(cx), nbformat::v4::CellType::Code);
+            assert_eq!(dup.current_source(cx).trim(), "print('hello')");
+        });
+
+        // Change the duplicated cell to markdown.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_cell_type(
+                &ChangeCellType {
+                    cell_type: NotebookCellType::Markdown,
+                },
+                window,
+                cx,
+            );
+        });
+        editor.read_with(cx, |editor, cx| {
+            let cell = editor.cell_map.get(&editor.cell_order[1]).unwrap();
+            assert_eq!(cell.cell_type(cx), nbformat::v4::CellType::Markdown);
+            assert_eq!(cell.current_source(cx).trim(), "print('hello')");
+        });
+
+        // Toggle output visibility on the first (still code) cell and verify
+        // the collapsed state is persisted to its metadata.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.select_first(&menu::SelectFirst, window, cx);
+            editor.toggle_cell_output(&ToggleCellOutput, window, cx);
+        });
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.selected_cell_index, 0);
+            let cell = editor.cell_map.get(&editor.cell_order[0]).unwrap();
+            let Cell::Code(code_cell) = cell else {
+                panic!("expected a code cell");
+            };
+            let code_cell = code_cell.read(cx);
+            assert!(code_cell.outputs_collapsed());
+            let nbformat::v4::Cell::Code { metadata, .. } = code_cell.to_nbformat_cell(cx) else {
+                panic!("expected a code cell");
+            };
+            assert_eq!(
+                metadata.jupyter.as_ref().unwrap().outputs_hidden,
+                Some(true)
+            );
         });
     }
 }
