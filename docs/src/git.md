@@ -9,6 +9,19 @@ Zed has built-in Git support that lets you manage version control without leavin
 
 For operations that Zed doesn't support natively, you can use the integrated terminal.
 
+## Repository Activation
+
+When a project is rooted at a git repository, or at a subdirectory of one, all repositories in it are active immediately.
+
+When a project is not rooted at a repository (a home directory, a folder of projects), repositories directly inside the project root are also active immediately, and deeper ones activate when a file inside them is opened, in local and remote projects alike.
+
+Inactive repositories are fully indexed and searchable; only git features (status, diffs, branches) wait for activation.
+
+This behavior is tied to the [`file_scan_depth`](./reference/all-settings.md#file-scan-depth) setting, but not to its value: any non-zero `file_scan_depth` defers activation for repositories that are not directly inside a project root folder, and repositories rooted at or deeper than the limit are not even discovered until their directories are indexed on demand.
+In multi-folder projects, depth and activation are measured from each root folder separately.
+
+Setting `file_scan_depth` to `0` turns deferred activation off: every discovered repository activates immediately.
+
 ## Git Panel
 
 The Git Panel shows the state of your working tree and Git's staging area.
