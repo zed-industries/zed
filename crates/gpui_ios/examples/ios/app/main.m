@@ -11,23 +11,32 @@ extern void gpui_ios_did_enter_background(void *application);
 extern void gpui_ios_did_receive_memory_warning(void *application);
 extern void gpui_ios_will_terminate(void *application);
 extern void gpui_ios_handle_open_url(void *url);
+extern void gpui_ios_set_window_scene(void *scene);
 
-@interface GPUIAppDelegate : UIResponder <UIApplicationDelegate>
+@interface GPUIExampleSceneDelegate : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic, strong) CADisplayLink *displayLink;
 @end
 
-@implementation GPUIAppDelegate
+@interface GPUIAppDelegate : UIResponder <UIApplicationDelegate>
+@end
 
-- (BOOL)application:(UIApplication *)application
-    didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+@implementation GPUIExampleSceneDelegate
+
+- (void)scene:(UIScene *)scene
+    willConnectToSession:(UISceneSession *)session
+                 options:(UISceneConnectionOptions *)connectionOptions {
+    if (![scene isKindOfClass:UIWindowScene.class]) {
+        return;
+    }
+
+    gpui_ios_set_window_scene((__bridge void *)scene);
     if (!gpui_ios_example_run()) {
-        return NO;
+        return;
     }
 
     self.displayLink = [CADisplayLink displayLinkWithTarget:self
                                                   selector:@selector(renderFrame:)];
     [self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
-    return YES;
 }
 
 - (void)renderFrame:(CADisplayLink *)displayLink {
@@ -37,20 +46,51 @@ extern void gpui_ios_handle_open_url(void *url);
     }
 }
 
-- (void)applicationWillEnterForeground:(UIApplication *)application {
-    gpui_ios_will_enter_foreground((__bridge void *)application);
+- (void)sceneWillEnterForeground:(UIScene *)scene {
+    gpui_ios_will_enter_foreground((__bridge void *)scene);
 }
 
-- (void)applicationDidBecomeActive:(UIApplication *)application {
-    gpui_ios_did_become_active((__bridge void *)application);
+- (void)sceneDidBecomeActive:(UIScene *)scene {
+    gpui_ios_did_become_active((__bridge void *)scene);
 }
 
-- (void)applicationWillResignActive:(UIApplication *)application {
-    gpui_ios_will_resign_active((__bridge void *)application);
+- (void)sceneWillResignActive:(UIScene *)scene {
+    gpui_ios_will_resign_active((__bridge void *)scene);
 }
 
-- (void)applicationDidEnterBackground:(UIApplication *)application {
-    gpui_ios_did_enter_background((__bridge void *)application);
+- (void)sceneDidEnterBackground:(UIScene *)scene {
+    gpui_ios_did_enter_background((__bridge void *)scene);
+}
+
+- (void)sceneDidDisconnect:(UIScene *)scene {
+    [self.displayLink invalidate];
+}
+
+- (void)scene:(UIScene *)scene
+    openURLContexts:(NSSet<UIOpenURLContext *> *)URLContexts {
+    UIOpenURLContext *context = URLContexts.anyObject;
+    if (context != nil) {
+        gpui_ios_handle_open_url((__bridge void *)context.URL.absoluteString);
+    }
+}
+
+@end
+
+@implementation GPUIAppDelegate
+
+- (BOOL)application:(UIApplication *)application
+    didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    return YES;
+}
+
+- (UISceneConfiguration *)application:(UIApplication *)application
+    configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession
+                                   options:(UISceneConnectionOptions *)options {
+    UISceneConfiguration *configuration =
+        [[UISceneConfiguration alloc] initWithName:@"Default Configuration"
+                                       sessionRole:connectingSceneSession.role];
+    configuration.delegateClass = GPUIExampleSceneDelegate.class;
+    return configuration;
 }
 
 - (void)applicationDidReceiveMemoryWarning:(UIApplication *)application {
@@ -58,15 +98,7 @@ extern void gpui_ios_handle_open_url(void *url);
 }
 
 - (void)applicationWillTerminate:(UIApplication *)application {
-    [self.displayLink invalidate];
     gpui_ios_will_terminate((__bridge void *)application);
-}
-
-- (BOOL)application:(UIApplication *)application
-            openURL:(NSURL *)url
-            options:(NSDictionary<UIApplicationOpenURLOptionsKey, id> *)options {
-    gpui_ios_handle_open_url((__bridge void *)url.absoluteString);
-    return YES;
 }
 
 @end

@@ -462,10 +462,21 @@ impl IosWindow {
 
         unsafe {
             // Create UIWindow
-            let screen_obj: *mut AnyObject = msg_send![class!(UIScreen), mainScreen];
+            let window_scene = super::ffi::window_scene();
+            let screen_obj: *mut AnyObject = if window_scene.is_null() {
+                msg_send![class!(UIScreen), mainScreen]
+            } else {
+                msg_send![window_scene, screen]
+            };
             let screen_bounds_cg: ObjcCGRect = msg_send![screen_obj, bounds];
             let window: *mut AnyObject = msg_send![class!(UIWindow), alloc];
-            let window: *mut AnyObject = msg_send![window, initWithFrame: screen_bounds_cg];
+            let window: *mut AnyObject = if window_scene.is_null() {
+                msg_send![window, initWithFrame: screen_bounds_cg]
+            } else {
+                let window: *mut AnyObject = msg_send![window, initWithWindowScene: window_scene];
+                let _: () = msg_send![window, setFrame: screen_bounds_cg];
+                window
+            };
 
             // Create our custom UIViewController subclass that supports
             // dynamic `preferredStatusBarStyle` overrides.

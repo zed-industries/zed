@@ -16,6 +16,12 @@ targets:
     info:
       path: Info.plist
       properties:
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default Configuration
+                UISceneDelegateClassName: GPUIExampleSceneDelegate
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UISupportedInterfaceOrientations:
@@ -37,6 +43,7 @@ targets:
       - sdk: Foundation.framework
       - sdk: Metal.framework
       - sdk: QuartzCore.framework
+      - sdk: SafariServices.framework
       - sdk: Security.framework
       - sdk: SystemConfiguration.framework
       - sdk: UIKit.framework
