@@ -404,25 +404,6 @@ impl TypeScriptContextProvider {
     }
 }
 
-async fn detect_package_manager(
-    worktree_root: PathBuf,
-    fs: Arc<dyn Fs>,
-    package_json_data: Option<PackageJsonData>,
-) -> &'static str {
-    if let Some(package_json_data) = package_json_data
-        && let Some(package_manager) = package_json_data.package_manager
-    {
-        return package_manager;
-    }
-    if fs.is_file(&worktree_root.join("pnpm-lock.yaml")).await {
-        return "pnpm";
-    }
-    if fs.is_file(&worktree_root.join("yarn.lock")).await {
-        return "yarn";
-    }
-    "npm"
-}
-
 impl ContextProvider for TypeScriptContextProvider {
     fn associated_tasks(
         &self,
@@ -511,15 +492,19 @@ impl ContextProvider for TypeScriptContextProvider {
                     self.combined_package_json_data(fs.clone(), &worktree_root, file_path, cx),
                     worktree_root,
                     fs,
+                    file_path.clone(),
                 )
             },
         );
         cx.background_spawn(async move {
-            if let Some((task, worktree_root, fs)) = args {
+            if let Some((task, worktree_root, fs, file_path)) = args {
                 let package_json_data = task.await.log_err();
+                let package_dir = worktree_root.join(file_path.as_std_path());
+                let package_dir = package_dir.parent().unwrap_or(worktree_root.as_ref());
+
                 vars.insert(
                     TYPESCRIPT_RUNNER_VARIABLE,
-                    detect_package_manager(worktree_root, fs, package_json_data.clone())
+                    crate::detect_package_manager(fs, package_dir, &worktree_root)
                         .await
                         .to_owned(),
                 );

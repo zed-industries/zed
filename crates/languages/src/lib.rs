@@ -31,7 +31,7 @@ mod typescript;
 mod vtsls;
 mod yaml;
 
-pub(crate) use package_json::{PackageJson, PackageJsonData};
+pub(crate) use package_json::{PackageJson, PackageJsonData, detect_package_manager};
 
 /// A shared grammar for plain text, exposed for reuse by downstream crates.
 #[cfg(feature = "tree-sitter-gitcommit")]
@@ -64,7 +64,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let eslint_adapter = Arc::new(eslint::EsLintLspAdapter::new(node.clone(), fs.clone()));
     let go_context_provider = Arc::new(go::GoContextProvider);
     let go_lsp_adapter = Arc::new(go::GoLspAdapter);
-    let json_context_provider = Arc::new(JsonTaskProvider);
+    let json_context_provider = Arc::new(JsonTaskProvider::new(fs.clone()));
     let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(languages.clone(), node.clone()));
     let node_version_lsp_adapter = Arc::new(json::NodeVersionAdapter);
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());

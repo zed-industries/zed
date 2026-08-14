@@ -152,6 +152,52 @@ fn package_manager_name(value: &str) -> Option<&'static str> {
     }
 }
 
+pub(crate) async fn detect_package_manager(
+    fs: Arc<dyn project::Fs>,
+    package_dir: &Path,
+    worktree_root: &Path,
+) -> &'static str {
+    let mut directory = package_dir;
+
+    loop {
+        let package_json_path = directory.join("package.json");
+
+        if fs.is_file(&package_json_path).await {
+            if let Ok(contents) = fs.load(&package_json_path).await {
+                if let Ok(package_json) =
+                    serde_json_lenient::from_str::<HashMap<String, Value>>(&contents)
+                {
+                    if let Some(package_manager) =
+                        PackageJsonData::new(package_json_path.into(), package_json).package_manager
+                    {
+                        return package_manager;
+                    }
+                }
+            }
+        }
+
+        if directory == worktree_root {
+            break;
+        }
+
+        let Some(parent) = directory.parent() else {
+            break;
+        };
+
+        directory = parent;
+    }
+
+    if fs.is_file(&worktree_root.join("pnpm-lock.yaml")).await {
+        return "pnpm";
+    }
+
+    if fs.is_file(&worktree_root.join("yarn.lock")).await {
+        return "yarn";
+    }
+
+    "npm"
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -197,6 +243,155 @@ mod tests {
         assert_eq!(
             package_manager(r#"{"devEngines": {"packageManager": {"version": "^11.1.3"}}}"#),
             None,
+        );
+    }
+
+    #[gpui::test]
+    async fn detect_package_manager_from_ancestor_package_json(executor: gpui::BackgroundExecutor) {
+        let fs = project::FakeFs::new(executor);
+
+        fs.insert_tree(
+            std::path::Path::new("/root"),
+            serde_json::json!({
+                "package.json": r#"{
+                    "name": "root",
+                    "private": true,
+                    "packageManager": "pnpm@11.17.0"
+                }"#,
+                "packages": {
+                    "example": {
+                        "package.json": r#"{
+                            "name": "example",
+                            "private": true,
+                            "scripts": {
+                                "show-runner": "node -p \"process.env.npm_execpath\""
+                            }
+                        }"#
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            super::detect_package_manager(
+                fs,
+                std::path::Path::new("/root/packages/example"),
+                std::path::Path::new("/root"),
+            )
+            .await,
+            "pnpm"
+        );
+    }
+
+    #[gpui::test]
+    async fn detect_package_manager_prefers_nearest_package_json(
+        executor: gpui::BackgroundExecutor,
+    ) {
+        let fs = project::FakeFs::new(executor);
+
+        fs.insert_tree(
+            std::path::Path::new("/root"),
+            serde_json::json!({
+                "package.json": r#"{
+                    "packageManager": "pnpm@11.17.0"
+                }"#,
+                "packages": {
+                    "example": {
+                        "package.json": r#"{
+                            "packageManager": "yarn@4.9.1"
+                        }"#
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            super::detect_package_manager(
+                fs,
+                std::path::Path::new("/root/packages/example"),
+                std::path::Path::new("/root"),
+            )
+            .await,
+            "yarn"
+        );
+    }
+
+    #[gpui::test]
+    async fn detect_package_manager_from_pnpm_lockfile(executor: gpui::BackgroundExecutor) {
+        let fs = project::FakeFs::new(executor);
+
+        fs.insert_tree(
+            std::path::Path::new("/root"),
+            serde_json::json!({
+                "pnpm-lock.yaml": "",
+                "packages": {
+                    "example": {}
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            super::detect_package_manager(
+                fs,
+                std::path::Path::new("/root/packages/example"),
+                std::path::Path::new("/root"),
+            )
+            .await,
+            "pnpm"
+        );
+    }
+
+    #[gpui::test]
+    async fn detect_package_manager_from_yarn_lockfile(executor: gpui::BackgroundExecutor) {
+        let fs = project::FakeFs::new(executor);
+
+        fs.insert_tree(
+            std::path::Path::new("/root"),
+            serde_json::json!({
+                "yarn.lock": "",
+                "packages": {
+                    "example": {}
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            super::detect_package_manager(
+                fs,
+                std::path::Path::new("/root/packages/example"),
+                std::path::Path::new("/root"),
+            )
+            .await,
+            "yarn"
+        );
+    }
+
+    #[gpui::test]
+    async fn detect_package_manager_defaults_to_npm(executor: gpui::BackgroundExecutor) {
+        let fs = project::FakeFs::new(executor);
+
+        fs.insert_tree(
+            std::path::Path::new("/root"),
+            serde_json::json!({
+                "packages": {
+                    "example": {}
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            super::detect_package_manager(
+                fs,
+                std::path::Path::new("/root/packages/example"),
+                std::path::Path::new("/root"),
+            )
+            .await,
+            "npm"
         );
     }
 }

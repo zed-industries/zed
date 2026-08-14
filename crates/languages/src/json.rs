@@ -12,7 +12,7 @@ use language::{
 };
 use lsp::{LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
-use project::lsp_store::language_server_settings;
+use project::{Fs, lsp_store::language_server_settings};
 use semver::Version;
 use serde_json::{Value, json};
 use settings::SettingsLocation;
@@ -40,7 +40,15 @@ use crate::PackageJsonData;
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
 
-pub(crate) struct JsonTaskProvider;
+pub(crate) struct JsonTaskProvider {
+    fs: Arc<dyn Fs>,
+}
+
+impl JsonTaskProvider {
+    pub fn new(fs: Arc<dyn Fs>) -> Self {
+        Self { fs }
+    }
+}
 
 impl ContextProvider for JsonTaskProvider {
     fn associated_tasks(
@@ -62,12 +70,15 @@ impl ContextProvider for JsonTaskProvider {
             return Task::ready(None);
         }
 
+        let fs = self.fs.clone();
+        let worktree_root = file.worktree.read(cx).root_dir();
         cx.spawn(async move |cx| {
             let contents = file
                 .worktree
                 .update(cx, |this, cx| this.load_file(&file.path, cx))
                 .await
                 .ok()?;
+
             let path = cx.update(|cx| file.abs_path(cx)).as_path().into();
             let contents_text = contents.text.to_string();
 
@@ -76,8 +87,13 @@ impl ContextProvider for JsonTaskProvider {
                     HashMap<String, serde_json_lenient::Value>,
                 >(&contents_text)
                 .ok()?;
-                let package_json = PackageJsonData::new(path, package_json);
-                let command = package_json.package_manager.unwrap_or("npm").to_owned();
+                let package_json = PackageJsonData::new(path.clone(), package_json);
+                let package_dir = path.parent().unwrap_or(Path::new("/"));
+                let worktree_root = worktree_root.as_deref().unwrap_or(package_dir);
+
+                let command = crate::detect_package_manager(fs.clone(), package_dir, worktree_root)
+                    .await
+                    .to_owned();
                 package_json
                     .scripts
                     .into_iter()
