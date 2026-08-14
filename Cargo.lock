@@ -4584,6 +4584,7 @@ dependencies = [
  "gpui",
  "log",
  "picker",
+ "proptest",
  "text",
  "ui",
  "workspace",
