@@ -8026,6 +8026,11 @@ impl Editor {
             return None;
         }
         let rename = self.take_rename(false, window, cx)?;
+        let new_name = rename.editor.read(cx).text(cx);
+        if new_name.trim().is_empty() {
+            return Some(Task::ready(Ok(())));
+        }
+
         let workspace = self.workspace()?.downgrade();
         let (buffer, start) = self
             .buffer
@@ -8040,7 +8045,6 @@ impl Editor {
         }
 
         let old_name = rename.old_name;
-        let new_name = rename.editor.read(cx).text(cx);
 
         let rename = self.semantics_provider.as_ref()?.perform_rename(
             &buffer,
