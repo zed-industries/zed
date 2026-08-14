@@ -208,7 +208,7 @@ Since v0.196.0, on Linux, if the key that you type doesn't produce an ASCII char
 
 We do not yet remap shortcuts so every built-in shortcut is typeable on every layout. If your layout cannot type some ASCII characters, you may need custom key bindings. We plan to improve this.
 
-## Tips and Tricks
+## Tips and tricks
 
 ### Disabling a binding
 
