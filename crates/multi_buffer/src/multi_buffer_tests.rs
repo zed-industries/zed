@@ -1803,6 +1803,39 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_set_excerpts_with_reversed_and_out_of_bounds_ranges(cx: &mut TestAppContext) {
+    let buffer = cx.new(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
+    let path = PathKey::with_sort_prefix(0, rel_path("root").into_arc());
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    // Locations arrive from external sources like language servers, which can
+    // produce reversed ranges, and from stale computations whose points lie
+    // beyond the buffer's current end. Neither may produce a backward excerpt.
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path.clone(),
+            buffer.clone(),
+            vec![Point::new(8, 2)..Point::new(1, 1)],
+            2,
+            cx,
+        );
+    });
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert!(!snapshot.text().is_empty());
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path.clone(),
+            buffer.clone(),
+            vec![Point::new(20, 0)..Point::new(30, 0)],
+            2,
+            cx,
+        );
+    });
+    multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+}
+
+#[gpui::test]
 fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     let buf1 = cx.new(|cx| {
         Buffer::local(

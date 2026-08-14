@@ -3168,16 +3168,26 @@ fn build_excerpt_ranges(
     context_line_count: u32,
     buffer_snapshot: &BufferSnapshot,
 ) -> Vec<ExcerptRange<Point>> {
+    let max_point = buffer_snapshot.max_point();
     ranges
         .into_iter()
         .map(|range| {
-            let start_row = range.start.row.saturating_sub(context_line_count);
+            // Ranges arrive from external sources like language servers, which
+            // can produce reversed ranges. A reversed range would produce an
+            // excerpt whose anchors resolve backward, which panics when the
+            // excerpt is summarized.
+            let (range_start, range_end) = if range.start <= range.end {
+                (range.start, range.end)
+            } else {
+                (range.end, range.start)
+            };
+            let start_row = range_start.row.saturating_sub(context_line_count);
             let start = Point::new(start_row, 0);
-            let end_row = (range.end.row + context_line_count).min(buffer_snapshot.max_point().row);
+            let end_row = (range_end.row + context_line_count).min(max_point.row);
             let end = Point::new(end_row, buffer_snapshot.line_len(end_row));
             ExcerptRange {
                 context: start..end,
-                primary: range,
+                primary: range_start..range_end,
             }
         })
         .collect()
