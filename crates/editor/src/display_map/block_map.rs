@@ -4937,10 +4937,13 @@ mod tests {
     /// this area, e.g. `ITERATIONS=1000 OPERATIONS=40`. Found so far:
     /// `InlayMap::sync` panicking on inlays whose anchors predate a path key
     /// reuse (minimized into `inlay_map`'s
-    /// `test_sync_after_path_key_reused_for_different_buffer`), and
-    /// a `FoldMap` canonical-form violation ("found adjacent isomorphic
-    /// transforms", `SEED=612 OPERATIONS=40`), which is test-only and still
-    /// unfixed.
+    /// `test_sync_after_path_key_reused_for_different_buffer`), a
+    /// `FoldMap` canonical-form violation ("found adjacent isomorphic
+    /// transforms", `SEED=612 OPERATIONS=40`), and the fold tree going out of
+    /// order (`SEED=144 OPERATIONS=50`): with all diff hunks expanded, fold
+    /// anchors carry diff base anchors, and replacing a diff's base text
+    /// changes how those anchors compare, unsorting the persistent fold tree
+    /// that `FoldMap` seeks through. All three are unfixed.
     #[gpui::test(iterations = 20)]
     async fn test_random_excerpt_removal_with_diffs(
         cx: &mut gpui::TestAppContext,
@@ -5001,6 +5004,13 @@ mod tests {
             }
         } else {
             multibuffer = cx.update(|cx| MultiBuffer::build_random(&mut rng, cx));
+            // Diff views like the project diff show all hunks expanded, which
+            // materializes deleted rows from base buffers inline.
+            if rng.random_bool(0.5) {
+                multibuffer.update(cx, |multibuffer, cx| {
+                    multibuffer.set_all_diff_hunks_expanded(cx);
+                });
+            }
             known_buffers = multibuffer.read_with(cx, |multibuffer, _| {
                 multibuffer.all_buffers_iter().collect::<Vec<_>>()
             });
