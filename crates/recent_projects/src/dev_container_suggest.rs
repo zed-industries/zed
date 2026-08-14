@@ -2,6 +2,7 @@ use db::kvp::KeyValueStore;
 use dev_container::find_configs_in_snapshot;
 use gpui::{App, SharedString, Window};
 use project::{Project, WorktreeId};
+use remote::remote_connection_identity;
 use std::path::Path;
 use std::sync::LazyLock;
 use ui::Tooltip;
@@ -63,9 +64,22 @@ fn dismiss_path_for_worktree(
         .max_by_key(|(work_dir_len, _)| *work_dir_len)
         .map(|(_, common_dir)| common_dir);
 
-    match common_dir {
+    let path = match common_dir {
         Some(common_dir) => common_dir.to_string_lossy().to_string(),
         None => worktree_abs_path.to_string_lossy().to_string(),
+    };
+
+    // The path alone is ambiguous once projects can live on other machines:
+    // `/home/user/project` names a different project on every host.
+    match project.read(cx).remote_client() {
+        Some(client) => {
+            let options = client.read(cx).connection_options();
+            format!(
+                "{}:{path}",
+                remote_connection_identity(&options).persistence_key()
+            )
+        }
+        None => path,
     }
 }
 
@@ -91,11 +105,13 @@ pub fn suggest_on_worktree_updated(
         return;
     };
 
-    let worktree = worktree.read(cx);
-
-    if !worktree.is_local() {
+    // A container is provisioned on the machine holding the project, which for a
+    // collab guest is someone else's — there is no connection to build it over.
+    if project.read(cx).is_via_collab() {
         return;
     }
+
+    let worktree = worktree.read(cx);
 
     let has_configs = !find_configs_in_snapshot(worktree).is_empty();
 

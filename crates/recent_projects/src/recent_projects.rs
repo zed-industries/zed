@@ -505,11 +505,14 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|_: &OpenDevContainer, cx| {
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            if !workspace.project().read(cx).is_local() {
+            // A remote project's container is built on its own host. A collab
+            // project's host belongs to another user, so there is nothing to
+            // build it over.
+            if workspace.project().read(cx).is_via_collab() {
                 cx.spawn_in(window, async move |_, cx| {
                     cx.prompt(
                         gpui::PromptLevel::Critical,
-                        "Cannot open Dev Container from remote project",
+                        "Cannot open Dev Container from a shared project",
                         None,
                         &["OK"],
                     )

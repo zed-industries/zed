@@ -382,9 +382,18 @@ impl DevContainerContext {
         let fs = workspace.app_state().fs.clone();
         let environment = workspace.project().read(cx).environment().downgrade();
         let remote_client = workspace.project().read(cx).remote_client();
+        // A remote project's files only exist on its host, so that is the only
+        // machine whose engine can bind mount them.
+        let host = match remote_client
+            .as_ref()
+            .and_then(|client| client.read(cx).remote_connection())
+        {
+            Some(connection) => DevContainerHost::Remote(connection),
+            None => DevContainerHost::Local,
+        };
         Some(Self {
             project_directory,
-            host: DevContainerHost::Local,
+            host,
             remote_client,
             use_podman,
             use_buildkit,
