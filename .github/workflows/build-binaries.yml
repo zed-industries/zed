@@ -40,7 +40,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
       - name: Compute release version
         id: compute
@@ -84,7 +84,7 @@ jobs:
   build-windows:
     needs: prepare
     if: needs.prepare.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.branch == 'main')
-    runs-on: windows-2022
+    runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 360
     env:
       ZED_WORKSPACE: ${{ github.workspace }}
@@ -95,12 +95,17 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+          clean: false
+      - name: Manage persistent target
+        shell: pwsh
+        run: ./script/clear-target-dir-if-larger-than.ps1 -MAX_SIZE_IN_GB 350 -SMALL_CLEAN_SIZE_IN_GB 200
+      - name: Cache Rust dependencies
+        id: rust-cache
+        uses: Swatinem/rust-cache@72d126e709cad40056a62344eee609d696d62d33
       - name: Set release version
         shell: bash
         run: |
           sed -i "s/^version = \"[^\"]*\"/version = \"${{ needs.prepare.outputs.version }}\"/" crates/zed/Cargo.toml
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@72d126e709cad40056a62344eee609d696d62d33
       - name: Enable long paths
         shell: pwsh
         run: |
@@ -108,7 +113,7 @@ jobs:
           git config --global core.longpaths true
       - name: Fetch dependencies
         shell: bash
-        run: cargo fetch
+        run: cargo fetch --locked --target x86_64-pc-windows-msvc
       - name: Bundle Windows installer
         shell: pwsh
         run: ./script/bundle-windows.ps1
