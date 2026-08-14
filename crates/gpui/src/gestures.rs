@@ -161,11 +161,16 @@ impl TouchGestureArena {
         }
     }
 
-    pub(crate) fn handle(&mut self, event: &TouchEvent) -> SmallVec<[TouchGestureOutput; 1]> {
+    #[cfg(test)]
+    fn handle(&mut self, event: &TouchEvent) -> SmallVec<[TouchGestureOutput; 1]> {
         self.handle_at(event, Instant::now())
     }
 
-    fn handle_at(&mut self, event: &TouchEvent, now: Instant) -> SmallVec<[TouchGestureOutput; 1]> {
+    pub(crate) fn handle_at(
+        &mut self,
+        event: &TouchEvent,
+        now: Instant,
+    ) -> SmallVec<[TouchGestureOutput; 1]> {
         match event.phase {
             TouchPhase::Started => {
                 if self.active_touch.is_none() {

@@ -5185,7 +5185,9 @@ impl Window {
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         if let PlatformInput::Touch(touch) = event {
-            let semantic_events = self.touch_gesture_arena.handle(&touch);
+            let semantic_events = self
+                .touch_gesture_arena
+                .handle_at(&touch, cx.background_executor().now());
             let mut result = self.dispatch_event_with_modality(
                 PlatformInput::Touch(touch),
                 Some(InputModality::Touch),
