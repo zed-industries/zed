@@ -223,6 +223,34 @@ impl Render for RemoteConnectionPrompt {
     }
 }
 
+/// The header's `(connection_string, nickname, is_wsl, is_devcontainer)`.
+///
+/// The header renders the nickname as the headline with the connection string
+/// beside it, so a container whose engine lives elsewhere reads as
+/// "my-container (that machine)" while a local one keeps its bare name.
+fn header_labels(options: &RemoteConnectionOptions) -> (String, Option<String>, bool, bool) {
+    match options {
+        RemoteConnectionOptions::Ssh(options) => (
+            options.connection_string(),
+            options.nickname.clone(),
+            false,
+            false,
+        ),
+        RemoteConnectionOptions::Wsl(options) => (options.distro_name.clone(), None, true, false),
+        RemoteConnectionOptions::Docker(options) => match options.host.connection_options() {
+            Some(host) => (host.display_name(), Some(options.name.clone()), false, true),
+            None => (options.name.clone(), None, false, true),
+        },
+        // Gated on the feature alone, not on `test`: this crate's own test
+        // build does not turn on `remote/test-support`, so under `cfg(test)`
+        // the variant this arm names does not exist.
+        #[cfg(feature = "test-support")]
+        RemoteConnectionOptions::Mock(options) => {
+            (format!("mock-{}", options.id), None, false, false)
+        }
+    }
+}
+
 impl RemoteConnectionModal {
     pub fn new(
         connection_options: &RemoteConnectionOptions,
@@ -230,22 +258,8 @@ impl RemoteConnectionModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (connection_string, nickname, is_wsl, is_devcontainer) = match connection_options {
-            RemoteConnectionOptions::Ssh(options) => (
-                options.connection_string(),
-                options.nickname.clone(),
-                false,
-                false,
-            ),
-            RemoteConnectionOptions::Wsl(options) => {
-                (options.distro_name.clone(), None, true, false)
-            }
-            RemoteConnectionOptions::Docker(options) => (options.name.clone(), None, false, true),
-            #[cfg(any(test, feature = "test-support"))]
-            RemoteConnectionOptions::Mock(options) => {
-                (format!("mock-{}", options.id), None, false, false)
-            }
-        };
+        let (connection_string, nickname, is_wsl, is_devcontainer) =
+            header_labels(connection_options);
         Self {
             prompt: cx.new(|cx| {
                 RemoteConnectionPrompt::new(
@@ -726,3 +740,42 @@ pub fn connect(
 }
 
 use anyhow::Context as _;
+
+#[cfg(test)]
+mod tests {
+    use super::header_labels;
+    use remote::{
+        DockerConnectionOptions, DockerHost, RemoteConnectionOptions, SshConnectionOptions,
+    };
+
+    #[test]
+    fn a_containers_header_names_the_machine_it_runs_on() {
+        let container = |host: DockerHost| {
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                name: "zed-dev".to_string(),
+                container_id: "container-123".to_string(),
+                remote_user: "anth".to_string(),
+                upload_binary_over_docker_exec: false,
+                use_podman: false,
+                remote_env: Default::default(),
+                host,
+            })
+        };
+
+        let (connection_string, nickname, is_wsl, is_devcontainer) =
+            header_labels(&container(DockerHost::Local));
+        assert_eq!(connection_string, "zed-dev");
+        assert_eq!(nickname, None);
+        assert!(!is_wsl && is_devcontainer);
+
+        let (connection_string, nickname, _, is_devcontainer) =
+            header_labels(&container(DockerHost::Ssh(SshConnectionOptions {
+                host: "example.com".into(),
+                nickname: Some("work".to_string()),
+                ..Default::default()
+            })));
+        assert_eq!(nickname.as_deref(), Some("zed-dev"));
+        assert_eq!(connection_string, "work");
+        assert!(is_devcontainer);
+    }
+}
