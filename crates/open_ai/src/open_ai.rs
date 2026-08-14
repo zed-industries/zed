@@ -12,7 +12,7 @@ use http_client::{
 pub use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{convert::TryFrom, future::Future};
+use std::{convert::TryFrom, future::Future, io};
 use strum::EnumIter;
 use thiserror::Error;
 
@@ -605,6 +605,9 @@ pub enum RequestMessage {
         tool_calls: Vec<ToolCall>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reasoning_content: Option<String>,
+        /// Provider-defined reasoning metadata required for replay.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_details: Option<std::sync::Arc<Value>>,
     },
     User {
         content: MessageContent,
@@ -688,6 +691,9 @@ pub enum ToolCallContent {
 pub struct FunctionContent {
     pub name: String,
     pub arguments: String,
+    /// Provider-defined metadata required to replay a reasoning tool call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -716,6 +722,9 @@ pub struct ResponseMessageDelta {
     pub tool_calls: Option<Vec<ToolCallChunk>>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub reasoning_content: Option<String>,
+    /// Provider-defined structured reasoning metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_details: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -733,6 +742,20 @@ pub struct ToolCallChunk {
 pub struct FunctionChunk {
     pub name: Option<String>,
     pub arguments: Option<String>,
+    /// Provider-defined metadata required to replay a reasoning tool call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
+}
+
+/// Reports prompt-cache token usage from compatible providers.
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+pub struct PromptTokensDetails {
+    /// Tokens read from a prompt cache.
+    #[serde(default)]
+    pub cached_tokens: u64,
+    /// Tokens written to a prompt cache.
+    #[serde(default)]
+    pub cache_write_tokens: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -740,6 +763,9 @@ pub struct Usage {
     pub prompt_tokens: Option<u64>,
     pub completion_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
+    /// Prompt-cache usage when reported by the provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -749,6 +775,10 @@ pub struct ChoiceDelta {
     pub finish_reason: Option<String>,
 }
 
+/// An error produced while sending an OpenAI-compatible request.
+///
+/// Transport and wire-format failures retain their category so callers can
+/// present an appropriate error or translate it into provider-specific errors.
 #[derive(Error, Debug)]
 pub enum RequestError {
     #[error("HTTP response error from {provider}'s API: status {status_code} - {body:?}")]
@@ -756,7 +786,37 @@ pub enum RequestError {
         provider: String,
         status_code: StatusCode,
         body: String,
-        headers: HeaderMap<HeaderValue>,
+        headers: Box<HeaderMap<HeaderValue>>,
+    },
+    #[error("error serializing request to {provider}'s API")]
+    SerializeRequest {
+        provider: String,
+        #[source]
+        error: serde_json::Error,
+    },
+    #[error("error building request body for {provider}'s API")]
+    BuildRequestBody {
+        provider: String,
+        #[source]
+        error: http_client::http::Error,
+    },
+    #[error("error sending HTTP request to {provider}'s API")]
+    HttpSend {
+        provider: String,
+        #[source]
+        error: anyhow::Error,
+    },
+    #[error("I/O error reading response from {provider}'s API")]
+    ReadResponse {
+        provider: String,
+        #[source]
+        error: io::Error,
+    },
+    #[error("error deserializing {provider}'s API response")]
+    DeserializeResponse {
+        provider: String,
+        #[source]
+        error: serde_json::Error,
     },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -780,50 +840,162 @@ pub struct ResponseStreamEvent {
     pub usage: Option<Usage>,
 }
 
+/// A framed Chat Completions server-sent event.
+///
+/// `Done` is distinct from the underlying response body ending so callers can
+/// tell whether the server completed the stream according to the protocol.
+#[derive(Debug, PartialEq)]
+pub enum ChatCompletionStreamEvent {
+    /// A JSON payload from a `data` field.
+    Data(Value),
+    /// The protocol terminator `data: [DONE]`.
+    Done,
+}
+
+/// Sends a non-streaming compatible Chat Completions request.
+///
+/// The request may use any serializable envelope. The response body is returned
+/// as JSON so the caller can deserialize provider-specific extensions.
+///
+/// # Errors
+///
+/// Returns [`RequestError`] when request serialization or construction fails,
+/// the HTTP request fails, the server returns a non-success status, the response
+/// body cannot be read, or the response is not valid JSON.
+pub async fn non_streaming_chat_completion<RequestBody>(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    extra_headers: &CustomHeaders,
+    request: &RequestBody,
+) -> Result<Value, RequestError>
+where
+    RequestBody: Serialize + ?Sized,
+{
+    let request = chat_completion_request(provider_name, api_url, api_key, extra_headers, request)?;
+    let mut response = client
+        .send(request)
+        .await
+        .map_err(|error| RequestError::HttpSend {
+            provider: provider_name.to_string(),
+            error,
+        })?;
+    if !response.status().is_success() {
+        return Err(http_response_error(provider_name, &mut response).await);
+    }
+
+    let body =
+        read_response_body(&mut response)
+            .await
+            .map_err(|error| RequestError::ReadResponse {
+                provider: provider_name.to_string(),
+                error,
+            })?;
+    serde_json::from_str(&body).map_err(|error| RequestError::DeserializeResponse {
+        provider: provider_name.to_string(),
+        error,
+    })
+}
+
 pub async fn non_streaming_completion(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
     request: Request,
 ) -> Result<Response, RequestError> {
-    let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
+    let response = non_streaming_chat_completion(
+        client,
+        "openai",
+        api_url,
+        api_key,
+        &CustomHeaders::default(),
+        &request,
+    )
+    .await?;
+    serde_json::from_value(response).map_err(|error| RequestError::Other(error.into()))
+}
 
-    let request = request_builder
-        .body(AsyncBody::from(
-            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
-        ))
-        .map_err(|e| RequestError::Other(e.into()))?;
-
-    let mut response = client.send(request).await?;
-    if response.status().is_success() {
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .map_err(|e| RequestError::Other(e.into()))?;
-
-        serde_json::from_str(&body).map_err(|e| RequestError::Other(e.into()))
-    } else {
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .map_err(|e| RequestError::Other(e.into()))?;
-
-        Err(RequestError::HttpResponseError {
-            provider: "openai".to_owned(),
-            status_code: response.status(),
-            body,
-            headers: response.headers().clone(),
-        })
+/// Starts a streaming compatible Chat Completions request.
+///
+/// The returned stream preserves the distinction between a `[DONE]` event and
+/// the response body ending without a protocol terminator.
+///
+/// # Errors
+///
+/// Returns [`RequestError`] before streaming begins when request serialization
+/// or construction fails, the HTTP request fails, or the server returns a
+/// non-success status. The returned stream yields [`RequestError`] when the
+/// response body cannot be read or a `data` field is not valid JSON.
+pub async fn stream_chat_completion<RequestBody>(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    extra_headers: &CustomHeaders,
+    request: &RequestBody,
+) -> Result<
+    BoxStream<'static, std::result::Result<ChatCompletionStreamEvent, RequestError>>,
+    RequestError,
+>
+where
+    RequestBody: Serialize + ?Sized,
+{
+    let request = chat_completion_request(provider_name, api_url, api_key, extra_headers, request)?;
+    let mut response = client
+        .send(request)
+        .await
+        .map_err(|error| RequestError::HttpSend {
+            provider: provider_name.to_string(),
+            error,
+        })?;
+    if !response.status().is_success() {
+        return Err(http_response_error(provider_name, &mut response).await);
     }
+
+    let lines = BufReader::new(response.into_body()).lines();
+    let provider_name = provider_name.to_string();
+    Ok(futures::stream::try_unfold(
+        (lines, false, provider_name),
+        |(mut lines, is_done, provider_name)| async move {
+            if is_done {
+                return Ok(None);
+            }
+
+            loop {
+                let Some(line) = lines.next().await else {
+                    return Ok(None);
+                };
+                let line = line.map_err(|error| RequestError::ReadResponse {
+                    provider: provider_name.clone(),
+                    error,
+                })?;
+                let Some(data) = line
+                    .strip_prefix("data: ")
+                    .or_else(|| line.strip_prefix("data:"))
+                else {
+                    continue;
+                };
+                if data == "[DONE]" {
+                    return Ok(Some((
+                        ChatCompletionStreamEvent::Done,
+                        (lines, true, provider_name),
+                    )));
+                }
+                let value = serde_json::from_str(data).map_err(|error| {
+                    RequestError::DeserializeResponse {
+                        provider: provider_name.clone(),
+                        error,
+                    }
+                })?;
+                return Ok(Some((
+                    ChatCompletionStreamEvent::Data(value),
+                    (lines, false, provider_name),
+                )));
+            }
+        },
+    )
+    .boxed())
 }
 
 pub async fn stream_completion(
@@ -834,66 +1006,91 @@ pub async fn stream_completion(
     request: Request,
     extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
-    let uri = format!("{api_url}/chat/completions");
-    let request = HttpRequest::builder()
+    let events = stream_chat_completion(
+        client,
+        provider_name,
+        api_url,
+        api_key,
+        extra_headers,
+        &request,
+    )
+    .await?;
+    Ok(events
+        .filter_map(|event| async move {
+            let value = match event {
+                Ok(ChatCompletionStreamEvent::Data(value)) => value,
+                Ok(ChatCompletionStreamEvent::Done) => return None,
+                Err(error) => return Some(Err(anyhow!(error))),
+            };
+            match ResponseStreamResult::deserialize(&value) {
+                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                Ok(ResponseStreamResult::Err { error }) => Some(Err(anyhow!(error.message))),
+                Err(error) => {
+                    log::error!(
+                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
+                        Response: `{}`",
+                        error,
+                        value,
+                    );
+                    Some(Err(anyhow!(error)))
+                }
+            }
+        })
+        .boxed())
+}
+
+fn chat_completion_request<RequestBody>(
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    extra_headers: &CustomHeaders,
+    request: &RequestBody,
+) -> std::result::Result<HttpRequest<AsyncBody>, RequestError>
+where
+    RequestBody: Serialize + ?Sized,
+{
+    let body = serde_json::to_string(request).map_err(|error| RequestError::SerializeRequest {
+        provider: provider_name.to_string(),
+        error,
+    })?;
+    HttpRequest::builder()
         .method(Method::POST)
-        .uri(uri)
+        .uri(format!("{api_url}/chat/completions"))
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()))
         .extra_headers(extra_headers)
-        .body(AsyncBody::from(
-            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
-        ))
-        .map_err(|e| RequestError::Other(e.into()))?;
-
-    let mut response = client.send(request).await?;
-    if response.status().is_success() {
-        let reader = BufReader::new(response.into_body());
-        Ok(reader
-            .lines()
-            .filter_map(|line| async move {
-                match line {
-                    Ok(line) => {
-                        let line = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:"))?;
-                        if line == "[DONE]" {
-                            None
-                        } else {
-                            match serde_json::from_str(line) {
-                                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                                Ok(ResponseStreamResult::Err { error }) => {
-                                    Some(Err(anyhow!(error.message)))
-                                }
-                                Err(error) => {
-                                    log::error!(
-                                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
-                                        Response: `{}`",
-                                        error,
-                                        line,
-                                    );
-                                    Some(Err(anyhow!(error)))
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => Some(Err(anyhow!(error))),
-                }
-            })
-            .boxed())
-    } else {
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .map_err(|e| RequestError::Other(e.into()))?;
-
-        Err(RequestError::HttpResponseError {
-            provider: provider_name.to_owned(),
-            status_code: response.status(),
-            body,
-            headers: response.headers().clone(),
+        .body(AsyncBody::from(body))
+        .map_err(|error| RequestError::BuildRequestBody {
+            provider: provider_name.to_string(),
+            error,
         })
+}
+
+async fn http_response_error(
+    provider_name: &str,
+    response: &mut http_client::Response<AsyncBody>,
+) -> RequestError {
+    let body = match read_response_body(response).await {
+        Ok(body) => body,
+        Err(error) => {
+            return RequestError::ReadResponse {
+                provider: provider_name.to_string(),
+                error,
+            };
+        }
+    };
+    RequestError::HttpResponseError {
+        provider: provider_name.to_string(),
+        status_code: response.status(),
+        body,
+        headers: Box::new(response.headers().clone()),
     }
+}
+
+async fn read_response_body(response: &mut http_client::Response<AsyncBody>) -> io::Result<String> {
+    let mut body = String::new();
+    response.body_mut().read_to_string(&mut body).await?;
+    Ok(body)
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
@@ -977,7 +1174,237 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
 
                 Self::from_http_status(provider.into(), status_code, body, retry_after)
             }
+            RequestError::SerializeRequest { provider, error } => Self::SerializeRequest {
+                provider: provider.into(),
+                error,
+            },
+            RequestError::BuildRequestBody { provider, error } => Self::BuildRequestBody {
+                provider: provider.into(),
+                error,
+            },
+            RequestError::HttpSend { provider, error } => Self::HttpSend {
+                provider: provider.into(),
+                error,
+            },
+            RequestError::ReadResponse { provider, error } => Self::ApiReadResponseError {
+                provider: provider.into(),
+                error,
+            },
+            RequestError::DeserializeResponse { provider, error } => Self::DeserializeResponse {
+                provider: provider.into(),
+                error,
+            },
             RequestError::Other(e) => Self::Other(e),
+        }
+    }
+}
+
+#[cfg(test)]
+mod chat_completion_transport_tests {
+    use super::*;
+    use futures::executor::block_on;
+    use http_client::{
+        FakeHttpClient, Response,
+        http::{HeaderName, HeaderValue},
+    };
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn streaming_transport_serializes_custom_requests_and_reports_done() {
+        let captured_request = Arc::new(Mutex::new(None));
+        let captured_request_for_handler = captured_request.clone();
+        let client = FakeHttpClient::create(move |mut request| {
+            let captured_request = captured_request_for_handler.clone();
+            async move {
+                let uri = request.uri().to_string();
+                let authorization = request.headers()["authorization"]
+                    .to_str()
+                    .expect("valid authorization header")
+                    .to_string();
+                let custom_header = request.headers()["x-compatible-provider"]
+                    .to_str()
+                    .expect("valid custom header")
+                    .to_string();
+                let mut body = String::new();
+                request.body_mut().read_to_string(&mut body).await?;
+                captured_request
+                    .lock()
+                    .expect("captured request lock")
+                    .replace((uri, authorization, custom_header, body));
+                Ok(Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(concat!(
+                        ": keepalive\n",
+                        "event: message\n",
+                        "data:{\"chunk\":1}\n\n",
+                        "data: [DONE]\n\n"
+                    )))?)
+            }
+        });
+        let extra_headers = CustomHeaders::new(vec![(
+            HeaderName::from_static("x-compatible-provider"),
+            HeaderValue::from_static("enabled"),
+        )]);
+
+        let events = block_on(async {
+            stream_chat_completion(
+                client.as_ref(),
+                "Compatible Provider",
+                "https://example.com/v1",
+                " secret ",
+                &extra_headers,
+                &json!({"model": "custom/model", "provider_option": true}),
+            )
+            .await
+            .expect("streaming request")
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<std::result::Result<Vec<_>, RequestError>>()
+            .expect("stream events")
+        });
+
+        assert_eq!(
+            events,
+            vec![
+                ChatCompletionStreamEvent::Data(json!({"chunk": 1})),
+                ChatCompletionStreamEvent::Done,
+            ]
+        );
+        assert_eq!(
+            captured_request
+                .lock()
+                .expect("captured request lock")
+                .as_ref(),
+            Some(&(
+                "https://example.com/v1/chat/completions".to_string(),
+                "Bearer secret".to_string(),
+                "enabled".to_string(),
+                json!({"model": "custom/model", "provider_option": true}).to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn streaming_transport_does_not_synthesize_done_at_eof() {
+        let client = FakeHttpClient::create(|_| async move {
+            Ok(Response::builder()
+                .status(200)
+                .body(AsyncBody::from("data: {\"chunk\":1}\n\n"))?)
+        });
+
+        let events = block_on(async {
+            stream_chat_completion(
+                client.as_ref(),
+                "Compatible Provider",
+                "https://example.com/v1",
+                "secret",
+                &CustomHeaders::default(),
+                &json!({"model": "custom/model"}),
+            )
+            .await
+            .expect("streaming request")
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<std::result::Result<Vec<_>, RequestError>>()
+            .expect("stream events")
+        });
+
+        assert_eq!(
+            events,
+            vec![ChatCompletionStreamEvent::Data(json!({"chunk": 1}))]
+        );
+    }
+
+    #[test]
+    fn transport_preserves_typed_send_and_deserialization_errors() {
+        let client = FakeHttpClient::create(|_| async move { Err(anyhow!("network unavailable")) });
+        let error = block_on(non_streaming_chat_completion(
+            client.as_ref(),
+            "Compatible Provider",
+            "https://example.com/v1",
+            "secret",
+            &CustomHeaders::default(),
+            &json!({"model": "custom/model"}),
+        ))
+        .expect_err("send error");
+        assert!(matches!(
+            error,
+            RequestError::HttpSend { provider, .. } if provider == "Compatible Provider"
+        ));
+
+        let client = FakeHttpClient::create(|_| async move {
+            Ok(Response::builder()
+                .status(200)
+                .body(AsyncBody::from("not JSON"))?)
+        });
+        let error = block_on(non_streaming_chat_completion(
+            client.as_ref(),
+            "Compatible Provider",
+            "https://example.com/v1",
+            "secret",
+            &CustomHeaders::default(),
+            &json!({"model": "custom/model"}),
+        ))
+        .expect_err("deserialization error");
+        assert!(matches!(
+            error,
+            RequestError::DeserializeResponse { provider, .. }
+                if provider == "Compatible Provider"
+        ));
+    }
+
+    #[test]
+    fn non_streaming_transport_supports_custom_envelopes_and_provider_errors() {
+        let client = FakeHttpClient::create(|request| async move {
+            assert_eq!(request.headers()["x-compatible-provider"], "enabled");
+            Ok(Response::builder()
+                .status(200)
+                .body(AsyncBody::from(r#"{"result":"ok"}"#))?)
+        });
+        let extra_headers = CustomHeaders::new(vec![(
+            HeaderName::from_static("x-compatible-provider"),
+            HeaderValue::from_static("enabled"),
+        )]);
+        let response = block_on(non_streaming_chat_completion(
+            client.as_ref(),
+            "Compatible Provider",
+            "https://example.com/v1",
+            "secret",
+            &extra_headers,
+            &json!({"model": "custom/model", "custom_option": "value"}),
+        ))
+        .expect("non-streaming request");
+        assert_eq!(response, json!({"result": "ok"}));
+
+        let client = FakeHttpClient::create(|_| async move {
+            Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(AsyncBody::from("invalid custom option"))?)
+        });
+        let error = block_on(non_streaming_chat_completion(
+            client.as_ref(),
+            "Compatible Provider",
+            "https://example.com/v1",
+            "secret",
+            &CustomHeaders::default(),
+            &json!({"model": "custom/model"}),
+        ))
+        .expect_err("provider error");
+        match error {
+            RequestError::HttpResponseError {
+                provider,
+                status_code,
+                body,
+                ..
+            } => {
+                assert_eq!(provider, "Compatible Provider");
+                assert_eq!(status_code, StatusCode::BAD_REQUEST);
+                assert_eq!(body, "invalid custom option");
+            }
+            error => panic!("unexpected transport error: {error}"),
         }
     }
 }
