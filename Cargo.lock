@@ -8715,8 +8715,10 @@ dependencies = [
 name = "http_client_tls"
 version = "0.1.0"
 dependencies = [
+ "log",
  "rustls 0.23.40",
  "rustls-platform-verifier",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]
