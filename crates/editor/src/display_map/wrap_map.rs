@@ -984,6 +984,12 @@ impl WrapSnapshot {
     fn check_invariants(&self) {
         #[cfg(test)]
         {
+            // Randomized tests set this to let corrupted state propagate the
+            // way it does in production builds, where no invariants run, so
+            // that downstream symptoms become observable.
+            if std::env::var("SIMULATE_PRODUCTION").is_ok() {
+                return;
+            }
             assert_eq!(
                 TabPoint::from(self.transforms.summary().input.lines),
                 self.tab_snapshot.max_point()

@@ -4944,11 +4944,15 @@ mod tests {
     /// anchors carry diff base anchors, and replacing a diff's base text
     /// changes how those anchors compare, unsorting the persistent fold tree
     /// that `FoldMap` seeks through. With `SIMULATE_PRODUCTION=1`, which
-    /// disables the fold map's test-only invariants the way production
-    /// builds do, the unsorted tree propagates until `FoldMap::sync` panics
-    /// with "cannot seek backward" (`SEED=332 OPERATIONS=60`), matching a
-    /// large family of open Sentry crashes with that message. All three
-    /// finds are unfixed.
+    /// disables the fold and wrap maps' test-only invariants the way
+    /// production builds run, the unsorted tree propagates: `FoldMap::sync`
+    /// panics with "cannot seek backward" (`SEED=332 OPERATIONS=60`),
+    /// matching a large family of open Sentry crashes with that message, and
+    /// the wrap layer emits edits that no longer cover the rows that actually
+    /// changed (`SEED=612 OPERATIONS=50`, caught by
+    /// `assert_wrap_edits_cover_changes`), which is the mechanism that leaves
+    /// the block map holding stale header blocks. All three finds are
+    /// unfixed.
     #[gpui::test(iterations = 20)]
     async fn test_random_excerpt_removal_with_diffs(
         cx: &mut gpui::TestAppContext,
@@ -5047,6 +5051,7 @@ mod tests {
         let font = test_font();
         let (wrap_map, wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font, font_size, wrap_width, cx));
+        let mut previous_wrap_text = wraps_snapshot.text();
         let mut block_map = BlockMap::new(
             wraps_snapshot,
             buffer_start_header_height,
@@ -5091,6 +5096,11 @@ mod tests {
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
+                    assert_wrap_edits_cover_changes(
+                        &mut previous_wrap_text,
+                        &wraps_snapshot,
+                        &wrap_edits,
+                    );
                     let mut writer = block_map.write(wraps_snapshot, wrap_edits, None);
                     let folded_buffers = writer
                         .block_map
@@ -5217,6 +5227,11 @@ mod tests {
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
+                    assert_wrap_edits_cover_changes(
+                        &mut previous_wrap_text,
+                        &wraps_snapshot,
+                        &wrap_edits,
+                    );
                     block_map.read(wraps_snapshot, wrap_edits, None);
 
                     if rng.random_bool(0.5) {
@@ -5227,6 +5242,11 @@ mod tests {
                                 .update(cx, |wrap_map, cx| {
                                     wrap_map.sync(tab_snapshot, tab_edits, cx)
                                 });
+                            assert_wrap_edits_cover_changes(
+                                &mut previous_wrap_text,
+                                &wraps_snapshot,
+                                &wrap_edits,
+                            );
                             block_map.read(wraps_snapshot, wrap_edits, None);
                         }
                     } else {
@@ -5239,6 +5259,11 @@ mod tests {
                         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                             wrap_map.sync(tab_snapshot, tab_edits, cx)
                         });
+                        assert_wrap_edits_cover_changes(
+                            &mut previous_wrap_text,
+                            &wraps_snapshot,
+                            &wrap_edits,
+                        );
                         block_map.read(wraps_snapshot, wrap_edits, None);
                     }
                 }
@@ -5324,6 +5349,7 @@ mod tests {
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tab_snapshot, tab_edits, cx)
             });
+            assert_wrap_edits_cover_changes(&mut previous_wrap_text, &wraps_snapshot, &wrap_edits);
             let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits, None);
             log::info!("blocks text: {:?}", blocks_snapshot.text());
             assert_excerpts_resolve(&buffer_snapshot);
@@ -5870,6 +5896,52 @@ mod tests {
                 wrap_map.sync(tab_snapshot, tab_edits, cx)
             })
         }
+    }
+
+    /// Verifies the edit coverage invariant at the wrap boundary: applying the
+    /// emitted edits to the previous wrap text must reproduce the new wrap
+    /// text exactly. A row that changed without being covered by an edit is
+    /// precisely the kind of under-invalidation that leaves the block map
+    /// holding stale header blocks (ZED-7G6), because every layer below the
+    /// block map propagates its changes only through these edits. Checking at
+    /// the wrap boundary catches under-coverage introduced by any layer
+    /// beneath it.
+    #[track_caller]
+    fn assert_wrap_edits_cover_changes(
+        previous_wrap_text: &mut String,
+        wrap_snapshot: &WrapSnapshot,
+        wrap_edits: &WrapPatch,
+    ) {
+        let new_text = wrap_snapshot.text();
+        let old_rows = previous_wrap_text.split('\n').collect::<Vec<_>>();
+        let new_rows = new_text.split('\n').collect::<Vec<_>>();
+
+        let mut reconstructed = old_rows.clone();
+        for edit in wrap_edits.edits().iter().rev() {
+            assert!(
+                edit.old.start.0 as usize <= reconstructed.len()
+                    && edit.old.end.0 as usize <= old_rows.len(),
+                "edit {edit:?} lies outside the previous wrap text ({} rows)",
+                old_rows.len(),
+            );
+            assert!(
+                edit.new.end.0 as usize <= new_rows.len(),
+                "edit {edit:?} lies outside the new wrap text ({} rows)",
+                new_rows.len(),
+            );
+            reconstructed.splice(
+                edit.old.start.0 as usize..edit.old.end.0 as usize,
+                new_rows[edit.new.start.0 as usize..edit.new.end.0 as usize]
+                    .iter()
+                    .copied(),
+            );
+        }
+        assert_eq!(
+            reconstructed.join("\n"),
+            new_text,
+            "wrap edits do not cover all changed rows; edits: {wrap_edits:?}",
+        );
+        *previous_wrap_text = new_text;
     }
 
     /// Every excerpt must resolve its buffer, independently of any block: a
