@@ -28,12 +28,14 @@ use rustc_span::Span;
 
 mod blocking_io_on_foreground;
 mod entity_update_in_render;
+mod extern_fn_in_background_spawn;
 mod notify_in_render;
 mod owned_string_into_shared;
 mod render_helpers;
 
 use blocking_io_on_foreground::BLOCKING_IO_ON_FOREGROUND;
 use entity_update_in_render::ENTITY_UPDATE_IN_RENDER;
+use extern_fn_in_background_spawn::EXTERN_FN_IN_BACKGROUND_SPAWN;
 use notify_in_render::NOTIFY_IN_RENDER;
 use owned_string_into_shared::OWNED_STRING_INTO_SHARED;
 
@@ -54,6 +56,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         ASYNC_BLOCK_WITHOUT_AWAIT,
         BLOCKING_IO_ON_FOREGROUND,
         ENTITY_UPDATE_IN_RENDER,
+        EXTERN_FN_IN_BACKGROUND_SPAWN,
         NOTIFY_IN_RENDER,
         OWNED_STRING_INTO_SHARED,
     ]);
@@ -61,6 +64,8 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(|_| Box::new(AsyncBlockWithoutAwait));
     lint_store.register_late_pass(|_| Box::new(blocking_io_on_foreground::BlockingIoOnForeground));
     lint_store.register_late_pass(|_| Box::new(entity_update_in_render::EntityUpdateInRender));
+    lint_store
+        .register_late_pass(|_| Box::new(extern_fn_in_background_spawn::ExternFnInBackgroundSpawn));
     lint_store.register_late_pass(|_| Box::new(notify_in_render::NotifyInRender));
     lint_store.register_late_pass(|_| Box::new(owned_string_into_shared::OwnedStringIntoShared));
 }

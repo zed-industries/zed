@@ -2,13 +2,28 @@
 //! name and the type names, so we only need to reproduce the relevant API
 //! surface.
 
+use std::future::Future;
 use std::marker::PhantomData;
 
 // --- AppContext ---
 
 pub trait AppContext {
     fn as_app_mut(&mut self) -> &mut App;
+
+    fn background_spawn<R>(&self, _future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        Task(PhantomData)
+    }
 }
+
+pub struct Task<T>(PhantomData<T>);
+
+pub trait WorkerSend {}
+
+impl WorkerSend for String {}
+impl<T: WorkerSend + ?Sized> WorkerSend for Box<T> {}
 
 // --- App ---
 

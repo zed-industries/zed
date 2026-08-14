@@ -1,0 +1,44 @@
+error: GPUI background task contains data that does not implement `WorkerSend` for wasm
+  --> $DIR/extern_fn_in_background_spawn.rs:27:5
+   |
+LL | /     cx.background_spawn(async move {
+LL | |         callback();
+LL | |     });
+   | |______^
+   |
+   = note: `-D extern-fn-in-background-spawn` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(extern_fn_in_background_spawn)]`
+
+error: GPUI background task contains data that does not implement `WorkerSend` for wasm
+  --> $DIR/extern_fn_in_background_spawn.rs:34:5
+   |
+LL | /     cx.background_spawn(async move {
+LL | |         callback();
+LL | |     });
+   | |______^
+
+error: GPUI background task contains data that does not implement `WorkerSend` for wasm
+  --> $DIR/extern_fn_in_background_spawn.rs:41:5
+   |
+LL | /     cx.background_spawn(async move {
+LL | |         drop(data);
+LL | |     });
+   | |______^
+
+error: GPUI background task contains data that does not implement `WorkerSend` for wasm
+  --> $DIR/extern_fn_in_background_spawn.rs:49:5
+   |
+LL | /     cx.background_spawn(async move {
+LL | |         closure();
+LL | |     });
+   | |______^
+
+error: GPUI background task contains data that does not implement `WorkerSend` for wasm
+  --> $DIR/extern_fn_in_background_spawn.rs:59:5
+   |
+LL | /     cx.background_spawn(async move {
+LL | |         future.await;
+LL | |     });
+   | |______^
+
+error: aborting due to 5 previous errors

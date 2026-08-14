@@ -28,6 +28,7 @@ picks them up automatically when run from that directory.
 - `notify_in_render` — `Context::notify()` called inside `Render::render`.
 - `owned_string_into_shared` — `String::from(<lit>).into()` / `<lit>.to_string().into()` / `<lit>.to_owned().into()` whose target is `SharedString`, `Arc<str>`, `Rc<str>`, or `Cow<'_, str>`.
 - `blocking_io_on_foreground` - Catch blocking IO calls that are called on the main thread (but not on closures or background threads)
+- `extern_fn_in_background_spawn` — Catch GPUI background tasks containing data that does not implement `WorkerSend`, while treating closures and futures as if `WorkerSend` were an auto trait.
 
 ## How to run
 
