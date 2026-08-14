@@ -20,9 +20,10 @@ use core_foundation::{
 use futures::channel::oneshot;
 use gpui::{
     Action, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem, CursorStyle,
-    DummyKeyboardMapper, ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, Task, ThermalState, WindowAppearance, WindowParams,
+    DummyKeyboardMapper, ForegroundExecutor, GestureTuning, Keymap, Menu, MenuItem,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformGestures, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, Task, ThermalState,
+    WindowAppearance, WindowParams,
 };
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
@@ -35,6 +36,17 @@ use std::{
 };
 
 pub struct IosPlatform(Mutex<IosPlatformState>);
+
+struct IosGestures;
+
+impl PlatformGestures for IosGestures {
+    fn tuning(&self) -> GestureTuning {
+        GestureTuning {
+            momentum_decay_per_ms: 0.99,
+            ..GestureTuning::default()
+        }
+    }
+}
 
 pub(crate) struct IosPlatformState {
     background_executor: BackgroundExecutor,
@@ -178,6 +190,10 @@ impl Platform for IosPlatform {
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
         self.0.lock().text_system.clone()
+    }
+
+    fn gestures(&self) -> Option<Rc<dyn PlatformGestures>> {
+        Some(Rc::new(IosGestures))
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {

@@ -658,15 +658,37 @@ impl IosWindow {
     }
 
     /// Delivers a UIKit touch through GPUI's platform-neutral touch API.
-    pub fn handle_touch(&self, touch: *mut AnyObject, _event: *mut AnyObject) {
+    pub fn handle_touch(&self, touch: *mut AnyObject, event: *mut AnyObject) {
+        let id = touch_id(touch);
+        if touch_phase(touch) == UITouchPhase::Moved && !event.is_null() {
+            unsafe {
+                let samples: *mut AnyObject = msg_send![event, coalescedTouchesForTouch: touch];
+                if !samples.is_null() {
+                    let count: usize = msg_send![samples, count];
+                    if count > 0 {
+                        for index in 0..count {
+                            let sample: *mut AnyObject = msg_send![samples, objectAtIndex: index];
+                            self.handle_touch_sample(sample, id);
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
+        self.handle_touch_sample(touch, id);
+    }
+
+    fn handle_touch_sample(&self, touch: *mut AnyObject, id: TouchId) {
         let position = touch_location_in_view(touch, self.view);
         self.mouse_position.set(position);
 
         let event = TouchEvent {
-            id: touch_id(touch),
+            id,
             phase: touch_phase(touch).into(),
             position,
             force: touch_force(touch),
+            timestamp: Some(touch_timestamp(touch)),
         };
         self.handle_keyboard_dismiss_touch(&event);
         if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
