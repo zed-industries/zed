@@ -5,6 +5,10 @@ pub struct NotebookFeatureFlag;
 impl FeatureFlag for NotebookFeatureFlag {
     const NAME: &'static str = "notebooks";
     type Value = PresenceFlag;
+
+    fn enabled_for_all() -> bool {
+        true
+    }
 }
 register_feature_flag!(NotebookFeatureFlag);
 
