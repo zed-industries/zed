@@ -4943,7 +4943,12 @@ mod tests {
     /// order (`SEED=144 OPERATIONS=50`): with all diff hunks expanded, fold
     /// anchors carry diff base anchors, and replacing a diff's base text
     /// changes how those anchors compare, unsorting the persistent fold tree
-    /// that `FoldMap` seeks through. All three are unfixed.
+    /// that `FoldMap` seeks through. With `SIMULATE_PRODUCTION=1`, which
+    /// disables the fold map's test-only invariants the way production
+    /// builds do, the unsorted tree propagates until `FoldMap::sync` panics
+    /// with "cannot seek backward" (`SEED=332 OPERATIONS=60`), matching a
+    /// large family of open Sentry crashes with that message. All three
+    /// finds are unfixed.
     #[gpui::test(iterations = 20)]
     async fn test_random_excerpt_removal_with_diffs(
         cx: &mut gpui::TestAppContext,
