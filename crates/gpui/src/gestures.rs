@@ -130,6 +130,7 @@ impl Default for GestureTuning {
 pub(crate) struct TouchGestureArena {
     tuning: GestureTuning,
     active_touch: Option<ActiveTouch>,
+    momentum: Option<ScrollMomentum>,
     last_tap: Option<CompletedTap>,
 }
 
@@ -143,7 +144,16 @@ struct ActiveTouch {
     start_position: Point<Pixels>,
     last_position: Point<Pixels>,
     started_at: Instant,
+    last_moved_at: Instant,
+    velocity: Point<Pixels>,
     is_panning: bool,
+}
+
+struct ScrollMomentum {
+    position: Point<Pixels>,
+    velocity: Point<Pixels>,
+    last_frame_at: Instant,
+    started: bool,
 }
 
 struct CompletedTap {
@@ -157,6 +167,7 @@ impl TouchGestureArena {
         Self {
             tuning,
             active_touch: None,
+            momentum: None,
             last_tap: None,
         }
     }
@@ -173,16 +184,28 @@ impl TouchGestureArena {
     ) -> SmallVec<[TouchGestureOutput; 1]> {
         match event.phase {
             TouchPhase::Started => {
+                let cancelled_momentum = self.momentum.take().map(|_| {
+                    TouchGestureOutput::PlatformInput(PlatformInput::ScrollWheel(
+                        ScrollWheelEvent {
+                            position: event.position,
+                            delta: ScrollDelta::Pixels(Point::default()),
+                            modifiers: Modifiers::default(),
+                            touch_phase: TouchPhase::Cancelled,
+                        },
+                    ))
+                });
                 if self.active_touch.is_none() {
                     self.active_touch = Some(ActiveTouch {
                         id: event.id,
                         start_position: event.position,
                         last_position: event.position,
                         started_at: now,
+                        last_moved_at: now,
+                        velocity: Point::default(),
                         is_panning: false,
                     });
                 }
-                SmallVec::new()
+                cancelled_momentum.into_iter().collect()
             }
             TouchPhase::Moved => {
                 let Some(active_touch) = self
@@ -193,6 +216,14 @@ impl TouchGestureArena {
                     return SmallVec::new();
                 };
 
+                let elapsed = now.saturating_duration_since(active_touch.last_moved_at);
+                if !elapsed.is_zero() {
+                    let instantaneous_velocity =
+                        (event.position - active_touch.last_position) / elapsed.as_secs_f32();
+                    active_touch.velocity =
+                        active_touch.velocity * 0.25 + instantaneous_velocity * 0.75;
+                }
+                active_touch.last_moved_at = now;
                 let mut touch_phase = TouchPhase::Moved;
                 let delta = if active_touch.is_panning {
                     event.position - active_touch.last_position
@@ -231,6 +262,25 @@ impl TouchGestureArena {
                 };
 
                 if active_touch.is_panning {
+                    let elapsed = now.saturating_duration_since(active_touch.last_moved_at);
+                    let mut velocity = active_touch.velocity;
+                    if !elapsed.is_zero() && elapsed <= Duration::from_millis(100) {
+                        let instantaneous_velocity =
+                            (event.position - active_touch.last_position) / elapsed.as_secs_f32();
+                        velocity = velocity * 0.25 + instantaneous_velocity * 0.75;
+                    }
+                    if event.phase == TouchPhase::Ended
+                        && elapsed <= Duration::from_millis(100)
+                        && velocity.y.abs() >= velocity.x.abs()
+                        && velocity.magnitude() >= f64::from(self.tuning.min_fling_velocity)
+                    {
+                        self.momentum = Some(ScrollMomentum {
+                            position: event.position,
+                            velocity,
+                            last_frame_at: now,
+                            started: false,
+                        });
+                    }
                     return smallvec![TouchGestureOutput::PlatformInput(
                         PlatformInput::ScrollWheel(ScrollWheelEvent {
                             position: event.position,
@@ -276,6 +326,48 @@ impl TouchGestureArena {
                 })]
             }
         }
+    }
+
+    pub(crate) fn has_momentum(&self) -> bool {
+        self.momentum.is_some()
+    }
+
+    pub(crate) fn advance_momentum_at(&mut self, now: Instant) -> Option<PlatformInput> {
+        let momentum = self.momentum.as_mut()?;
+        let elapsed = now
+            .saturating_duration_since(momentum.last_frame_at)
+            .min(Duration::from_millis(50));
+        if elapsed.is_zero() {
+            return None;
+        }
+        momentum.last_frame_at = now;
+
+        let elapsed_seconds = elapsed.as_secs_f32();
+        let delta = momentum.velocity * elapsed_seconds;
+        let decay = self
+            .tuning
+            .momentum_decay_per_ms
+            .powf(elapsed_seconds * 1_000.);
+        momentum.velocity *= decay;
+        let finished = momentum.velocity.magnitude() < f64::from(self.tuning.min_fling_velocity);
+        let touch_phase = if finished {
+            TouchPhase::Ended
+        } else if std::mem::replace(&mut momentum.started, true) {
+            TouchPhase::Moved
+        } else {
+            TouchPhase::Started
+        };
+        let position = momentum.position;
+        if finished {
+            self.momentum = None;
+        }
+
+        Some(PlatformInput::ScrollWheel(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Pixels(delta),
+            modifiers: Modifiers::default(),
+            touch_phase,
+        }))
     }
 }
 
@@ -487,6 +579,91 @@ mod tests {
             panic!("ending a pan should end the scroll");
         };
         assert_eq!(scroll.touch_phase, TouchPhase::Ended);
+    }
+
+    #[test]
+    fn touch_gesture_arena_continues_vertical_fling_with_momentum() {
+        let mut arena = TouchGestureArena::new(GestureTuning::default());
+        let started_at = Instant::now();
+        let started = TouchEvent {
+            id: TouchId(1),
+            phase: TouchPhase::Started,
+            position: point(px(10.), px(20.)),
+            force: None,
+        };
+        arena.handle_at(&started, started_at);
+        let moved = TouchEvent {
+            phase: TouchPhase::Moved,
+            position: point(px(10.), px(60.)),
+            ..started.clone()
+        };
+        arena.handle_at(&moved, started_at + Duration::from_millis(16));
+        arena.handle_at(
+            &TouchEvent {
+                phase: TouchPhase::Ended,
+                position: point(px(10.), px(80.)),
+                ..started
+            },
+            started_at + Duration::from_millis(32),
+        );
+
+        assert!(arena.has_momentum());
+        let Some(PlatformInput::ScrollWheel(momentum)) =
+            arena.advance_momentum_at(started_at + Duration::from_millis(48))
+        else {
+            panic!("a vertical fling should continue scrolling");
+        };
+        assert_eq!(momentum.touch_phase, TouchPhase::Started);
+        let ScrollDelta::Pixels(delta) = momentum.delta else {
+            panic!("touch momentum should scroll in pixels");
+        };
+        assert!(delta.y > Pixels::ZERO);
+
+        let mut final_phase = momentum.touch_phase;
+        for frame in 2..=500 {
+            let Some(PlatformInput::ScrollWheel(momentum)) =
+                arena.advance_momentum_at(started_at + Duration::from_millis(frame * 16))
+            else {
+                continue;
+            };
+            final_phase = momentum.touch_phase;
+            if !arena.has_momentum() {
+                break;
+            }
+        }
+        assert!(!arena.has_momentum());
+        assert_eq!(final_phase, TouchPhase::Ended);
+    }
+
+    #[test]
+    fn touch_gesture_arena_does_not_add_momentum_to_horizontal_swipe() {
+        let mut arena = TouchGestureArena::new(GestureTuning::default());
+        let started_at = Instant::now();
+        let started = TouchEvent {
+            id: TouchId(1),
+            phase: TouchPhase::Started,
+            position: point(px(10.), px(20.)),
+            force: None,
+        };
+        arena.handle_at(&started, started_at);
+        arena.handle_at(
+            &TouchEvent {
+                phase: TouchPhase::Moved,
+                position: point(px(60.), px(20.)),
+                ..started.clone()
+            },
+            started_at + Duration::from_millis(16),
+        );
+        arena.handle_at(
+            &TouchEvent {
+                phase: TouchPhase::Ended,
+                position: point(px(80.), px(20.)),
+                ..started
+            },
+            started_at + Duration::from_millis(32),
+        );
+
+        assert!(!arena.has_momentum());
     }
 
     #[test]

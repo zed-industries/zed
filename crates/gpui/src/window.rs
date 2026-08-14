@@ -5209,10 +5209,25 @@ impl Window {
                     TouchGestureOutput::Click(event) => self.dispatch_touch_event(&event, cx),
                 };
             }
+            if self.touch_gesture_arena.has_momentum() {
+                self.schedule_touch_momentum_frame();
+            }
             return result;
         }
 
         self.dispatch_event_with_modality(event, None, cx)
+    }
+
+    fn schedule_touch_momentum_frame(&self) {
+        self.on_next_frame(|window, cx| {
+            let now = cx.background_executor().now();
+            if let Some(event) = window.touch_gesture_arena.advance_momentum_at(now) {
+                window.dispatch_event_with_modality(event, Some(InputModality::Touch), cx);
+            }
+            if window.touch_gesture_arena.has_momentum() {
+                window.schedule_touch_momentum_frame();
+            }
+        });
     }
 
     fn dispatch_event_with_modality(
