@@ -451,14 +451,20 @@ impl MarksState {
     ) {
         let new_points: HashMap<String, Vec<Point>> =
             if let Some(anchors) = self.buffer_marks.get(&buffer.read(cx).remote_id()) {
+                let buffer = buffer.read(cx);
                 anchors
                     .iter()
                     .map(|(name, anchors)| {
                         (
                             name.clone(),
-                            buffer
-                                .read(cx)
-                                .summaries_for_anchors::<Point, _>(anchors.iter().copied())
+                            // A mark's anchors are in caller order, which is not
+                            // necessarily sorted (paired marks like `[` and `]`
+                            // correspond by index across marks), so they cannot
+                            // be summarized with the sorted-input-only
+                            // `summaries_for_anchors`.
+                            anchors
+                                .iter()
+                                .map(|anchor| buffer.summary_for_anchor::<Point>(anchor))
                                 .collect(),
                         )
                     })
