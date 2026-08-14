@@ -13222,24 +13222,42 @@ async fn test_newline_below_auto_indent_none(cx: &mut TestAppContext) {
         settings.defaults.auto_indent = Some(settings::AutoIndentMode::None)
     });
 
-    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: false,
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
 
-    cx.set_state(indoc! {"
-        hello
-            indented lineˇ
-        world
-    "});
+    let buffer =
+        cx.new(|cx| Buffer::local("fn foo() {\n}", cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
 
-    cx.update_editor(|editor, window, cx| {
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(10)..MultiBufferOffset(10)])
+        });
         editor.newline_below(&NewlineBelow, window, cx);
+        assert_eq!(editor.text(cx), "fn foo() {\n\n}");
     });
-
-    cx.assert_editor_state(indoc! {"
-        hello
-            indented line
-        ˇ
-        world
-    "});
 }
 
 #[gpui::test]
@@ -13248,24 +13266,43 @@ async fn test_newline_below_auto_indent_preserve(cx: &mut TestAppContext) {
         settings.defaults.auto_indent = Some(settings::AutoIndentMode::PreserveIndent)
     });
 
-    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: false,
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
 
-    cx.set_state(indoc! {"
-        hello
-            indented lineˇ
-        world
-    "});
-
-    cx.update_editor(|editor, window, cx| {
-        editor.newline_below(&NewlineBelow, window, cx);
+    let buffer = cx.new(|cx| {
+        Buffer::local("fn outer() {\n    fn inner() {\n    }\n}", cx).with_language(language.clone(), cx)
     });
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
 
-    cx.assert_editor_state(indoc! {"
-        hello
-            indented line
-            ˇ
-        world
-    "});
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(29)..MultiBufferOffset(29)])
+        });
+        editor.newline_below(&NewlineBelow, window, cx);
+        assert_eq!(editor.text(cx), "fn outer() {\n    fn inner() {\n    \n    }\n}");
+    });
 }
 
 #[gpui::test]
@@ -13274,24 +13311,42 @@ async fn test_newline_above_auto_indent_none(cx: &mut TestAppContext) {
         settings.defaults.auto_indent = Some(settings::AutoIndentMode::None)
     });
 
-    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: false,
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
 
-    cx.set_state(indoc! {"
-        hello
-            indented lineˇ
-        world
-    "});
+    let buffer =
+        cx.new(|cx| Buffer::local("fn foo() {\n}", cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
 
-    cx.update_editor(|editor, window, cx| {
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(11)..MultiBufferOffset(11)])
+        });
         editor.newline_above(&NewlineAbove, window, cx);
+        assert_eq!(editor.text(cx), "fn foo() {\n\n}");
     });
-
-    cx.assert_editor_state(indoc! {"
-        hello
-        ˇ
-            indented line
-        world
-    "});
 }
 
 #[gpui::test]
@@ -13300,24 +13355,43 @@ async fn test_newline_above_auto_indent_preserve(cx: &mut TestAppContext) {
         settings.defaults.auto_indent = Some(settings::AutoIndentMode::PreserveIndent)
     });
 
-    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: false,
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
 
-    cx.set_state(indoc! {"
-        hello
-            indented lineˇ
-        world
-    "});
-
-    cx.update_editor(|editor, window, cx| {
-        editor.newline_above(&NewlineAbove, window, cx);
+    let buffer = cx.new(|cx| {
+        Buffer::local("fn foo() {\n        let x = 1;\n}", cx).with_language(language.clone(), cx)
     });
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
 
-    cx.assert_editor_state(indoc! {"
-        hello
-            ˇ
-            indented line
-        world
-    "});
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(29)..MultiBufferOffset(29)])
+        });
+        editor.newline_above(&NewlineAbove, window, cx);
+        assert_eq!(editor.text(cx), "fn foo() {\n        \n        let x = 1;\n}");
+    });
 }
 
 #[gpui::test]
