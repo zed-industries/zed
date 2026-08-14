@@ -152,7 +152,6 @@ impl CsvPreviewView {
     }
 }
 
-
 pub fn from_buffer_with_delimiter(
     buffer_snapshot: &BufferSnapshot,
     delimiter: char,
