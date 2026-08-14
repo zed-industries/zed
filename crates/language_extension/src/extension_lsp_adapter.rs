@@ -130,11 +130,9 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
             language_server_id,
             status
         );
-        // Need to check whether servers exsist and ensure that sending `0` is ok
         self.language_registry
             .update_lsp_binary_status(BinaryStatusUpdate {
                 name: language_server_id,
-                // Need to check whether servers exsist and ensure that sending `0` is ok
                 id: LanguageServerId(0),
                 binary_status: status,
             });

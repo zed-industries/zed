@@ -47,7 +47,8 @@ pub struct LogStore {
     on_headless_host: bool,
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
-    pub stopped_language_servers: HashMap<LanguageServerId, LanguageServerState>,
+    pub stopped_language_servers:
+        HashMap<(LanguageServerName, Option<WorktreeId>), LanguageServerState>,
     io_tx: mpsc::UnboundedSender<(LanguageServerId, IoKind, String, Instant)>,
 }
 
@@ -131,6 +132,7 @@ impl Message for RpcMessage {
 }
 
 pub struct LanguageServerState {
+    pub server_id: LanguageServerId,
     pub name: Option<LanguageServerName>,
     pub worktree_id: Option<WorktreeId>,
     pub kind: LanguageServerKind,
@@ -146,6 +148,7 @@ pub struct LanguageServerState {
 impl std::fmt::Debug for LanguageServerState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LanguageServerState")
+            .field("server_id", &self.server_id)
             .field("name", &self.name)
             .field("worktree_id", &self.worktree_id)
             .field("kind", &self.kind)
@@ -371,7 +374,7 @@ impl LogStore {
                         this.language_servers
                             .retain(|_, state| state.kind.project() != Some(&weak_project));
                         this.stopped_language_servers
-                            .retain(|_, state| state.kind.project() != Some(&weak_project));
+                            .retain(|(_, _), state| state.kind.project() != Some(&weak_project));
                     }),
                     cx.subscribe(project, move |log_store, project, event, cx| {
                         let server_kind = if project.read(cx).is_local() {
@@ -488,9 +491,11 @@ impl LogStore {
         &mut self,
         id: LanguageServerId,
     ) -> Option<&mut LanguageServerState> {
-        self.language_servers
-            .get_mut(&id)
-            .or_else(|| self.stopped_language_servers.get_mut(&id))
+        self.language_servers.get_mut(&id).or_else(|| {
+            self.stopped_language_servers
+                .values_mut()
+                .find(|s| s.server_id == id)
+        })
     }
 
     pub fn add_language_server(
@@ -502,21 +507,15 @@ impl LogStore {
         server: Option<Arc<LanguageServer>>,
         cx: &mut Context<Self>,
     ) -> Option<&mut LanguageServerState> {
-        let stopped_id = if let (Some(name), Some(worktree_id)) = (name.as_ref(), worktree_id) {
+        let stopped_state = name.as_ref().and_then(|name| {
             self.stopped_language_servers
-                .iter()
-                .find(|(_, state)| {
-                    state.name.as_ref() == Some(name) && state.worktree_id == Some(worktree_id)
-                })
-                .map(|(id, _)| *id)
-        } else {
-            None
-        };
-        let stopped_state = stopped_id.and_then(|id| self.stopped_language_servers.remove(&id));
+                .remove(&(name.clone(), worktree_id))
+        });
 
         let server_state = self.language_servers.entry(server_id).or_insert_with(|| {
             cx.notify();
             LanguageServerState {
+                server_id,
                 name: None,
                 worktree_id: None,
                 kind,
@@ -758,8 +757,12 @@ impl LogStore {
     }
 
     pub fn remove_language_server(&mut self, id: LanguageServerId, cx: &mut Context<Self>) {
-        if let Some(state) = self.language_servers.remove(&id) {
-            self.stopped_language_servers.insert(id, state);
+        if let Some(mut state) = self.language_servers.remove(&id) {
+            state.server_id = id;
+            if let Some(name) = state.name.clone() {
+                self.stopped_language_servers
+                    .insert((name, state.worktree_id), state);
+            }
         }
         cx.notify();
     }
@@ -778,9 +781,11 @@ impl LogStore {
         &self,
         server_id: LanguageServerId,
     ) -> Option<&LanguageServerState> {
-        self.language_servers
-            .get(&server_id)
-            .or_else(|| self.stopped_language_servers.get(&server_id))
+        self.language_servers.get(&server_id).or_else(|| {
+            self.stopped_language_servers
+                .values()
+                .find(|s| s.server_id == server_id)
+        })
     }
 
     pub fn server_ids_for_project<'a>(
@@ -826,10 +831,7 @@ impl LogStore {
 
     pub fn has_server_logs(&self, server: &LanguageServerSelector) -> bool {
         match server {
-            LanguageServerSelector::Id(id) => {
-                self.language_servers.contains_key(id)
-                    || self.stopped_language_servers.contains_key(id)
-            }
+            LanguageServerSelector::Id(id) => self.contains_language_server(*id),
             LanguageServerSelector::Name(name) => {
                 self.language_servers
                     .values()
@@ -843,7 +845,11 @@ impl LogStore {
     }
 
     pub fn contains_language_server(&self, id: LanguageServerId) -> bool {
-        self.language_servers.contains_key(&id) || self.stopped_language_servers.contains_key(&id)
+        self.language_servers.contains_key(&id)
+            || self
+                .stopped_language_servers
+                .values()
+                .any(|s| s.server_id == id)
     }
 
     pub fn language_server_id_for_name_and_worktree(
@@ -852,11 +858,8 @@ impl LogStore {
         worktree_id: WorktreeId,
     ) -> Option<LanguageServerId> {
         self.stopped_language_servers
-            .iter()
-            .find_map(|(id, state)| {
-                (state.name.as_ref() == Some(name) && state.worktree_id == Some(worktree_id))
-                    .then_some(*id)
-            })
+            .get(&(name.clone(), Some(worktree_id)))
+            .map(|state| state.server_id)
             .or_else(|| {
                 self.language_servers.iter().find_map(|(id, state)| {
                     (state.name.as_ref() == Some(name) && state.worktree_id == Some(worktree_id))
@@ -999,7 +1002,9 @@ mod tests {
                 );
                 assert!(
                     !store.language_servers.contains_key(&first_id)
-                        && store.stopped_language_servers.contains_key(&first_id),
+                        && store
+                            .stopped_language_servers
+                            .contains_key(&(name.clone(), Some(worktree_id))),
                     "the entry moves from running to stopped",
                 );
                 assert_eq!(
@@ -1071,6 +1076,71 @@ mod tests {
                         .collect::<Vec<_>>()),
                     Some(vec!["hello from the server", "hello again"]),
                     "new logs are appended after the carried-over logs",
+                );
+            });
+        });
+    }
+
+    /// A Global (worktree-less) stopped server merges its logs into the
+    /// restarted instance, since stopped entries are keyed by
+    /// (name, Option<WorktreeId>).
+    #[gpui::test]
+    async fn test_stopped_global_server_logs_retained_until_restart(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let log_store = cx.new(|cx| LogStore::new(false, cx));
+            let name = LanguageServerName("global-server".into());
+            let first_id = LanguageServerId(1);
+
+            log_store.update(cx, |store, cx| {
+                store.add_language_server(
+                    LanguageServerKind::Global,
+                    first_id,
+                    Some(name.clone()),
+                    None,
+                    None,
+                    cx,
+                );
+                store.add_language_server_log(
+                    first_id,
+                    MessageType::LOG,
+                    "from the global server",
+                    cx,
+                );
+
+                store.remove_language_server(first_id, cx);
+
+                assert!(
+                    store
+                        .stopped_language_servers
+                        .contains_key(&(name.clone(), None)),
+                    "the global server is stored under a None worktree key",
+                );
+                assert!(
+                    store.server_logs(first_id).map(|logs| logs.len()) == Some(1),
+                    "the global server's logs are retained while stopped",
+                );
+
+                let restarted_id = LanguageServerId(2);
+                store.add_language_server(
+                    LanguageServerKind::Global,
+                    restarted_id,
+                    Some(name.clone()),
+                    None,
+                    None,
+                    cx,
+                );
+
+                assert!(
+                    store.stopped_language_servers.is_empty(),
+                    "the global stopped entry is claimed on restart",
+                );
+                assert_eq!(
+                    store.server_logs(restarted_id).map(|logs| logs
+                        .iter()
+                        .map(|log| log.message.as_str())
+                        .collect::<Vec<_>>()),
+                    Some(vec!["from the global server"]),
+                    "the global server's logs carry over to the restarted instance",
                 );
             });
         });

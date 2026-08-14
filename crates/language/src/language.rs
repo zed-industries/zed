@@ -763,10 +763,9 @@ where
         let name = self.name();
 
         log::debug!("fetching latest version of language server {:?}", name.0);
-        // Need to check whether servers exsist and ensure that sending `0` is ok
         delegate.update_status(BinaryStatusUpdate {
             name: name.clone(),
-            id: LanguageServerId(0), // no server exists yet; the store attributes this status to its pending fetch id.
+            id: LanguageServerId(0),
             binary_status: BinaryStatus::CheckingForUpdate,
         });
 
@@ -780,19 +779,17 @@ where
             .await
         {
             log::debug!("language server {:?} is already installed", name.0);
-            // Need to check whether servers exsist and ensure that sending `0` is ok
             delegate.update_status(BinaryStatusUpdate {
                 name: name.clone(),
-                id: LanguageServerId(0), // no server exists yet; the store attributes this status to its pending fetch id.
+                id: LanguageServerId(0),
                 binary_status: BinaryStatus::None,
             });
             Ok(binary)
         } else {
             log::debug!("downloading language server {:?}", name.0);
-            // Need to check whether servers exsist and ensure that sending `0` is ok
             delegate.update_status(BinaryStatusUpdate {
                 name: name.clone(),
-                id: LanguageServerId(0), // no server exists yet; the store attributes this status to its pending fetch id.
+                id: LanguageServerId(0),
                 binary_status: BinaryStatus::Downloading,
             });
             let binary = cx
@@ -800,10 +797,9 @@ where
                 .spawn(self.fetch_server_binary(latest_version, container_dir, delegate))
                 .await;
 
-            // Need to check whether servers exsist and ensure that sending `0` is ok
             delegate.update_status(BinaryStatusUpdate {
                 name: name.clone(),
-                id: LanguageServerId(0), // no server exists yet; the store attributes this status to its pending fetch id.
+                id: LanguageServerId(0),
                 binary_status: BinaryStatus::None,
             });
             binary
@@ -895,10 +891,9 @@ where
                         );
                         binary = Ok(prev_downloaded_binary);
                     } else {
-                        // Need to check whether servers exsist and ensure that sending `0` is ok
                         delegate.update_status(BinaryStatusUpdate {
                             name: self.name(),
-                            id: LanguageServerId(0), // no server exists yet; the store attributes this status to its pending fetch id.
+                            id: LanguageServerId(0),
                             binary_status: BinaryStatus::Failed {
                                 error: format!("{error:?}"),
                             },

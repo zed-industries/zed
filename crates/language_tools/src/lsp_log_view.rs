@@ -441,9 +441,7 @@ impl LspLogView {
                 .stopped_language_servers
                 .iter()
                 .filter(|(_, state)| is_for_project(&state.kind))
-                .for_each(|(server_id, state)| {
-                    rows.push(self.build_row(*server_id, state, true, cx))
-                });
+                .for_each(|(_, state)| rows.push(self.build_row(state.server_id, state, true, cx)));
 
             self.project
                 .read(cx)
@@ -1000,7 +998,7 @@ impl Render for LspLogToolbarItemView {
                             } else {
                                 row.worktree_root_name.clone()
                             };
-                            Cow::Owned(format!("{} ({})", row.server_name.0, worktree_root_name,))
+                            Cow::Owned(format!("{} ({})", row.server_name.0, worktree_root_name))
                         })
                         .unwrap_or_else(|| "No server selected".into()),
                 )

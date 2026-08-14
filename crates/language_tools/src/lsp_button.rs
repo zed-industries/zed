@@ -1043,9 +1043,6 @@ impl LspButton {
                     }) else {
                         return;
                     };
-                    // A new instance of the same language server started for
-                    // this buffer: any "Stopped" row for this (name, worktree)
-                    // is obsolete.
                     if let Some(worktree) = &worktree {
                         state.language_servers.stopped_servers.retain(
                             |(stopped_name, stopped_worktree)| {
