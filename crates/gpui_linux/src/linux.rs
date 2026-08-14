@@ -1,3 +1,5 @@
+#[cfg(any(feature = "wayland", feature = "x11"))]
+mod dbus_menu;
 mod dispatcher;
 mod headless;
 mod keyboard;
@@ -13,6 +15,8 @@ mod x11;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 mod xdg_desktop_portal;
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(crate) use dbus_menu::*;
 pub use dispatcher::*;
 pub(crate) use headless::*;
 pub(crate) use keyboard::*;
