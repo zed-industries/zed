@@ -14,11 +14,12 @@ use crate::{
     RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TouchGestureArena, TouchGestureOutput, TransformationMatrix,
-    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
-    prelude::*, profiler, px, rems, size, transparent_black,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputStateChange,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TouchGestureArena,
+    TouchGestureOutput, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowInsets,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler, px, rems, size,
+    transparent_black,
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -1156,6 +1157,7 @@ pub struct Window {
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
+    insets: WindowInsets,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -1580,6 +1582,7 @@ impl Window {
         let capslock = platform_window.capslock();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
+        let insets = platform_window.insets();
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let invalidator = WindowInvalidator::new();
@@ -1845,6 +1848,14 @@ impl Window {
                     .log_err();
             }
         }));
+        platform_window.on_insets_changed(Box::new({
+            let mut cx = cx.to_async();
+            move |insets| {
+                handle
+                    .update(&mut cx, |_, window, _cx| window.insets_changed(insets))
+                    .log_err();
+            }
+        }));
         platform_window.on_appearance_changed(Box::new({
             let cx = cx.to_async();
             let foreground_executor = cx.foreground_executor().clone();
@@ -2022,6 +2033,7 @@ impl Window {
             modifiers,
             capslock,
             scale_factor,
+            insets,
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
@@ -2598,6 +2610,11 @@ impl Window {
         self.platform_window.bounds()
     }
 
+    /// Returns the regions of this window obscured by system UI and the keyboard.
+    pub fn insets(&self) -> &WindowInsets {
+        &self.insets
+    }
+
     /// Renders the current frame's scene to a texture and returns the pixel data as an RGBA image.
     /// This does not present the frame to screen - useful for visual testing where we want
     /// to capture what would be rendered without displaying it or requiring the window to be visible.
@@ -2623,6 +2640,13 @@ impl Window {
         self.appearance_observers
             .clone()
             .retain(&(), |callback| callback(self, cx));
+    }
+
+    fn insets_changed(&mut self, insets: WindowInsets) {
+        if self.insets != insets {
+            self.insets = insets;
+            self.refresh();
+        }
     }
 
     pub(crate) fn button_layout_changed(&mut self, cx: &mut App) {
@@ -3009,19 +3033,23 @@ impl Window {
         // Place it back into a None slot (left by a previous .take()) so that
         // cached paint_range indices in reuse_paint find the handler at the
         // expected position.
-        if let Some(input_handler) = self.platform_window.take_input_handler() {
-            if let Some(slot) = self
-                .rendered_frame
-                .input_handlers
-                .iter_mut()
-                .rev()
-                .find(|h| h.is_none())
-            {
-                *slot = Some(input_handler);
+        let had_input_handler =
+            if let Some(input_handler) = self.platform_window.take_input_handler() {
+                if let Some(slot) = self
+                    .rendered_frame
+                    .input_handlers
+                    .iter_mut()
+                    .rev()
+                    .find(|h| h.is_none())
+                {
+                    *slot = Some(input_handler);
+                } else {
+                    self.rendered_frame.input_handlers.push(Some(input_handler));
+                }
+                true
             } else {
-                self.rendered_frame.input_handlers.push(Some(input_handler));
-            }
-        }
+                false
+            };
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
         }
@@ -3033,7 +3061,7 @@ impl Window {
         // paint_range indices remain valid for reuse_paint on the next frame.
         // Search backwards to find the last Some entry, since reuse_paint may
         // have copied None slots from the previous frame. (Fixes #50456)
-        if let Some(input_handler) = self
+        let has_input_handler = if let Some(input_handler) = self
             .next_frame
             .input_handlers
             .iter_mut()
@@ -3041,6 +3069,18 @@ impl Window {
             .find_map(|h| h.take())
         {
             self.platform_window.set_input_handler(input_handler);
+            true
+        } else {
+            false
+        };
+        match (had_input_handler, has_input_handler) {
+            (false, true) => self
+                .platform_window
+                .text_input_state_changed(TextInputStateChange::FocusGained),
+            (true, false) => self
+                .platform_window
+                .text_input_state_changed(TextInputStateChange::FocusLost),
+            _ => {}
         }
 
         self.layout_engine.as_mut().unwrap().clear();
