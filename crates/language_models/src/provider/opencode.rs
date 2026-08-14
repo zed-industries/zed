@@ -926,7 +926,7 @@ impl Render for ConfigurationView {
                 .child(
                     Switch::new("opencode-show-zen-models", show_zen.into())
                         .full_width(true)
-                        .label("Show Zen Models")
+                        .label("Show Zen models")
                         .label_position(SwitchLabelPosition::Start)
                         .on_click(cx.listener(|this, state, window, cx| {
                             this.set_subscription_enabled(
