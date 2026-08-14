@@ -62,6 +62,96 @@ impl IosPlatform {
             thermal_state_callback: None,
         }))
     }
+
+    fn root_view_controller() -> Option<*mut AnyObject> {
+        unsafe {
+            let scene = super::ffi::window_scene();
+            if scene.is_null() {
+                return None;
+            }
+
+            let windows: *mut AnyObject = msg_send![scene, windows];
+            if windows.is_null() {
+                return None;
+            }
+
+            let count: usize = msg_send![windows, count];
+            let mut fallback_window: *mut AnyObject = ptr::null_mut();
+            for index in 0..count {
+                let window: *mut AnyObject = msg_send![windows, objectAtIndex: index];
+                if fallback_window.is_null() {
+                    fallback_window = window;
+                }
+
+                let is_key_window: bool = msg_send![window, isKeyWindow];
+                if is_key_window {
+                    let view_controller: *mut AnyObject = msg_send![window, rootViewController];
+                    return (!view_controller.is_null()).then_some(view_controller);
+                }
+            }
+
+            if fallback_window.is_null() {
+                return None;
+            }
+
+            let view_controller: *mut AnyObject = msg_send![fallback_window, rootViewController];
+            (!view_controller.is_null()).then_some(view_controller)
+        }
+    }
+
+    fn presented_view_controller() -> Option<*mut AnyObject> {
+        unsafe {
+            let mut view_controller = Self::root_view_controller()?;
+            loop {
+                let presented: *mut AnyObject = msg_send![view_controller, presentedViewController];
+                if presented.is_null() {
+                    return Some(view_controller);
+                }
+                view_controller = presented;
+            }
+        }
+    }
+
+    fn dismiss_presented_browser() {
+        unsafe {
+            let mut view_controller = match Self::root_view_controller() {
+                Some(view_controller) => view_controller,
+                None => return,
+            };
+
+            loop {
+                let presented: *mut AnyObject = msg_send![view_controller, presentedViewController];
+                if presented.is_null() {
+                    return;
+                }
+
+                let is_browser: bool =
+                    msg_send![presented, isKindOfClass: class!(SFSafariViewController)];
+                if is_browser {
+                    let _: () = msg_send![
+                        presented,
+                        dismissViewControllerAnimated: true,
+                        completion: ptr::null::<AnyObject>()
+                    ];
+                    return;
+                }
+
+                view_controller = presented;
+            }
+        }
+    }
+
+    fn open_url_with_system(url: *mut AnyObject) {
+        unsafe {
+            let app: *mut AnyObject = msg_send![class!(UIApplication), sharedApplication];
+            let _: () = msg_send![
+                app,
+                openURL: url,
+                options: ptr::null::<AnyObject>(),
+                completionHandler: ptr::null::<AnyObject>()
+            ];
+        }
+    }
 }
 
 /// A simple iOS keyboard layout.
@@ -106,7 +196,7 @@ impl Platform for IosPlatform {
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {
-        // iOS handles app activation automatically
+        Self::dismiss_presented_browser();
     }
 
     fn hide(&self) {
@@ -171,13 +261,29 @@ impl Platform for IosPlatform {
     fn open_url(&self, url: &str) {
         unsafe {
             let url_string = super::util::nsstring(url);
-            let url: *mut AnyObject = msg_send![class!(NSURL), URLWithString: url_string];
-            if url.is_null() {
-                log::error!("GPUI iOS: Could not parse URL");
+            let native_url: *mut AnyObject = msg_send![class!(NSURL), URLWithString: url_string];
+            if native_url.is_null() {
+                log::error!("GPUI iOS: Could not parse URL: {url}");
                 return;
             }
-            let app: *mut AnyObject = msg_send![class!(UIApplication), sharedApplication];
-            let _: () = msg_send![app, openURL: url, options: std::ptr::null::<AnyObject>(), completionHandler: std::ptr::null::<AnyObject>()];
+
+            if url.starts_with("https://") || url.starts_with("http://") {
+                if let Some(view_controller) = Self::presented_view_controller() {
+                    let browser: *mut AnyObject = msg_send![class!(SFSafariViewController), alloc];
+                    let browser: *mut AnyObject = msg_send![browser, initWithURL: native_url];
+                    if !browser.is_null() {
+                        let _: () = msg_send![
+                            view_controller,
+                            presentViewController: browser,
+                            animated: true,
+                            completion: ptr::null::<AnyObject>()
+                        ];
+                        return;
+                    }
+                }
+            }
+
+            Self::open_url_with_system(native_url);
         }
     }
 

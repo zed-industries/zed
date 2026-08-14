@@ -17,6 +17,7 @@ struct IosCallbacks {
 struct IosAppState {
     callbacks: UnsafeCell<IosCallbacks>,
     application: UnsafeCell<Option<ApplicationHandle>>,
+    window_scene: UnsafeCell<*mut c_void>,
 }
 
 unsafe impl Send for IosAppState {}
@@ -41,6 +42,7 @@ fn app_state() -> &'static IosAppState {
             memory_warning: None,
         }),
         application: UnsafeCell::new(None),
+        window_scene: UnsafeCell::new(std::ptr::null_mut()),
     })
 }
 
@@ -57,6 +59,17 @@ pub extern "C" fn gpui_ios_initialize() -> *mut c_void {
     app_state();
     window_list();
     std::ptr::dangling_mut::<c_void>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn gpui_ios_set_window_scene(scene: *mut c_void) {
+    unsafe {
+        *app_state().window_scene.get() = scene;
+    }
+}
+
+pub(crate) fn window_scene() -> *mut objc2::runtime::AnyObject {
+    unsafe { (*app_state().window_scene.get()).cast() }
 }
 
 pub(crate) fn register_window(window: *const super::window::IosWindow) {
