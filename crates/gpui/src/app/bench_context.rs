@@ -101,6 +101,15 @@ impl BenchReport {
                 .draw
                 .record(timing.draw_duration().as_nanos() as u64)
                 .ok();
+            if let Some(layout_duration) = timing.layout_duration() {
+                snapshot
+                    .layout
+                    .record(layout_duration.as_nanos() as u64)
+                    .ok();
+            }
+            if let Some(paint_duration) = timing.paint_duration() {
+                snapshot.paint.record(paint_duration.as_nanos() as u64).ok();
+            }
             if let Some(dirty_to_draw) = timing.dirty_to_draw_duration() {
                 snapshot
                     .dirty_to_draw
@@ -152,6 +161,8 @@ impl BenchReport {
         eprintln!("  note: includes Criterion warmup/calibration");
         self.print_histogram("window dirty-to-draw", &frame_snapshot.dirty_to_draw);
         self.print_histogram("window draw", &frame_snapshot.draw);
+        self.print_histogram("layout and prepaint", &frame_snapshot.layout);
+        self.print_histogram("scene assembly", &frame_snapshot.paint);
         if !frame_snapshot.invalidations_per_frame.is_empty() {
             eprintln!(
                 "  invalidations per frame: mean {:.2}, max {}",
@@ -204,6 +215,8 @@ impl BenchReport {
 struct WindowFrameSnapshot {
     dirty_to_draw: Histogram<u64>,
     draw: Histogram<u64>,
+    layout: Histogram<u64>,
+    paint: Histogram<u64>,
     invalidations_per_frame: Histogram<u64>,
 }
 
@@ -212,6 +225,8 @@ impl WindowFrameSnapshot {
         Self {
             dirty_to_draw: Histogram::new(3).expect("3 significant digits is valid"),
             draw: Histogram::new(3).expect("3 significant digits is valid"),
+            layout: Histogram::new(3).expect("3 significant digits is valid"),
+            paint: Histogram::new(3).expect("3 significant digits is valid"),
             invalidations_per_frame: Histogram::new(3).expect("3 significant digits is valid"),
         }
     }
@@ -795,6 +810,11 @@ impl<'a, 'measurement> BenchWindowContext<'a, 'measurement> {
         self.cx
             .update_window(self.window, |_, window, cx| update(window, cx))
             .expect("benchmark window was unexpectedly closed")
+    }
+
+    /// Returns the primitive paint-operation count in the last rendered scene.
+    pub fn scene_len(&mut self) -> usize {
+        self.update(|window, _| window.rendered_frame.scene.len())
     }
 }
 

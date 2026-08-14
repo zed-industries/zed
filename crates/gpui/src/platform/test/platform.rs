@@ -3,7 +3,7 @@ use crate::{
     DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, PathPromptOptions, Platform,
     PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SharedString, SourceMetadata, SystemNotification, SystemNotificationResponse, Task,
+    SharedString, SourceMetadata, SystemNotification, SystemNotificationResponse, Task, TestAtlas,
     TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
@@ -35,6 +35,7 @@ pub(crate) struct TestPlatform {
     pub opened_url: RefCell<Option<String>>,
     pub(crate) system_notifications: RefCell<TestSystemNotifications>,
     pub text_system: Arc<dyn PlatformTextSystem>,
+    sprite_atlas: Arc<TestAtlas>,
     pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
     weak: Weak<Self>,
@@ -146,6 +147,7 @@ impl TestPlatform {
             opened_url: Default::default(),
             system_notifications: Default::default(),
             text_system,
+            sprite_atlas: Arc::new(TestAtlas::new()),
             headless_renderer_factory,
         })
     }
@@ -406,6 +408,7 @@ impl Platform for TestPlatform {
             params,
             self.weak.clone(),
             self.active_display.clone(),
+            self.sprite_atlas.clone(),
             renderer,
         );
         Ok(Box::new(window))

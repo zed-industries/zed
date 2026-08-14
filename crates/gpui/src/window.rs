@@ -20,6 +20,8 @@ use crate::{
     WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler, px, rems, size,
     transparent_black,
 };
+#[cfg(any(test, feature = "test-support"))]
+use crate::{FrameSnapshot, FrameSnapshotItem, TabStopOperation};
 
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -941,6 +943,12 @@ pub(crate) struct DeferredDraw {
     paint_range: Range<PaintIndex>,
 }
 
+#[derive(Clone, Copy)]
+struct FramePhaseTimings {
+    prepaint_end: Instant,
+    paint_end: Instant,
+}
+
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
@@ -957,6 +965,8 @@ pub(crate) struct Frame {
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    #[cfg(any(test, feature = "test-support"))]
+    accessibility_update: Option<String>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1004,6 +1014,8 @@ impl Frame {
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            accessibility_update: None,
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             next_inspector_instance_ids: FxHashMap::default(),
@@ -1032,6 +1044,7 @@ impl Frame {
         #[cfg(any(test, feature = "test-support"))]
         {
             self.debug_bounds.clear();
+            self.accessibility_update = None;
         }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1096,6 +1109,167 @@ impl Frame {
         }
 
         self.scene.finish();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn snapshot(&self) -> FrameSnapshot {
+        FrameSnapshot {
+            scene: self.scene.snapshot(),
+            hitboxes: self
+                .hitboxes
+                .iter()
+                .enumerate()
+                .map(|(index, hitbox)| {
+                    let label = format!(
+                        "hitbox bounds={:?} mask={:?} behavior={:?}",
+                        hitbox.bounds, hitbox.content_mask, hitbox.behavior
+                    );
+                    let mut item = FrameSnapshotItem::new(label.clone());
+                    item.push_str(&label);
+                    item.push_f32(hitbox.bounds.origin.x.as_f32());
+                    item.push_f32(hitbox.bounds.origin.y.as_f32());
+                    item.push_f32(hitbox.bounds.size.width.as_f32());
+                    item.push_f32(hitbox.bounds.size.height.as_f32());
+                    item.push_f32(hitbox.content_mask.bounds.origin.x.as_f32());
+                    item.push_f32(hitbox.content_mask.bounds.origin.y.as_f32());
+                    item.push_f32(hitbox.content_mask.bounds.size.width.as_f32());
+                    item.push_f32(hitbox.content_mask.bounds.size.height.as_f32());
+                    item.push_usize(index);
+                    item
+                })
+                .collect(),
+            window_control_hitboxes: self
+                .window_control_hitboxes
+                .iter()
+                .map(|(area, hitbox)| {
+                    let label = format!(
+                        "window_control area={area:?} bounds={:?} mask={:?} behavior={:?}",
+                        hitbox.bounds, hitbox.content_mask, hitbox.behavior
+                    );
+                    let mut item = FrameSnapshotItem::new(label.clone());
+                    item.push_str(&label);
+                    item
+                })
+                .collect(),
+            focus_path: self
+                .focus
+                .map(|focus| self.dispatch_tree.snapshot_focus_path(focus))
+                .unwrap_or_default(),
+            dispatch_tree: self
+                .dispatch_tree
+                .snapshot_nodes()
+                .map(|(index, parent, context, focusable, actions)| {
+                    let label = format!(
+                        "node parent={parent:?} context={context:?} focusable={focusable} actions={actions:?}"
+                    );
+                    let mut item = FrameSnapshotItem::new(label.clone());
+                    item.push_str(&label);
+                    item.push_usize(index);
+                    item
+                })
+                .collect(),
+            mouse_listeners: self
+                .mouse_listeners
+                .iter()
+                .map(Option::is_some)
+                .collect(),
+            input_handlers: self.input_handlers.iter().map(Option::is_some).collect(),
+            tooltip_requests: self
+                .tooltip_requests
+                .iter()
+                .map(Option::is_some)
+                .collect(),
+            cursor_styles: self
+                .cursor_styles
+                .iter()
+                .map(|request| {
+                    let hitbox_index = request.hitbox_id.and_then(|id| {
+                        self.hitboxes.iter().position(|hitbox| hitbox.id == id)
+                    });
+                    let label = format!(
+                        "cursor style={:?} hitbox={hitbox_index:?}",
+                        request.style
+                    );
+                    let mut item = FrameSnapshotItem::new(label.clone());
+                    item.push_str(&label);
+                    item
+                })
+                .collect(),
+            tab_stops: self
+                .tab_stops
+                .insertion_history
+                .iter()
+                .map(|operation| {
+                    let label = match operation {
+                        TabStopOperation::Insert(handle) => format!(
+                            "insert tab_index={} tab_stop={}",
+                            handle.tab_index, handle.tab_stop
+                        ),
+                        TabStopOperation::Group(index) => format!("group {index}"),
+                        TabStopOperation::GroupEnd => "group_end".to_string(),
+                    };
+                    let mut item = FrameSnapshotItem::new(label.clone());
+                    item.push_str(&label);
+                    item
+                })
+                .collect(),
+            deferred_draws: self
+                .deferred_draws
+                .iter()
+                .map(|draw| {
+                    let element_path = draw
+                        .element_id_stack
+                        .iter()
+                        .map(snapshot_element_id)
+                        .collect::<Vec<_>>();
+                    let label = format!(
+                        "deferred priority={} elements={:?} text={:?} mask={:?} rem={:?} offset={:?} prepaint=({}, {}) paint=({}, {})",
+                        draw.priority,
+                        element_path,
+                        draw.text_style_stack,
+                        draw.content_mask,
+                        draw.rem_size,
+                        draw.absolute_offset,
+                        draw.prepaint_range.start.hitboxes_index,
+                        draw.prepaint_range.end.hitboxes_index,
+                        draw.paint_range.start.scene_index,
+                        draw.paint_range.end.scene_index,
+                    );
+                    let mut item = FrameSnapshotItem::new(label.clone());
+                    item.push_str(&label);
+                    item.push_f32(draw.rem_size.as_f32());
+                    item.push_f32(draw.absolute_offset.x.as_f32());
+                    item.push_f32(draw.absolute_offset.y.as_f32());
+                    item
+                })
+                .collect(),
+            accessibility_update: self.accessibility_update.clone(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn snapshot_element_id(element_id: &ElementId) -> String {
+    match element_id {
+        ElementId::View(_) => "view".to_string(),
+        ElementId::Integer(value) => format!("integer:{value}"),
+        ElementId::Name(value) => format!("name:{value}"),
+        ElementId::Uuid(value) => format!("uuid:{value}"),
+        ElementId::FocusHandle(_) => "focus".to_string(),
+        ElementId::NamedInteger(name, value) => format!("named_integer:{name}:{value}"),
+        ElementId::Path(value) => format!("path:{}", value.display()),
+        ElementId::CodeLocation(value) => {
+            format!(
+                "code_location:{}:{}:{}",
+                value.file(),
+                value.line(),
+                value.column()
+            )
+        }
+        ElementId::NamedChild(parent, name) => {
+            format!("named_child:{}:{name}", snapshot_element_id(parent))
+        }
+        ElementId::OpaqueId(value) => format!("opaque:{value:?}"),
     }
 }
 
@@ -2981,6 +3155,7 @@ impl Window {
         let draw_started_at = Some(Instant::now());
         #[cfg(not(feature = "frame-duration-histogram"))]
         let draw_started_at = profiler::frame_trace_enabled().then(Instant::now);
+        let mut frame_phase_timings = None;
 
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
@@ -3010,7 +3185,7 @@ impl Window {
             }
         }
         if !cx.mode.skip_drawing() {
-            self.draw_roots(cx);
+            frame_phase_timings = Some(self.draw_roots(cx));
         }
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
@@ -3098,6 +3273,8 @@ impl Window {
                 dirty_at: frame_dirty.dirty_at,
                 invalidations: frame_dirty.invalidations,
                 draw_start,
+                prepaint_end: frame_phase_timings.map(|timings| timings.prepaint_end),
+                paint_end: frame_phase_timings.map(|timings| timings.paint_end),
                 draw_end,
             });
         }
@@ -3171,7 +3348,7 @@ impl Window {
         self.frame_duration_tracker.snapshot()
     }
 
-    fn draw_roots(&mut self, cx: &mut App) {
+    fn draw_roots(&mut self, cx: &mut App) -> FramePhaseTimings {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
@@ -3239,6 +3416,7 @@ impl Window {
         }
 
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
+        let prepaint_end = Instant::now();
 
         // Now actually paint the elements.
         self.invalidator.set_phase(DrawPhase::Paint);
@@ -3259,6 +3437,7 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
+        let paint_end = Instant::now();
 
         // a11y may have been activated/deactivated halfway through the frame
         let a11y_active_start_of_frame = self.a11y.is_active();
@@ -3277,6 +3456,10 @@ impl Window {
             };
             // clear the builder state regardless
             let tree_update = self.a11y.end_frame(frame_info);
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                self.next_frame.accessibility_update = self.a11y.snapshot_json();
+            }
 
             if should_send_a11y_update {
                 log::debug!(
@@ -3285,6 +3468,10 @@ impl Window {
                 );
                 self.platform_window.a11y_tree_update(tree_update);
             }
+        }
+        FramePhaseTimings {
+            prepaint_end,
+            paint_end,
         }
     }
 
@@ -6160,6 +6347,12 @@ impl Window {
     /// Debug representation of the last frame's accessibility information.
     pub fn debug_a11y_tree_json(&self) -> Option<String> {
         self.a11y.debug_tree_json()
+    }
+
+    /// Snapshots the output lanes of the most recently produced frame.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn frame_snapshot(&self) -> FrameSnapshot {
+        self.rendered_frame.snapshot()
     }
 
     /// Register a listener for an accessibility action on a specific node.

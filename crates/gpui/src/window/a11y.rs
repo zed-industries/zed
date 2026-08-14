@@ -293,6 +293,11 @@ impl A11y {
     pub(crate) fn debug_tree_json(&self) -> Option<String> {
         self.debug.to_json()
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn snapshot_json(&self) -> Option<String> {
+        self.debug.snapshot_json()
+    }
 }
 
 /// Builder API for synthetic children. See the docs for

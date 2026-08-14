@@ -70,11 +70,12 @@ impl TestWindow {
         params: WindowParams,
         platform: Weak<TestPlatform>,
         display: Rc<dyn PlatformDisplay>,
+        test_sprite_atlas: Arc<TestAtlas>,
         renderer: Option<Box<dyn PlatformHeadlessRenderer>>,
     ) -> Self {
         let sprite_atlas: Arc<dyn PlatformAtlas> = match &renderer {
             Some(r) => r.sprite_atlas(),
-            None => Arc::new(TestAtlas::new()),
+            None => test_sprite_atlas,
         };
         Self(Rc::new(Mutex::new(TestWindowState {
             bounds: params.bounds,

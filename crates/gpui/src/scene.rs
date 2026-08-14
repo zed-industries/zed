@@ -162,6 +162,58 @@ impl Scene {
         self.surfaces.sort_by_key(|surface| surface.order);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn snapshot(&self) -> Vec<crate::FrameSnapshotItem> {
+        self.paint_operations
+            .iter()
+            .map(|operation| {
+                let label = match operation {
+                    PaintOperation::Primitive(primitive) => match primitive {
+                        Primitive::Shadow(value) => format!("shadow {value:?}"),
+                        Primitive::Quad(value) => format!("quad {value:?}"),
+                        Primitive::Path(value) => format!("path {value:?}"),
+                        Primitive::Underline(value) => format!("underline {value:?}"),
+                        Primitive::MonochromeSprite(value) => {
+                            format!("monochrome_sprite {value:?}")
+                        }
+                        Primitive::SubpixelSprite(value) => format!("subpixel_sprite {value:?}"),
+                        Primitive::PolychromeSprite(value) => {
+                            format!("polychrome_sprite {value:?}")
+                        }
+                        Primitive::Surface(value) => format!("surface {value:?}"),
+                    },
+                    PaintOperation::StartLayer(bounds) => format!("start_layer {bounds:?}"),
+                    PaintOperation::EndLayer => "end_layer".to_string(),
+                };
+                let mut item = crate::FrameSnapshotItem::new(label);
+                match operation {
+                    PaintOperation::Primitive(primitive) => {
+                        item.push_str(match primitive {
+                            Primitive::Shadow(_) => "shadow",
+                            Primitive::Quad(_) => "quad",
+                            Primitive::Path(_) => "path",
+                            Primitive::Underline(_) => "underline",
+                            Primitive::MonochromeSprite(_) => "monochrome_sprite",
+                            Primitive::SubpixelSprite(_) => "subpixel_sprite",
+                            Primitive::PolychromeSprite(_) => "polychrome_sprite",
+                            Primitive::Surface(_) => "surface",
+                        });
+                        push_primitive_snapshot(&mut item, primitive);
+                    }
+                    PaintOperation::StartLayer(bounds) => {
+                        item.push_str("start_layer");
+                        item.push_f32(bounds.origin.x.as_f32());
+                        item.push_f32(bounds.origin.y.as_f32());
+                        item.push_f32(bounds.size.width.as_f32());
+                        item.push_f32(bounds.size.height.as_f32());
+                    }
+                    PaintOperation::EndLayer => item.push_str("end_layer"),
+                }
+                item
+            })
+            .collect()
+    }
+
     #[cfg_attr(
         all(
             any(target_os = "linux", target_os = "freebsd"),
@@ -188,6 +240,163 @@ impl Scene {
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
         }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn push_primitive_snapshot(item: &mut crate::FrameSnapshotItem, primitive: &Primitive) {
+    match primitive {
+        Primitive::Shadow(shadow) => {
+            item.push_usize(shadow.order as usize);
+            item.push_f32(shadow.blur_radius.as_f32());
+            push_scaled_bounds(item, shadow.bounds);
+            push_scaled_corners(item, shadow.corner_radii);
+            push_scaled_bounds(item, shadow.content_mask.bounds);
+            push_hsla(item, shadow.color);
+            push_scaled_bounds(item, shadow.element_bounds);
+            push_scaled_corners(item, shadow.element_corner_radii);
+            item.push_usize(shadow.inset as usize);
+        }
+        Primitive::Quad(quad) => {
+            item.push_usize(quad.order as usize);
+            item.push_str(&format!("{:?}", quad.border_style));
+            push_scaled_bounds(item, quad.bounds);
+            push_scaled_bounds(item, quad.content_mask.bounds);
+            push_background(item, quad.background);
+            push_hsla(item, quad.border_color);
+            push_scaled_corners(item, quad.corner_radii);
+            push_scaled_edges(item, quad.border_widths);
+        }
+        Primitive::Path(path) => {
+            item.push_usize(path.id.0);
+            item.push_usize(path.order as usize);
+            push_scaled_bounds(item, path.bounds);
+            push_scaled_bounds(item, path.content_mask.bounds);
+            item.push_usize(path.vertices.len());
+            for vertex in &path.vertices {
+                push_scaled_point(item, vertex.xy_position);
+                item.push_f32(vertex.st_position.x);
+                item.push_f32(vertex.st_position.y);
+                push_scaled_bounds(item, vertex.content_mask.bounds);
+            }
+            push_background(item, path.color);
+            push_scaled_point(item, path.start);
+            push_scaled_point(item, path.current);
+            item.push_usize(path.contour_count);
+        }
+        Primitive::Underline(underline) => {
+            item.push_usize(underline.order as usize);
+            push_scaled_bounds(item, underline.bounds);
+            push_scaled_bounds(item, underline.content_mask.bounds);
+            push_hsla(item, underline.color);
+            item.push_f32(underline.thickness.as_f32());
+            item.push_usize(underline.wavy.0 as usize);
+        }
+        Primitive::MonochromeSprite(sprite) => {
+            item.push_usize(sprite.order as usize);
+            push_scaled_bounds(item, sprite.bounds);
+            push_scaled_bounds(item, sprite.content_mask.bounds);
+            push_hsla(item, sprite.color);
+            push_atlas_tile(item, sprite.tile);
+            push_transformation(item, sprite.transformation);
+        }
+        Primitive::SubpixelSprite(sprite) => {
+            item.push_usize(sprite.order as usize);
+            push_scaled_bounds(item, sprite.bounds);
+            push_scaled_bounds(item, sprite.content_mask.bounds);
+            push_hsla(item, sprite.color);
+            push_atlas_tile(item, sprite.tile);
+            push_transformation(item, sprite.transformation);
+        }
+        Primitive::PolychromeSprite(sprite) => {
+            item.push_usize(sprite.order as usize);
+            item.push_usize(sprite.grayscale.0 as usize);
+            item.push_f32(sprite.opacity);
+            push_scaled_bounds(item, sprite.bounds);
+            push_scaled_bounds(item, sprite.content_mask.bounds);
+            push_scaled_corners(item, sprite.corner_radii);
+            push_atlas_tile(item, sprite.tile);
+        }
+        Primitive::Surface(surface) => {
+            item.push_usize(surface.order as usize);
+            push_scaled_bounds(item, surface.bounds);
+            push_scaled_bounds(item, surface.content_mask.bounds);
+            #[cfg(target_os = "macos")]
+            item.push_str(&format!("{:?}", surface.image_buffer));
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn push_scaled_point(item: &mut crate::FrameSnapshotItem, point: Point<ScaledPixels>) {
+    item.push_f32(point.x.as_f32());
+    item.push_f32(point.y.as_f32());
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn push_scaled_bounds(item: &mut crate::FrameSnapshotItem, bounds: Bounds<ScaledPixels>) {
+    push_scaled_point(item, bounds.origin);
+    item.push_f32(bounds.size.width.as_f32());
+    item.push_f32(bounds.size.height.as_f32());
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn push_scaled_corners(item: &mut crate::FrameSnapshotItem, corners: Corners<ScaledPixels>) {
+    item.push_f32(corners.top_left.as_f32());
+    item.push_f32(corners.top_right.as_f32());
+    item.push_f32(corners.bottom_right.as_f32());
+    item.push_f32(corners.bottom_left.as_f32());
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn push_scaled_edges(item: &mut crate::FrameSnapshotItem, edges: Edges<ScaledPixels>) {
+    item.push_f32(edges.top.as_f32());
+    item.push_f32(edges.right.as_f32());
+    item.push_f32(edges.bottom.as_f32());
+    item.push_f32(edges.left.as_f32());
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn push_hsla(item: &mut crate::FrameSnapshotItem, color: Hsla) {
+    item.push_f32(color.h);
+    item.push_f32(color.s);
+    item.push_f32(color.l);
+    item.push_f32(color.a);
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn push_background(item: &mut crate::FrameSnapshotItem, background: Background) {
+    item.push_str(&format!("{:?}", background.tag));
+    item.push_str(&format!("{:?}", background.color_space));
+    push_hsla(item, background.solid);
+    item.push_f32(background.gradient_angle_or_pattern_height);
+    for color_stop in background.colors {
+        push_hsla(item, color_stop.color);
+        item.push_f32(color_stop.percentage);
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn push_atlas_tile(item: &mut crate::FrameSnapshotItem, tile: AtlasTile) {
+    item.push_usize(tile.texture_id.index as usize);
+    item.push_str(&format!("{:?}", tile.texture_id.kind));
+    item.push_usize(tile.tile_id.0 as usize);
+    item.push_usize(tile.padding as usize);
+    item.push_i64(tile.bounds.origin.x.0 as i64);
+    item.push_i64(tile.bounds.origin.y.0 as i64);
+    item.push_i64(tile.bounds.size.width.0 as i64);
+    item.push_i64(tile.bounds.size.height.0 as i64);
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn push_transformation(item: &mut crate::FrameSnapshotItem, value: TransformationMatrix) {
+    for row in value.rotation_scale {
+        for component in row {
+            item.push_f32(component);
+        }
+    }
+    for component in value.translation {
+        item.push_f32(component);
     }
 }
 

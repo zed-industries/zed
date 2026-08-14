@@ -99,6 +99,15 @@ impl A11yDebug {
     /// Serialize the last tree update to a readable JSON string. Node ids are
     /// replaced with short ephemeral ids (`a`, `b`, ..., `z`, `aa`, ...).
     pub(crate) fn to_json(&self) -> Option<String> {
+        self.to_json_with_frame(true)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn snapshot_json(&self) -> Option<String> {
+        self.to_json_with_frame(false)
+    }
+
+    fn to_json_with_frame(&self, include_frame: bool) -> Option<String> {
         let update = self.last_tree_update.as_ref()?;
 
         let mut ephemeral: FxHashMap<NodeId, String> = FxHashMap::default();
@@ -131,20 +140,23 @@ impl A11yDebug {
             nodes.insert(key, value);
         }
 
-        let frame = self.last_frame.as_ref().map(|frame| {
-            serde_json::json!({
-                "rendered_at": frame.rendered_at,
-                "frame_number": frame.frame_number,
-                "window_title": frame.window_title.as_ref().map(|title| title.to_string()),
-                "node_count": frame.node_count,
-                "tab_stop_count": frame.tab_stop_count,
-                "viewport_size": {
-                    "width": frame.viewport_size.width.0,
-                    "height": frame.viewport_size.height.0,
-                },
-                "scale_factor": frame.scale_factor,
-            })
-        });
+        let frame = include_frame
+            .then(|| self.last_frame.as_ref())
+            .flatten()
+            .map(|frame| {
+                serde_json::json!({
+                    "rendered_at": frame.rendered_at,
+                    "frame_number": frame.frame_number,
+                    "window_title": frame.window_title.as_ref().map(|title| title.to_string()),
+                    "node_count": frame.node_count,
+                    "tab_stop_count": frame.tab_stop_count,
+                    "viewport_size": {
+                        "width": frame.viewport_size.width.0,
+                        "height": frame.viewport_size.height.0,
+                    },
+                    "scale_factor": frame.scale_factor,
+                })
+            });
 
         let root = update
             .tree
