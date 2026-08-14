@@ -25,6 +25,210 @@ use workspace::{
 
 use super::TestClient;
 
+/// Regression coverage for ZED-7G6 ("buffer snapshot not found for excerpt
+/// boundary"): a follower's multibuffer is updated by deserializing the
+/// leader's excerpt changes, so files leaving, re-entering, and swapping
+/// buffers under a path key must never leave the follower's display map
+/// holding a header block for a buffer its multibuffer no longer contains.
+#[gpui::test(iterations = 10)]
+async fn test_following_multibuffer_excerpt_churn(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "1.txt": "one\none one\none one one\none",
+                "2.txt": "two\ntwo two\ntwo two two\ntwo",
+                "3.txt": "three\nthree three\nthree three three\nthree",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let peer_id_a = client_a.peer_id().unwrap();
+
+    let mut buffers = Vec::new();
+    for file_name in ["1.txt", "2.txt", "3.txt"] {
+        let buffer = project_a
+            .update(cx_a, |project, cx| {
+                project.open_buffer((worktree_id, rel_path(file_name)), cx)
+            })
+            .await
+            .unwrap();
+        buffers.push(buffer);
+    }
+    let path_keys = cx_a.update(|_, cx| {
+        buffers
+            .iter()
+            .map(|buffer| PathKey::for_buffer(buffer, cx))
+            .collect::<Vec<_>>()
+    });
+
+    // The leader opens a multibuffer with excerpts from the first two files.
+    let multibuffer_a = cx_a.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        for ix in 0..2 {
+            multibuffer.set_excerpts_for_path(
+                path_keys[ix].clone(),
+                buffers[ix].clone(),
+                [Point::row_range(1..2)],
+                1,
+                cx,
+            );
+        }
+        multibuffer
+    });
+    let multibuffer_editor_a = workspace_a.update_in(cx_a, |workspace, window, cx| {
+        let editor = cx.new(|cx| {
+            Editor::for_multibuffer(multibuffer_a.clone(), Some(project_a.clone()), window, cx)
+        });
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        editor
+    });
+
+    workspace_b.update_in(cx_b, |workspace, window, cx| {
+        workspace.follow(peer_id_a, window, cx)
+    });
+    executor.run_until_parked();
+    let multibuffer_editor_b = workspace_b.update(cx_b, |workspace, cx| {
+        workspace
+            .active_item(cx)
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap()
+    });
+
+    #[track_caller]
+    fn assert_editor_headers_resolve(
+        editor: &Entity<Editor>,
+        cx: &mut VisualTestContext,
+        side: &str,
+    ) {
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let end_row = snapshot.display_snapshot.max_point().row() + 1;
+            for (row, block) in snapshot
+                .display_snapshot
+                .blocks_in_range(editor::display_map::DisplayRow::default()..end_row)
+            {
+                let excerpt = match block {
+                    editor::display_map::Block::BufferHeader { excerpt, .. }
+                    | editor::display_map::Block::ExcerptBoundary { excerpt, .. } => excerpt,
+                    editor::display_map::Block::FoldedBuffer { first_excerpt, .. } => first_excerpt,
+                    _ => continue,
+                };
+                assert!(
+                    snapshot
+                        .display_snapshot
+                        .buffer_snapshot()
+                        .buffer_for_id(excerpt.buffer_id())
+                        .is_some(),
+                    "stale header block {:?} at {row:?} on the {side} references buffer {:?}, \
+                     which is no longer in the multibuffer",
+                    block.id(),
+                    excerpt.buffer_id(),
+                );
+            }
+        });
+    }
+
+    let mut assert_both_sides = |cx_a: &mut VisualTestContext, cx_b: &mut VisualTestContext| {
+        executor.run_until_parked();
+        assert_editor_headers_resolve(&multibuffer_editor_a, cx_a, "leader");
+        assert_editor_headers_resolve(&multibuffer_editor_b, cx_b, "follower");
+    };
+
+    for _ in 0..3 {
+        // A file leaves the multibuffer.
+        multibuffer_a.update(cx_a, |multibuffer, cx| {
+            multibuffer.remove_excerpts(path_keys[0].clone(), cx);
+        });
+        assert_both_sides(cx_a, cx_b);
+
+        // The file re-enters.
+        multibuffer_a.update(cx_a, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                path_keys[0].clone(),
+                buffers[0].clone(),
+                [Point::row_range(0..2)],
+                1,
+                cx,
+            );
+        });
+        assert_both_sides(cx_a, cx_b);
+
+        // A path key is reused for a different buffer, as happens when a
+        // diff's base buffer is recreated.
+        multibuffer_a.update(cx_a, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                path_keys[1].clone(),
+                buffers[2].clone(),
+                [Point::row_range(1..3)],
+                1,
+                cx,
+            );
+        });
+        assert_both_sides(cx_a, cx_b);
+
+        // The leader edits a buffer that the multibuffer excerpts.
+        buffers[0].update(cx_a, |buffer, cx| {
+            buffer.edit([(Point::new(1, 0)..Point::new(1, 0), "edited ")], None, cx);
+        });
+        assert_both_sides(cx_a, cx_b);
+
+        // Everything leaves at once.
+        multibuffer_a.update(cx_a, |multibuffer, cx| {
+            multibuffer.clear(cx);
+        });
+        assert_both_sides(cx_a, cx_b);
+
+        // All three files enter.
+        multibuffer_a.update(cx_a, |multibuffer, cx| {
+            for ix in 0..3 {
+                multibuffer.set_excerpts_for_path(
+                    path_keys[ix].clone(),
+                    buffers[ix].clone(),
+                    [Point::row_range(1..2)],
+                    1,
+                    cx,
+                );
+            }
+        });
+        assert_both_sides(cx_a, cx_b);
+    }
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_basic_following(
     cx_a: &mut TestAppContext,
