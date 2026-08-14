@@ -1762,6 +1762,14 @@ impl Window {
                     .log_err();
             }
         }));
+        platform_window.set_keyboard_dismiss_handler(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, window, _cx| window.blur())
+                    .log_err();
+            }
+        }));
         platform_window.on_input({
             let mut cx = cx.to_async();
             Box::new(move |event| {

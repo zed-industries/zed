@@ -965,6 +965,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Requests that the soft keyboard be hidden.
     fn hide_soft_keyboard(&self) {}
 
+    /// Sets the handler for a user-requested soft-keyboard dismissal.
+    fn set_keyboard_dismiss_handler(&self, _callback: Box<dyn FnMut()>) {}
+
     /// Inform the operating system that the text input state has changed
     fn text_input_state_changed(&self, _change: TextInputStateChange) {}
 
