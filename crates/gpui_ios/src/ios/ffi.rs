@@ -299,16 +299,22 @@ pub extern "C" fn gpui_ios_run() {
 }
 
 pub fn run_app() {
+    run_app_with_assets(());
+}
+
+pub fn run_app_with_assets(asset_source: impl gpui::AssetSource) {
     gpui_ios_initialize();
 
     let platform = Rc::new(super::IosPlatform::new());
-    let application = Application::with_platform(platform).run_embedded(|cx: &mut App| {
-        if let Some(callback) = take_app_callback() {
-            callback(cx);
-        } else {
-            log::error!("GPUI iOS: App callback was not registered");
-        }
-    });
+    let application = Application::with_platform(platform)
+        .with_assets(asset_source)
+        .run_embedded(|cx: &mut App| {
+            if let Some(callback) = take_app_callback() {
+                callback(cx);
+            } else {
+                log::error!("GPUI iOS: App callback was not registered");
+            }
+        });
     unsafe {
         *app_state().application.get() = Some(application);
     }
