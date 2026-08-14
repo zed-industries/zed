@@ -64,12 +64,25 @@ use std::io::Cursor;
 use std::ops;
 use std::time::Duration;
 use std::{
+    any::Any,
     fmt::{self, Debug},
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
+
+/// A platform-native surface inserted between GPUI's base and overlay scene
+/// planes.
+pub trait PlatformNativeSurface {
+    /// Updates the native surface geometry in device pixels.
+    fn set_bounds(&self, bounds: Bounds<DevicePixels>) -> Result<()>;
+    /// Updates whether the native surface participates in composition.
+    fn set_visible(&self, visible: bool) -> Result<()>;
+    /// Returns the platform attachment object, such as an
+    /// `IDCompositionVisual` on Windows.
+    fn platform_handle(&self) -> Box<dyn Any>;
+}
 use strum::EnumIter;
 use uuid::Uuid;
 
@@ -849,6 +862,25 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
+    /// Draws a scene with primitives at and after `overlay_start` on a platform
+    /// overlay surface when one has been enabled.
+    ///
+    /// Platforms without layered scene support fall back to drawing the complete
+    /// scene on their primary surface.
+    fn draw_layered(&self, scene: &Scene, _overlay_start: usize) {
+        self.draw(scene);
+    }
+    /// Enables a transparent GPUI surface above native child views.
+    ///
+    /// This is currently an experimental capability for embedding native
+    /// surfaces between GPUI's base and deferred-overlay paint planes.
+    fn enable_scene_overlay(&self) -> anyhow::Result<()> {
+        anyhow::bail!("layered GPUI scenes are not supported on this platform")
+    }
+    /// Creates a native surface slot between GPUI's base and overlay planes.
+    fn create_native_surface(&self) -> Result<Rc<dyn PlatformNativeSurface>> {
+        anyhow::bail!("native surface portals are not supported on this platform")
+    }
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
