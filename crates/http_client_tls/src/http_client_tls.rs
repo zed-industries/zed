@@ -51,6 +51,7 @@ pub fn tls_config() -> ClientConfig {
 
 #[cfg(target_os = "ios")]
 fn ios_tls_config() -> ClientConfig {
+    log::info!("initializing iOS TLS with the platform verifier and bundled-root fallback");
     let mut root_store = RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     let webpki_verifier = match WebPkiServerVerifier::builder(Arc::new(root_store)).build() {
@@ -99,9 +100,34 @@ impl ServerCertVerifier for IosCertificateVerifier {
             ocsp_response,
             now,
         ) {
-            Err(TlsError::InvalidCertificate(CertificateError::UnknownIssuer)) => self
-                .webpki
-                .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now),
+            Err(TlsError::InvalidCertificate(CertificateError::UnknownIssuer)) => {
+                log::warn!(
+                    "iOS platform TLS verification reported an unknown issuer for {server_name:?}; retrying with {} intermediate certificate(s) against bundled public roots",
+                    intermediates.len()
+                );
+                match self.webpki.verify_server_cert(
+                    end_entity,
+                    intermediates,
+                    server_name,
+                    ocsp_response,
+                    now,
+                ) {
+                    Ok(verified) => {
+                        log::info!(
+                            "bundled public roots accepted the TLS certificate for {server_name:?}"
+                        );
+                        Ok(verified)
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "bundled public roots also rejected the TLS certificate for {server_name:?}: {error}"
+                        );
+                        Err(TlsError::General(format!(
+                            "the iOS platform verifier reported an unknown issuer and bundled public roots also rejected the certificate: {error}"
+                        )))
+                    }
+                }
+            }
             result => result,
         }
     }
