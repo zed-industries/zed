@@ -18,6 +18,7 @@ use ui::{
 
 use crate::{
     CsvPreviewView,
+    renderer::table_cell::with_copy_on_right_click,
     settings::FilterSortOrder,
     table_data_engine::{
         filtering_by_column::{FilterEntry, FilterEntryState},
@@ -71,15 +72,16 @@ impl ColumnFilterDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
         let mut available: Vec<(FilterEntry, bool)> = Vec::new();
-        let mut hidden: Vec<(FilterEntry, AnyColumn)> = Vec::new();
+        let mut hidden: Vec<(FilterEntry, AnyColumn, bool)> = Vec::new();
         for (entry, state) in column_filters.iter() {
             match state {
                 FilterEntryState::Available { is_applied } => {
                     available.push((entry.clone(), *is_applied))
                 }
-                FilterEntryState::Unavailable { blocked_by } => {
-                    hidden.push((entry.clone(), *blocked_by))
-                }
+                FilterEntryState::Unavailable {
+                    blocked_by,
+                    is_applied,
+                } => hidden.push((entry.clone(), *blocked_by, *is_applied)),
             }
         }
 
@@ -110,9 +112,9 @@ impl ColumnFilterDelegate {
             .chain(
                 hidden
                     .into_iter()
-                    .map(|(entry, blocked_by)| ColumnFilterRow {
+                    .map(|(entry, blocked_by, is_applied)| ColumnFilterRow {
                         entry,
-                        is_applied: false,
+                        is_applied,
                         hidden_by: Some(blocked_by),
                     }),
             )
@@ -247,8 +249,11 @@ impl ColumnFilterDelegate {
                     row.is_applied = is_applied;
                     row.hidden_by = None;
                 }
-                FilterEntryState::Unavailable { blocked_by } => {
-                    row.is_applied = false;
+                FilterEntryState::Unavailable {
+                    blocked_by,
+                    is_applied,
+                } => {
+                    row.is_applied = is_applied;
                     row.hidden_by = Some(blocked_by);
                 }
             }
@@ -286,10 +291,15 @@ impl PickerDelegate for ColumnFilterDelegate {
         cx.notify();
     }
 
+    /// A hidden (blocked-by-another-filter) row can still be selected if it's currently
+    /// applied, so the user can uncheck it from the popover; a hidden-and-unapplied row
+    /// can't be newly selected, since doing so would only add a filter guaranteed to
+    /// leave zero rows.
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered.get(ix) {
             Some(ColumnFilterListEntry::Row { row_index, .. }) => {
-                self.rows[*row_index].hidden_by.is_none()
+                let row = &self.rows[*row_index];
+                row.hidden_by.is_none() || row.is_applied
             }
             _ => false,
         }
@@ -360,7 +370,7 @@ impl PickerDelegate for ColumnFilterDelegate {
             return;
         };
         let row_index = *row_index;
-        if self.rows[row_index].hidden_by.is_some() {
+        if self.rows[row_index].hidden_by.is_some() && !self.rows[row_index].is_applied {
             return;
         }
         let col = self.col;
@@ -410,24 +420,20 @@ impl PickerDelegate for ColumnFilterDelegate {
                     .single_line()
                     .truncate();
 
-                if row.hidden_by.is_some() {
-                    return Some(
-                        ListItem::new(("csv-filter-hidden", ix))
-                            .disabled(true)
-                            .inset(true)
-                            .spacing(ListItemSpacing::Sparse)
-                            .child(label.color(Color::Disabled))
-                            .end_slot(
-                                Label::new(count_text)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Disabled),
-                            )
-                            .into_any_element(),
-                    );
-                }
+                // Hidden-and-unapplied rows are disabled (can't newly select a value that
+                // would zero out the table); hidden-and-applied rows stay interactive so the
+                // user can uncheck them, same as a normal available row, just muted to signal
+                // it's currently blocked by another filter.
+                let is_hidden = row.hidden_by.is_some();
+                let color = if is_hidden {
+                    Color::Disabled
+                } else {
+                    Color::Muted
+                };
 
                 Some(
                     ListItem::new(("csv-filter-value", ix))
+                        .disabled(is_hidden && !row.is_applied)
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
@@ -435,18 +441,16 @@ impl PickerDelegate for ColumnFilterDelegate {
                             h_flex()
                                 .flex_none()
                                 .when(!row.is_applied, |el| el.invisible())
-                                .child(
-                                    Icon::new(IconName::Check)
-                                        .size(IconSize::Small)
-                                        .color(Color::Accent),
-                                ),
+                                .child(Icon::new(IconName::Check).size(IconSize::Small).color(
+                                    if is_hidden {
+                                        Color::Disabled
+                                    } else {
+                                        Color::Accent
+                                    },
+                                )),
                         )
-                        .child(label)
-                        .end_slot(
-                            Label::new(count_text)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
+                        .child(label.color(color))
+                        .end_slot(Label::new(count_text).size(LabelSize::Small).color(color))
                         .tooltip(Tooltip::text(value_text))
                         .into_any_element(),
                 )
@@ -459,6 +463,9 @@ impl PickerDelegate for ColumnFilterDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
+        if !self.view.read(cx).engine.has_active_filters(self.col) {
+            return None;
+        }
         let selected_rows: usize = self
             .rows
             .iter()
@@ -471,9 +478,6 @@ impl PickerDelegate for ColumnFilterDelegate {
             .filter(|row| row.hidden_by.is_none())
             .map(|row| row.entry.occurred_times())
             .sum();
-        if selected_rows == 0 {
-            return None;
-        }
 
         let col = self.col;
         Some(
@@ -546,14 +550,23 @@ impl CsvPreviewView {
             .items_center()
             .font_buffer(cx)
             .text_buffer(cx)
-            .child(
-                div()
+            .child({
+                let header_text_cell = div()
+                    .id(ElementId::NamedInteger(
+                        "csv-col-header-text".into(),
+                        col_idx.get() as u64,
+                    ))
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(header_text),
-            )
+                    .whitespace_nowrap();
+                with_copy_on_right_click(
+                    header_text_cell,
+                    header_text.clone(),
+                    "Right click to copy column name",
+                )
+                .child(header_text)
+            })
             .child(
                 GradientFade::new(base_bg, base_bg, base_bg)
                     .width(grad_width)

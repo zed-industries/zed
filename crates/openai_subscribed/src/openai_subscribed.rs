@@ -15,7 +15,7 @@ use language_model::{
 };
 use open_ai::{
     ReasoningEffort,
-    responses::{compact_response, stream_response},
+    responses::{ResponseInputItem, stream_response},
 };
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
@@ -25,9 +25,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use url::form_urlencoded;
 use util::ResultExt as _;
 
-use open_ai::completion::{
-    OpenAiResponseEventMapper, into_open_ai_response, token_usage_from_response_usage,
-};
+use open_ai::completion::{OpenAiResponseEventMapper, into_open_ai_response};
 
 pub const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai-subscribed");
 pub const PROVIDER_NAME: LanguageModelProviderName =
@@ -295,19 +293,17 @@ impl ChatGptModel {
         }
     }
 
-    /// Subscription requests are billed by OpenAI, so use the models' full
-    /// public API context windows instead of long-context pricing thresholds.
     fn max_token_count(&self) -> u64 {
         match self {
-            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna | Self::Gpt55 | Self::Gpt54 => {
-                1_050_000
-            }
-            Self::Gpt54Mini => 400_000,
+            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => 372_000,
+            Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => 272_000,
         }
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        Some(128_000)
+        // Codex model metadata does not expose a max output token cap for these
+        // models. Source: openai/codex models-manager/models.json.
+        None
     }
 
     fn supports_images(&self) -> bool {
@@ -407,7 +403,10 @@ impl OpenAiSubscribedLanguageModel {
     }
 }
 
-fn codex_extra_headers(credentials: &CodexCredentials) -> CustomHeaders {
+fn codex_extra_headers(
+    credentials: &CodexCredentials,
+    routing_cache_key: Option<&str>,
+) -> CustomHeaders {
     let mut header_pairs: Vec<(HeaderName, HeaderValue)> = vec![
         (
             HeaderName::from_static("originator"),
@@ -423,6 +422,12 @@ fn codex_extra_headers(credentials: &CodexCredentials) -> CustomHeaders {
         && let Ok(value) = HeaderValue::from_str(id)
     {
         header_pairs.push((HeaderName::from_static("chatgpt-account-id"), value));
+    }
+    if let Some(routing_cache_key) = routing_cache_key
+        && let Ok(value) = HeaderValue::from_str(routing_cache_key)
+    {
+        header_pairs.push((HeaderName::from_static("session-id"), value.clone()));
+        header_pairs.push((HeaderName::from_static("thread-id"), value));
     }
     CustomHeaders::new(header_pairs)
 }
@@ -468,6 +473,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         self.model.supports_priority()
     }
 
+    fn supports_server_side_compaction(&self) -> bool {
+        true
+    }
+
     fn supports_explicit_compaction(&self) -> bool {
         true
     }
@@ -477,10 +486,14 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
-        let compact_request = match self.codex_responses_request(request) {
-            Ok(responses_request) => responses_request.into_compact_request(),
+        let mut responses_request = match self.codex_responses_request(request) {
+            Ok(responses_request) => responses_request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
+        responses_request.context_management = None;
+        responses_request
+            .input
+            .push(ResponseInputItem::CompactionTrigger);
 
         let state = self.state.downgrade();
         let http_client = self.http_client.clone();
@@ -488,25 +501,52 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
-            let extra_headers = codex_extra_headers(&creds);
-            request_limiter
-                .run(async move {
-                    let response = compact_response(
+            let extra_headers =
+                codex_extra_headers(&creds, responses_request.prompt_cache_key.as_deref());
+            let access_token = creds.access_token.clone();
+            let response_stream = request_limiter
+                .stream(async move {
+                    stream_response(
                         http_client.as_ref(),
                         PROVIDER_NAME.0.as_str(),
                         CODEX_BASE_URL,
-                        &creds.access_token,
-                        compact_request,
+                        &access_token,
+                        responses_request,
                         &extra_headers,
                     )
-                    .await?;
-                    let usage = token_usage_from_response_usage(&response.usage);
-                    let context = response
-                        .into_compacted_context(PROVIDER_ID)
-                        .map_err(LanguageModelCompletionError::Other)?;
-                    Ok(CompactionResult { context, usage })
+                    .await
+                    .map_err(LanguageModelCompletionError::from)
                 })
-                .await
+                .await?;
+            let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
+            let mut event_stream = mapper.map_stream(response_stream.boxed());
+            let mut compacted_context = None;
+            let mut usage = language_model::TokenUsage::default();
+
+            while let Some(event) = event_stream.next().await {
+                match event? {
+                    LanguageModelCompletionEvent::Compaction(
+                        language_model::CompactionUpdate::Finished(context),
+                    ) => {
+                        if compacted_context.replace(context).is_some() {
+                            return Err(LanguageModelCompletionError::Other(anyhow!(
+                                "ChatGPT subscription compaction returned multiple replacement contexts"
+                            )));
+                        }
+                    }
+                    LanguageModelCompletionEvent::UsageUpdate(updated_usage) => {
+                        usage = updated_usage;
+                    }
+                    _ => {}
+                }
+            }
+
+            let context = compacted_context.ok_or_else(|| {
+                LanguageModelCompletionError::Other(anyhow!(
+                    "ChatGPT subscription compaction returned no replacement context"
+                ))
+            })?;
+            Ok(CompactionResult { context, usage })
         })
         .boxed()
     }
@@ -574,7 +614,8 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
-            let extra_headers = codex_extra_headers(&creds);
+            let extra_headers =
+                codex_extra_headers(&creds, responses_request.prompt_cache_key.as_deref());
 
             let access_token = creds.access_token.clone();
             request_limiter
@@ -1310,16 +1351,16 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_compact_posts_to_codex_compact_endpoint(cx: &mut TestAppContext) {
-        let compact_request_count = Arc::new(AtomicUsize::new(0));
+    async fn test_server_side_compaction_streams_from_codex_responses(cx: &mut TestAppContext) {
+        let compaction_request_count = Arc::new(AtomicUsize::new(0));
         let http_client = FakeHttpClient::create({
-            let compact_request_count = compact_request_count.clone();
+            let compaction_request_count = compaction_request_count.clone();
             move |request| {
-                let compact_request_count = compact_request_count.clone();
+                let compaction_request_count = compaction_request_count.clone();
                 async move {
                     assert_eq!(
                         request.uri().to_string(),
-                        "https://chatgpt.com/backend-api/codex/responses/compact"
+                        "https://chatgpt.com/backend-api/codex/responses"
                     );
                     assert_eq!(
                         request
@@ -1335,21 +1376,38 @@ mod tests {
                             .and_then(|value| value.to_str().ok()),
                         Some("account-123")
                     );
-                    compact_request_count.fetch_add(1, Ordering::SeqCst);
-                    // Only `output` is present, matching the least metadata a
-                    // Responses-protocol backend is known to attach.
-                    Ok(http_client::Response::builder().status(200).body(
-                        http_client::AsyncBody::from(
-                            serde_json::json!({
-                                "output": [{
-                                    "type": "compaction",
-                                    "id": "cmp_1",
-                                    "encrypted_content": "opaque-state",
-                                }],
-                            })
-                            .to_string(),
-                        ),
-                    )?)
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get("session-id")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("thread-123")
+                    );
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get("thread-id")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("thread-123")
+                    );
+                    let mut request_body = String::new();
+                    smol::io::AsyncReadExt::read_to_string(
+                        &mut request.into_body(),
+                        &mut request_body,
+                    )
+                    .await?;
+                    let request_body: serde_json::Value = serde_json::from_str(&request_body)?;
+                    assert_eq!(
+                        request_body["context_management"],
+                        serde_json::json!([{
+                            "type": "compaction",
+                            "compact_threshold": 100_000,
+                        }])
+                    );
+                    compaction_request_count.fetch_add(1, Ordering::SeqCst);
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(http_client::AsyncBody::from(compaction_response_stream()))?)
                 }
             }
         });
@@ -1359,6 +1417,7 @@ mod tests {
         credentials.account_id = Some("account-123".to_string());
         let state = make_state(http, Some(credentials), cx);
         let model = cx.read(|cx| create_language_model(ChatGptModel::Gpt55, &state, cx));
+        assert!(model.supports_server_side_compaction());
         assert!(model.supports_explicit_compaction());
 
         let request = LanguageModelRequest {
@@ -1368,19 +1427,32 @@ mod tests {
                 cache: false,
                 reasoning_details: None,
             }],
+            compact_at_tokens: Some(100_000),
+            thread_id: Some("thread-123".to_string()),
             ..Default::default()
         };
         let async_cx = cx.to_async();
-        let result = model
-            .compact(request, &async_cx)
+        let events = model
+            .stream_completion(request, &async_cx)
             .await
-            .expect("compaction should succeed");
+            .expect("the response stream should start")
+            .collect::<Vec<_>>()
+            .await;
 
-        assert_eq!(compact_request_count.load(Ordering::SeqCst), 1);
-        assert_eq!(result.usage, language_model::TokenUsage::default());
-        let language_model::CompactedContext::ProviderState(compaction_state) = result.context
+        assert_eq!(compaction_request_count.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            events.first(),
+            Some(Ok(LanguageModelCompletionEvent::Compaction(
+                language_model::CompactionUpdate::Started
+            )))
+        ));
+        let Some(Ok(LanguageModelCompletionEvent::Compaction(
+            language_model::CompactionUpdate::Finished(
+                language_model::CompactedContext::ProviderState(compaction_state),
+            ),
+        ))) = events.get(1)
         else {
-            panic!("expected provider compaction state");
+            panic!("expected the streamed provider compaction state");
         };
         assert_eq!(compaction_state.provider_id(), &PROVIDER_ID);
         let items = open_ai::responses::provider_compaction_items(&compaction_state, &PROVIDER_ID)
@@ -1394,6 +1466,111 @@ mod tests {
                 "encrypted_content": "opaque-state",
             })]
         );
+    }
+
+    #[gpui::test]
+    async fn test_explicit_compaction_streams_with_codex_compaction_trigger(
+        cx: &mut TestAppContext,
+    ) {
+        let http_client = FakeHttpClient::create(move |request| async move {
+            assert_eq!(
+                request.uri().to_string(),
+                "https://chatgpt.com/backend-api/codex/responses"
+            );
+            assert_eq!(
+                request
+                    .headers()
+                    .get("session-id")
+                    .and_then(|value| value.to_str().ok()),
+                Some("thread-123")
+            );
+            assert_eq!(
+                request
+                    .headers()
+                    .get("thread-id")
+                    .and_then(|value| value.to_str().ok()),
+                Some("thread-123")
+            );
+            let mut request_body = String::new();
+            smol::io::AsyncReadExt::read_to_string(&mut request.into_body(), &mut request_body)
+                .await?;
+            let request_body: serde_json::Value = serde_json::from_str(&request_body)?;
+            assert!(request_body.get("context_management").is_none());
+            assert_eq!(
+                request_body["input"]
+                    .as_array()
+                    .and_then(|input| input.last()),
+                Some(&serde_json::json!({"type": "compaction_trigger"}))
+            );
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::from(compaction_response_stream()))?)
+        });
+
+        let http: Arc<dyn HttpClient> = http_client;
+        let state = make_state(http, Some(make_fresh_credentials()), cx);
+        let model = cx.read(|cx| create_language_model(ChatGptModel::Gpt55, &state, cx));
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: language_model::Role::User,
+                content: vec![language_model::MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            compact_at_tokens: Some(100_000),
+            thread_id: Some("thread-123".to_string()),
+            ..Default::default()
+        };
+
+        let result = model
+            .compact(request, &cx.to_async())
+            .await
+            .expect("manual compaction should succeed");
+        let language_model::CompactedContext::ProviderState(compaction_state) = result.context
+        else {
+            panic!("expected provider compaction state");
+        };
+        let items = open_ai::responses::provider_compaction_items(&compaction_state, &PROVIDER_ID)
+            .expect("the compacted state should parse")
+            .expect("the compacted state should be owned by the subscription provider");
+        assert_eq!(
+            items,
+            vec![serde_json::json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "opaque-state",
+            })]
+        );
+    }
+
+    fn compaction_response_stream() -> String {
+        let compaction_item = serde_json::json!({
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "opaque-state",
+        });
+        [
+            serde_json::json!({
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": compaction_item,
+            }),
+            serde_json::json!({
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": compaction_item,
+            }),
+            serde_json::json!({
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "output": [],
+                },
+            }),
+        ]
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect()
     }
 
     struct FakeCredentialsProvider {

@@ -843,7 +843,7 @@ impl EditorElement {
                             .eq(&Ordering::Greater))
                 {
                     let drag_cursor_layout = SelectionLayout::new(
-                        drop_cursor.clone(),
+                        *drop_cursor,
                         false,
                         editor.cursor_offset_on_selection,
                         CursorShape::Bar,
