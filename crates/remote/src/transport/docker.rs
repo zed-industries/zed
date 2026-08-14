@@ -80,6 +80,10 @@ pub(crate) struct DockerExecConnection {
     /// Connection to the machine running the docker daemon, when it is not
     /// this one. Every docker invocation is routed through it.
     host: Option<Arc<dyn RemoteConnection>>,
+    /// How the container is addressed from the machine running the daemon.
+    /// `None` when it could not be determined, which makes port forwarding
+    /// unavailable rather than wrong.
+    container_address: Option<String>,
 }
 
 impl DockerExecConnection {
@@ -99,6 +103,7 @@ impl DockerExecConnection {
             path_style: None,
             shell: "sh".to_owned(),
             host,
+            container_address: None,
         };
         let (release_channel, version, commit) = cx.update(|cx| {
             (
@@ -122,6 +127,12 @@ impl DockerExecConnection {
 
         this.shell = this.discover_shell().await;
         log::info!("Remote shell discovered: {}", this.shell);
+
+        this.container_address = this.discover_container_address().await;
+        log::info!(
+            "Container address on its daemon's machine: {:?}",
+            this.container_address
+        );
 
         this.remote_dir_for_server = this.docker_user_home_dir().await?.trim().to_string();
 
@@ -185,6 +196,34 @@ impl DockerExecConnection {
             .map(|i| start + i)
             .unwrap_or(output.len());
         Ok(output[start..end].to_string())
+    }
+
+    /// Asks the daemon how the container is reached from its own machine.
+    ///
+    /// A container's ports are only published on that machine if the
+    /// configuration asked for it, but on a bridge network every port is
+    /// reachable at the container's own address without publishing. A
+    /// container sharing the host's network namespace has no address of its
+    /// own and is reached on loopback instead.
+    async fn discover_container_address(&self) -> Option<String> {
+        let output = self
+            .run_docker_command(
+                "inspect",
+                &[
+                    "-f",
+                    "{{.HostConfig.NetworkMode}} {{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+                    &self.connection_options.container_id,
+                ],
+            )
+            .await
+            .map_err(|error| log::warn!("Could not inspect the container's network: {error}"))
+            .ok()?;
+
+        let mut fields = output.split_whitespace();
+        if fields.next()? == "host" {
+            return Some("localhost".to_string());
+        }
+        fields.next().map(str::to_string)
     }
 
     async fn discover_shell(&self) -> String {
@@ -1009,11 +1048,37 @@ impl RemoteConnection for DockerExecConnection {
         self.docker_command(docker_args)
     }
 
+    /// Forwards through the machine running the daemon, which can reach the
+    /// container directly. Without a host there is no such hop to compose
+    /// with: the daemon is here, and reaching an unpublished container port
+    /// from here would need a relay process inside the container.
     fn build_forward_ports_command(
         &self,
-        _forwards: Vec<(u16, String, u16)>,
+        forwards: Vec<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
-        Err(anyhow::anyhow!("Not currently supported for docker_exec"))
+        let Some(host) = &self.host else {
+            anyhow::bail!("port forwarding is not supported for a container on this machine");
+        };
+        let container_address = self.container_address.as_ref().context(
+            "the container's address on its host is unknown, so ports cannot be forwarded",
+        )?;
+
+        let forwards = forwards
+            .into_iter()
+            .map(|(local_port, destination, remote_port)| {
+                // The destination is named as the container sees it. Only
+                // loopback survives being re-pointed at the container from one
+                // hop away; anything else would silently forward to a host of
+                // the same name on the daemon's machine.
+                anyhow::ensure!(
+                    matches!(destination.as_str(), "localhost" | "127.0.0.1" | "::1"),
+                    "only loopback ports inside a container can be forwarded, not {destination}"
+                );
+                Ok((local_port, container_address.clone(), remote_port))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        host.build_forward_ports_command(forwards)
     }
 
     fn connection_options(&self) -> RemoteConnectionOptions {
@@ -1071,6 +1136,7 @@ mod tests {
             path_style: Some(PathStyle::Unix),
             shell: "/bin/bash".to_string(),
             host: None,
+            container_address: Some("172.17.0.2".to_string()),
         }
     }
 
@@ -1206,6 +1272,46 @@ mod tests {
                 "--identifier",
                 "some-identifier",
             ]
+        );
+    }
+
+    /// The container's ports are not published on the daemon's machine, but
+    /// they are reachable there at the container's own address, so the
+    /// forward is the host's with its destination re-pointed.
+    #[gpui::test]
+    async fn ports_are_forwarded_through_the_containers_host(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let mut connection = local_connection(docker_options());
+
+        assert!(
+            connection
+                .build_forward_ports_command(vec![(9000, "localhost".to_string(), 3000)])
+                .is_err(),
+            "a container on this machine has no hop to forward through"
+        );
+
+        connection.host = Some(mock_host(cx, server_cx).await);
+        let command = connection
+            .build_forward_ports_command(vec![(9000, "localhost".to_string(), 3000)])
+            .expect("forwarding through the host should succeed");
+        assert_eq!(command.program, "mock");
+        assert_eq!(command.args, vec!["-N", "9000:172.17.0.2:3000"]);
+
+        assert!(
+            connection
+                .build_forward_ports_command(vec![(9000, "elsewhere.internal".to_string(), 3000)])
+                .is_err(),
+            "a destination that is not the container itself must not be re-pointed at it"
+        );
+
+        connection.container_address = None;
+        assert!(
+            connection
+                .build_forward_ports_command(vec![(9000, "localhost".to_string(), 3000)])
+                .is_err(),
+            "forwarding to an unknown address would silently reach the daemon's machine"
         );
     }
 

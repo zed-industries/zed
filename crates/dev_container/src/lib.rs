@@ -113,6 +113,25 @@ pub enum DevContainerHost {
 }
 
 impl DevContainerHost {
+    /// How a connection to a container on this host is addressed.
+    ///
+    /// Provisioning and connecting are separate steps that must agree on the
+    /// machine: a container built here can only be reached by a connection
+    /// that names the same host.
+    pub fn docker_host(&self) -> Result<remote::DockerHost, DevContainerError> {
+        let DevContainerHost::Remote(connection) = self else {
+            return Ok(remote::DockerHost::Local);
+        };
+        match connection.connection_options() {
+            remote::RemoteConnectionOptions::Ssh(options) => Ok(remote::DockerHost::Ssh(options)),
+            #[cfg(any(test, feature = "test-support"))]
+            remote::RemoteConnectionOptions::Mock(options) => Ok(remote::DockerHost::Mock(options)),
+            other => Err(DevContainerError::UnsupportedHost(
+                other.connection_type().to_string(),
+            )),
+        }
+    }
+
     /// How the host writes paths.
     ///
     /// Every path that reaches an engine command, a bind mount, or a container
@@ -468,6 +487,45 @@ mod environment_source_tests {
             environment_source(&remote, false),
             EnvironmentSource::Unavailable,
             "reading the host environment is an RPC, so it needs the server connection"
+        );
+    }
+
+    /// Provisioning and connecting are separate steps. If the connection does
+    /// not name the machine the container was built on, it reaches this
+    /// machine's daemon and finds nothing.
+    #[test]
+    fn the_connection_names_the_machine_the_container_was_built_on() {
+        assert_eq!(
+            DevContainerHost::Local.docker_host().unwrap(),
+            remote::DockerHost::Local
+        );
+
+        let host = DevContainerHost::Remote(Arc::new(FakeRemoteConnection::default()));
+        assert!(matches!(
+            host.docker_host().unwrap(),
+            remote::DockerHost::Ssh(_)
+        ));
+    }
+
+    /// The engine is on whichever machine will build the container, so the
+    /// probe for it has to travel the same path every other engine command
+    /// does rather than running here.
+    #[test]
+    fn the_engine_is_probed_on_the_host() {
+        let host = DevContainerHost::Remote(Arc::new(FakeRemoteConnection::default()));
+        let command = host
+            .command(
+                "docker",
+                &["--version".to_string()],
+                &std::collections::HashMap::default(),
+                None,
+            )
+            .expect("a remote host can build a command");
+
+        assert_ne!(
+            command.get_program(),
+            "docker",
+            "the probe must be wrapped by the transport, not run locally"
         );
     }
 }

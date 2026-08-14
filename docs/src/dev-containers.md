@@ -90,7 +90,7 @@ Note that extensions load for the Zed session, so these extensions will exist on
 
 For containers running on a remote host, additionally:
 
-- **Port forwarding** from the container is not available.
+- **Port forwarding** is routed through the remote host, which requires it to be able to reach container addresses directly. This is the case for Linux bridge networking, but not for Docker Desktop's virtual machine. Forwarding a port from a container on your own machine is not supported at all.
 - **Docker Compose** configurations are read from your own machine rather than the host, so a Compose-based configuration will not resolve correctly.
 - **`updateRemoteUserUID`** matches the container user against your local user ID rather than the host's, which can produce files owned by the wrong user.
 - **Installing an extension from a local directory** into the container is not supported; extensions listed in `devcontainer.json` install normally.

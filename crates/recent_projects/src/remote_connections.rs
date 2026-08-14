@@ -12,7 +12,7 @@ use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
 
 use project::trusted_worktrees;
 use remote::{
-    DockerConnectionOptions, Interactive, RemoteConnection, RemoteConnectionOptions,
+    DockerConnectionOptions, DockerHost, Interactive, RemoteConnection, RemoteConnectionOptions,
     SshConnectionOptions,
 };
 pub use settings::SshConnection;
@@ -81,7 +81,10 @@ impl RemoteSettings {
 pub enum Connection {
     Ssh(SshConnection),
     Wsl(WslConnection),
-    DevContainer(DevContainerConnection),
+    /// The machine running the container's engine is carried alongside the
+    /// container, because it is not recorded in the settings entry and a
+    /// connection that does not name it reaches the wrong daemon.
+    DevContainer(DevContainerConnection, DockerHost),
 }
 
 impl From<Connection> for RemoteConnectionOptions {
@@ -89,7 +92,7 @@ impl From<Connection> for RemoteConnectionOptions {
         match val {
             Connection::Ssh(conn) => RemoteConnectionOptions::Ssh(conn.into()),
             Connection::Wsl(conn) => RemoteConnectionOptions::Wsl(conn.into()),
-            Connection::DevContainer(conn) => {
+            Connection::DevContainer(conn, host) => {
                 RemoteConnectionOptions::Docker(DockerConnectionOptions {
                     name: conn.name,
                     remote_user: conn.remote_user,
@@ -97,7 +100,7 @@ impl From<Connection> for RemoteConnectionOptions {
                     upload_binary_over_docker_exec: false,
                     use_podman: conn.use_podman,
                     remote_env: conn.remote_env,
-                    host: Default::default(),
+                    host,
                 })
             }
         }
@@ -518,6 +521,34 @@ mod tests {
     use serde_json::json;
     use util::path;
     use workspace::find_existing_workspace;
+
+    /// The container was built by the host's engine, so the options handed to
+    /// the pool have to name that host. Defaulting the field here is what
+    /// makes a remote dev container connect to this machine's daemon and find
+    /// no such container.
+    #[test]
+    fn a_dev_container_connection_keeps_the_host_it_was_built_on() {
+        let container = settings::DevContainerConnection {
+            name: "zed-dev".to_string(),
+            remote_user: "root".to_string(),
+            container_id: "abc123".to_string(),
+            use_podman: false,
+            extension_ids: Vec::new(),
+            remote_env: Default::default(),
+        };
+        let host = DockerHost::Ssh(SshConnectionOptions {
+            host: "example.com".into(),
+            ..Default::default()
+        });
+
+        let options: RemoteConnectionOptions =
+            Connection::DevContainer(container, host.clone()).into();
+
+        let RemoteConnectionOptions::Docker(options) = options else {
+            panic!("a dev container is a docker connection");
+        };
+        assert_eq!(options.host, host);
+    }
 
     #[gpui::test]
     async fn test_open_remote_project_with_mock_connection(
