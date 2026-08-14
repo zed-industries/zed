@@ -958,6 +958,8 @@ pub mod notebook {
             AddCodeBlock,
             /// Deletes the current cell.
             DeleteCell,
+            /// Deletes the current cell after confirmation.
+            DeleteCurrentCell,
             /// Restarts the kernel.
             RestartKernel,
             /// Interrupts the current execution.

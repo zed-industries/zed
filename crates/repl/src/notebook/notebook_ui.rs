@@ -11,7 +11,7 @@ use futures::FutureExt;
 use futures::future::Shared;
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, KeyContext, ListScrollEvent,
-    ListState, Point, Task, TaskExt, actions, list, prelude::*,
+    ListState, Point, PromptLevel, Task, TaskExt, actions, list, prelude::*,
 };
 use jupyter_protocol::JupyterKernelspec;
 use language::{Language, LanguageRegistry};
@@ -20,6 +20,7 @@ use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
 use ui::{CommonAnimationExt, KeyBinding, Tooltip, prelude::*};
 use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
+use workspace::notifications::DetachAndPromptErr;
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
 
@@ -43,9 +44,9 @@ use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
 use zed_actions::editor::{MoveDown, MoveUp};
 use zed_actions::notebook::{
-    AddCodeBlock, AddMarkdownBlock, ClearOutputs, DeleteCell, EnterCommandMode, EnterEditMode,
-    InterruptKernel, MoveCellDown, MoveCellUp, NotebookMoveDown, NotebookMoveUp, OpenNotebook,
-    RestartKernel, Run, RunAll, RunAndAdvance,
+    AddCodeBlock, AddMarkdownBlock, ClearOutputs, DeleteCell, DeleteCurrentCell, EnterCommandMode,
+    EnterEditMode, InterruptKernel, MoveCellDown, MoveCellUp, NotebookMoveDown, NotebookMoveUp,
+    OpenNotebook, RestartKernel, Run, RunAll, RunAndAdvance,
 };
 
 /// Whether the notebook is in command mode (navigating cells) or edit mode (editing a cell).
@@ -783,6 +784,54 @@ impl NotebookEditor {
         cx.notify();
     }
 
+    fn delete_current_cell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.cell_order.is_empty() {
+            return;
+        }
+
+        let prompt = window.prompt(
+            PromptLevel::Warning,
+            "Delete current cell?",
+            None,
+            &["Delete", "Cancel"],
+            cx,
+        );
+
+        cx.spawn_in(window, async move |this, cx| {
+            let answer = prompt.await?;
+            if answer != 0 {
+                return Ok(());
+            }
+
+            this.update_in(cx, |this, window, cx| {
+                this.delete_current_cell_confirmed(window, cx);
+            })?;
+
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to delete cell", window, cx, |e, _, _| {
+            Some(format!("{e}"))
+        });
+    }
+
+    fn delete_current_cell_confirmed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.cell_order.is_empty() {
+            return;
+        }
+
+        let cell_id = self.cell_order.remove(self.selected_cell_index);
+        self.cell_map.remove(&cell_id);
+
+        if !self.cell_order.is_empty() {
+            self.selected_cell_index = self.selected_cell_index.min(self.cell_order.len() - 1);
+        } else {
+            self.selected_cell_index = 0;
+        }
+
+        self.cell_list.reset(self.cell_order.len());
+        cx.notify();
+    }
+
     fn insert_cell_at_current_position(&mut self, cell_id: CellId, cell: Cell) {
         let insert_index = if self.cell_order.is_empty() {
             0
@@ -1142,17 +1191,17 @@ impl NotebookEditor {
                     .child(
                         Self::button_group(window, cx).child(
                             Self::render_notebook_control(
-                                "delete-cell",
+                                "delete-current-cell",
                                 IconName::Trash,
                                 window,
                                 cx,
                             )
                             .disabled(self.cell_order.is_empty())
                             .tooltip(move |window, cx| {
-                                Tooltip::for_action("Delete cell", &DeleteCell, cx)
+                                Tooltip::for_action("Delete current cell", &DeleteCurrentCell, cx)
                             })
                             .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(DeleteCell), cx);
+                                window.dispatch_action(Box::new(DeleteCurrentCell), cx);
                             }),
                         ),
                     ),
@@ -1441,6 +1490,9 @@ impl Render for NotebookEditor {
                 cx.listener(|this, _: &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
             )
             .on_action(cx.listener(|this, _: &DeleteCell, window, cx| this.delete_cell(window, cx)))
+            .on_action(cx.listener(|this, _: &DeleteCurrentCell, window, cx| {
+                this.delete_current_cell(window, cx)
+            }))
             .on_action(
                 cx.listener(|this, action, window, cx| this.enter_edit_mode(action, window, cx)),
             )
