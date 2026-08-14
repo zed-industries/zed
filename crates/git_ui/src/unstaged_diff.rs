@@ -3,7 +3,8 @@ use crate::{
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
 };
 use anyhow::{Context as _, Result};
-use buffer_diff::DiffHunkStatus;
+use buffer_diff::{DiffHunkStatus, ResolvedLineSelection};
+use collections::HashMap;
 use editor::{
     DiffHunkDelegate, Editor, EditorEvent, ResolvedDiffHunks, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk},
@@ -13,7 +14,7 @@ use gpui::{
     Action, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Subscription, Task, WeakEntity,
 };
-use language::Capability;
+use language::{BufferId, Capability};
 use project::{
     Project, ProjectPath,
     git_store::diff_buffer_list::{DiffBase, DiffBufferList},
@@ -45,6 +46,19 @@ impl DiffHunkDelegate for UnstagedDiffDelegate {
         cx: &mut Context<Editor>,
     ) {
         self.stage_or_unstage(true, hunks, editor, window, cx);
+    }
+
+    fn toggle_lines(
+        &self,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _ranges: Vec<Range<editor::Anchor>>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+        // TODO(partial-commit): line-level staging is not yet implemented for
+        // the standalone unstaged-changes view; it is only wired for the
+        // uncommitted (gutter / project diff) path.
     }
 
     fn stage_or_unstage(
@@ -79,6 +93,19 @@ impl DiffHunkDelegate for UnstagedDiffDelegate {
                 })
                 .log_err();
         }
+    }
+
+    fn stage_or_unstage_lines(
+        &self,
+        _stage: bool,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _selections: HashMap<BufferId, Vec<ResolvedLineSelection>>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+        // TODO(partial-commit): line-level staging is not yet implemented for
+        // the standalone unstaged-changes view.
     }
 
     fn restore(
