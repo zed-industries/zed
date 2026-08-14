@@ -2957,13 +2957,14 @@ mod tests {
         test::test_font,
     };
     use buffer_diff::BufferDiff;
-    use gpui::{App, AppContext as _, Element, div, font, px};
+    use gpui::{App, AppContext as _, Element, Entity, div, font, px};
     use itertools::Itertools;
     use language::{Buffer, Capability, Point};
     use multi_buffer::{MultiBuffer, PathKey};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::env;
+    use std::num::NonZeroU32;
     use util::RandomCharIter;
 
     #[gpui::test]
@@ -4677,6 +4678,249 @@ mod tests {
         }
     }
 
+    /// Regression fuzz for ZED-7G6 across a split diff. Both sides sync their
+    /// block maps from the other's edits, and converting those edits between
+    /// the two coordinate spaces can lose coverage, so a header can survive a
+    /// buffer leaving its multibuffer.
+    #[gpui::test(iterations = 20)]
+    fn test_random_split_diff_header_staleness(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
+        cx.update(init_test);
+
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(20);
+        let tab_size = 4.try_into().unwrap();
+
+        let lhs_multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let rhs_multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+        // Each entry pairs a main buffer with its diff, mirroring one file in
+        // a split diff: the right side excerpts the main buffer, the left side
+        // excerpts the diff's base text buffer.
+        let mut files = Vec::new();
+        for _ in 0..rng.random_range(1..=3) {
+            let text = random_buffer_text(&mut rng);
+            let main_buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
+            let base_text = randomized_text(&text, &mut rng);
+            let diff = cx.new(|cx| {
+                BufferDiff::new_with_base_text(
+                    &base_text,
+                    &main_buffer.read(cx).text_snapshot(),
+                    cx,
+                )
+            });
+            let base_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+            files.push((main_buffer, base_buffer, diff));
+        }
+
+        for (main_buffer, base_buffer, diff) in &files {
+            rhs_multibuffer.update(cx, |multibuffer, cx| {
+                let max_point = main_buffer.read(cx).max_point();
+                multibuffer.set_excerpts_for_buffer(
+                    main_buffer.clone(),
+                    [Point::zero()..max_point],
+                    0,
+                    cx,
+                );
+                multibuffer.add_diff(diff.clone(), cx);
+            });
+            lhs_multibuffer.update(cx, |multibuffer, cx| {
+                let max_point = base_buffer.read(cx).max_point();
+                multibuffer.set_excerpts_for_buffer(
+                    base_buffer.clone(),
+                    [Point::zero()..max_point],
+                    0,
+                    cx,
+                );
+                multibuffer.add_inverted_diff(diff.clone(), main_buffer.clone(), cx);
+            });
+        }
+
+        let rhs_display_map_id = rhs_multibuffer.entity_id();
+        let lhs_display_map_id = lhs_multibuffer.entity_id();
+        let companion = cx.new(|_| Companion::new(rhs_display_map_id));
+
+        let mut lhs = SplitSideMaps::new(&lhs_multibuffer, tab_size, cx);
+        let mut rhs = SplitSideMaps::new(&rhs_multibuffer, tab_size, cx);
+
+        for _ in 0..operations {
+            match rng.random_range(0..100) {
+                // Remove a file from both sides, as `sync_lhs_for_paths` does
+                // when a file no longer has changes.
+                0..=29 if !files.is_empty() => {
+                    let (main_buffer, base_buffer, _) = files.choose(&mut rng).unwrap().clone();
+                    let (main_id, base_id) = cx.update(|cx| {
+                        (
+                            main_buffer.read(cx).remote_id(),
+                            base_buffer.read(cx).remote_id(),
+                        )
+                    });
+                    log::info!("Removing file (main {main_id:?}, base {base_id:?})");
+                    rhs_multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.remove_excerpts_for_buffer(main_id, cx);
+                    });
+                    lhs_multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.remove_excerpts_for_buffer(base_id, cx);
+                    });
+                }
+                // Restore a file on both sides.
+                30..=49 if !files.is_empty() => {
+                    let (main_buffer, base_buffer, diff) = files.choose(&mut rng).unwrap().clone();
+                    log::info!("Restoring a file");
+                    rhs_multibuffer.update(cx, |multibuffer, cx| {
+                        let max_point = main_buffer.read(cx).max_point();
+                        multibuffer.set_excerpts_for_buffer(
+                            main_buffer.clone(),
+                            [Point::zero()..max_point],
+                            0,
+                            cx,
+                        );
+                        multibuffer.add_diff(diff.clone(), cx);
+                    });
+                    lhs_multibuffer.update(cx, |multibuffer, cx| {
+                        let max_point = base_buffer.read(cx).max_point();
+                        multibuffer.set_excerpts_for_buffer(
+                            base_buffer.clone(),
+                            [Point::zero()..max_point],
+                            0,
+                            cx,
+                        );
+                        multibuffer.add_inverted_diff(diff.clone(), main_buffer.clone(), cx);
+                    });
+                }
+                // Edit a main buffer and recalculate its diff, which reshapes
+                // the deleted-hunk spacers on both sides.
+                50..=79 if !files.is_empty() => {
+                    let (main_buffer, _, diff) = files.choose(&mut rng).unwrap().clone();
+                    main_buffer.update(cx, |buffer, cx| {
+                        let edit_count = rng.random_range(1..=3);
+                        buffer.randomly_edit(&mut rng, edit_count, cx);
+                    });
+                    let snapshot = main_buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+                    diff.update(cx, |diff, cx| diff.recalculate_diff_sync(&snapshot, cx));
+                }
+                _ => {
+                    let wrap_width = if rng.random_bool(0.3) {
+                        None
+                    } else {
+                        Some(px(rng.random_range(0.0..=100.0)))
+                    };
+                    log::info!("Setting wrap width to {wrap_width:?}");
+                    if rng.random_bool(0.5) {
+                        lhs.wrap_map
+                            .update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                    } else {
+                        rhs.wrap_map
+                            .update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                    }
+                }
+            }
+
+            let (lhs_wrap_snapshot, lhs_wrap_edits) = lhs.sync(&lhs_multibuffer, tab_size, cx);
+            let (rhs_wrap_snapshot, rhs_wrap_edits) = rhs.sync(&rhs_multibuffer, tab_size, cx);
+
+            let rhs_blocks = companion.read_with(cx, |companion, _| {
+                rhs.block_map.read(
+                    rhs_wrap_snapshot.clone(),
+                    rhs_wrap_edits.clone(),
+                    Some(CompanionView::new(
+                        rhs_display_map_id,
+                        &lhs_wrap_snapshot,
+                        &lhs_wrap_edits,
+                        companion,
+                    )),
+                )
+            });
+            let lhs_blocks = companion.read_with(cx, |companion, _| {
+                lhs.block_map.read(
+                    lhs_wrap_snapshot.clone(),
+                    lhs_wrap_edits.clone(),
+                    Some(CompanionView::new(
+                        lhs_display_map_id,
+                        &rhs_wrap_snapshot,
+                        &rhs_wrap_edits,
+                        companion,
+                    )),
+                )
+            });
+
+            assert_headers_resolve(&rhs_blocks.snapshot, &rhs.buffer_snapshot, "right");
+            assert_headers_resolve(&lhs_blocks.snapshot, &lhs.buffer_snapshot, "left");
+        }
+    }
+
+    /// Regression test for ZED-7G6 ("buffer snapshot not found for excerpt
+    /// boundary"). Removing a buffer whose excerpts hold no text produces a
+    /// zero-width edit, which `Patch::push` discards, so subscribers observe no
+    /// edits at all. `BlockMap::sync` then returns early and keeps the header
+    /// block for a buffer the multibuffer snapshot no longer contains, and
+    /// rendering that header panics when it resolves its buffer.
+    #[gpui::test]
+    fn test_header_removed_when_empty_buffer_leaves_multibuffer(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let buffer = cx.new(|cx| Buffer::local("", cx));
+        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_buffer(
+                buffer.clone(),
+                [Point::zero()..Point::zero()],
+                0,
+                cx,
+            );
+        });
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+        let subscription = multibuffer.update(cx, |multibuffer, _| multibuffer.subscribe());
+        let buffer_snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (wrap_map, wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, test_font(), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
+
+        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default(), None);
+        assert!(
+            blocks_snapshot
+                .blocks_in_range(BlockRow(0)..BlockRow(blocks_snapshot.max_point().row + 1))
+                .any(|(_, block)| matches!(block, Block::BufferHeader { .. })),
+            "expected a header block for the excerpted buffer"
+        );
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(buffer_id, cx);
+        });
+
+        let buffer_snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        assert!(
+            buffer_snapshot.buffer_for_id(buffer_id).is_none(),
+            "buffer should be gone from the multibuffer"
+        );
+
+        let buffer_edits = subscription.consume().into_inner();
+        let (inlay_snapshot, inlay_edits) = inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
+        let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+        let (tab_snapshot, tab_edits) =
+            tab_map.sync(fold_snapshot, fold_edits, 4.try_into().unwrap());
+        let (wrap_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+            wrap_map.sync(tab_snapshot, tab_edits, cx)
+        });
+        let blocks_snapshot = block_map.read(wrap_snapshot, wrap_edits, None);
+
+        for (row, block) in blocks_snapshot
+            .blocks_in_range(BlockRow(0)..BlockRow(blocks_snapshot.max_point().row + 1))
+        {
+            if let Block::BufferHeader { excerpt, .. } = block {
+                assert!(
+                    buffer_snapshot.buffer_for_id(excerpt.buffer_id()).is_some(),
+                    "header block at {row:?} still references removed buffer {:?}",
+                    excerpt.buffer_id(),
+                );
+            }
+        }
+    }
+
     /// Regression fuzz for ZED-7G6 ("buffer snapshot not found for excerpt
     /// boundary"): header blocks cache an `ExcerptBoundaryInfo`, so when a
     /// buffer leaves the multibuffer without the block map re-syncing the
@@ -4716,10 +4960,7 @@ mod tests {
             multibuffer = cx.new(|_cx| MultiBuffer::new(Capability::ReadWrite));
             known_buffers = Vec::new();
             for _ in 0..rng.random_range(1..=3) {
-                let text_len = rng.random_range(5..30);
-                let text = RandomCharIter::new(&mut rng)
-                    .take(text_len)
-                    .collect::<String>();
+                let text = random_buffer_text(&mut rng);
                 let main_buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
                 let base_text = randomized_text(&text, &mut rng);
                 let diff = cx.new(|cx| {
@@ -4785,7 +5026,17 @@ mod tests {
 
         let subscription = multibuffer.update(cx, |multibuffer, _| multibuffer.subscribe());
 
+        let mut operations_until_sync = 0;
         for _ in 0..operations {
+            // Apply several mutations before syncing the display layers, so
+            // that edit composition across mutations is exercised the way it is
+            // when more than one change lands between frames.
+            let sync_now = operations_until_sync == 0;
+            if sync_now {
+                operations_until_sync = rng.random_range(1..=4);
+            }
+            operations_until_sync -= 1;
+
             match rng.random_range(0..100) {
                 0..=9 => {
                     let wrap_width = if rng.random_bool(0.2) {
@@ -4797,8 +5048,13 @@ mod tests {
                     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
                 10..=24 => {
+                    // Folding reads the block map, so bring the display layers
+                    // up to date with any mutations batched since the last sync.
+                    buffer_snapshot =
+                        multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+                    let pending_edits = subscription.consume().into_inner();
                     let (inlay_snapshot, inlay_edits) =
-                        inlay_map.sync(buffer_snapshot.clone(), vec![]);
+                        inlay_map.sync(buffer_snapshot.clone(), pending_edits);
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tab_snapshot, tab_edits) =
                         tab_map.sync(fold_snapshot, fold_edits, tab_size);
@@ -4868,10 +5124,7 @@ mod tests {
                         .collect::<Vec<_>>();
 
                     let buffer = if absent.is_empty() || rng.random_bool(0.3) {
-                        let text_len = rng.random_range(0..20);
-                        let text = RandomCharIter::new(&mut rng)
-                            .take(text_len)
-                            .collect::<String>();
+                        let text = random_buffer_text(&mut rng);
                         log::info!("Creating new buffer with text: {text:?}");
                         let buffer = cx.new(|cx| Buffer::local(text, cx));
                         known_buffers.push(buffer.clone());
@@ -4934,10 +5187,7 @@ mod tests {
                     let path = paths.choose(&mut rng).unwrap().clone();
 
                     let buffer = if rng.random_bool(0.5) {
-                        let text_len = rng.random_range(0..20);
-                        let text = RandomCharIter::new(&mut rng)
-                            .take(text_len)
-                            .collect::<String>();
+                        let text = random_buffer_text(&mut rng);
                         let buffer = cx.new(|cx| Buffer::local(text, cx));
                         known_buffers.push(buffer.clone());
                         buffer
@@ -4987,6 +5237,10 @@ mod tests {
                         }
                     }
                 }
+            }
+
+            if !sync_now {
+                continue;
             }
 
             buffer_snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
@@ -5428,6 +5682,100 @@ mod tests {
         cx.set_global(settings);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         assets::Assets.load_test_fonts(cx);
+    }
+
+    /// The display map layers for one side of a split diff.
+    struct SplitSideMaps {
+        inlay_map: InlayMap,
+        fold_map: FoldMap,
+        tab_map: TabMap,
+        wrap_map: Entity<WrapMap>,
+        block_map: BlockMap,
+        subscription: text::Subscription<MultiBufferOffset>,
+        buffer_snapshot: MultiBufferSnapshot,
+    }
+
+    impl SplitSideMaps {
+        fn new(
+            multibuffer: &Entity<MultiBuffer>,
+            tab_size: NonZeroU32,
+            cx: &mut gpui::TestAppContext,
+        ) -> Self {
+            let subscription = multibuffer.update(cx, |multibuffer, _| multibuffer.subscribe());
+            let buffer_snapshot =
+                multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+            let (inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+            let (fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+            let (tab_map, tab_snapshot) = TabMap::new(fold_snapshot, tab_size);
+            let (wrap_map, wrap_snapshot) =
+                cx.update(|cx| WrapMap::new(tab_snapshot, test_font(), px(14.0), None, cx));
+            let block_map = BlockMap::new(wrap_snapshot, 1, 1);
+            Self {
+                inlay_map,
+                fold_map,
+                tab_map,
+                wrap_map,
+                block_map,
+                subscription,
+                buffer_snapshot,
+            }
+        }
+
+        fn sync(
+            &mut self,
+            multibuffer: &Entity<MultiBuffer>,
+            tab_size: NonZeroU32,
+            cx: &mut gpui::TestAppContext,
+        ) -> (WrapSnapshot, WrapPatch) {
+            self.buffer_snapshot =
+                multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+            let buffer_edits = self.subscription.consume().into_inner();
+            let (inlay_snapshot, inlay_edits) = self
+                .inlay_map
+                .sync(self.buffer_snapshot.clone(), buffer_edits);
+            let (fold_snapshot, fold_edits) = self.fold_map.read(inlay_snapshot, inlay_edits);
+            let (tab_snapshot, tab_edits) = self.tab_map.sync(fold_snapshot, fold_edits, tab_size);
+            self.wrap_map.update(cx, |wrap_map, cx| {
+                wrap_map.sync(tab_snapshot, tab_edits, cx)
+            })
+        }
+    }
+
+    #[track_caller]
+    fn assert_headers_resolve(
+        blocks: &BlockSnapshot,
+        buffer_snapshot: &MultiBufferSnapshot,
+        side: &str,
+    ) {
+        for (row, block) in
+            blocks.blocks_in_range(BlockRow(0)..BlockRow(blocks.max_point().row + 1))
+        {
+            let excerpt = match block {
+                Block::BufferHeader { excerpt, .. } | Block::ExcerptBoundary { excerpt, .. } => {
+                    excerpt
+                }
+                Block::FoldedBuffer { first_excerpt, .. } => first_excerpt,
+                _ => continue,
+            };
+            assert!(
+                buffer_snapshot.buffer_for_id(excerpt.buffer_id()).is_some(),
+                "stale header block {:?} at {row:?} on the {side} side references buffer {:?}, \
+                 which is no longer in the multibuffer",
+                block.id(),
+                excerpt.buffer_id(),
+            );
+        }
+    }
+
+    /// Empty and single-line buffers are generated often because excerpts
+    /// holding no text produce zero-width edits, which `Patch` discards.
+    fn random_buffer_text(rng: &mut StdRng) -> String {
+        let len = match rng.random_range(0..100) {
+            0..=29 => 0,
+            30..=59 => rng.random_range(1..4),
+            _ => rng.random_range(4..30),
+        };
+        RandomCharIter::new(rng).take(len).collect()
     }
 
     fn randomized_text(text: &str, rng: &mut StdRng) -> String {
