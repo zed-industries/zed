@@ -2911,7 +2911,7 @@ impl Buffer {
                     }
 
                     if !new_text.contains('\n')
-                        && (old_start.column + (range_len as u32) < old_line_end
+                        && (old_start.column + (range_len as u32) <= old_line_end
                             || old_line_end == old_line_start)
                     {
                         first_line_is_new = false;
