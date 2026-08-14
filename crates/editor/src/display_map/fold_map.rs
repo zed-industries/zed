@@ -412,6 +412,12 @@ impl FoldMap {
     #[ztracing::instrument(skip_all)]
     fn check_invariants(&self) {
         if cfg!(test) {
+            // Randomized tests set this to let corrupted state propagate the
+            // way it does in production builds, where no invariants run, so
+            // that downstream symptoms become observable.
+            if std::env::var("SIMULATE_PRODUCTION").is_ok() {
+                return;
+            }
             assert_eq!(
                 self.snapshot.transforms.summary().input.len,
                 self.snapshot.inlay_snapshot.len().0,
