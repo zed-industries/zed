@@ -157,6 +157,8 @@ pub enum Model {
     Grok4_5,
     #[serde(rename = "grok-4.6")]
     Grok4_6,
+    #[serde(rename = "muse-spark-1.2")]
+    MuseSpark1_2,
     #[serde(rename = "kimi-k2.5")]
     KimiK2_5,
     #[serde(rename = "kimi-k2.6")]
@@ -316,6 +318,7 @@ impl Model {
             Self::GrokBuild0_1 => "grok-build-0.1",
             Self::Grok4_5 => "grok-4.5",
             Self::Grok4_6 => "grok-4.6",
+            Self::MuseSpark1_2 => "muse-spark-1.2",
             Self::KimiK2_5 => "kimi-k2.5",
             Self::KimiK2_6 => "kimi-k2.6",
             Self::KimiK2_7Code => "kimi-k2.7-code",
@@ -388,6 +391,7 @@ impl Model {
             Self::GrokBuild0_1 => "Grok Build 0.1",
             Self::Grok4_5 => "Grok 4.5",
             Self::Grok4_6 => "Grok 4.6",
+            Self::MuseSpark1_2 => "Muse Spark 1.2",
             Self::KimiK2_5 => "Kimi K2.5",
             Self::KimiK2_6 => "Kimi K2.6",
             Self::KimiK2_7Code => "Kimi K2.7 Code",
@@ -485,7 +489,7 @@ impl Model {
             | Self::BigPickle
             | Self::Nemotron3UltraFree => ApiProtocol::OpenAiChat,
 
-            Self::Grok4_6 | Self::Grok4_5 => ApiProtocol::OpenAiResponses,
+            Self::Grok4_6 | Self::Grok4_5 | Self::MuseSpark1_2 => ApiProtocol::OpenAiResponses,
 
             Self::Custom { protocol, .. } => *protocol,
         }
@@ -573,6 +577,7 @@ impl Model {
             Self::KimiK3 => 1_048_576,
             Self::GrokBuild0_1 => 256_000,
             Self::Grok4_6 | Self::Grok4_5 => 500_000,
+            Self::MuseSpark1_2 => 1_048_576,
             Self::MimoV2_5Pro => 1_048_576,
             Self::MimoV2_5 => 1_000_000,
             Self::Qwen3_5Plus => 262_144,
@@ -667,6 +672,7 @@ impl Model {
             Self::KimiK3 => Some(131_072),
             Self::GrokBuild0_1 => Some(256_000),
             Self::Grok4_6 | Self::Grok4_5 => Some(500_000),
+            Self::MuseSpark1_2 => Some(131_072),
             Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
                 Some(65_536)
             }
@@ -741,6 +747,7 @@ impl Model {
             | Self::GrokBuild0_1
             | Self::Grok4_5
             | Self::Grok4_6
+            | Self::MuseSpark1_2
             | Self::MimoV2_5
             | Self::Qwen3_5Plus
             | Self::Qwen3_6Plus
@@ -922,6 +929,15 @@ impl Model {
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
+            ]),
+
+            // Meta AI models
+            Self::MuseSpark1_2 => Some(vec![
+                ReasoningEffort::Minimal,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
             ]),
 
             Self::Custom {
