@@ -2732,6 +2732,7 @@ pub mod tests {
     use lsp::LanguageServerId;
 
     use futures::stream::StreamExt;
+    use multi_buffer::PathKey;
     use rand::{Rng, prelude::*};
     use settings::{SettingsContent, SettingsStore};
     use std::{env, sync::Arc};
@@ -4143,6 +4144,273 @@ pub mod tests {
             chunks.push((chunk.text.to_string(), syntax_color, highlight_color));
         }
         chunks
+    }
+
+    /// Regression fuzz for ZED-7G6 ("buffer snapshot not found for excerpt
+    /// boundary") at the `DisplayMap` level: drives real display maps through
+    /// split and unsplit transitions, which stash deferred edits and clean up
+    /// balancing blocks, while files enter and leave both sides the way
+    /// `SplittableEditor::sync_lhs_for_paths` moves them. After every
+    /// operation, every header block must resolve its buffer against the same
+    /// display snapshot, which is the invariant whose violation panics at
+    /// render time.
+    #[gpui::test(iterations = 20)]
+    async fn test_random_split_diff_display_map_headers(
+        cx: &mut gpui::TestAppContext,
+        mut rng: StdRng,
+    ) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(30);
+        let font_size = px(14.0);
+        let wrap_width = if rng.random_bool(0.2) {
+            None
+        } else {
+            Some(px(rng.random_range(0.0..=300.0)))
+        };
+
+        struct SplitFile {
+            main_buffer: Entity<Buffer>,
+            base_buffer: Entity<Buffer>,
+            diff: Entity<buffer_diff::BufferDiff>,
+            path_key: PathKey,
+        }
+
+        let mut files = Vec::new();
+        for ix in 0..rng.random_range(1..=3) {
+            let text_len = rng.random_range(0..30);
+            let text = util::RandomCharIter::new(&mut rng)
+                .take(text_len)
+                .collect::<String>();
+            let main_buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
+            let base_text_len = rng.random_range(0..30);
+            let base_text = util::RandomCharIter::new(&mut rng)
+                .take(base_text_len)
+                .collect::<String>();
+            let diff = cx.new(|cx| {
+                buffer_diff::BufferDiff::new_with_base_text(
+                    &base_text,
+                    &main_buffer.read(cx).text_snapshot(),
+                    cx,
+                )
+            });
+            let base_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+            files.push(SplitFile {
+                main_buffer,
+                base_buffer,
+                diff,
+                path_key: PathKey::sorted(ix),
+            });
+        }
+
+        let rhs_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+            multibuffer.set_show_deleted_hunks(false, cx);
+            multibuffer.set_use_extended_diff_range(true, cx);
+            multibuffer
+        });
+        let lhs_multibuffer = cx.new(|_| MultiBuffer::new(language::Capability::ReadWrite));
+
+        /// Mirrors `SplittableEditor::sync_lhs_for_paths` for one file: the
+        /// right side excerpts the main buffer, and the left side excerpts the
+        /// corresponding base text rows under the same path key.
+        fn sync_file_to_both_sides(
+            lhs_multibuffer: &Entity<MultiBuffer>,
+            rhs_multibuffer: &Entity<MultiBuffer>,
+            file: &SplitFile,
+            cx: &mut gpui::TestAppContext,
+        ) {
+            rhs_multibuffer.update(cx, |multibuffer, cx| {
+                let max_point = file.main_buffer.read(cx).max_point();
+                multibuffer.set_excerpts_for_path(
+                    file.path_key.clone(),
+                    file.main_buffer.clone(),
+                    [Point::zero()..max_point],
+                    0,
+                    cx,
+                );
+                multibuffer.add_diff(file.diff.clone(), cx);
+            });
+            let lhs_range = cx.update(|cx| {
+                let diff_snapshot = file.diff.read(cx).snapshot(cx);
+                let main_snapshot = file.main_buffer.read(cx).text_snapshot();
+                let rhs_range = Point::zero()..file.main_buffer.read(cx).max_point();
+                let start = diff_snapshot
+                    .buffer_point_to_base_text_range(
+                        Point::new(rhs_range.start.row, 0),
+                        &main_snapshot,
+                    )
+                    .start;
+                let end = diff_snapshot
+                    .buffer_point_to_base_text_range(
+                        Point::new(rhs_range.end.row, 0),
+                        &main_snapshot,
+                    )
+                    .end;
+                let end_column = diff_snapshot.base_text().line_len(end.row);
+                Point::new(start.row, 0)..Point::new(end.row, end_column)
+            });
+            lhs_multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.set_excerpts_for_path(
+                    file.path_key.clone(),
+                    file.base_buffer.clone(),
+                    [lhs_range],
+                    0,
+                    cx,
+                );
+                multibuffer.add_inverted_diff(file.diff.clone(), file.main_buffer.clone(), cx);
+            });
+        }
+
+        for file in &files {
+            sync_file_to_both_sides(&lhs_multibuffer, &rhs_multibuffer, file, cx);
+        }
+
+        let rhs_display_map = cx.new(|cx| {
+            DisplayMap::new(
+                rhs_multibuffer.clone(),
+                test_font(),
+                font_size,
+                wrap_width,
+                2,
+                2,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let mut lhs_state: Option<(Entity<DisplayMap>, Entity<Companion>)> = None;
+
+        #[track_caller]
+        fn assert_headers_resolve(snapshot: &DisplaySnapshot, side: &str) {
+            let end_row = DisplayRow(snapshot.max_point().row().0 + 1);
+            for (row, block) in snapshot.blocks_in_range(DisplayRow(0)..end_row) {
+                let excerpt = match block {
+                    Block::BufferHeader { excerpt, .. }
+                    | Block::ExcerptBoundary { excerpt, .. } => excerpt,
+                    Block::FoldedBuffer { first_excerpt, .. } => first_excerpt,
+                    _ => continue,
+                };
+                assert!(
+                    snapshot
+                        .buffer_snapshot()
+                        .buffer_for_id(excerpt.buffer_id())
+                        .is_some(),
+                    "stale header block {:?} at {row:?} on the {side} side references \
+                     buffer {:?}, which is no longer in the multibuffer",
+                    block.id(),
+                    excerpt.buffer_id(),
+                );
+            }
+        }
+
+        for _ in 0..operations {
+            match rng.random_range(0..100) {
+                // Toggle the split, as `SplittableEditor::split`/`unsplit` do.
+                0..=14 => {
+                    if let Some((_, _)) = lhs_state.take() {
+                        log::info!("Unsplitting");
+                        rhs_display_map.update(cx, |display_map, cx| {
+                            display_map.set_companion(None, cx);
+                        });
+                    } else {
+                        log::info!("Splitting");
+                        let lhs_display_map = cx.new(|cx| {
+                            DisplayMap::new(
+                                lhs_multibuffer.clone(),
+                                test_font(),
+                                font_size,
+                                wrap_width,
+                                2,
+                                2,
+                                FoldPlaceholder::test(),
+                                DiagnosticSeverity::Warning,
+                                cx,
+                            )
+                        });
+                        let companion = cx.new(|_| Companion::new(rhs_display_map.entity_id()));
+                        rhs_display_map.update(cx, |display_map, cx| {
+                            display_map.set_companion(
+                                Some((lhs_display_map.clone(), companion.clone())),
+                                cx,
+                            );
+                        });
+                        lhs_state = Some((lhs_display_map, companion));
+                    }
+                }
+                // Remove a file from both sides.
+                15..=34 => {
+                    let file = &files[rng.random_range(0..files.len())];
+                    log::info!("Removing file at {:?}", file.path_key);
+                    rhs_multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.remove_excerpts(file.path_key.clone(), cx);
+                    });
+                    lhs_multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.remove_excerpts(file.path_key.clone(), cx);
+                    });
+                }
+                // Restore a file on both sides.
+                35..=54 => {
+                    let file = &files[rng.random_range(0..files.len())];
+                    log::info!("Restoring file at {:?}", file.path_key);
+                    sync_file_to_both_sides(&lhs_multibuffer, &rhs_multibuffer, file, cx);
+                }
+                // Edit a main buffer, recalculate its diff, and re-derive the
+                // left side's excerpts.
+                55..=74 => {
+                    let file = &files[rng.random_range(0..files.len())];
+                    log::info!("Editing main buffer at {:?}", file.path_key);
+                    file.main_buffer.update(cx, |buffer, cx| {
+                        let edit_count = rng.random_range(1..=3);
+                        buffer.randomly_edit(&mut rng, edit_count, cx);
+                    });
+                    let snapshot = file
+                        .main_buffer
+                        .read_with(cx, |buffer, _| buffer.text_snapshot());
+                    file.diff
+                        .update(cx, |diff, cx| diff.recalculate_diff_sync(&snapshot, cx));
+                    sync_file_to_both_sides(&lhs_multibuffer, &rhs_multibuffer, file, cx);
+                }
+                // Fold or unfold a buffer on one side.
+                _ => {
+                    let fold_rhs = lhs_state.is_none() || rng.random_bool(0.5);
+                    let (display_map, multibuffer) = if fold_rhs {
+                        (&rhs_display_map, &rhs_multibuffer)
+                    } else {
+                        (&lhs_state.as_ref().unwrap().0, &lhs_multibuffer)
+                    };
+                    let buffer_ids = multibuffer.read_with(cx, |multibuffer, cx| {
+                        multibuffer
+                            .snapshot(cx)
+                            .all_buffer_ids()
+                            .collect::<Vec<_>>()
+                    });
+                    let Some(buffer_id) = buffer_ids.choose(&mut rng).copied() else {
+                        continue;
+                    };
+                    display_map.update(cx, |display_map, cx| {
+                        if display_map.is_buffer_folded(buffer_id) {
+                            log::info!("Unfolding {buffer_id:?}");
+                            display_map.unfold_buffers([buffer_id], cx);
+                        } else {
+                            log::info!("Folding {buffer_id:?}");
+                            display_map.fold_buffers([buffer_id], cx);
+                        }
+                    });
+                }
+            }
+
+            let rhs_snapshot =
+                rhs_display_map.update(cx, |display_map, cx| display_map.snapshot(cx));
+            assert_headers_resolve(&rhs_snapshot, "right");
+            if let Some((lhs_display_map, _)) = &lhs_state {
+                let lhs_snapshot =
+                    lhs_display_map.update(cx, |display_map, cx| display_map.snapshot(cx));
+                assert_headers_resolve(&lhs_snapshot, "left");
+            }
+        }
     }
 
     fn init_test(cx: &mut App, f: &dyn Fn(&mut SettingsContent)) {
