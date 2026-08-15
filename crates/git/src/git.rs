@@ -409,3 +409,37 @@ impl RunHook {
         }
     }
 }
+
+/// Headless git provenance metadata for tracking changes made by autonomous agents
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeadlessGitProvenance {
+    pub agent_id: String,
+    pub session_id: String,
+    pub parent_commit: String,
+    pub modified_files: Vec<String>,
+    pub timestamp: u64,
+}
+
+/// Headless commit specification for deterministic programmatic commits without user dialogs
+#[derive(Clone, Debug, Default)]
+pub struct HeadlessCommitBuilder {
+    pub message: String,
+    pub staged_files: Vec<std::path::PathBuf>,
+    pub author_name: Option<String>,
+    pub author_email: Option<String>,
+}
+
+impl HeadlessCommitBuilder {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            staged_files: Vec::new(),
+            author_name: None,
+            author_email: None,
+        }
+    }
+
+    pub fn add_staged_file(&mut self, path: impl Into<std::path::PathBuf>) {
+        self.staged_files.push(path.into());
+    }
+}
