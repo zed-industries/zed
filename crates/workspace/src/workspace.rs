@@ -17434,3 +17434,28 @@ mod tests {
         assert_eq!(cx.opened_url(), Some("nonexistent.txt".to_string()));
     }
 }
+
+/// Headless workspace context representation for external agent automation and background task execution
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeadlessWorkspaceContext {
+    pub workspace_id: String,
+    pub root_paths: Vec<std::path::PathBuf>,
+    pub open_buffer_count: usize,
+    pub is_headless: bool,
+}
+
+impl HeadlessWorkspaceContext {
+    pub fn new(workspace_id: impl Into<String>) -> Self {
+        Self {
+            workspace_id: workspace_id.into(),
+            root_paths: Vec::new(),
+            open_buffer_count: 0,
+            is_headless: true,
+        }
+    }
+
+    pub fn with_root_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.root_paths.push(path.into());
+        self
+    }
+}
