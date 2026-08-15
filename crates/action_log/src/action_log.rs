@@ -48,6 +48,16 @@ pub struct LastRejectUndo {
     pub buffers: Vec<PerBufferUndo>,
 }
 
+/// Represents an event-sourced action log entry for deterministic agent replay
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActionJournalEvent {
+    BufferRead { path: PathBuf, timestamp: clock::Lamport },
+    BufferEdited { path: PathBuf, change_summary: String },
+    BufferCreated { path: PathBuf },
+    BufferDeleted { path: PathBuf },
+    ToolExecuted { tool_name: String, status: String },
+}
+
 /// Tracks actions performed by tools in a thread
 pub struct ActionLog {
     /// Buffers that we want to notify the model about when they change.
@@ -62,6 +72,8 @@ pub struct ActionLog {
     last_reject_undo: Option<LastRejectUndo>,
     /// Tracks the last time files were read by the agent, to detect external modifications
     file_read_times: HashMap<PathBuf, MTime>,
+    /// Event-sourced append-only journal for deterministic session replay
+    event_journal: Vec<ActionJournalEvent>,
 }
 
 impl ActionLog {
@@ -73,7 +85,18 @@ impl ActionLog {
             linked_action_log: None,
             last_reject_undo: None,
             file_read_times: HashMap::default(),
+            event_journal: Vec::new(),
         }
+    }
+
+    /// Records an event to the deterministic replay journal
+    pub fn record_journal_event(&mut self, event: ActionJournalEvent) {
+        self.event_journal.push(event);
+    }
+
+    /// Returns a slice of recorded journal events
+    pub fn event_journal(&self) -> &[ActionJournalEvent] {
+        &self.event_journal
     }
 
     pub fn with_linked_action_log(mut self, linked_action_log: Entity<ActionLog>) -> Self {
@@ -3497,5 +3520,43 @@ mod tests {
                 })
                 .collect()
         })
+    }
+
+    #[gpui::test]
+    async fn test_action_log_event_journal(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, _| {
+                log.record_journal_event(ActionJournalEvent::BufferCreated {
+                    path: PathBuf::from("src/main.rs"),
+                });
+                log.record_journal_event(ActionJournalEvent::ToolExecuted {
+                    tool_name: "edit_file".to_string(),
+                    status: "success".to_string(),
+                });
+            });
+        });
+
+        cx.read(|cx| {
+            let log = action_log.read(cx);
+            assert_eq!(log.event_journal().len(), 2);
+            assert_eq!(
+                log.event_journal()[0],
+                ActionJournalEvent::BufferCreated {
+                    path: PathBuf::from("src/main.rs"),
+                }
+            );
+            assert_eq!(
+                log.event_journal()[1],
+                ActionJournalEvent::ToolExecuted {
+                    tool_name: "edit_file".to_string(),
+                    status: "success".to_string(),
+                }
+            );
+        });
     }
 }
