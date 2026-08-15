@@ -119,6 +119,43 @@ impl InitializedContextServerProtocol {
             .await
     }
 
+    /// Executes a request with automatic exponential backoff retry policy and fault-resilience.
+    pub async fn request_with_retry<T: Request + Clone>(
+        &self,
+        params: T::Params,
+        max_retries: usize,
+        initial_backoff: Duration,
+        timeout: Option<Duration>,
+    ) -> Result<T::Response>
+    where
+        T::Params: Clone,
+    {
+        let mut attempts = 0;
+        let mut backoff = initial_backoff;
+
+        loop {
+            match self.request_with::<T>(params.clone(), None, timeout).await {
+                Ok(response) => return Ok(response),
+                Err(err) => {
+                    attempts += 1;
+                    if attempts > max_retries {
+                        return Err(err);
+                    }
+                    log::warn!(
+                        "MCP request {} failed (attempt {}/{}), retrying in {:?}: {}",
+                        T::METHOD,
+                        attempts,
+                        max_retries,
+                        backoff,
+                        err
+                    );
+                    smol::Timer::after(backoff).await;
+                    backoff = backoff.saturating_mul(2);
+                }
+            }
+        }
+    }
+
     pub fn notify<T: Notification>(&self, params: T::Params) -> Result<()> {
         self.inner.notify(T::METHOD, params)
     }
