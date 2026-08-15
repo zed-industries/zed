@@ -209,6 +209,92 @@ fn entry_compatible_custom_map(map: &mut EntryMap, key: String) {
     }
 }
 
+// --- Keys that differ only by a value-preserving conversion ---
+
+// The shape that motivated conversion peeling: code in the wild looks up
+// `&key` and inserts `key.clone()`, which a textual comparison misses.
+fn insert_clones_the_key(map: &mut HashMap<String, Vec<usize>>, key: String, value: usize) {
+    if let Some(values) = map.get_mut(&key) {
+        values.push(value);
+    } else {
+        map.insert(key.clone(), vec![value]);
+    }
+}
+
+fn insert_clones_the_key_ufcs(map: &mut HashMap<String, usize>, key: String) {
+    match map.get(&key) {
+        Some(_) => {}
+        None => {
+            map.insert(Clone::clone(&key), 1);
+        }
+    }
+}
+
+fn insert_key_to_owned(map: &mut HashMap<String, usize>, key: &str) {
+    match map.get(key) {
+        Some(_) => {}
+        None => {
+            map.insert(key.to_owned(), 1);
+        }
+    }
+}
+
+fn insert_key_to_string(map: &mut HashMap<String, usize>, key: &str) {
+    match map.get(key) {
+        Some(_) => {}
+        None => {
+            map.insert(key.to_string(), 1);
+        }
+    }
+}
+
+fn insert_key_string_from(map: &mut HashMap<String, usize>, key: &str) {
+    match map.get(key) {
+        Some(_) => {}
+        None => {
+            map.insert(String::from(key), 1);
+        }
+    }
+}
+
+fn insert_key_to_vec(map: &mut HashMap<Vec<u8>, usize>, key: &[u8]) {
+    match map.get(key) {
+        Some(_) => {}
+        None => {
+            map.insert(key.to_vec(), 1);
+        }
+    }
+}
+
+// The lookup and the insertion may each add their own borrow/deref layers.
+fn insert_clone_of_deref(map: &mut HashMap<String, usize>, key: &String) {
+    match map.get(key) {
+        Some(_) => {}
+        None => {
+            map.insert((*key).clone(), 1);
+        }
+    }
+}
+
+// An immutable local alias of the cloned key is still the same key.
+fn insert_through_alias(map: &mut HashMap<String, usize>, key: String) {
+    let owned = key.clone();
+    match map.get(&key) {
+        Some(_) => {}
+        None => {
+            map.insert(owned, 1);
+        }
+    }
+}
+
+fn set_insert_clone(set: &mut HashSet<String>, value: String) -> bool {
+    if let Some(existing) = set.get(&value) {
+        existing.is_empty()
+    } else {
+        set.insert(value.clone())
+    }
+}
+
 // ------------- SHOULD NOT FIRE -------------
 
 // `contains_key` followed by `insert` is Clippy's `map_entry` lint.
@@ -398,6 +484,90 @@ fn side_effecting_map(key: String) {
         Some(_) => {}
         None => {
             global_map().insert(key, 1);
+        }
+    }
+}
+
+// Conversions are peeled by definition, not by name: `DisguisedKey`'s
+// inherent `clone` and `to_owned` are not `Clone::clone`/`ToOwned::to_owned`
+// and may return a different key.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct DisguisedKey(usize);
+
+impl DisguisedKey {
+    fn clone(&self) -> DisguisedKey {
+        DisguisedKey(self.0 + 1)
+    }
+
+    fn to_owned(&self) -> DisguisedKey {
+        DisguisedKey(self.0 * 2)
+    }
+}
+
+fn inherent_clone_is_a_different_key(map: &mut HashMap<DisguisedKey, usize>, key: DisguisedKey) {
+    match map.get(&key) {
+        Some(_) => {}
+        None => {
+            map.insert(key.clone(), 1);
+        }
+    }
+}
+
+fn inherent_to_owned_is_a_different_key(
+    map: &mut HashMap<DisguisedKey, usize>,
+    key: DisguisedKey,
+) {
+    match map.get(&key) {
+        Some(_) => {}
+        None => {
+            map.insert(key.to_owned(), 1);
+        }
+    }
+}
+
+// A mutable alias may no longer hold the looked-up key by insertion time.
+fn mutated_alias(map: &mut HashMap<String, usize>, key: String) {
+    let mut owned = key.clone();
+    owned.push('!');
+    match map.get(&key) {
+        Some(_) => {}
+        None => {
+            map.insert(owned, 1);
+        }
+    }
+}
+
+// A clone of a different key is a different key.
+fn clone_of_different_key(map: &mut HashMap<String, usize>, first: String, second: String) {
+    match map.get(&first) {
+        Some(_) => {}
+        None => {
+            map.insert(second.clone(), 1);
+        }
+    }
+}
+
+// `to_string` runs an arbitrary `Display` impl; only the string types are
+// guaranteed to format as themselves, so a non-string receiver stays a
+// side-effecting key and is not matched.
+fn to_string_of_non_string_key(map: &mut HashMap<String, usize>, id: u32) {
+    match map.get(&id.to_string()) {
+        Some(_) => {}
+        None => {
+            map.insert(id.to_string(), 1);
+        }
+    }
+}
+
+// Alias resolution must not equate structurally equal but side-effecting
+// initializers: the two `next_key()` calls produce two different keys.
+fn aliases_of_two_generated_keys(map: &mut HashMap<String, usize>) {
+    let first = next_key();
+    let second = next_key();
+    match map.get(&first) {
+        Some(_) => {}
+        None => {
+            map.insert(second, 1);
         }
     }
 }
