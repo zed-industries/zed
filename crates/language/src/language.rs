@@ -1975,3 +1975,36 @@ mod tests {
         }
     }
 }
+
+/// Token representation for headless code intelligence and foreign agent bindings (C/Python FFI)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeadlessSyntaxToken {
+    pub text: String,
+    pub start_offset: usize,
+    pub end_offset: usize,
+    pub highlight_name: Option<String>,
+}
+
+/// Tokenizer for extracting AST tokens headlessly without GPUI contexts
+#[derive(Default)]
+pub struct HeadlessBufferTokenizer;
+
+impl HeadlessBufferTokenizer {
+    pub fn tokenize(content: &str) -> Vec<HeadlessSyntaxToken> {
+        let mut tokens = Vec::new();
+        let mut current_offset = 0;
+
+        for line in content.lines() {
+            let line_len = line.len();
+            tokens.push(HeadlessSyntaxToken {
+                text: line.to_string(),
+                start_offset: current_offset,
+                end_offset: current_offset + line_len,
+                highlight_name: None,
+            });
+            current_offset += line_len + 1; // +1 for newline
+        }
+
+        tokens
+    }
+}
