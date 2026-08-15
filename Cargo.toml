@@ -113,6 +113,7 @@ members = [
     "crates/install_cli",
     "crates/journal",
     "crates/json_schema_store",
+    "crates/json_schema_builder",
     "crates/keymap_editor",
     "crates/language",
     "crates/language_core",

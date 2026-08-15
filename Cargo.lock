@@ -9492,6 +9492,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "json-schema-builder"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn 2.0.119",
+ "tempfile",
+ "walkdir",
+]
+
+[[package]]
 name = "json5"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

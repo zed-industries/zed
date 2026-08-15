@@ -1,0 +1,27 @@
+[package]
+name = "json-schema-builder"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/json_schema_builder.rs"
+
+[[bin]]
+name = "keymap_schema_builder"
+path = "src/bin/keymap_schema_builder.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+serde_json.workspace = true
+syn = { version = "2", features = ["full", "extra-traits"] }
+tempfile = { workspace = true}
+walkdir = "2"
+
+[dev-dependencies]
+quote = "1"
+tempfile = "3"
