@@ -127,9 +127,58 @@ pub fn load_proxy_env(cx: &mut App) -> HashMap<String, String> {
     if let Some(no_proxy) = read_no_proxy_from_env() {
         env.insert("NO_PROXY".to_owned(), no_proxy);
     } else if proxy_url.is_some() {
-        // We sometimes need local MCP servers that we don't want to proxy
         env.insert("NO_PROXY".to_owned(), "localhost,127.0.0.1".to_owned());
     }
 
     env
+}
+
+/// Restart policy for actor supervised child processes
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SupervisorRestartPolicy {
+    OneForOne,
+    OneForAll,
+    ExponentialBackoff { max_retries: u32 },
+}
+
+/// Status of a managed actor process
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActorProcessStatus {
+    Starting,
+    Running { pid: u32 },
+    Failed { reason: String },
+    Terminated,
+}
+
+/// Erlang-style process supervisor for LSP, MCP, and ACP agent subprocesses
+pub struct ActorSupervisor {
+    name: String,
+    policy: SupervisorRestartPolicy,
+    process_status: HashMap<String, ActorProcessStatus>,
+}
+
+impl ActorSupervisor {
+    pub fn new(name: impl Into<String>, policy: SupervisorRestartPolicy) -> Self {
+        Self {
+            name: name.into(),
+            policy,
+            process_status: HashMap::default(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn policy(&self) -> SupervisorRestartPolicy {
+        self.policy
+    }
+
+    pub fn register_process(&mut self, process_id: impl Into<String>, status: ActorProcessStatus) {
+        self.process_status.insert(process_id.into(), status);
+    }
+
+    pub fn get_status(&self, process_id: &str) -> Option<&ActorProcessStatus> {
+        self.process_status.get(process_id)
+    }
 }
