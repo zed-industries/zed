@@ -75,6 +75,8 @@ mod custom_highlights;
 mod fold_map;
 mod inlay_map;
 mod invisibles;
+#[cfg(test)]
+pub(crate) mod production_simulation;
 mod tab_map;
 mod wrap_map;
 
