@@ -1227,12 +1227,8 @@ impl ContextServerStore {
             _ => anyhow::bail!("Server is not in AuthRequired state"),
         };
 
-        let needs_keychain_check = match configuration.as_ref() {
-            ContextServerConfiguration::Http {
-                url,
-                oauth: Some(oauth_settings),
-                ..
-            } if oauth_settings.client_secret.is_none() => Some(url.clone()),
+        let server_url = match configuration.as_ref() {
+            ContextServerConfiguration::Http { url, .. } => Some(url.clone()),
             _ => None,
         };
 
@@ -1243,33 +1239,6 @@ impl ContextServerStore {
             let server = server.clone();
             let configuration = configuration.clone();
             async move |this, cx| {
-                if let Some(server_url) = needs_keychain_check {
-                    let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-                    let has_keychain_secret =
-                        Self::load_client_secret(&credentials_provider, &server_url, cx)
-                            .await
-                            .ok()
-                            .flatten()
-                            .is_some();
-
-                    if !has_keychain_secret {
-                        this.update(cx, |this, cx| {
-                            this.update_server_state(
-                                id.clone(),
-                                ContextServerState::ClientSecretRequired {
-                                    server,
-                                    configuration,
-                                    discovery,
-                                    error: None,
-                                },
-                                cx,
-                            );
-                        })
-                        .log_err();
-                        return;
-                    }
-                }
-
                 let result = Self::run_oauth_flow(
                     this.clone(),
                     id.clone(),
@@ -1282,18 +1251,57 @@ impl ContextServerStore {
 
                 if let Err(err) = &result {
                     log::error!("{} OAuth authentication failed: {:?}", id, err);
-                    this.update(cx, |this, cx| {
-                        this.update_server_state(
-                            id.clone(),
-                            ContextServerState::Error {
-                                server,
-                                configuration,
-                                error: format!("{err:#}").into(),
-                            },
-                            cx,
-                        )
-                    })
-                    .log_err();
+
+                    let is_bad_client_credentials = err
+                        .downcast_ref::<oauth::OAuthTokenError>()
+                        .is_some_and(|e| {
+                            e.error == "unauthorized_client" || e.error == "invalid_client"
+                        });
+
+                    let has_preregistered_oauth = matches!(
+                        configuration.as_ref(),
+                        ContextServerConfiguration::Http {
+                            oauth: Some(_),
+                            ..
+                        }
+                    );
+
+                    if is_bad_client_credentials && has_preregistered_oauth {
+                        if let Some(server_url) = server_url {
+                            let credentials_provider =
+                                cx.update(|cx| zed_credentials_provider::global(cx));
+                            Self::clear_client_secret(&credentials_provider, &server_url, cx)
+                                .await
+                                .log_err();
+                        }
+
+                        this.update(cx, |this, cx| {
+                            this.update_server_state(
+                                id.clone(),
+                                ContextServerState::ClientSecretRequired {
+                                    server,
+                                    configuration,
+                                    discovery,
+                                    error: Some(format!("{err:#}").into()),
+                                },
+                                cx,
+                            );
+                        })
+                        .log_err();
+                    } else {
+                        this.update(cx, |this, cx| {
+                            this.update_server_state(
+                                id.clone(),
+                                ContextServerState::Error {
+                                    server,
+                                    configuration,
+                                    error: format!("{err:#}").into(),
+                                },
+                                cx,
+                            )
+                        })
+                        .log_err();
+                    }
                 }
             }
         });
@@ -1373,7 +1381,9 @@ impl ContextServerStore {
 
                     let is_bad_client_credentials = err
                         .downcast_ref::<oauth::OAuthTokenError>()
-                        .is_some_and(|e| e.error == "unauthorized_client");
+                        .is_some_and(|e| {
+                            e.error == "unauthorized_client" || e.error == "invalid_client"
+                        });
 
                     if is_bad_client_credentials {
                         // Clear the bad secret from the keychain so the user
