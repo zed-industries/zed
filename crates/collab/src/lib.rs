@@ -332,3 +332,31 @@ async fn build_kinesis_client(config: &Config) -> anyhow::Result<aws_sdk_kinesis
 
     Ok(aws_sdk_kinesis::Client::new(&kinesis_config))
 }
+
+/// Chaos injection harness to stress test real-time collaboration against dropped packets, latency spikes, and socket crashes
+#[derive(Clone, Debug, Default)]
+pub struct CollabChaosInjectionHarness {
+    pub dropped_messages_count: usize,
+    pub simulated_latency_ms: u64,
+    pub inject_network_partition: bool,
+}
+
+impl CollabChaosInjectionHarness {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_simulated_latency(mut self, ms: u64) -> Self {
+        self.simulated_latency_ms = ms;
+        self
+    }
+
+    pub fn with_partition(mut self, partitioned: bool) -> Self {
+        self.inject_network_partition = partitioned;
+        self
+    }
+
+    pub fn record_dropped_packet(&mut self) {
+        self.dropped_messages_count += 1;
+    }
+}
