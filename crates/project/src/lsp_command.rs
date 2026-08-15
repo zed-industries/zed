@@ -2095,7 +2095,7 @@ impl LspCommand for GetDocumentSymbols {
                 fn convert_symbol_to_proto(symbol: DocumentSymbol) -> proto::DocumentSymbol {
                     proto::DocumentSymbol {
                         name: symbol.name.clone(),
-                        kind: symbol.kind as i32,
+                        kind: symbol.kind.to_proto(),
                         start: Some(proto::PointUtf16 {
                             row: symbol.range.start.0.row,
                             column: symbol.range.start.0.column,

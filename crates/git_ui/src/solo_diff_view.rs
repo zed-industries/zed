@@ -18,9 +18,8 @@ use git::{
     status::StageStatus,
 };
 use gpui::{
-    Action, AnyElement, App, AppContext as _, AsyncWindowContext, Context, Empty, Entity,
-    EventEmitter, FocusHandle, Focusable, HighlightStyle, IntoElement, Render, Subscription, Task,
-    WeakEntity, Window,
+    Action, AnyElement, App, AppContext as _, Context, Empty, Entity, EventEmitter, FocusHandle,
+    Focusable, HighlightStyle, IntoElement, Render, Subscription, Task, WeakEntity, Window,
 };
 use language::{Anchor, Buffer, HighlightedText, OffsetRangeExt as _, Point};
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
@@ -1082,7 +1081,7 @@ impl Render for SoloDiffGitToolbar {
                     .child(Divider::vertical())
                     .child(h_group_sm().child(if button_states.stage_file {
                         Button::new("stage-file", "Stage All")
-                            .width(rems_from_px(80.))
+                            .width(rems_from_px(80_f32))
                             .disabled(!button_states.stage_file)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Stage All",
@@ -1094,7 +1093,7 @@ impl Render for SoloDiffGitToolbar {
                             }))
                     } else {
                         Button::new("unstage-file", "Unstage All")
-                            .width(rems_from_px(80.))
+                            .width(rems_from_px(80_f32))
                             .disabled(!button_states.unstage_file)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Unstage All",

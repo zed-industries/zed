@@ -162,7 +162,7 @@ pub enum HighlightKey {
     // Note we want semantic tokens > colorized brackets
     // to allow language server highlights to work over brackets.
     ColorizeBracket(usize),
-    SemanticToken,
+    SemanticToken(u32),
     // below is sorted lexicographically, as there is no relevant ordering for these aside from coming after the above
     BufferSearchHighlights,
     ConsoleAnsiHighlight(usize),
@@ -360,6 +360,7 @@ pub struct SemanticTokenHighlight {
     pub token_type: TokenType,
     pub token_modifiers: u32,
     pub server_id: lsp::LanguageServerId,
+    pub precedence: u32,
 }
 
 impl DisplayMap {
@@ -2109,7 +2110,7 @@ impl DisplaySnapshot {
             });
         chars.collect::<String>().graphemes(true).next().map(|s| {
             if let Some(invisible) = s.chars().next().filter(|&c| is_invisible(c)) {
-                replacement(invisible).unwrap_or(s).to_owned().into()
+                replacement(invisible).map_or_else(|| s.to_owned().into(), SharedString::from)
             } else if s == "\n" {
                 " ".into()
             } else {

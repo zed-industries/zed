@@ -1772,7 +1772,7 @@ mod tests {
             let format_path_with_position_and_match =
                 |path_with_position: &PathWithPosition, hyperlink_match: &Match| {
                     let mut result =
-                        format!("Path = «{}»", &path_with_position.path.to_string_lossy());
+                        format!("Path = «{}»", path_with_position.path.to_string_lossy());
                     if let Some(row) = path_with_position.row {
                         result += &format!(", line = {row}");
                         if let Some(column) = path_with_position.column {

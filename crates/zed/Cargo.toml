@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "1.15.0"
+version = "1.17.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -118,7 +118,9 @@ git_ui = { workspace = true, features = ["call"] }
 git_ui_core.workspace = true
 go_to_line.workspace = true
 system_specs.workspace = true
-gpui = { workspace = true, features = ["input-latency-histogram", "profiler"] }
+gpui = { workspace = true, features = [
+    "profiler",
+] }
 gpui_platform = {workspace = true, features=["screen-capture", "font-kit", "wayland", "x11"]}
 hdrhistogram.workspace = true
 image = { workspace = true, optional = true }
@@ -225,6 +227,7 @@ web_search_providers.workspace = true
 which_key.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zed_credentials_provider.workspace = true
 zed_env_vars.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
@@ -233,7 +236,7 @@ zlog_settings.workspace = true
 etw_tracing.workspace = true
 windows.workspace = true
 gpui = { workspace = true, features = [
-    "input-latency-histogram",
+    "profiler",
     "windows-manifest",
 ] }
 
@@ -242,7 +245,7 @@ windows_resources = { path = "../windows_resources" }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 gpui = { workspace = true, features = [
-    "input-latency-histogram",
+    "profiler",
     "wayland",
     "x11",
 ] }
@@ -257,10 +260,11 @@ image.workspace = true
 pkg-config = "0.3.22"
 
 [dev-dependencies]
+activity_indicator = { workspace = true, features = ["test-support"] }
 call = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["input-latency-histogram", "test-support"] }
+gpui = { workspace = true, features = ["profiler", "test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
 itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }

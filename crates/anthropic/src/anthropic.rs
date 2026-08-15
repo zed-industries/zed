@@ -260,7 +260,7 @@ pub async fn stream_completion(
     .map(|output| output.0)
 }
 
-/// A raw model entry returned by the Anthropic models listing endpoint.
+/// A validated model entry returned by the Anthropic models listing endpoint.
 #[derive(Clone, Debug, Deserialize)]
 pub struct ListModelEntry {
     pub id: String,
@@ -272,8 +272,51 @@ pub struct ListModelEntry {
 }
 
 #[derive(Debug, Deserialize)]
+struct ApiListModelEntry {
+    id: String,
+    display_name: String,
+    max_input_tokens: Option<u64>,
+    max_tokens: Option<u64>,
+    #[serde(default)]
+    capabilities: Option<ModelCapabilities>,
+}
+
+impl ApiListModelEntry {
+    fn into_listed(self) -> Option<ListModelEntry> {
+        let Self {
+            id,
+            display_name,
+            max_input_tokens,
+            max_tokens,
+            capabilities,
+        } = self;
+
+        let missing_fields = match (&max_input_tokens, &max_tokens) {
+            (None, None) => Some("`max_input_tokens` and `max_tokens`"),
+            (None, Some(_)) => Some("`max_input_tokens`"),
+            (Some(_), None) => Some("`max_tokens`"),
+            (Some(_), Some(_)) => None,
+        };
+        if let Some(missing_fields) = missing_fields {
+            log::error!(
+                "Filtering out Anthropic model `{id}` because the API returned null for {missing_fields}"
+            );
+            return None;
+        }
+
+        Some(ListModelEntry {
+            id,
+            display_name,
+            max_input_tokens: max_input_tokens?,
+            max_tokens: max_tokens?,
+            capabilities,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct ListModelsResponse {
-    data: Vec<ListModelEntry>,
+    data: Vec<ApiListModelEntry>,
 }
 
 /// Fetch the list of models available to the current API key. The returned
@@ -324,6 +367,7 @@ pub async fn list_models(
     let models = parsed
         .data
         .into_iter()
+        .filter_map(ApiListModelEntry::into_listed)
         .map(Model::from_listed)
         .collect::<Vec<_>>();
     Ok(models)
@@ -1184,6 +1228,47 @@ mod tests {
             max_tokens: 64_000,
             capabilities: Some(capabilities),
         }
+    }
+
+    #[test]
+    fn api_list_model_entry_filters_null_token_limits() {
+        let entries: Vec<ApiListModelEntry> = serde_json::from_str(
+            r#"[
+                {
+                    "id": "valid",
+                    "display_name": "Valid",
+                    "max_input_tokens": 200000,
+                    "max_tokens": 64000
+                },
+                {
+                    "id": "null-input",
+                    "display_name": "Null Input",
+                    "max_input_tokens": null,
+                    "max_tokens": 64000
+                },
+                {
+                    "id": "null-output",
+                    "display_name": "Null Output",
+                    "max_input_tokens": 200000,
+                    "max_tokens": null
+                },
+                {
+                    "id": "null-both",
+                    "display_name": "Null Both",
+                    "max_input_tokens": null,
+                    "max_tokens": null
+                }
+            ]"#,
+        )
+        .expect("entries should deserialize");
+
+        let entries = entries
+            .into_iter()
+            .filter_map(ApiListModelEntry::into_listed)
+            .collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "valid");
     }
 
     #[test]
