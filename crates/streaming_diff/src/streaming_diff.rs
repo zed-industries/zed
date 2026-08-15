@@ -103,7 +103,7 @@ impl Debug for Matrix {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CharOperation {
     Insert { text: String },
     Delete { bytes: usize },
@@ -510,6 +510,81 @@ impl LineDiff {
         }
 
         ops
+    }
+}
+
+/// Represents a single atomic edit operation on a text buffer with automatic rollback capability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BufferAtomicEdit {
+    pub offset: usize,
+    pub old_text: String,
+    pub new_text: String,
+}
+
+/// Represents an atomic multi-step transaction with 2-Phase Commit (2PC) semantics for buffers.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BufferTransaction {
+    pub edits: Vec<BufferAtomicEdit>,
+}
+
+impl BufferTransaction {
+    pub fn new() -> Self {
+        Self { edits: Vec::new() }
+    }
+
+    pub fn record_edit(&mut self, offset: usize, old_text: impl Into<String>, new_text: impl Into<String>) {
+        self.edits.push(BufferAtomicEdit {
+            offset,
+            old_text: old_text.into(),
+            new_text: new_text.into(),
+        });
+    }
+
+    /// Generates the inverse transaction to safely rollback edits in reverse order.
+    pub fn rollback_transaction(&self) -> Self {
+        let mut reverse_edits = Vec::with_capacity(self.edits.len());
+        for edit in self.edits.iter().rev() {
+            reverse_edits.push(BufferAtomicEdit {
+                offset: edit.offset,
+                old_text: edit.new_text.clone(),
+                new_text: edit.old_text.clone(),
+            });
+        }
+        Self { edits: reverse_edits }
+    }
+
+    /// Verifies if the transaction is applicable on the target text snapshot.
+    pub fn verify_against_text(&self, text: &str) -> bool {
+        let mut current_offset_delta: isize = 0;
+        for edit in &self.edits {
+            let adjusted_offset = (edit.offset as isize + current_offset_delta) as usize;
+            if adjusted_offset + edit.old_text.len() > text.len() {
+                return false;
+            }
+            if &text[adjusted_offset..adjusted_offset + edit.old_text.len()] != edit.old_text {
+                return false;
+            }
+            current_offset_delta += edit.new_text.len() as isize - edit.old_text.len() as isize;
+        }
+        true
+    }
+
+    /// Applies the atomic transaction to the provided text string, returning the modified string.
+    pub fn apply(&self, text: &str) -> Result<String, &'static str> {
+        let mut result = text.to_string();
+        let mut delta: isize = 0;
+
+        for edit in &self.edits {
+            let start = (edit.offset as isize + delta) as usize;
+            let end = start + edit.old_text.len();
+            if end > result.len() || &result[start..end] != edit.old_text {
+                return Err("Transaction mismatch: source content does not match expected old_text");
+            }
+            result.replace_range(start..end, &edit.new_text);
+            delta += edit.new_text.len() as isize - edit.old_text.len() as isize;
+        }
+
+        Ok(result)
     }
 }
 
@@ -1122,4 +1197,27 @@ mod tests {
 
         result
     }
+
+    #[test]
+    fn test_buffer_transaction_commit_and_rollback() {
+        let initial_text = "fn main() {\n    println!(\"Hello, world!\");\n}\n";
+        let target_str = "Hello, world!";
+        let offset = initial_text.find(target_str).expect("target string not found");
+        let mut txn = BufferTransaction::new();
+        txn.record_edit(offset, target_str, "State-of-the-Art System");
+        
+        assert!(txn.verify_against_text(initial_text));
+        let committed = txn.apply(initial_text).expect("Transaction apply failed");
+        assert_eq!(
+            committed,
+            "fn main() {\n    println!(\"State-of-the-Art System\");\n}\n"
+        );
+
+        // Rollback
+        let rollback_txn = txn.rollback_transaction();
+        assert!(rollback_txn.verify_against_text(&committed));
+        let reverted = rollback_txn.apply(&committed).expect("Rollback apply failed");
+        assert_eq!(reverted, initial_text);
+    }
 }
+
