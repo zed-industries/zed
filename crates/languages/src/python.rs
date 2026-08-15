@@ -265,6 +265,41 @@ fn highlight_id_for_completion(
     }
 }
 
+/// Older pyright-derived servers request a literal `<configuration section>.analysis` section,
+/// while new versions request `<configuration section>` and read its nested `analysis` object.
+///
+/// Basedpyright changed this behavior in v1.39.10, context: https://github.com/DetachHead/basedpyright/pull/1847
+/// Pyright itself changed this behavior in v1.1.411 context: https://github.com/microsoft/pyright/pull/11480
+fn normalize_pyright_analysis_configuration(
+    workspace_configuration: &mut Value,
+    configuration_section: &str,
+) {
+    let Some(workspace_configuration) = workspace_configuration.as_object_mut() else {
+        return;
+    };
+
+    let analysis_section = format!("{configuration_section}.analysis");
+    let analysis = workspace_configuration
+        .get(configuration_section)
+        .and_then(Value::as_object)
+        .and_then(|server_configuration| server_configuration.get("analysis"))
+        .cloned()
+        .or_else(|| workspace_configuration.get(&analysis_section).cloned());
+    let Some(analysis) = analysis else {
+        return;
+    };
+
+    let server_configuration = workspace_configuration
+        .entry(configuration_section)
+        .or_insert_with(|| Value::Object(serde_json::Map::default()));
+    let Some(server_configuration) = server_configuration.as_object_mut() else {
+        return;
+    };
+    server_configuration.insert("analysis".to_owned(), analysis.clone());
+
+    workspace_configuration.insert(analysis_section, analysis);
+}
+
 pub struct TyLspAdapter {
     fs: Arc<dyn Fs>,
 }
@@ -735,6 +770,7 @@ impl LspAdapter for PyrightLspAdapter {
                 );
             }
 
+            normalize_pyright_analysis_configuration(&mut user_settings, "python");
             user_settings
         }))
     }
@@ -2195,6 +2231,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 }
             }
 
+            normalize_pyright_analysis_configuration(&mut user_settings, "basedpyright");
             user_settings
         }))
     }
@@ -2721,7 +2758,124 @@ mod tests {
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 
-    use crate::python::python_module_name_from_relative_path;
+    use crate::python::{
+        normalize_pyright_analysis_configuration, python_module_name_from_relative_path,
+    };
+
+    #[test]
+    fn test_normalize_legacy_basedpyright_analysis_configuration() {
+        let mut workspace_configuration = serde_json::json!({
+            "basedpyright.analysis": {
+                "diagnosticMode": "workspace",
+                "typeCheckingMode": "basic"
+            }
+        });
+
+        normalize_pyright_analysis_configuration(&mut workspace_configuration, "basedpyright");
+
+        assert_eq!(
+            workspace_configuration,
+            serde_json::json!({
+                "basedpyright": {
+                    "analysis": {
+                        "diagnosticMode": "workspace",
+                        "typeCheckingMode": "basic"
+                    }
+                },
+                "basedpyright.analysis": {
+                    "diagnosticMode": "workspace",
+                    "typeCheckingMode": "basic"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_normalize_nested_basedpyright_analysis_configuration() {
+        let mut workspace_configuration = serde_json::json!({
+            "basedpyright": {
+                "analysis": {
+                    "diagnosticMode": "workspace"
+                },
+                "unrelated": true
+            }
+        });
+
+        normalize_pyright_analysis_configuration(&mut workspace_configuration, "basedpyright");
+
+        assert_eq!(
+            workspace_configuration,
+            serde_json::json!({
+                "basedpyright": {
+                    "analysis": {
+                        "diagnosticMode": "workspace"
+                    },
+                    "unrelated": true
+                },
+                "basedpyright.analysis": {
+                    "diagnosticMode": "workspace"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_nested_basedpyright_analysis_configuration_takes_precedence() {
+        let mut workspace_configuration = serde_json::json!({
+            "basedpyright": {
+                "analysis": {
+                    "typeCheckingMode": "basic"
+                }
+            },
+            "basedpyright.analysis": {
+                "typeCheckingMode": "strict"
+            }
+        });
+
+        normalize_pyright_analysis_configuration(&mut workspace_configuration, "basedpyright");
+
+        assert_eq!(
+            workspace_configuration,
+            serde_json::json!({
+                "basedpyright": {
+                    "analysis": {
+                        "typeCheckingMode": "basic"
+                    }
+                },
+                "basedpyright.analysis": {
+                    "typeCheckingMode": "basic"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_normalize_pyright_analysis_configuration() {
+        let mut workspace_configuration = serde_json::json!({
+            "python.analysis": {
+                "diagnosticMode": "workspace",
+                "typeCheckingMode": "basic"
+            }
+        });
+
+        normalize_pyright_analysis_configuration(&mut workspace_configuration, "python");
+
+        assert_eq!(
+            workspace_configuration,
+            serde_json::json!({
+                "python": {
+                    "analysis": {
+                        "diagnosticMode": "workspace",
+                        "typeCheckingMode": "basic"
+                    }
+                },
+                "python.analysis": {
+                    "diagnosticMode": "workspace",
+                    "typeCheckingMode": "basic"
+                }
+            })
+        );
+    }
 
     #[gpui::test]
     async fn test_conda_activation_script_injection(cx: &mut TestAppContext) {
