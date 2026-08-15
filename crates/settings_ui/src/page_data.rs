@@ -2182,7 +2182,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn gutter_section() -> [SettingsPageItem; 9] {
+    fn gutter_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("Gutter"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2334,6 +2334,30 @@ fn editor_page() -> SettingsPage {
                             .gutter
                             .get_or_insert_default()
                             .min_line_number_digits = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Git Gutter Width",
+                description: "Width, in pixels, of the git diff indicators in the gutter. When unset, the width scales with the buffer font size.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("gutter.git_gutter_width"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .as_ref()
+                            .and_then(|gutter| gutter.git_gutter_width.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .get_or_insert_default()
+                            .git_gutter_width = value;
                     },
                 }),
                 metadata: None,
@@ -3720,7 +3744,7 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
-    fn file_scan_section() -> [SettingsPageItem; 6] {
+    fn file_scan_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("File Scan"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3768,6 +3792,22 @@ fn search_and_files_page() -> SettingsPage {
                 ),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "File Scan Depth",
+                description: "Maximum directory depth to eagerly index outside of git repositories; contents of directories at this depth or deeper are indexed on demand. Repositories rooted shallower than this depth are always indexed fully. In projects that are not rooted at a git repository, repositories directly inside a root folder activate their git features immediately; deeper ones activate on first use. 0 means no limit and activates all git repositories immediately",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("file_scan_depth"),
+                    pick: |settings_content| {
+                        settings_content.project.worktree.file_scan_depth.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.project.worktree.file_scan_depth = value;
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Scan Symbolic Links",
@@ -5669,7 +5709,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn terminal_panel_section() -> [SettingsPageItem; 4] {
+    fn terminal_panel_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Terminal Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5681,6 +5721,25 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| settings_content.terminal.as_ref()?.dock.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.terminal.get_or_insert_default().dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Starts Open",
+                description: "Whether the terminal panel should open on startup.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("terminal.starts_open"),
+                    pick: |settings_content| {
+                        settings_content.terminal.as_ref()?.starts_open.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .starts_open = value;
                     },
                 }),
                 metadata: None,
@@ -5945,7 +6004,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 17] {
+    fn git_panel_section() -> [SettingsPageItem; 18] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5971,6 +6030,25 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| settings_content.git_panel.as_ref()?.dock.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.git_panel.get_or_insert_default().dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Starts Open",
+                description: "Whether the git panel should open on startup.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.starts_open"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.starts_open.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .starts_open = value;
                     },
                 }),
                 metadata: None,
@@ -7895,7 +7973,7 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn git_hunks_section() -> [SettingsPageItem; 4] {
+    fn git_hunks_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Git Hunks"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7907,6 +7985,20 @@ fn version_control_page() -> SettingsPage {
                     pick: |settings_content| settings_content.git.as_ref()?.hunk_style.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.git.get_or_insert_default().hunk_style = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Diff Base",
+                description: "Whether git features show changes relative to HEAD (uncommitted changes) or to the default branch (all changes on the current branch).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.diff_base"),
+                    pick: |settings_content| settings_content.git.as_ref()?.diff_base.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.git.get_or_insert_default().diff_base = value;
                     },
                 }),
                 metadata: None,

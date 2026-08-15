@@ -73,7 +73,7 @@ impl DevContainerManifest {
         local_project_path: &Path,
     ) -> Result<Self, DevContainerError> {
         let config_path = local_project_path.join(local_config.config_path.clone());
-        log::debug!("parsing devcontainer json found in {:?}", &config_path);
+        log::debug!("parsing devcontainer json found in {config_path:?}");
         let devcontainer_contents = context.fs.load(&config_path).await.map_err(|e| {
             log::error!("Unable to read devcontainer contents: {e}");
             DevContainerError::DevContainerParseFailed
@@ -591,7 +591,7 @@ impl DevContainerManifest {
                     "No devcontainer-feature.json found in {:?}, no defaults to apply",
                     feature_json_path
                 );
-                log::error!("{}", &message);
+                log::error!("{message}");
                 return Err(DevContainerError::ResourceFetchFailed);
             }
 
