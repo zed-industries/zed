@@ -91,6 +91,8 @@ pub enum CommandCategory {
     Native,
     /// Commands sourced from MCP server prompts.
     Mcp,
+    /// Multi-agent swarm and subagent delegation commands (e.g. `/delegate`, `/swarm`).
+    Swarm,
 }
 
 impl CommandCategory {
@@ -98,6 +100,7 @@ impl CommandCategory {
         match self {
             Self::Native => "native",
             Self::Mcp => "mcp",
+            Self::Swarm => "swarm",
         }
     }
 
@@ -105,6 +108,7 @@ impl CommandCategory {
         match value {
             "native" => Some(Self::Native),
             "mcp" => Some(Self::Mcp),
+            "swarm" => Some(Self::Swarm),
             _ => None,
         }
     }
