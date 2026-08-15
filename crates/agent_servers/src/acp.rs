@@ -669,9 +669,12 @@ const MINIMUM_SUPPORTED_VERSION: ProtocolVersion = ProtocolVersion::V1;
 /// dispatch queue via `dispatch_tx`, where they are handled by the
 /// `handle_*` functions on a GPUI context. The returned future drives the
 /// connection and completes when the transport closes; callers are expected
-/// to spawn it on a background executor and hold the task for the lifetime
-/// of the connection. The `connection_tx` oneshot receives the
-/// `ConnectionTo<Agent>` handle as soon as the builder runs its `main_fn`.
+/// to poll it in the background and hold the task for the lifetime of the
+/// connection. In unoptimized builds each inbound dispatch needs ~0.5 MiB
+/// of stack, so poll it on a thread with room to spare (macOS GCD workers'
+/// 512 KiB is not enough — see `AcpConnection::stdio`). The `connection_tx`
+/// oneshot receives the `ConnectionTo<Agent>` handle as soon as the builder
+/// runs its `main_fn`.
 fn connect_client_future(
     name: &'static str,
     transport: impl agent_client_protocol::ConnectTo<Client> + 'static,
@@ -925,17 +928,25 @@ impl AcpConnection {
         });
 
         // `connect_client_future` installs the production handler set and
-        // hands us back both the connection-future (to run on a background
-        // executor) and a oneshot receiver that produces the
-        // `ConnectionTo<Agent>` once the transport handshake is ready.
+        // hands us back both the connection-future and a oneshot receiver
+        // that produces the `ConnectionTo<Agent>` once the transport
+        // handshake is ready. The future must be polled on a dedicated
+        // thread rather than via `background_spawn`: in unoptimized builds
+        // its dispatch chain needs ~0.5 MiB of stack per inbound message,
+        // which overflows the fixed 512 KiB stacks of the GCD workers that
+        // poll background tasks on macOS, crashing dev builds as soon as an
+        // agent sends its first message. See `spawn_dedicated` for the
+        // stack guarantee that makes the dedicated thread sufficient.
         let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
         let connection_future =
             connect_client_future("zed", transport, dispatch_tx.clone(), connection_tx);
-        let io_task = cx.background_spawn(async move {
-            if let Err(err) = connection_future.await {
-                log::error!("ACP connection error: {err}");
-            }
-        });
+        let io_task = cx
+            .background_executor()
+            .spawn_dedicated(move |_executor| async move {
+                if let Err(err) = connection_future.await {
+                    log::error!("ACP connection error: {err}");
+                }
+            });
 
         let connection_rx = async move {
             connection_rx

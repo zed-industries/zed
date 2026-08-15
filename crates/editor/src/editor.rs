@@ -106,7 +106,7 @@ pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
 };
-pub use git::blame::BlameRenderer;
+pub use git::blame::{BlameRenderer, GitBlame};
 pub use git::{
     DiffHunkDelegate, ResolvedDiffHunk, ResolvedDiffHunks, RestoreOnlyDiffHunkDelegate,
     RestoreOnlyUnstagedDiffHunkDelegate, UncommittedDiffHunkDelegate, render_diff_hunk_controls,
@@ -158,7 +158,7 @@ use futures::{
     future::{self, Shared},
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
-use git::blame::{GitBlame, GlobalBlameRenderer};
+use git::blame::GlobalBlameRenderer;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
@@ -3330,7 +3330,12 @@ impl Editor {
             cx.notify();
             return;
         }
-        if self.show_git_blame_gutter {
+        if self.show_git_blame_gutter
+            && !self
+                .blame
+                .as_ref()
+                .is_some_and(|blame| blame.read(cx).is_static())
+        {
             self.show_git_blame_gutter = false;
             cx.notify();
             return;
@@ -8026,6 +8031,11 @@ impl Editor {
             return None;
         }
         let rename = self.take_rename(false, window, cx)?;
+        let new_name = rename.editor.read(cx).text(cx);
+        if new_name.trim().is_empty() {
+            return Some(Task::ready(Ok(())));
+        }
+
         let workspace = self.workspace()?.downgrade();
         let (buffer, start) = self
             .buffer
@@ -8040,7 +8050,6 @@ impl Editor {
         }
 
         let old_name = rename.old_name;
-        let new_name = rename.editor.read(cx).text(cx);
 
         let rename = self.semantics_provider.as_ref()?.perform_rename(
             &buffer,
