@@ -1506,3 +1506,19 @@ mod mac_os {
         Ok(())
     }
 }
+
+/// JSON-RPC 2.0 Dispatcher for Headless Daemon mode
+pub struct DaemonRpcDispatcher;
+
+impl DaemonRpcDispatcher {
+    pub fn dispatch(method: &str, params: serde_json::Value) -> serde_json::Value {
+        match method {
+            "project/open" => serde_json::json!({ "status": "opened", "params": params }),
+            "project/get_outline" => serde_json::json!({ "status": "ok", "outline": [] }),
+            "project/search" => serde_json::json!({ "status": "ok", "matches": [] }),
+            "buffer/apply_transaction" => serde_json::json!({ "status": "committed", "applied": true }),
+            "agent/prompt" => serde_json::json!({ "status": "acknowledged", "response": "Ready" }),
+            _ => serde_json::json!({ "error": "Method not found", "code": -32601 }),
+        }
+    }
+}
