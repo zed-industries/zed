@@ -209,6 +209,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "comment.todo": {
+            "color": "#dfc184ff",
+            "font_style": "italic",
+            "font_weight": 700
+          },
           "constant": {
             "color": "#dfc184ff",
             "font_style": null,
@@ -625,6 +630,11 @@
             "color": "#7c7e86ff",
             "font_style": null,
             "font_weight": null
+          },
+          "comment.todo": {
+            "color": "#c18401ff",
+            "font_style": "italic",
+            "font_weight": 700
           },
           "constant": {
             "color": "#c18401ff",

@@ -384,3 +384,6 @@
     "Warning" "UserWarning" "DeprecationWarning" "PendingDeprecationWarning" "SyntaxWarning"
     "RuntimeWarning" "FutureWarning" "ImportWarning" "UnicodeWarning" "EncodingWarning"
     "BytesWarning" "ResourceWarning"))
+
+((comment) @comment.todo
+  (#match? @comment.todo "(?i)\\b(todo|fixme)\\b"))

@@ -163,3 +163,6 @@
 
 ((comment) @preproc
   (#match? @preproc "^// \\+build"))
+
+((comment) @comment.todo
+  (#match? @comment.todo "(?i)\\b(todo|fixme)\\b"))

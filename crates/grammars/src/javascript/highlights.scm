@@ -445,3 +445,6 @@
 (jsx_text) @text.jsx
 
 (html_character_reference) @string.special
+
+((comment) @comment.todo
+  (#match? @comment.todo "(?i)\\b(todo|fixme)\\b"))

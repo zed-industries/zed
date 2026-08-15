@@ -207,6 +207,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "comment.todo": {
+            "color": "#fabd2eff",
+            "font_style": "italic",
+            "font_weight": 700
+          },
           "constant": {
             "color": "#fabd2eff",
             "font_style": null,
@@ -628,6 +633,11 @@
             "color": "#c6b697ff",
             "font_style": null,
             "font_weight": null
+          },
+          "comment.todo": {
+            "color": "#fabd2eff",
+            "font_style": "italic",
+            "font_weight": 700
           },
           "constant": {
             "color": "#fabd2eff",
@@ -1051,6 +1061,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "comment.todo": {
+            "color": "#fabd2eff",
+            "font_style": "italic",
+            "font_weight": 700
+          },
           "constant": {
             "color": "#fabd2eff",
             "font_style": null,
@@ -1472,6 +1487,11 @@
             "color": "#5d544eff",
             "font_style": null,
             "font_weight": null
+          },
+          "comment.todo": {
+            "color": "#b57613ff",
+            "font_style": "italic",
+            "font_weight": 700
           },
           "constant": {
             "color": "#b57613ff",
@@ -1895,6 +1915,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "comment.todo": {
+            "color": "#b57613ff",
+            "font_style": "italic",
+            "font_weight": 700
+          },
           "constant": {
             "color": "#b57613ff",
             "font_style": null,
@@ -2316,6 +2341,11 @@
             "color": "#5d544eff",
             "font_style": null,
             "font_weight": null
+          },
+          "comment.todo": {
+            "color": "#b57613ff",
+            "font_style": "italic",
+            "font_weight": 700
           },
           "constant": {
             "color": "#b57613ff",

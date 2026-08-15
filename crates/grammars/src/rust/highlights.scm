@@ -258,3 +258,9 @@ operator: "/" @operator
         "::"
         (#match? @none "^[a-z\\d_]*$"))
     ]))
+
+([
+  (line_comment)
+  (block_comment)
+] @comment.todo
+  (#match? @comment.todo "(?i)\\b(todo|fixme)\\b"))

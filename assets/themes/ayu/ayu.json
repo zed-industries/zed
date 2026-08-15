@@ -202,6 +202,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "comment.todo": {
+            "color": "#e6b450ff",
+            "font_style": "italic",
+            "font_weight": 700
+          },
           "constant": {
             "color": "#d2a6ffff",
             "font_style": null,
@@ -609,6 +614,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "comment.todo": {
+            "color": "#f2ae49ff",
+            "font_style": "italic",
+            "font_weight": 700
+          },
           "constant": {
             "color": "#a37accff",
             "font_style": null,
@@ -1015,6 +1025,11 @@
             "color": "#9b9b99ff",
             "font_style": null,
             "font_weight": null
+          },
+          "comment.todo": {
+            "color": "#ffcc66ff",
+            "font_style": "italic",
+            "font_weight": 700
           },
           "constant": {
             "color": "#dfbfffff",

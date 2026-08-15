@@ -300,3 +300,6 @@ type: (primitive_type) @type.builtin
 
 (user_defined_literal
   (literal_suffix) @operator)
+
+((comment) @comment.todo
+  (#match? @comment.todo "(?i)\\b(todo|fixme)\\b"))

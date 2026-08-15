@@ -110,3 +110,31 @@ pub fn load_queries(name: &str) -> LanguageQueries {
     }
     result
 }
+
+#[cfg(all(test, feature = "load-grammars"))]
+mod tests {
+    use std::collections::{BTreeSet, HashMap};
+
+    use super::*;
+
+    #[test]
+    fn test_highlights_queries_compile() {
+        let grammars: HashMap<_, _> = native_grammars().into_iter().collect();
+        let language_names: BTreeSet<String> = GrammarDir::iter()
+            .filter_map(|path| Some(path.split_once('/')?.0.to_string()))
+            .collect();
+
+        for name in language_names {
+            let config = load_config(&name);
+            let grammar_name = config.grammar.as_deref().unwrap_or(&name);
+            let Some(grammar) = grammars.get(grammar_name) else {
+                continue;
+            };
+            if let Some(highlights) = load_queries(&name).highlights {
+                tree_sitter::Query::new(grammar, &highlights).unwrap_or_else(|error| {
+                    panic!("invalid highlights query for language {name:?}: {error}")
+                });
+            }
+        }
+    }
+}

@@ -476,3 +476,6 @@
 
 (switch_default
   "default" @keyword.control)
+
+((comment) @comment.todo
+  (#match? @comment.todo "(?i)\\b(todo|fixme)\\b"))

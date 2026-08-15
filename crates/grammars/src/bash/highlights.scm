@@ -164,3 +164,6 @@
   value: (_) @string.regex)
 
 (special_variable_name) @variable.special
+
+((comment) @comment.todo
+  (#match? @comment.todo "(?i)\\b(todo|fixme)\\b"))
