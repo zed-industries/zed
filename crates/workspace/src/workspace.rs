@@ -7085,22 +7085,32 @@ impl Workspace {
             let (items, active, pinned_count) = {
                 let pane = pane_handle.read(cx);
                 let active_item_id = pane.active_item().map(|item| item.item_id());
-                (
-                    pane.items()
-                        .filter_map(|handle| {
-                            let handle = handle.to_serializable_item_handle(cx)?;
+                // Pinned tabs are the leading tabs of a pane, so the pinned count has to
+                // shrink along with every pinned item that is dropped here. Otherwise a
+                // tab that was not pinned would take the dropped item's slot and come
+                // back pinned on the next restore.
+                let mut pinned_count = pane.pinned_count();
+                let items = pane
+                    .items()
+                    .enumerate()
+                    .filter_map(|(index, handle)| {
+                        let Some(handle) = handle.to_serializable_item_handle(cx) else {
+                            if index < pinned_count {
+                                pinned_count -= 1;
+                            }
+                            return None;
+                        };
 
-                            Some(SerializedItem {
-                                kind: Arc::from(handle.serialized_item_kind()),
-                                item_id: handle.item_id().as_u64(),
-                                active: Some(handle.item_id()) == active_item_id,
-                                preview: pane.is_active_preview_item(handle.item_id()),
-                            })
+                        Some(SerializedItem {
+                            kind: Arc::from(handle.serialized_item_kind()),
+                            item_id: handle.item_id().as_u64(),
+                            active: Some(handle.item_id()) == active_item_id,
+                            preview: pane.is_active_preview_item(handle.item_id()),
                         })
-                        .collect::<Vec<_>>(),
-                    pane.has_focus(window, cx),
-                    pane.pinned_count(),
-                )
+                    })
+                    .collect::<Vec<_>>();
+
+                (items, pane.has_focus(window, cx), pinned_count)
             };
 
             SerializedPane::new(items, active, pinned_count)
@@ -16396,6 +16406,91 @@ mod tests {
         let item_count_c = pane_c.read_with(cx, |pane, _| pane.items_len());
         assert_eq!(item_count_b, 0, "Pinned item in pane B should be closed");
         assert_eq!(item_count_c, 0, "Unpinned item in pane C should be closed");
+    }
+
+    #[gpui::test]
+    async fn test_restoring_pinned_tabs_when_items_fail_to_deserialize(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "test.txt": "" })).await;
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Items whose kind has no registered descriptor always fail to deserialize,
+        // which is what happens to a real item when its file or serialized state is
+        // gone by the time the workspace is restored.
+        let (items_len, pinned_count) = restore_pane(
+            &workspace,
+            SerializedPane::new(
+                vec![
+                    SerializedItem::new("TestItem", 1, false, false),
+                    SerializedItem::new("Unrestorable", 2, false, false),
+                    SerializedItem::new("TestItem", 3, true, false),
+                    SerializedItem::new("TestItem", 4, false, false),
+                ],
+                true,
+                2,
+            ),
+            cx,
+        )
+        .await;
+        assert_eq!(items_len, 3);
+        assert_eq!(
+            pinned_count, 1,
+            "only the pinned item that was restored should stay pinned"
+        );
+
+        let (items_len, pinned_count) = restore_pane(
+            &workspace,
+            SerializedPane::new(
+                vec![
+                    SerializedItem::new("TestItem", 1, false, false),
+                    SerializedItem::new("TestItem", 2, true, false),
+                    SerializedItem::new("Unrestorable", 3, false, false),
+                ],
+                true,
+                2,
+            ),
+            cx,
+        )
+        .await;
+        assert_eq!(items_len, 2);
+        assert_eq!(
+            pinned_count, 2,
+            "an unpinned item failing to restore should not unpin anything"
+        );
+    }
+
+    async fn restore_pane(
+        workspace: &Entity<Workspace>,
+        serialized_pane: SerializedPane,
+        cx: &mut VisualTestContext,
+    ) -> (usize, usize) {
+        let (pane, task) = workspace.update_in(cx, |workspace, window, cx| {
+            let pane = workspace.add_pane(window, cx);
+            let weak_pane = pane.downgrade();
+            let project = workspace.project().clone();
+            let workspace = cx.entity().downgrade();
+            let task = window.spawn(cx, async move |cx| {
+                serialized_pane
+                    .deserialize_to(
+                        &project,
+                        &weak_pane,
+                        WorkspaceId::from_i64(1),
+                        workspace,
+                        cx,
+                    )
+                    .await
+            });
+            (pane, task)
+        });
+        task.await.unwrap();
+        pane.read_with(cx, |pane, _| (pane.items_len(), pane.pinned_count()))
     }
 
     mod register_project_item_tests {
