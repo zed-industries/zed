@@ -342,9 +342,6 @@ impl NotebookEditor {
         cx.notify();
     }
 
-    /// Writes the notebook through the project rather than through the client's
-    /// own filesystem, so that a remote notebook's path is resolved on the
-    /// remote instead of against the local machine.
     fn save_impl(
         &mut self,
         destination: SaveDestination,
