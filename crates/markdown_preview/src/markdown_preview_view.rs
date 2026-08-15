@@ -717,7 +717,7 @@ impl MarkdownPreviewView {
 
     fn line_scroll_amount(&self, cx: &App) -> Pixels {
         let settings = ThemeSettings::get_global(cx);
-        settings.markdown_preview_font_size(cx) * settings.buffer_line_height.value()
+        settings.markdown_preview_font_size(cx) * settings.line_height()
     }
 
     fn increase_font_size(

@@ -209,7 +209,7 @@ impl MarkdownStyle {
         };
 
         let mut text_style = window.text_style();
-        let line_height = buffer_font_size * 1.75;
+        let line_height = buffer_font_size * theme_settings.line_height();
 
         text_style.refine(&TextStyleRefinement {
             font_family: Some(body_font_family),
@@ -6053,6 +6053,29 @@ mod tests {
                 "preview container font size must be rem-based, got {:?}",
                 style.container_style.text.font_size
             );
+        });
+    }
+
+    #[gpui::test]
+    fn test_markdown_preview_respects_line_height(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_line_height =
+                        Some(settings::BufferLineHeight::Custom(2.0));
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.update(|window, cx| {
+            let style = MarkdownStyle::themed(MarkdownFont::Preview, window, cx);
+            let font_size = ThemeSettings::get_global(cx).markdown_preview_font_size(cx);
+            let expected_line_height = font_size * 2.0;
+            assert_eq!(style.base_text_style.line_height, Some(expected_line_height.into()));
         });
     }
 
