@@ -91,7 +91,7 @@ impl AskPassDelegate {
         }
     }
 
-    pub fn ask_password(&mut self, prompt: String) -> Task<Option<EncryptedPassword>> {
+    pub fn ask_password(&self, prompt: String) -> Task<Option<EncryptedPassword>> {
         let mut this_tx = self.tx.clone();
         self.executor.spawn(async move {
             let (response_sender, response_receiver) = oneshot::channel();
@@ -125,7 +125,7 @@ impl AskPassSession {
     /// This will create a new AskPassSession.
     /// You must retain this session until the master process exits.
     #[must_use]
-    pub async fn new(executor: BackgroundExecutor, mut delegate: AskPassDelegate) -> Result<Self> {
+    pub async fn new(executor: BackgroundExecutor, delegate: AskPassDelegate) -> Result<Self> {
         #[cfg(target_os = "windows")]
         let secret = std::sync::Arc::new(std::sync::Mutex::new(None));
 
@@ -604,7 +604,7 @@ mod tests {
     #[gpui::test]
     async fn dropping_password_request_cancels_prompt(cx: &mut TestAppContext) {
         let (prompt_sender, mut prompt_receiver) = mpsc::unbounded();
-        let mut delegate = AskPassDelegate::new_with_cancellation(
+        let delegate = AskPassDelegate::new_with_cancellation(
             &mut cx.to_async(),
             move |_, response_sender, cancellation, _| {
                 prompt_sender
