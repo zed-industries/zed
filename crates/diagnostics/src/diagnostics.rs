@@ -1152,3 +1152,43 @@ fn is_line_blank_or_indented_less(
     let line_indent = snapshot.line_indent_for_row(row);
     line_indent.is_line_blank() || line_indent.len(tab_size) < indent_level
 }
+
+/// Agent-targeted diagnostic filter for automated error-correction loops
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentDiagnosticFilter {
+    pub include_errors: bool,
+    pub include_warnings: bool,
+    pub target_file: Option<std::path::PathBuf>,
+}
+
+impl Default for AgentDiagnosticFilter {
+    fn default() -> Self {
+        Self {
+            include_errors: true,
+            include_warnings: false,
+            target_file: None,
+        }
+    }
+}
+
+/// Structured consensus report of compiler diagnostics for autonomous swarm review
+#[derive(Clone, Debug, Default)]
+pub struct DiagnosticConsensusReport {
+    pub total_errors: usize,
+    pub total_warnings: usize,
+    pub critical_paths: Vec<std::path::PathBuf>,
+}
+
+impl DiagnosticConsensusReport {
+    pub fn new(total_errors: usize, total_warnings: usize) -> Self {
+        Self {
+            total_errors,
+            total_warnings,
+            critical_paths: Vec::new(),
+        }
+    }
+
+    pub fn is_clean(&self) -> bool {
+        self.total_errors == 0
+    }
+}
