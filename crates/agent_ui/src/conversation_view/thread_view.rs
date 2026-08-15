@@ -10121,11 +10121,17 @@ impl ThreadView {
             .get(entry_ix)?
             .location(location_ix)?;
 
-        let project_path = self
-            .project
-            .upgrade()?
-            .read(cx)
-            .find_project_path(&tool_call_location.path, cx);
+        let mut path = tool_call_location.path.clone();
+        if let Ok(url) = url::Url::parse(&path.to_string_lossy()) {
+            if url.scheme() == "file" {
+                if let Ok(file_path) = url.to_file_path() {
+                    path = file_path;
+                }
+            }
+        }
+
+        let project = self.project.upgrade()?;
+        let project_path = project.read(cx).find_project_path(&path, cx);
 
         let open_task = self
             .workspace
@@ -10133,8 +10139,24 @@ impl ThreadView {
                 if let Some(project_path) = project_path {
                     workspace.open_path(project_path, None, true, window, cx)
                 } else {
+                    let abs_path = if util::paths::is_absolute(
+                        path.to_string_lossy().as_ref(),
+                        workspace.project().read(cx).path_style(cx),
+                    ) {
+                        path
+                    } else if let Some(worktree) = workspace
+                        .project()
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .next()
+                        .or_else(|| workspace.project().read(cx).worktrees(cx).next())
+                    {
+                        worktree.read(cx).abs_path().join(&path)
+                    } else {
+                        path
+                    };
                     workspace.open_abs_path(
-                        tool_call_location.path.clone(),
+                        abs_path,
                         OpenOptions {
                             focus: Some(true),
                             ..Default::default()

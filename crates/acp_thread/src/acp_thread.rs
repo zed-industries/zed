@@ -929,12 +929,25 @@ impl ToolCall {
             cx.new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx))
         };
 
+        let mut locations = tool_call.locations;
+        if locations.is_empty() {
+            for item in &content {
+                if let ToolCallContent::Diff(diff) = item {
+                    if let Some(diff_path) = diff.read(cx).file_path(cx) {
+                        if !diff_path.is_empty() {
+                            locations.push(acp::ToolCallLocation::new(PathBuf::from(diff_path)));
+                        }
+                    }
+                }
+            }
+        }
+
         let result = Self {
             id: tool_call.tool_call_id,
             label,
             kind: tool_call.kind,
             content,
-            locations: tool_call.locations,
+            locations,
             resolved_locations: Vec::default(),
             status,
             raw_input: tool_call.raw_input,
@@ -1046,6 +1059,17 @@ impl ToolCall {
         if let Some(locations) = locations {
             self.locations = locations;
         }
+        if self.locations.is_empty() {
+            for item in &self.content {
+                if let ToolCallContent::Diff(diff) = item {
+                    if let Some(diff_path) = diff.read(cx).file_path(cx) {
+                        if !diff_path.is_empty() {
+                            self.locations.push(acp::ToolCallLocation::new(PathBuf::from(diff_path)));
+                        }
+                    }
+                }
+            }
+        }
 
         if let Some(raw_input) = raw_input {
             self.raw_input_markdown = markdown_for_raw_output(&raw_input, &language_registry, cx);
@@ -1132,15 +1156,31 @@ impl ToolCall {
     ) -> Option<ResolvedLocation> {
         let buffer = project
             .update(cx, |project, cx| {
-                if let Some(path) = project.project_path_for_absolute_path(&location.path, cx) {
-                    Some(project.open_buffer(path, cx))
-                } else if is_absolute(
-                    location.path.to_string_lossy().as_ref(),
-                    project.path_style(cx),
-                ) {
-                    Some(project.open_local_buffer(&location.path, cx))
+                let mut path = location.path.clone();
+                if let Ok(url) = url::Url::parse(&path.to_string_lossy()) {
+                    if url.scheme() == "file" {
+                        if let Ok(file_path) = url.to_file_path() {
+                            path = file_path;
+                        }
+                    }
+                }
+
+                if let Some(project_path) = project.find_project_path(&path, cx) {
+                    Some(project.open_buffer(project_path, cx))
+                } else if is_absolute(path.to_string_lossy().as_ref(), project.path_style(cx)) {
+                    Some(project.open_local_buffer(&path, cx))
                 } else {
-                    None
+                    let worktree_abs_path = project
+                        .visible_worktrees(cx)
+                        .next()
+                        .or_else(|| project.worktrees(cx).next())
+                        .map(|w| w.read(cx).abs_path().to_path_buf());
+                    if let Some(worktree_abs_path) = worktree_abs_path {
+                        let abs_path = worktree_abs_path.join(&path);
+                        Some(project.open_local_buffer(&abs_path, cx))
+                    } else {
+                        Some(project.open_local_buffer(&path, cx))
+                    }
                 }
             })
             .ok()??;
@@ -3157,7 +3197,7 @@ impl AcpThread {
 
         match update {
             ToolCallUpdate::UpdateFields(update) => {
-                let location_updated = update.fields.locations.is_some();
+                let had_locations = !call.locations.is_empty();
                 call.update_fields(
                     update.fields,
                     update.meta,
@@ -3166,13 +3206,24 @@ impl AcpThread {
                     &self.terminals,
                     cx,
                 )?;
-                if location_updated {
+                let has_locations = !call.locations.is_empty();
+                if has_locations || had_locations {
                     self.resolve_locations(update.tool_call_id, cx);
                 }
             }
             ToolCallUpdate::UpdateDiff(update) => {
+                let diff_path = update.diff.read(cx).file_path(cx);
+                let id = update.id.clone();
                 call.content.clear();
                 call.content.push(ToolCallContent::Diff(update.diff));
+                if call.locations.is_empty() {
+                    if let Some(diff_path) = diff_path {
+                        if !diff_path.is_empty() {
+                            call.locations.push(acp::ToolCallLocation::new(PathBuf::from(diff_path)));
+                        }
+                    }
+                }
+                self.resolve_locations(id, cx);
             }
             ToolCallUpdate::UpdateTerminal(update) => {
                 call.content.clear();
@@ -4225,11 +4276,29 @@ impl AcpThread {
         let should_update_agent_location = self.parent_session_id.is_none();
         cx.spawn(async move |this, cx| {
             let load = project.update(cx, |project, cx| {
-                let path = project
-                    .project_path_for_absolute_path(&path, cx)
-                    .ok_or_else(|| {
-                        acp::Error::resource_not_found(Some(path.display().to_string()))
-                    })?;
+                let mut path = path;
+                if let Ok(url) = url::Url::parse(&path.to_string_lossy()) {
+                    if url.scheme() == "file" {
+                        if let Ok(file_path) = url.to_file_path() {
+                            path = file_path;
+                        }
+                    }
+                }
+                let project_path = project
+                    .find_project_path(&path, cx)
+                    .or_else(|| {
+                        let abs_path = if is_absolute(path.to_string_lossy().as_ref(), project.path_style(cx)) {
+                            path.clone()
+                        } else if let Some(worktree) = project.visible_worktrees(cx).next().or_else(|| project.worktrees(cx).next()) {
+                            worktree.read(cx).abs_path().join(&path)
+                        } else {
+                            path.clone()
+                        };
+                        project.project_path_for_absolute_path(&abs_path, cx)
+                    });
+                let path = project_path.ok_or_else(|| {
+                    acp::Error::resource_not_found(Some(path.display().to_string()))
+                })?;
                 Ok::<_, acp::Error>(project.open_buffer(path, cx))
             })?;
 
@@ -4300,10 +4369,31 @@ impl AcpThread {
         let should_update_agent_location = self.parent_session_id.is_none();
         cx.spawn(async move |this, cx| {
             let load = project.update(cx, |project, cx| {
-                let path = project
-                    .project_path_for_absolute_path(&path, cx)
-                    .context("invalid path")?;
-                anyhow::Ok(project.open_buffer(path, cx))
+                let mut path = path;
+                if let Ok(url) = url::Url::parse(&path.to_string_lossy()) {
+                    if url.scheme() == "file" {
+                        if let Ok(file_path) = url.to_file_path() {
+                            path = file_path;
+                        }
+                    }
+                }
+                if let Some(project_path) = project.find_project_path(&path, cx) {
+                    anyhow::Ok(project.open_buffer(project_path, cx))
+                } else if is_absolute(path.to_string_lossy().as_ref(), project.path_style(cx)) {
+                    anyhow::Ok(project.open_local_buffer(&path, cx))
+                } else {
+                    let worktree_abs_path = project
+                        .visible_worktrees(cx)
+                        .next()
+                        .or_else(|| project.worktrees(cx).next())
+                        .map(|w| w.read(cx).abs_path().to_path_buf());
+                    if let Some(worktree_abs_path) = worktree_abs_path {
+                        let abs_path = worktree_abs_path.join(&path);
+                        anyhow::Ok(project.open_local_buffer(&abs_path, cx))
+                    } else {
+                        anyhow::Ok(project.open_local_buffer(&path, cx))
+                    }
+                }
             });
             let buffer = load?.await?;
             let snapshot = this.update(cx, |this, cx| {
@@ -6392,6 +6482,247 @@ mod tests {
                 .upgrade()
                 .expect("resolved location should keep an open buffer");
             assert_eq!(buffer.read(cx).text(), "skill body");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_location_resolves_relative_file_and_updates_agent_location(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "src": {
+                    "foo.rs": "fn foo() {}\nfn bar() {}\n",
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        // 1. Test relative path "src/foo.rs"
+        let rel_path = std::path::PathBuf::from("src/foo.rs");
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("edit_file", "Edit src/foo.rs")
+                            .kind(acp::ToolKind::Edit)
+                            .status(acp::ToolCallStatus::Completed)
+                            .locations(vec![acp::ToolCallLocation::new(rel_path.clone()).line(Some(1))]),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            let (tool_call_location, agent_location) = thread.entries[0]
+                .location(0)
+                .expect("relative tool-call location should resolve");
+            assert_eq!(tool_call_location.path, rel_path);
+
+            let buffer = agent_location
+                .buffer
+                .upgrade()
+                .expect("resolved location should keep an open buffer");
+            assert_eq!(buffer.read(cx).text(), "fn foo() {}\nfn bar() {}\n");
+        });
+
+        project.read_with(cx, |project, cx| {
+            let agent_location = project
+                .agent_location()
+                .expect("project agent location should be set");
+            let buffer = agent_location.buffer.upgrade().unwrap();
+            assert_eq!(buffer.read(cx).text(), "fn foo() {}\nfn bar() {}\n");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_location_resolves_file_uri(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "src": {
+                    "foo.rs": "fn foo() {}\n",
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let uri_path = std::path::PathBuf::from("file:///project/src/foo.rs");
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("edit_file", "Edit src/foo.rs")
+                            .kind(acp::ToolKind::Edit)
+                            .status(acp::ToolCallStatus::Completed)
+                            .locations(vec![acp::ToolCallLocation::new(uri_path.clone())]),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            let (tool_call_location, agent_location) = thread.entries[0]
+                .location(0)
+                .expect("file URI tool-call location should resolve");
+            assert_eq!(tool_call_location.path, uri_path);
+
+            let buffer = agent_location
+                .buffer
+                .upgrade()
+                .expect("resolved location should keep an open buffer");
+            assert_eq!(buffer.read(cx).text(), "fn foo() {}\n");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_location_extracted_from_diff(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "src": {
+                    "foo.rs": "fn foo() {}\n",
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("edit_file", "Edit src/foo.rs")
+                            .kind(acp::ToolKind::Edit)
+                            .status(acp::ToolCallStatus::Completed)
+                            .content(vec![acp::ToolCallContent::Diff(acp::Diff::new(
+                                "src/foo.rs",
+                                "fn foo() {\n    println!(\"hello\");\n}\n",
+                            ))]),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            let (tool_call_location, agent_location) = thread.entries[0]
+                .location(0)
+                .expect("diff tool-call location should resolve");
+            assert_eq!(tool_call_location.path, Path::new("src/foo.rs"));
+
+            let buffer = agent_location
+                .buffer
+                .upgrade()
+                .expect("resolved location should keep an open buffer");
+            assert_eq!(buffer.read(cx).text(), "fn foo() {}\n");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_location_resolves_relative_new_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({}),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let new_file_rel = std::path::PathBuf::from("new_file.txt");
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("create_file", "Create new_file.txt")
+                            .kind(acp::ToolKind::Edit)
+                            .status(acp::ToolCallStatus::Completed)
+                            .locations(vec![acp::ToolCallLocation::new(new_file_rel.clone())]),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            let (tool_call_location, agent_location) = thread.entries[0]
+                .location(0)
+                .expect("new relative file location should resolve");
+            assert_eq!(tool_call_location.path, new_file_rel);
+
+            let buffer = agent_location
+                .buffer
+                .upgrade()
+                .expect("resolved location should keep an open buffer");
+            assert_eq!(buffer.read(cx).text(), "");
         });
     }
 
