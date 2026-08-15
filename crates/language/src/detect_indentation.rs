@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::num::NonZeroU32;
+use text::LineIndent;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DetectedIndentation {
@@ -7,51 +8,42 @@ pub struct DetectedIndentation {
     pub tab_size: Option<NonZeroU32>,
 }
 
-pub fn detect_indentation<'a>(lines: impl Iterator<Item = &'a str>) -> Option<DetectedIndentation> {
+pub fn detect_indentation(
+    indents: impl Iterator<Item = LineIndent>,
+) -> Option<DetectedIndentation> {
     const TEST_LINES: usize = 2000;
     const MAX_DELTA_SAMPLES: usize = 10;
 
     let mut lines_with_leading_tab = 0;
     let mut lines_with_leading_space = 0;
+    let mut delta_histogram = HashMap::<u32, usize>::new();
+    let mut previous_indent: Option<u32> = None;
 
-    let mut delta_histogram = HashMap::<usize, usize>::new();
-
-    let mut previous_indent = None;
-
-    for line in lines.take(TEST_LINES) {
-        if line.trim().is_empty() {
+    for indent in indents.take(TEST_LINES) {
+        if indent.is_line_blank() {
             continue;
         }
-
-        let tabs = line.chars().take_while(|&c| c == '\t').count();
-        let spaces = line.chars().take_while(|&c| c == ' ').count();
-
-        // Fow now, we are ignoring mixed indentation
-        if tabs > 0 && spaces > 0 {
+        // Ignore mixed indentation lines for now, same as before.
+        if indent.tabs > 0 && indent.spaces > 0 {
             continue;
         }
-
-        if tabs > 0 {
+        if indent.tabs > 0 {
             lines_with_leading_tab += 1;
             continue;
         }
-
-        if spaces > 0 {
+        if indent.spaces > 0 {
             lines_with_leading_space += 1;
-
-            if let Some(previous_indent) = previous_indent {
-                let delta = spaces.abs_diff(previous_indent);
-
+            if let Some(prev) = previous_indent {
+                let delta = indent.spaces.abs_diff(prev);
                 if delta > 0 {
-                    *delta_histogram.entry(delta).or_default() += 1;
-
-                    if *delta_histogram.get(&delta).unwrap() >= MAX_DELTA_SAMPLES {
+                    let count = delta_histogram.entry(delta).or_default();
+                    *count += 1;
+                    if *count >= MAX_DELTA_SAMPLES {
                         break;
                     }
                 }
             }
-
-            previous_indent = Some(spaces);
+            previous_indent = Some(indent.spaces);
         }
     }
 
@@ -68,7 +60,7 @@ pub fn detect_indentation<'a>(lines: impl Iterator<Item = &'a str>) -> Option<De
             tab_size: delta_histogram
                 .into_iter()
                 .max_by_key(|(_, count)| *count)
-                .and_then(|(size, _)| NonZeroU32::new(size as u32)),
+                .and_then(|(size, _)| NonZeroU32::new(size)),
         })
     }
 }
@@ -85,7 +77,7 @@ fn main() {
 }
 "#;
 
-    let result = detect_indentation(source.lines());
+    let result = detect_indentation(source.lines().map(LineIndent::from));
 
     assert_eq!(
         result,
@@ -100,7 +92,7 @@ fn main() {
 fn test_detect_tab_indentation() {
     let source = "fn main() {\n\tlet x = 10;\n\tprintln!(\"hello\");\n}\n";
 
-    let result = detect_indentation(source.lines());
+    let result = detect_indentation(source.lines().map(LineIndent::from));
 
     assert_eq!(
         result,
@@ -122,7 +114,7 @@ fn main() {
 "#;
 
     assert_eq!(
-        detect_indentation(source.lines()),
+        detect_indentation(source.lines().map(LineIndent::from)),
         Some(DetectedIndentation {
             hard_tabs: false,
             tab_size: NonZeroU32::new(4),
@@ -143,7 +135,7 @@ fn main() {
 "#;
 
     assert_eq!(
-        detect_indentation(source.lines()),
+        detect_indentation(source.lines().map(LineIndent::from)),
         Some(DetectedIndentation {
             hard_tabs: false,
             tab_size: NonZeroU32::new(2),
