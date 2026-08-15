@@ -1232,3 +1232,32 @@ mod tests {
         assert_eq!(selection.start.row, buffer_row);
     }
 }
+
+/// Headless outline item representing code symbols extracted from AST
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeadlessOutlineItem {
+    pub name: String,
+    pub kind: String,
+    pub start_row: u32,
+    pub end_row: u32,
+    pub depth: usize,
+}
+
+/// Hierarchy of symbol outlines for whole-buffer headless agent navigation
+#[derive(Clone, Debug, Default)]
+pub struct HeadlessOutlineTree {
+    pub items: Vec<HeadlessOutlineItem>,
+}
+
+impl HeadlessOutlineTree {
+    pub fn new(items: Vec<HeadlessOutlineItem>) -> Self {
+        Self { items }
+    }
+
+    pub fn find_by_name(&self, query: &str) -> Vec<&HeadlessOutlineItem> {
+        self.items
+            .iter()
+            .filter(|item| item.name.to_lowercase().contains(&query.to_lowercase()))
+            .collect()
+    }
+}
