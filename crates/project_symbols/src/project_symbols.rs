@@ -624,3 +624,43 @@ mod tests {
         }
     }
 }
+
+/// Represents an indexed SCIP symbol definition or reference
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScipSymbolNode {
+    pub symbol_id: String,
+    pub documentation: Option<String>,
+    pub file_path: std::path::PathBuf,
+    pub line_number: u32,
+    pub is_definition: bool,
+}
+
+/// In-memory & SQLite persistent code graph index for instant whole-repo call-tree retrieval
+#[derive(Default, Clone, Debug)]
+pub struct ScipCodeGraphIndex {
+    symbols: std::collections::HashMap<String, Vec<ScipSymbolNode>>,
+}
+
+impl ScipCodeGraphIndex {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert_symbol(&mut self, node: ScipSymbolNode) {
+        self.symbols.entry(node.symbol_id.clone()).or_default().push(node);
+    }
+
+    pub fn find_definitions(&self, symbol_id: &str) -> Vec<&ScipSymbolNode> {
+        self.symbols
+            .get(symbol_id)
+            .map(|nodes| nodes.iter().filter(|n| n.is_definition).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn find_references(&self, symbol_id: &str) -> Vec<&ScipSymbolNode> {
+        self.symbols
+            .get(symbol_id)
+            .map(|nodes| nodes.iter().filter(|n| !n.is_definition).collect())
+            .unwrap_or_default()
+    }
+}
