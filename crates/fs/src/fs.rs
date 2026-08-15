@@ -3522,3 +3522,28 @@ fn atomic_replace<P: AsRef<Path>>(
         )
     }
 }
+
+/// Space-grade in-memory filesystem snapshot for deterministic agent verification and dry-run assertions
+#[derive(Clone, Debug, Default)]
+pub struct MemoryFsSnapshot {
+    pub files: collections::HashMap<PathBuf, Vec<u8>>,
+    pub directories: collections::HashSet<PathBuf>,
+}
+
+impl MemoryFsSnapshot {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert_file(&mut self, path: impl Into<PathBuf>, content: impl Into<Vec<u8>>) {
+        self.files.insert(path.into(), content.into());
+    }
+
+    pub fn insert_dir(&mut self, path: impl Into<PathBuf>) {
+        self.directories.insert(path.into());
+    }
+
+    pub fn contains_path(&self, path: &Path) -> bool {
+        self.files.contains_key(path) || self.directories.contains(path)
+    }
+}
