@@ -344,3 +344,30 @@ pub struct GpuSpecs {
     /// Further information about the driver, as reported by Vulkan.
     pub driver_info: String,
 }
+
+/// Headless rendering driver for executing GPUI layouts and element trees in offscreen / agent daemon modes
+#[derive(Clone, Debug, Default)]
+pub struct HeadlessRenderDriver {
+    /// Virtual viewport width in logical pixels.
+    pub virtual_width: u32,
+    /// Virtual viewport height in logical pixels.
+    pub virtual_height: u32,
+    /// Display scale factor.
+    pub scale_factor: f32,
+}
+
+impl HeadlessRenderDriver {
+    /// Creates a new headless render driver with the given virtual dimensions.
+    pub fn new(width: u32, height: u32, scale_factor: f32) -> Self {
+        Self {
+            virtual_width: width,
+            virtual_height: height,
+            scale_factor,
+        }
+    }
+
+    /// Returns true if this driver operates in offscreen mode.
+    pub fn is_offscreen(&self) -> bool {
+        true
+    }
+}
