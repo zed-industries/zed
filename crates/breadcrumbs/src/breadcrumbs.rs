@@ -125,3 +125,31 @@ impl ToolbarItemView for Breadcrumbs {
         self.pane_focused = pane_focused;
     }
 }
+
+/// Headless breadcrumb entry for external agent AST and location tracking
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeadlessBreadcrumbEntry {
+    pub name: String,
+    pub kind: Option<String>,
+    pub is_active: bool,
+}
+
+/// Snapshot of the current file and AST breadcrumb hierarchy
+#[derive(Clone, Debug, Default)]
+pub struct HeadlessBreadcrumbsState {
+    pub entries: Vec<HeadlessBreadcrumbEntry>,
+}
+
+impl HeadlessBreadcrumbsState {
+    pub fn new(entries: Vec<HeadlessBreadcrumbEntry>) -> Self {
+        Self { entries }
+    }
+
+    pub fn path_string(&self) -> String {
+        self.entries
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" > ")
+    }
+}
