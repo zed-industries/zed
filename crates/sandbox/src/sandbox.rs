@@ -1496,3 +1496,34 @@ mod grantable_write_dir_tests {
         assert!(!real.join("child").exists());
     }
 }
+
+/// Windows Native AppContainer and Job Object security isolation policy
+#[cfg(target_os = "windows")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowsAppContainerProfile {
+    pub profile_name: String,
+    pub display_name: String,
+    pub description: String,
+    pub allowed_directories: Vec<PathBuf>,
+    pub max_memory_bytes: Option<u64>,
+    pub max_cpu_percent: Option<u32>,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsAppContainerProfile {
+    pub fn new(profile_name: impl Into<String>, display_name: impl Into<String>) -> Self {
+        Self {
+            profile_name: profile_name.into(),
+            display_name: display_name.into(),
+            description: String::new(),
+            allowed_directories: Vec::new(),
+            max_memory_bytes: Some(1024 * 1024 * 1024), // 1GB default limit
+            max_cpu_percent: Some(80),
+        }
+    }
+
+    pub fn allow_directory(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        self.allowed_directories.push(path.into());
+        self
+    }
+}
