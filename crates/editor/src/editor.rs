@@ -12622,3 +12622,36 @@ pub fn multibuffer_context_lines(cx: &App) -> u32 {
         .unwrap_or(2)
         .min(32)
 }
+
+/// Active cursor focus region for agent attention visualization and headless driving
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentFocusRegion {
+    pub agent_id: String,
+    pub start_row: u32,
+    pub start_col: u32,
+    pub end_row: u32,
+    pub end_col: u32,
+    pub label: Option<String>,
+}
+
+/// Lightweight snapshot of editor buffer state for external agent headless querying
+#[derive(Clone, Debug, Default)]
+pub struct HeadlessEditorSnapshot {
+    pub text_excerpt: String,
+    pub line_count: usize,
+    pub active_regions: Vec<AgentFocusRegion>,
+}
+
+impl HeadlessEditorSnapshot {
+    pub fn new(text_excerpt: impl Into<String>, line_count: usize) -> Self {
+        Self {
+            text_excerpt: text_excerpt.into(),
+            line_count,
+            active_regions: Vec::new(),
+        }
+    }
+
+    pub fn add_focus_region(&mut self, region: AgentFocusRegion) {
+        self.active_regions.push(region);
+    }
+}
