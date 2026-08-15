@@ -7,6 +7,7 @@ use crate::{
     movement::TextLayoutDetails,
     scroll::ScrollAmount,
 };
+use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use gpui::{
     AnyElement, App, AsyncWindowContext, Bounds, Context, Entity, Focusable as _, FontWeight, Hsla,
@@ -19,7 +20,7 @@ use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{MultiBufferOffset, ToOffset, ToPoint};
-use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
+use project::{DisableAiSettings, HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use std::{
     borrow::Cow,
@@ -32,6 +33,7 @@ use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
+use zed_actions::agent::FixDiagnosticWithAgent;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
@@ -281,11 +283,17 @@ fn show_hover(
 
     let snapshot = editor.snapshot(window, cx);
 
-    let (buffer_position, _) = editor
-        .buffer
-        .read(cx)
-        .snapshot(cx)
-        .anchor_to_buffer_anchor(anchor)?;
+    let (buffer_position, buffer_snapshot) =
+        snapshot.buffer_snapshot().anchor_to_buffer_anchor(anchor)?;
+    let diagnostic_path = if AgentSettings::get_global(cx).enabled(cx)
+        && !DisableAiSettings::is_ai_disabled_for_file(buffer_snapshot.file(), cx)
+    {
+        buffer_snapshot
+            .file()
+            .map(|file| file.full_path(cx).to_string_lossy().into_owned())
+    } else {
+        None
+    };
     let buffer = editor.buffer.read(cx).buffer(buffer_position.buffer_id)?;
 
     let language_registry = editor
@@ -416,6 +424,20 @@ fn show_hover(
                             .buffer_snapshot()
                             .anchor_after(local_diagnostic.range.end),
                 };
+                let fix_action = diagnostic_path.as_ref().and_then(|path| {
+                    if local_diagnostic.diagnostic.severity != DiagnosticSeverity::ERROR {
+                        return None;
+                    }
+                    let (diagnostic_start, buffer_snapshot) = snapshot
+                        .buffer_snapshot()
+                        .anchor_to_buffer_anchor(local_diagnostic.range.start)?;
+                    let point = text::ToPoint::to_point(&diagnostic_start, buffer_snapshot);
+                    Some(FixDiagnosticWithAgent {
+                        path: path.clone().into(),
+                        line: point.row + 1,
+                        message: local_diagnostic.diagnostic.message.clone().into(),
+                    })
+                });
 
                 let scroll_handle = ScrollHandle::new();
 
@@ -425,6 +447,7 @@ fn show_hover(
                     border_color,
                     scroll_handle,
                     background_color,
+                    fix_action,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor,
                     last_bounds: Rc::new(Cell::new(None)),
@@ -1150,6 +1173,7 @@ pub struct DiagnosticPopover {
     markdown: Entity<Markdown>,
     border_color: Hsla,
     background_color: Hsla,
+    fix_action: Option<FixDiagnosticWithAgent>,
     pub keyboard_grace: Rc<RefCell<bool>>,
     pub anchor: Anchor,
     pub last_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -1167,10 +1191,11 @@ impl DiagnosticPopover {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let this = cx.entity().downgrade();
         let bounds_cell = self.last_bounds.clone();
-        div()
+        let fix_action = self.fix_action.clone();
+        v_flex()
+            .items_start()
             .id("diagnostic")
             .occlude()
-            .elevation_2_borderless(cx)
             .child(
                 canvas(
                     {
@@ -1183,11 +1208,6 @@ impl DiagnosticPopover {
                 .absolute()
                 .size_full(),
             )
-            // Don't draw the background color if the theme
-            // allows transparent surfaces.
-            .when(theme_is_transparent(cx), |this| {
-                this.bg(gpui::transparent_black())
-            })
             // Prevent a mouse move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move({
@@ -1208,55 +1228,88 @@ impl DiagnosticPopover {
                 *keyboard_grace = false;
                 cx.stop_propagation();
             })
+            .when_some(fix_action, |this, action| {
+                this.child(
+                    h_flex().pb_1().child(
+                        Button::new("fix-diagnostic-with-agent", "Fix with Agent")
+                            .size(ButtonSize::Compact)
+                            .style(ButtonStyle::Filled)
+                            .label_size(LabelSize::Small)
+                            .start_icon(
+                                Icon::new(IconName::ZedAssistant)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                window.dispatch_action(Box::new(action.clone()), cx);
+                            }),
+                    ),
+                )
+            })
             .child(
                 div()
-                    .relative()
-                    .py_1()
-                    .pl_2()
-                    .pr_8()
-                    .bg(self.background_color)
-                    .border_1()
-                    .border_color(self.border_color)
-                    .rounded_lg()
+                    .elevation_2_borderless(cx)
+                    // Don't draw the background color if the theme
+                    // allows transparent surfaces.
+                    .when(theme_is_transparent(cx), |this| {
+                        this.bg(gpui::transparent_black())
+                    })
                     .child(
                         div()
-                            .id("diagnostic-content-container")
-                            .max_w(max_size.width)
-                            .max_h(max_size.height)
-                            .overflow_y_scroll()
-                            .track_scroll(&self.scroll_handle)
+                            .relative()
+                            .py_1()
+                            .pl_2()
+                            .pr_8()
+                            .bg(self.background_color)
+                            .border_1()
+                            .border_color(self.border_color)
+                            .rounded_lg()
                             .child(
-                                MarkdownElement::new(
-                                    self.markdown.clone(),
-                                    diagnostics_markdown_style(window, cx),
-                                )
-                                .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                    copy_button_visibility: CopyButtonVisibility::Hidden,
-                                    wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
-                                    border: false,
-                                })
-                                .on_url_click(
-                                    move |link, window, cx| {
-                                        if let Some(renderer) = GlobalDiagnosticRenderer::global(cx)
-                                        {
-                                            this.update(cx, |this, cx| {
-                                                renderer.as_ref().open_link(this, link, window, cx);
-                                            })
-                                            .ok();
-                                        }
-                                    },
-                                ),
+                                div()
+                                    .id("diagnostic-content-container")
+                                    .max_w(max_size.width)
+                                    .max_h(max_size.height)
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.scroll_handle)
+                                    .child(
+                                        MarkdownElement::new(
+                                            self.markdown.clone(),
+                                            diagnostics_markdown_style(window, cx),
+                                        )
+                                        .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                                            copy_button_visibility: CopyButtonVisibility::Hidden,
+                                            wrap_button_visibility:
+                                                markdown::WrapButtonVisibility::Hidden,
+                                            border: false,
+                                        })
+                                        .on_url_click(
+                                            move |link, window, cx| {
+                                                if let Some(renderer) =
+                                                    GlobalDiagnosticRenderer::global(cx)
+                                                {
+                                                    this.update(cx, |this, cx| {
+                                                        renderer
+                                                            .as_ref()
+                                                            .open_link(this, link, window, cx);
+                                                    })
+                                                    .ok();
+                                                }
+                                            },
+                                        ),
+                                    ),
+                            )
+                            .child(div().absolute().top_1().right_1().child({
+                                let message = self.local_diagnostic.diagnostic.message.clone();
+                                CopyButton::new("copy-diagnostic", message)
+                                    .tooltip_label("Copy Diagnostic")
+                            }))
+                            .custom_scrollbars(
+                                Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
+                                    .tracked_scroll_handle(&self.scroll_handle),
+                                window,
+                                cx,
                             ),
-                    )
-                    .child(div().absolute().top_1().right_1().child({
-                        let message = self.local_diagnostic.diagnostic.message.clone();
-                        CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
-                    }))
-                    .custom_scrollbars(
-                        Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
-                            .tracked_scroll_handle(&self.scroll_handle),
-                        window,
-                        cx,
                     ),
             )
             .into_any_element()
