@@ -509,7 +509,11 @@ impl EditorElement {
         register_action(editor, window, Editor::copy_file_location);
         register_action(editor, window, Editor::toggle_git_blame);
         register_action(editor, window, Editor::toggle_git_blame_inline);
-        register_action(editor, window, Editor::open_git_blame_commit);
+        if editor.read(cx).blame().is_some() {
+            register_action(editor, window, Editor::open_git_blame_commit);
+            register_action(editor, window, Editor::blame_revision);
+            register_action(editor, window, Editor::blame_previous_revision);
+        }
         register_action(editor, window, Editor::toggle_selected_diff_hunks);
         register_action(editor, window, Editor::toggle_staged_selected_diff_hunks);
         register_action(editor, window, Editor::stage_and_next);
