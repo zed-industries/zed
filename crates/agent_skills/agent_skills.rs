@@ -101,6 +101,10 @@ pub enum SkillSource {
     BuiltIn,
     /// From ~/.agents/skills/
     Global,
+    /// Shared dynamically by peer agents in an active swarm session.
+    AgentSwarm {
+        agent_id: Arc<str>,
+    },
     /// From {project}/.agents/skills/
     ProjectLocal {
         worktree_id: SkillScopeId,
@@ -110,40 +114,23 @@ pub enum SkillSource {
 
 impl SkillSource {
     /// Precedence for resolving same-named skills. Higher values shadow
-    /// lower ones: `ProjectLocal` > `Global` > `BuiltIn`. Two sources
-    /// returning equal precedence (e.g. two project-local skills from
-    /// different worktrees) leave the winner up to the caller, which by
-    /// convention keeps the first one in iteration order.
-    ///
-    /// Adding a new `SkillSource` variant should be a one-line change
-    /// here — every consumer routes through this method so the hierarchy
-    /// stays in sync.
+    /// lower ones: `ProjectLocal` > `AgentSwarm` > `Global` > `BuiltIn`.
     pub fn precedence(&self) -> u8 {
         match self {
             Self::BuiltIn => 0,
             Self::Global => 1,
-            Self::ProjectLocal { .. } => 2,
+            Self::AgentSwarm { .. } => 2,
+            Self::ProjectLocal { .. } => 3,
         }
     }
 
-    /// Scope prefix used in the `/<prefix>:<name>` slash-command
-    /// syntax that the autocomplete popup inserts. Global skills use
-    /// an empty prefix (so the inserted text is `/:<name>`), and
-    /// project-local skills use their worktree root name (so the
-    /// inserted text is `/<worktree>:<name>`).
-    ///
-    /// Using an empty prefix for globals rather than a literal
-    /// `global` means a worktree literally named `global` is no
-    /// longer ambiguous with the global source: the global skill is
-    /// invoked as `/:<name>`, and the worktree's skill is invoked as
-    /// `/global:<name>`. The two grammars never collide on the
-    /// inserted text.
     /// Human-readable label for this source, used in the UI to
     /// distinguish skills from different origins.
     pub fn display_label(&self) -> &str {
         match self {
             Self::BuiltIn => "built-in",
             Self::Global => "global",
+            Self::AgentSwarm { agent_id } => agent_id.as_ref(),
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => worktree_root_name.as_ref(),
@@ -153,25 +140,17 @@ impl SkillSource {
     pub fn scope_prefix(&self) -> &str {
         match self {
             Self::BuiltIn | Self::Global => "",
+            Self::AgentSwarm { agent_id } => agent_id.as_ref(),
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => worktree_root_name.as_ref(),
         }
     }
 
-    /// Whether this source matches the given scope qualifier from a
-    /// `/<scope>:<name>` slash command. The empty scope is reserved
-    /// for global skills; non-empty scopes match a project-local
-    /// skill whose worktree root name equals the scope.
-    ///
-    /// Hand-typed `/global:<name>` is NOT treated as an alias for
-    /// `/:<name>`. It looks for a project-local skill from a worktree
-    /// named `global` and fails if none exists. The popup always
-    /// inserts the unambiguous form (`/:<name>` for globals), so this
-    /// strictness only affects users typing by memory.
     pub fn matches_scope(&self, scope: &str) -> bool {
         match self {
             Self::BuiltIn | Self::Global => scope.is_empty(),
+            Self::AgentSwarm { agent_id } => !scope.is_empty() && agent_id.as_ref() == scope,
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => !scope.is_empty() && worktree_root_name.as_ref() == scope,
