@@ -969,7 +969,7 @@ struct PathCurve {
     float sx;
 };
 
-static const float PATH_TILE_SIZE = 16.0;
+static const float PATH_TILE_SIZE = 8.0;
 
 struct PathTile {
     uint paint;
@@ -997,71 +997,96 @@ StructuredBuffer<TileCurve> tile_curves: register(t2);
 StructuredBuffer<PathCurve> path_curves: register(t3);
 StructuredBuffer<PathPaint> path_paints: register(t4);
 
-struct PathTileVertexOutput {
-    float4 position: SV_Position;
-    nointerpolation uint tile_id: TEXCOORD0;
-    nointerpolation float4 background_solid: COLOR1;
-    nointerpolation float4 background_color0: COLOR2;
-    nointerpolation float4 background_color1: COLOR3;
-    float4 clip_distance: SV_ClipDistance;
-};
-
+// Everything the fragment needs that is constant across the tile travels as
+// flat interpolants. Both `PathTile` and `PathPaint` are already in registers
+// here in the vertex shader; re-reading them per pixel cost 136 of the 274
+// bytes a path fragment used to load.
 struct PathTileFragmentInput {
     float4 position: SV_Position;
-    nointerpolation uint tile_id: TEXCOORD0;
-    nointerpolation float4 background_solid: COLOR1;
-    nointerpolation float4 background_color0: COLOR2;
-    nointerpolation float4 background_color1: COLOR3;
+    // The tile's corner — the winding route's origin, which is the unclipped
+    // corner even when the drawn quad is trimmed — and the winding there.
+    nointerpolation float3 corner_and_backdrop: TEXCOORD0;
+    // `curve_start`, `curve_count`, and whether the fill rule is even-odd.
+    nointerpolation uint3 curves_and_fill_rule: TEXCOORD3;
+    PreparedBackground background;
 };
 
-PathTileVertexOutput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id: SV_InstanceID) {
+PathTileFragmentInput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint tile_index = batch_start_index + tile_id;
     PathTile tile = path_tiles[tile_index];
     PathPaint paint = path_paints[tile.paint];
-    float2 origin = tile.corner;
-    float2 size = float2(PATH_TILE_SIZE * float(tile.run), PATH_TILE_SIZE);
-    float2 position = origin + unit_vertex * size;
 
-    GradientColor gradient = prepare_gradient_color(
-        paint.color.tag, paint.color.color_space,
-        paint.color.solid, paint.color.colors);
+    // Trimming the quad to the mask is safe because the winding route starts
+    // from `tile.corner`, which is passed separately and never clipped. Tiles
+    // partition the plane, so a visible pixel is still covered by exactly one
+    // of them.
+    Bounds quad;
+    quad.origin = tile.corner;
+    quad.size = float2(PATH_TILE_SIZE * float(tile.run), PATH_TILE_SIZE);
+    ClippedVertex vertex = clip_to_mask(unit_vertex, quad, paint.content_mask);
 
-    PathTileVertexOutput output;
-    output.position = to_device_position_impl(position);
-    output.tile_id = tile_index;
-    output.background_solid = gradient.solid;
-    output.background_color0 = gradient.color0;
-    output.background_color1 = gradient.color1;
-    output.clip_distance = distance_from_clip_rect_impl(position, paint.content_mask);
+    PathTileFragmentInput output;
+    output.position = to_device_position_impl(vertex.position);
+    output.corner_and_backdrop = float3(tile.corner, float(tile.backdrop));
+    output.curves_and_fill_rule = uint3(tile.curve_start, tile.curve_count, paint.even_odd);
+    output.background = prepare_background(paint.color, paint.bounds);
     return output;
 }
 
 // Solve for a*t^2 + b*t + c = 0, returning the root within [0, 1].
-// The curves are monotone, so at most one root lies in range.
-float monotone_quadratic_root(float a, float b, float c) {
+// `direction` is the sign of the solved component's derivative over the
+// monotone piece (+1 increasing, -1 decreasing) and selects the in-range
+// root in closed form: at that root b^2 - 4ac = (b + 2at)^2, so
+// b + direction * sqrt(...) equals 2(b + at) with both terms carrying
+// direction's sign -- the citardauq quotient -2c / (b + direction * sqrt)
+// is the monotone root with no cancellation and no candidate selection.
+float monotone_quadratic_root(float a, float b, float c, float direction) {
     if (abs(a) < 1e-6) {
         return abs(b) < 1e-12 ? 0.0 : saturate(-c / b);
     }
     float discriminant = max(b * b - 4.0 * a * c, 0.0);
-    float sqrt_discriminant = sqrt(discriminant);
-    float q = b >= 0.0 ? -0.5 * (b + sqrt_discriminant) : -0.5 * (b - sqrt_discriminant);
-    float root0 = q / a;
-    float root1 = abs(q) > 1e-12 ? c / q : root0;
-    bool root0_in_range = root0 >= -1e-4 && root0 <= 1.0001;
-    return saturate(root0_in_range ? root0 : root1);
+    float denominator = b + direction * sqrt(discriminant);
+    if (abs(denominator) < 1e-12) {
+        return 0.0;
+    }
+    return saturate(-2.0 * c / denominator);
 }
 
-// Antiderivative of (ax*t^2 + bx*t + cx) * (2*ay*t + by).
-float coverage_integral(float ax, float bx, float cx, float ay, float by, float t) {
-    float c3 = 0.5 * ax * ay;
-    float c2 = (ax * by + 2.0 * bx * ay) / 3.0;
-    float c1 = 0.5 * (bx * by + 2.0 * cx * ay);
-    float c0 = cx * by;
-    return (((c3 * t + c2) * t + c1) * t + c0) * t;
+// Definite integral over [t0, t1] of (ax*t^2 + bx*t + cx) * (2*ay*t + by):
+// the integrand is cubic, so the midpoint value plus the dt^2/12
+// second-derivative correction is exact, and it avoids differencing a
+// quartic antiderivative at two nearby points.
+float coverage_integral(float ax, float bx, float cx, float ay, float by, float t0, float t1) {
+    float dt = t1 - t0;
+    float m = 0.5 * (t0 + t1);
+    float x_m = (ax * m + bx) * m + cx;
+    float dx_m = 2.0 * ax * m + bx;
+    float dy_m = 2.0 * ay * m + by;
+    return dt * (x_m * dy_m + dt * dt / 12.0 * (ax * dy_m + 2.0 * ay * dx_m));
 }
 
-    // Exact area of the part of the pixel column [px, px+1] left of a
+// Exact area of the part of the pixel column [px, px+1] left of a line
+// over a y-window of the given height: integral of clamp(x(y), 0, 1) dy
+// with x affine in y from x0 to x1 (column-relative). Phi(x) =
+// 0.5*max(x,0)^2 - 0.5*max(x-1,0)^2 is the antiderivative of clamp in x,
+// so the area is height * (Phi(x1) - Phi(x0)) / (x1 - x0), with the
+// constant-x limit when the window is vertical. The squared differences
+// are factored so that small dx stays exact (m1 - m0 equals dx exactly
+// inside the column) instead of cancelling inside Phi.
+float line_column_area(float height, float x0, float x1) {
+    float dx = x1 - x0;
+    if (dx == 0.0) {
+        return height * saturate(x0);
+    }
+    float m0 = max(x0, 0.0);
+    float m1 = max(x1, 0.0);
+    float n0 = max(x0 - 1.0, 0.0);
+    float n1 = max(x1 - 1.0, 0.0);
+    return height * 0.5 * ((m1 - m0) * (m1 + m0) - (n1 - n0) * (n1 + n0)) / dx;
+}
+
+// Exact area of the part of the pixel column [px, px+1] left of a
 // downward-monotone quadratic curve over the window [ya, yb]:
 //     integral over [ya, yb] of clamp(x(y) - px, 0, 1) dy
 // Specialized to its one call site: the caller guarantees the window lies
@@ -1073,21 +1098,17 @@ float curve_column_area(float ax, float bx, float cx, float ay, float by, float 
     // Split the parameter interval where the curve crosses the column's
     // boundaries; each crossing is another single-root monotone solve.
     if (xb >= xa) {
-        float s0 = xa >= 0.0 ? ta : (xb <= 0.0 ? tb : clamp(monotone_quadratic_root(ax, bx, cx), ta, tb));
-        float s1 = xb <= 1.0 ? tb : (xa >= 1.0 ? ta : clamp(monotone_quadratic_root(ax, bx, cx - 1.0), ta, tb));
+        float s0 = xa >= 0.0 ? ta : (xb <= 0.0 ? tb : clamp(monotone_quadratic_root(ax, bx, cx, 1.0), ta, tb));
+        float s1 = xb <= 1.0 ? tb : (xa >= 1.0 ? ta : clamp(monotone_quadratic_root(ax, bx, cx - 1.0, 1.0), ta, tb));
         float y_s1 = (ay * s1 + by) * s1 + p0y;
         float y_tb = (ay * tb + by) * tb + p0y;
-        return (y_tb - y_s1)
-             + coverage_integral(ax, bx, cx, ay, by, s1)
-             - coverage_integral(ax, bx, cx, ay, by, s0);
+        return (y_tb - y_s1) + coverage_integral(ax, bx, cx, ay, by, s0, s1);
     } else {
-        float s1 = xa <= 1.0 ? ta : (xb >= 1.0 ? tb : clamp(monotone_quadratic_root(ax, bx, cx - 1.0), ta, tb));
-        float s0 = xb >= 0.0 ? tb : (xa <= 0.0 ? ta : clamp(monotone_quadratic_root(ax, bx, cx), ta, tb));
+        float s1 = xa <= 1.0 ? ta : (xb >= 1.0 ? tb : clamp(monotone_quadratic_root(ax, bx, cx - 1.0, -1.0), ta, tb));
+        float s0 = xb >= 0.0 ? tb : (xa <= 0.0 ? ta : clamp(monotone_quadratic_root(ax, bx, cx, -1.0), ta, tb));
         float y_s1 = (ay * s1 + by) * s1 + p0y;
         float y_ta = (ay * ta + by) * ta + p0y;
-        return (y_s1 - y_ta)
-             + coverage_integral(ax, bx, cx, ay, by, s0)
-             - coverage_integral(ax, bx, cx, ay, by, s1);
+        return (y_s1 - y_ta) + coverage_integral(ax, bx, cx, ay, by, s1, s0);
     }
 }
 
@@ -1118,8 +1139,9 @@ float curve_winding(PathCurve curve, float2 corner, float2 pixel,
     float ya = max(pixel.y, curve.p0.y);
     float yb = min(pixel.y + 1.0, curve.p1.y);
     if (yb > ya) {
-        float ta = monotone_quadratic_root(ay, by, curve.p0.y - ya);
-        float tb = monotone_quadratic_root(ay, by, curve.p0.y - yb);
+        float window = yb - ya;
+        float ta = monotone_quadratic_root(ay, by, curve.p0.y - ya, 1.0);
+        float tb = monotone_quadratic_root(ay, by, curve.p0.y - yb, 1.0);
         float xa = (ax * ta + bx) * ta + curve.p0.x;
         float xb = (ax * tb + bx) * tb + curve.p0.x;
 
@@ -1163,6 +1185,18 @@ float curve_winding(PathCurve curve, float2 corner, float2 pixel,
             if (live) {
                 if (max(xa, xb) <= pixel.x) {
                     winding += curve.sign * (yb - ya);
+                } else if (ax == 0.0 && ay == 0.0) {
+                    // Lines carry exact-zero quadratic coefficients (set,
+                    // not derived, in MonotoneCurve::scaled), so this branch
+                    // is uniform across every lane processing the same
+                    // curve. Like the general integral, the area spans the
+                    // full window, not the leg-clipped [ya, yb]: the clip
+                    // only shortens the crossing height, and the clipped
+                    // part's integrand is zero. The line formula couples
+                    // height and x-range through the slope, so it must see
+                    // matching full-window values for both.
+                    winding += curve.sign * ((yb - ya)
+                        - line_column_area(window, xa - pixel.x, xb - pixel.x));
                 } else {
                     // clamp(px + 1 - x_c, 0, 1) = 1 - clamp(x_c - px, 0, 1).
                     winding += curve.sign * ((yb - ya)
@@ -1189,8 +1223,9 @@ float curve_winding(PathCurve curve, float2 corner, float2 pixel,
 }
 
 float4 path_tile_fragment(PathTileFragmentInput input): SV_Target {
-    PathTile tile = path_tiles[input.tile_id];
-    PathPaint paint = path_paints[tile.paint];
+    float2 corner = input.corner_and_backdrop.xy;
+    uint curve_start = input.curves_and_fill_rule.x;
+    uint curve_count = input.curves_and_fill_rule.y;
     float2 pixel = floor(input.position.xy);
 
     // The tile's curve list is sorted by each curve's leftmost x, so the
@@ -1200,19 +1235,19 @@ float4 path_tile_fragment(PathTileFragmentInput input): SV_Target {
     // requires straddling the tile's left edge, which lies left of every
     // pixel's right edge. The break costs divergence only where neighbors
     // within a wave straddle a curve's leftmost x.
-    float winding = float(tile.backdrop);
+    float winding = input.corner_and_backdrop.z;
     [loop]
-    for (uint i = 0u; i < tile.curve_count; i++) {
-        TileCurve entry = tile_curves[tile.curve_start + i];
+    for (uint i = 0u; i < curve_count; i++) {
+        TileCurve entry = tile_curves[curve_start + i];
         PathCurve curve = path_curves[entry.curve & 0x7fffffffu];
         if (min(curve.p0.x, curve.p1.x) >= pixel.x + 1.0) {
             break;
         }
-        winding += curve_winding(curve, tile.corner, pixel,
+        winding += curve_winding(curve, corner, pixel,
             (entry.curve & 0x80000000u) != 0u, entry.leg_y);
     }
 
-    float coverage = paint.even_odd != 0u
+    float coverage = input.curves_and_fill_rule.z != 0u
         // Distance to the nearest even integer (FreeType's fold).
         ? abs(winding - 2.0 * round(winding * 0.5))
         // Distance from zero, clamped.
@@ -1226,8 +1261,7 @@ float4 path_tile_fragment(PathTileFragmentInput input): SV_Target {
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
-    float4 color = gradient_color(paint.color, input.position.xy, paint.bounds,
-        input.background_solid, input.background_color0, input.background_color1);
+    float4 color = background_color(input.background, input.position.xy);
     return float4(color.rgb, color.a * coverage);
 }
 

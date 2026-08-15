@@ -31,7 +31,7 @@ use std::cell::RefCell;
 /// Purely a performance knob — coverage is exact at any value. Mirrored in
 /// `shaders.hlsl`, where the vertex shader derives each tile's rectangle
 /// from its corner and run length.
-const TILE_SIZE: f32 = 16.0;
+const TILE_SIZE: f32 = 8.0;
 
 /// Upper bound on the tiles one path may cover, guarding against
 /// pathological (but finite) coordinates turning the grid allocation into a
@@ -783,23 +783,29 @@ impl PathCurve {
     /// The x coordinate at which this downward-monotone curve reaches `y`.
     /// Monotonicity guarantees a single in-range root.
     fn x_at_y(&self, y: f32) -> f32 {
-        let t = monotone_quadratic_root(self.ay, self.by, self.p0.y - y);
+        let t = monotone_quadratic_root(self.ay, self.by, self.p0.y - y, 1.0);
         (self.ax * t + self.bx) * t + self.p0.x
     }
 
     /// The y coordinate at which this x-monotone curve reaches `x`. Only
     /// meaningful when `x` lies within the curve's x-range.
     fn y_at_x(&self, x: f32) -> f32 {
-        let t = monotone_quadratic_root(self.ax, self.bx, self.p0.x - x);
+        let t = monotone_quadratic_root(self.ax, self.bx, self.p0.x - x, self.sx);
         (self.ay * t + self.by) * t + self.p0.y
     }
 }
 
 /// Stable quadratic solve for `a t^2 + b t + c = 0`, returning the root
-/// within `[0, 1]`. Deliberately identical to the shader's
-/// `monotone_quadratic_root` so that the CPU's backdrop and the shader's
-/// route legs agree on where a curve crosses a line.
-fn monotone_quadratic_root(a: f32, b: f32, c: f32) -> f32 {
+/// within `[0, 1]`. `direction` is the sign of the solved component's
+/// derivative over the monotone piece (+1 increasing, -1 decreasing) and
+/// selects the in-range root in closed form: at that root
+/// `b^2 - 4ac = (b + 2at)^2`, so `b + direction * sqrt(...)` equals
+/// `2(b + at)` with both terms carrying `direction`'s sign — the citardauq
+/// quotient `-2c / (b + direction * sqrt(...))` is the monotone root with
+/// no cancellation and no candidate selection. Deliberately identical to
+/// the shader's `monotone_quadratic_root` so that the CPU's backdrop and
+/// the shader's route legs agree on where a curve crosses a line.
+fn monotone_quadratic_root(a: f32, b: f32, c: f32, direction: f32) -> f32 {
     if a.abs() < 1e-6 {
         return if b.abs() < 1e-12 {
             0.0
@@ -807,20 +813,12 @@ fn monotone_quadratic_root(a: f32, b: f32, c: f32) -> f32 {
             (-c / b).clamp(0.0, 1.0)
         };
     }
-    let sqrt_discriminant = (b * b - 4.0 * a * c).max(0.0).sqrt();
-    let q = if b >= 0.0 {
-        -0.5 * (b + sqrt_discriminant)
-    } else {
-        -0.5 * (b - sqrt_discriminant)
-    };
-    let root0 = q / a;
-    let root1 = if q.abs() > 1e-12 { c / q } else { root0 };
-    let root = if (-1e-4..=1.0001).contains(&root0) {
-        root0
-    } else {
-        root1
-    };
-    root.clamp(0.0, 1.0)
+    let discriminant = (b * b - 4.0 * a * c).max(0.0);
+    let denominator = b + direction * discriminant.sqrt();
+    if denominator.abs() < 1e-12 {
+        return 0.0;
+    }
+    (-2.0 * c / denominator).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -1398,8 +1396,9 @@ mod tests {
         let mut ya = pixel.y.max(curve.p0.y);
         let mut yb = (pixel.y + 1.0).min(curve.p1.y);
         if yb > ya {
-            let ta = monotone_quadratic_root(ay, by, curve.p0.y - ya);
-            let tb = monotone_quadratic_root(ay, by, curve.p0.y - yb);
+            let window = yb - ya;
+            let ta = monotone_quadratic_root(ay, by, curve.p0.y - ya, 1.0);
+            let tb = monotone_quadratic_root(ay, by, curve.p0.y - yb, 1.0);
             let xa = (ax * ta + bx) * ta + curve.p0.x;
             let xb = (ax * tb + bx) * tb + curve.p0.x;
 
@@ -1419,6 +1418,10 @@ mod tests {
                 if live {
                     if xa.max(xb) <= pixel.x {
                         winding += curve.sign * (yb - ya);
+                    } else if ax == 0.0 && ay == 0.0 {
+                        winding += curve.sign
+                            * ((yb - ya)
+                                - emulated_line_column_area(window, xa - pixel.x, xb - pixel.x));
                     } else {
                         winding += curve.sign
                             * ((yb - ya)
@@ -1446,6 +1449,19 @@ mod tests {
         winding
     }
 
+    /// `line_column_area` from shaders.hlsl, transcribed.
+    fn emulated_line_column_area(height: f32, x0: f32, x1: f32) -> f32 {
+        let dx = x1 - x0;
+        if dx == 0.0 {
+            return height * x0.clamp(0.0, 1.0);
+        }
+        let m0 = x0.max(0.0);
+        let m1 = x1.max(0.0);
+        let n0 = (x0 - 1.0).max(0.0);
+        let n1 = (x1 - 1.0).max(0.0);
+        height * 0.5 * ((m1 - m0) * (m1 + m0) - (n1 - n0) * (n1 + n0)) / dx
+    }
+
     /// `curve_column_area` from shaders.hlsl, transcribed. The parameter
     /// list mirrors the HLSL signature one-to-one on purpose; bundling them
     /// into a struct would make the lockstep comparison harder to eyeball.
@@ -1462,12 +1478,17 @@ mod tests {
         xa: f32,
         xb: f32,
     ) -> f32 {
-        let integral = |t: f32| {
-            let c3 = 0.5 * ax * ay;
-            let c2 = (ax * by + 2.0 * bx * ay) / 3.0;
-            let c1 = 0.5 * (bx * by + 2.0 * cx * ay);
-            let c0 = cx * by;
-            (((c3 * t + c2) * t + c1) * t + c0) * t
+        // Definite integral over [t0, t1] of (ax*t^2 + bx*t + cx) *
+        // (2*ay*t + by): the integrand is cubic, so the midpoint value plus
+        // the dt^2/12 second-derivative correction is exact, and it avoids
+        // differencing a quartic antiderivative at two nearby points.
+        let integral = |t0: f32, t1: f32| {
+            let dt = t1 - t0;
+            let m = 0.5 * (t0 + t1);
+            let x_m = (ax * m + bx) * m + cx;
+            let dx_m = 2.0 * ax * m + bx;
+            let dy_m = 2.0 * ay * m + by;
+            dt * (x_m * dy_m + dt * dt / 12.0 * (ax * dy_m + 2.0 * ay * dx_m))
         };
 
         if xb >= xa {
@@ -1476,36 +1497,40 @@ mod tests {
             } else if xb <= 0.0 {
                 tb
             } else {
-                monotone_quadratic_root(ax, bx, cx).max(ta).min(tb)
+                monotone_quadratic_root(ax, bx, cx, 1.0).max(ta).min(tb)
             };
             let s1 = if xb <= 1.0 {
                 tb
             } else if xa >= 1.0 {
                 ta
             } else {
-                monotone_quadratic_root(ax, bx, cx - 1.0).max(ta).min(tb)
+                monotone_quadratic_root(ax, bx, cx - 1.0, 1.0)
+                    .max(ta)
+                    .min(tb)
             };
             let y_s1 = (ay * s1 + by) * s1 + p0y;
             let y_tb = (ay * tb + by) * tb + p0y;
-            (y_tb - y_s1) + integral(s1) - integral(s0)
+            (y_tb - y_s1) + integral(s0, s1)
         } else {
             let s1 = if xa <= 1.0 {
                 ta
             } else if xb >= 1.0 {
                 tb
             } else {
-                monotone_quadratic_root(ax, bx, cx - 1.0).max(ta).min(tb)
+                monotone_quadratic_root(ax, bx, cx - 1.0, -1.0)
+                    .max(ta)
+                    .min(tb)
             };
             let s0 = if xb >= 0.0 {
                 tb
             } else if xa <= 0.0 {
                 ta
             } else {
-                monotone_quadratic_root(ax, bx, cx).max(ta).min(tb)
+                monotone_quadratic_root(ax, bx, cx, -1.0).max(ta).min(tb)
             };
             let y_s1 = (ay * s1 + by) * s1 + p0y;
             let y_ta = (ay * ta + by) * ta + p0y;
-            (y_s1 - y_ta) + integral(s0) - integral(s1)
+            (y_s1 - y_ta) + integral(s1, s0)
         }
     }
 
