@@ -1,0 +1,235 @@
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:12:5
+   |
+LL | /     if let Some(value) = map.get(&key) {
+LL | |         *value
+LL | |     } else {
+LL | |         map.insert(key, 1);
+LL | |         1
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+   = note: `-D map-lookup-then-insert` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(map_lookup_then_insert)]`
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:21:5
+   |
+LL | /     match map.get(&key).copied() {
+LL | |         Some(value) => value,
+LL | |         None => {
+LL | |             map.insert(key, 1);
+...  |
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:32:5
+   |
+LL | /     match map.get_mut(&key) {
+LL | |         Some(value) => *value += 1,
+LL | |         None => {
+LL | |             map.insert(key, 1);
+LL | |         }
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:41:5
+   |
+LL | /     match map.get_key_value(&key) {
+LL | |         Some((_, value)) => *value,
+LL | |         None => {
+LL | |             map.insert(key, 1);
+...  |
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:51:5
+   |
+LL | /     match map.get(&key) {
+LL | |         Some(value) => *value,
+LL | |         None => {
+LL | |             map.insert(key, 1);
+...  |
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:61:5
+   |
+LL | /     if let Some(value) = map.get(&key) {
+LL | |         *value
+LL | |     } else {
+LL | |         map.insert(key, 1);
+LL | |         1
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:71:5
+   |
+LL | /     match map.get_mut(&key) {
+LL | |         Some(value) => *value += 1,
+LL | |         None => {
+LL | |             map.insert(key, 1);
+LL | |         }
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:80:5
+   |
+LL | /     match map.get_key_value(&key) {
+LL | |         Some((_, value)) => *value,
+LL | |         None => {
+LL | |             map.insert(key, 1);
+...  |
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:90:5
+   |
+LL | /     let Some(value) = map.get(&key) else {
+LL | |         map.insert(key, 1);
+LL | |         return 1;
+LL | |     };
+   | |______^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:100:5
+   |
+LL | /     if let Some(_current) = map.get(&key) {
+LL | |         map.insert(key, 2);
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this set lookup and insertion search for the same value twice
+  --> $DIR/map_lookup_then_insert.rs:108:5
+   |
+LL | /     if let Some(existing) = set.get(&value) {
+LL | |         existing.is_empty()
+LL | |     } else {
+LL | |         set.insert(value)
+LL | |     }
+   | |_____^
+   |
+   = help: `insert` alone searches once, skips duplicates, and returns `false` when the value was already present
+
+error: this set lookup and insertion search for the same value twice
+  --> $DIR/map_lookup_then_insert.rs:116:5
+   |
+LL | /     match set.get(&value) {
+LL | |         Some(_) => false,
+LL | |         None => set.insert(value),
+LL | |     }
+   | |_____^
+   |
+   = help: `insert` alone searches once, skips duplicates, and returns `false` when the value was already present
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:123:5
+   |
+LL | /     let Some(value) = map.get(&key) else {
+LL | |         map.insert(key, 1);
+LL | |         return 1;
+LL | |     };
+   | |______^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:136:5
+   |
+LL | /     match map.get(&key) {
+LL | |         Some(_) => {}
+LL | |         None => {
+LL | |             map.insert(key, expensive());
+LL | |         }
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:146:5
+   |
+LL | /     match map.get(&key) {
+LL | |         Some(_) => {}
+LL | |         None => {
+LL | |             let value = key.len();
+...  |
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:157:5
+   |
+LL | /     match map.get(&key) {
+LL | |         Some(_) => {}
+LL | |         None => {
+LL | |             map.insert(key, usize::default());
+LL | |         }
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:167:5
+   |
+LL | /     if let Some(_current) = map.get(&key) {
+LL | |         map.insert(key, 2);
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:180:5
+   |
+LL | /     match map.get(&key) {
+LL | |         Some(_) => {}
+LL | |         None => {
+LL | |             map.insert(key, 1);
+LL | |         }
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: this map lookup and insertion search for the same key twice
+  --> $DIR/map_lookup_then_insert.rs:207:5
+   |
+LL | /     if map.get(&key).is_none() {
+LL | |         map.insert(key, 1);
+LL | |     }
+   | |_____^
+   |
+   = help: to search the map only once, use the entry API: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html
+
+error: aborting due to 19 previous errors
+
