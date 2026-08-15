@@ -191,15 +191,12 @@ impl Render for PlatformTitleBar {
 
         let button_layout = self.effective_button_layout(&decorations, cx);
         let sidebar = self.sidebar_render_state(cx);
-        let is_draggable = !window.is_simple_fullscreen();
 
         let title_bar = h_flex()
-            .when(is_draggable, |this| {
-                this.window_control_area(WindowControlArea::Drag)
-            })
+            .window_control_area(WindowControlArea::Drag)
             .w_full()
             .h(height)
-            .when(is_draggable, |this| {
+            .map(|this| {
                 this.on_mouse_down_out(cx.listener(move |this, _ev, _window, _cx| {
                     this.should_move = false;
                 }))

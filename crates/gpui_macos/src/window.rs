@@ -90,8 +90,6 @@ const NSNormalWindowLevel: NSInteger = 0;
 #[allow(non_upper_case_globals)]
 const NSFloatingWindowLevel: NSInteger = 3;
 #[allow(non_upper_case_globals)]
-const NSMainMenuWindowLevel: NSInteger = 24;
-#[allow(non_upper_case_globals)]
 const NSPopUpWindowLevel: NSInteger = 101;
 #[allow(non_upper_case_globals)]
 const NSTrackingMouseEnteredAndExited: NSUInteger = 0x01;
@@ -508,13 +506,55 @@ const NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR: NSUInteger = 1 << 2;
 struct SimpleFullscreenState {
     frame: NSRect,
     style_mask: NSWindowStyleMask,
-    presentation_options: NSUInteger,
-    level: NSInteger,
 }
 
 enum SimpleFullscreenPlan {
     Enter { screen_frame: NSRect },
     Exit(SimpleFullscreenState),
+}
+
+struct SimpleFullscreenAppState {
+    window_count: usize,
+    saved_presentation_options: NSUInteger,
+}
+
+static SIMPLE_FULLSCREEN_APP_STATE: Mutex<Option<SimpleFullscreenAppState>> = Mutex::new(None);
+
+unsafe fn push_simple_fullscreen_presentation_options() {
+    let mut app_state = SIMPLE_FULLSCREEN_APP_STATE.lock();
+    match app_state.as_mut() {
+        Some(app_state) => app_state.window_count += 1,
+        None => unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let saved_presentation_options: NSUInteger = msg_send![app, presentationOptions];
+            let _: () = msg_send![
+                app,
+                setPresentationOptions: NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
+                    | NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR
+            ];
+            *app_state = Some(SimpleFullscreenAppState {
+                window_count: 1,
+                saved_presentation_options,
+            });
+        },
+    }
+}
+
+unsafe fn pop_simple_fullscreen_presentation_options() {
+    let mut app_state = SIMPLE_FULLSCREEN_APP_STATE.lock();
+    if let Some(state) = app_state.as_mut() {
+        state.window_count = state.window_count.saturating_sub(1);
+        if state.window_count == 0 {
+            unsafe {
+                let app = NSApplication::sharedApplication(nil);
+                let _: () = msg_send![
+                    app,
+                    setPresentationOptions: state.saved_presentation_options
+                ];
+            }
+            *app_state = None;
+        }
+    }
 }
 
 unsafe fn apply_simple_fullscreen_plan(
@@ -523,25 +563,15 @@ unsafe fn apply_simple_fullscreen_plan(
     plan: SimpleFullscreenPlan,
 ) {
     unsafe {
-        let app = NSApplication::sharedApplication(nil);
         match plan {
             SimpleFullscreenPlan::Exit(saved) => {
-                let _: () = msg_send![app, setPresentationOptions: saved.presentation_options];
-                native_window.setLevel_(saved.level);
+                pop_simple_fullscreen_presentation_options();
                 native_window.setStyleMask_(saved.style_mask);
                 native_window.setFrame_display_(saved.frame, YES);
             }
             SimpleFullscreenPlan::Enter { screen_frame } => {
-                let _: () = msg_send![
-                    app,
-                    setPresentationOptions: NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
-                        | NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR
-                ];
-                // Drop the titled/resizable chrome via a borderless mask so content
-                // can fill the whole screen, including the area around the notch.
+                push_simple_fullscreen_presentation_options();
                 native_window.setStyleMask_(NSWindowStyleMask::NSBorderlessWindowMask);
-                // Float above the menu bar so it doesn't draw over the window.
-                native_window.setLevel_(NSMainMenuWindowLevel + 1);
                 native_window.setFrame_display_(screen_frame, YES);
             }
         }
@@ -788,16 +818,10 @@ impl MacWindowState {
                 return None;
             }
             let screen_frame = unsafe { NSScreen::frame(screen) };
-            let previous_presentation_options: NSUInteger = unsafe {
-                let app = NSApplication::sharedApplication(nil);
-                msg_send![app, presentationOptions]
-            };
 
             self.simple_fullscreen_state = Some(SimpleFullscreenState {
                 frame: unsafe { NSWindow::frame(self.native_window) },
                 style_mask: unsafe { self.native_window.styleMask() },
-                presentation_options: previous_presentation_options,
-                level: unsafe { self.native_window.level() },
             });
 
             Some(SimpleFullscreenPlan::Enter { screen_frame })
@@ -1905,6 +1929,9 @@ impl PlatformWindow for MacWindow {
 
     fn titlebar_double_click(&self, is_resizable: bool, is_minimizable: bool) {
         let this = self.0.lock();
+        if this.simple_fullscreen_state.is_some() {
+            return;
+        }
         let window = this.native_window;
         let closed = this.closed.clone();
         this.foreground_executor
@@ -1962,6 +1989,9 @@ impl PlatformWindow for MacWindow {
 
     fn start_window_move(&self) {
         let this = self.0.lock();
+        if this.simple_fullscreen_state.is_some() {
+            return;
+        }
         let window = this.native_window;
 
         unsafe {
@@ -2870,12 +2900,19 @@ extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
 
 extern "C" fn close_window(this: &Object, _: Sel) {
     unsafe {
-        let close_callback = {
+        let (close_callback, simple_fullscreen_state) = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
             lock.closed.store(true, Ordering::Release);
-            lock.close_callback.take()
+            (
+                lock.close_callback.take(),
+                lock.simple_fullscreen_state.take(),
+            )
         };
+
+        if simple_fullscreen_state.is_some() {
+            pop_simple_fullscreen_presentation_options();
+        }
 
         if let Some(callback) = close_callback {
             callback();
