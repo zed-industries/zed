@@ -710,3 +710,29 @@ mod tests {
         })
     }
 }
+
+/// Headless task execution plan for autonomous agent background task orchestration
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AgentTaskExecutionPlan {
+    pub task_name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: collections::HashMap<String, String>,
+    pub cwd: Option<std::path::PathBuf>,
+}
+
+/// Headless runner for executing tasks deterministically without UI picker interactions
+#[derive(Clone, Debug, Default)]
+pub struct HeadlessTaskRunner {
+    pub active_plans: Vec<AgentTaskExecutionPlan>,
+}
+
+impl HeadlessTaskRunner {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn schedule_plan(&mut self, plan: AgentTaskExecutionPlan) {
+        self.active_plans.push(plan);
+    }
+}
