@@ -331,7 +331,7 @@ fn map_open_ai_error(error: open_ai::RequestError) -> LanguageModelCompletionErr
                 retry_after,
             )
         }
-        open_ai::RequestError::Other(error) => LanguageModelCompletionError::Other(error),
+        error => error.into(),
     }
 }
 
