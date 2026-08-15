@@ -585,6 +585,52 @@ impl DockerExecConnection {
         );
     }
 
+    /// The argv that unpacks a tar stream from this connection's stdin into
+    /// `dst_path` inside the container, as the connection's remote user.
+    ///
+    /// `tar` has to exist in the container. Every other way of moving a
+    /// directory needs either a path the daemon's machine can see (which
+    /// `docker cp` requires and a client-side directory is not) or one round
+    /// trip per file.
+    fn extract_archive_command(&self, dst_path: &str) -> Result<CommandTemplate> {
+        self.docker_command(
+            vec![
+                "exec".to_string(),
+                "-i".to_string(),
+                "-u".to_string(),
+                self.connection_options.remote_user.clone(),
+                self.connection_options.container_id.clone(),
+                "sh".to_string(),
+                "-c".to_string(),
+                "mkdir -p \"$1\" && tar -xf - -C \"$1\"".to_string(),
+                "zed-upload".to_string(),
+                dst_path.to_string(),
+            ],
+            Interactive::No,
+        )
+    }
+
+    /// Packs `src_path`'s contents into a tar file next to it, ready to be
+    /// streamed into a container.
+    async fn archive_directory(src_path: &Path) -> Result<tempfile::NamedTempFile> {
+        let archive = tempfile::NamedTempFile::new().context("creating an upload archive")?;
+        let file = smol::fs::File::create(archive.path())
+            .await
+            .context("opening the upload archive")?;
+
+        let mut builder = async_tar::Builder::new(file);
+        builder
+            .append_dir_all(".", src_path)
+            .await
+            .with_context(|| format!("packing {} for upload", src_path.display()))?;
+        builder
+            .finish()
+            .await
+            .context("finishing the upload archive")?;
+
+        Ok(archive)
+    }
+
     /// The argv that writes this connection's stdin into `dst_path` inside the
     /// container, as the connection's remote user.
     fn stream_into_container_command(&self, dst_path: &str) -> Result<CommandTemplate> {
@@ -966,12 +1012,19 @@ impl RemoteConnection for DockerExecConnection {
 
         if self.host.is_some() {
             // `docker cp` would resolve the source on the host, where this
-            // directory does not exist. Streaming a whole directory needs an
-            // archiver in the container, so it is not the same fix as for a
-            // single file.
-            return Task::ready(Err(anyhow::anyhow!(
-                "uploading a directory into a container on a remote host is not supported yet"
-            )));
+            // directory does not exist, so the directory travels as a tar
+            // stream on the exec channel instead — the same route the server
+            // binary takes, which does not care where the daemon runs.
+            let extract_command = match self.extract_archive_command(&dest_path_str) {
+                Ok(command) => command,
+                Err(error) => return Task::ready(Err(error)),
+            };
+            return cx.background_spawn(async move {
+                let archive = Self::archive_directory(&src_path).await?;
+                Self::stream_file_into(archive.path(), extract_command)
+                    .await
+                    .with_context(|| format!("uploading {src_path_display} into the container"))
+            });
         }
 
         let (copy_command, chown_command) =
@@ -1514,6 +1567,61 @@ mod tests {
         assert_eq!(
             std::fs::read(destination.path()).expect("reading the destination should succeed"),
             b"zed-remote-server bytes"
+        );
+    }
+
+    /// A dev extension is a directory, and `docker cp` cannot carry one to a
+    /// daemon on another machine. The local shell stands in for the container
+    /// so the archive is really packed, piped, and unpacked.
+    ///
+    /// Deliberately not a `gpui::test`: spawning a real process parks the
+    /// thread, which the test scheduler forbids.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_is_streamed_into_the_container_as_an_archive() {
+        let source = tempfile::tempdir().expect("creating a source directory should succeed");
+        std::fs::create_dir(source.path().join("languages"))
+            .expect("creating a nested directory should succeed");
+        std::fs::write(source.path().join("extension.toml"), b"id = \"nextflow\"")
+            .expect("writing the manifest should succeed");
+        std::fs::write(
+            source.path().join("languages/config.toml"),
+            b"name = \"nf\"",
+        )
+        .expect("writing a nested file should succeed");
+
+        let destination =
+            tempfile::tempdir().expect("creating a destination directory should succeed");
+        let destination = destination.path().join("nested/nextflow");
+
+        let command = CommandTemplate {
+            program: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "mkdir -p \"$1\" && tar -xf - -C \"$1\"".to_string(),
+                "zed-upload".to_string(),
+                destination.to_string_lossy().to_string(),
+            ],
+            env: Default::default(),
+        };
+
+        smol::block_on(async {
+            let archive = DockerExecConnection::archive_directory(source.path())
+                .await
+                .expect("packing the directory should succeed");
+            DockerExecConnection::stream_file_into(archive.path(), command).await
+        })
+        .expect("streaming the archive should succeed");
+
+        assert_eq!(
+            std::fs::read(destination.join("extension.toml"))
+                .expect("the manifest should have arrived"),
+            b"id = \"nextflow\""
+        );
+        assert_eq!(
+            std::fs::read(destination.join("languages/config.toml"))
+                .expect("nested files should have arrived"),
+            b"name = \"nf\""
         );
     }
 

@@ -15313,6 +15313,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "askpass",
+ "async-tar",
  "async-trait",
  "base64 0.22.1",
  "collections",

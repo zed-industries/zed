@@ -93,7 +93,6 @@ For containers running on a remote host, additionally:
 - **Port forwarding** is routed through the remote host, which requires it to be able to reach container addresses directly. This is the case for Linux bridge networking, but not for Docker Desktop's virtual machine. Forwarding a port from a container on your own machine is not supported at all.
 - **`updateRemoteUserUID`** only applies when the configuration declares `features`. Without them the container keeps whatever user ID its image ships, which may not match the owner of your files on the host, making the workspace read-only inside the container. Adding any feature, or setting the image's user ID to match, works around it. This limitation applies to local dev containers too.
 - **Windows clients** skip the user ID update entirely, even when the host is Linux.
-- **Installing an extension from a local directory** into the container is not supported; extensions listed in `devcontainer.json` install normally.
 
 ## See also
 
