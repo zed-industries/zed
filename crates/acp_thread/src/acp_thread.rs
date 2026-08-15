@@ -165,6 +165,47 @@ impl SandboxPermission {
     }
 }
 
+/// Represents an agent's vote in a multi-agent consensus verification
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum SwarmVoteDecision {
+    Approve,
+    Reject { reason: String },
+    RequestChanges { recommendations: Vec<String> },
+}
+
+/// Swarm multi-agent peer review task definition
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SwarmPeerReviewTask {
+    pub task_id: String,
+    pub proposing_agent_id: String,
+    pub reviewing_agents: Vec<String>,
+    pub votes: collections::HashMap<String, SwarmVoteDecision>,
+}
+
+impl SwarmPeerReviewTask {
+    pub fn new(task_id: impl Into<String>, proposing_agent_id: impl Into<String>) -> Self {
+        Self {
+            task_id: task_id.into(),
+            proposing_agent_id: proposing_agent_id.into(),
+            reviewing_agents: Vec::new(),
+            votes: collections::HashMap::default(),
+        }
+    }
+
+    pub fn cast_vote(&mut self, reviewer_id: impl Into<String>, decision: SwarmVoteDecision) {
+        self.votes.insert(reviewer_id.into(), decision);
+    }
+
+    pub fn is_consensus_approved(&self, required_approvals: usize) -> bool {
+        let approvals = self
+            .votes
+            .values()
+            .filter(|v| matches!(v, SwarmVoteDecision::Approve))
+            .count();
+        approvals >= required_approvals
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SandboxAuthorizationDetails {
     #[serde(default)]
