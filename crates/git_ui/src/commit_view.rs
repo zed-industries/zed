@@ -85,14 +85,36 @@ pub struct CommitView {
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     remote: Option<GitRemote>,
+    _load_diff_task: Task<Result<()>>,
 }
 
-struct GitBlob {
-    path: RepoPath,
-    worktree_id: WorktreeId,
-    is_deleted: bool,
-    is_binary: bool,
-    display_name: String,
+pub(crate) struct GitBlob {
+    pub(crate) path: RepoPath,
+    pub(crate) worktree_id: WorktreeId,
+    pub(crate) is_deleted: bool,
+    pub(crate) is_binary: bool,
+    pub(crate) display_name: String,
+}
+
+pub(crate) fn worktree_id_for_repo_path(
+    repository: &Repository,
+    project: &Project,
+    path: &RepoPath,
+    cx: &App,
+) -> Option<WorktreeId> {
+    repository
+        .repo_path_to_project_path(path, cx)
+        .map(|project_path| project_path.worktree_id)
+        .or_else(|| {
+            let (worktree, _) = project.find_worktree(&repository.work_directory_abs_path, cx)?;
+            Some(worktree.read(cx).id())
+        })
+        .or_else(|| {
+            project
+                .worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).id())
+        })
 }
 
 struct CommitDiffAddon {
@@ -287,15 +309,10 @@ impl CommitView {
         });
         let commit_sha = Arc::<str>::from(commit.sha.as_ref());
 
-        let first_worktree_id = project
-            .read(cx)
-            .worktrees(cx)
-            .next()
-            .map(|worktree| worktree.read(cx).id());
-
         let repository_clone = repository.clone();
+        let project_clone = project.clone();
 
-        cx.spawn_in(window, async move |this, cx| {
+        let load_diff_task = cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
@@ -318,11 +335,13 @@ impl CommitView {
                 };
                 let old_text = if is_binary { None } else { raw_old_text };
                 let worktree_id = repository_clone
-                    .update(cx, |repository, cx| {
-                        repository
-                            .repo_path_to_project_path(&file.path, cx)
-                            .map(|path| path.worktree_id)
-                            .or(first_worktree_id)
+                    .read_with(cx, |repository, cx| {
+                        worktree_id_for_repo_path(
+                            repository,
+                            project_clone.read(cx),
+                            &file.path,
+                            cx,
+                        )
                     })
                     .context("project has no worktrees")?;
                 let short_sha = commit_sha
@@ -453,8 +472,7 @@ impl CommitView {
             })?;
 
             anyhow::Ok(())
-        })
-        .detach();
+        });
 
         let snapshot = repository.read(cx).snapshot();
         let remote_url = snapshot
@@ -483,6 +501,7 @@ impl CommitView {
             project,
             workspace,
             remote,
+            _load_diff_task: load_diff_task,
         }
     }
 
@@ -957,7 +976,7 @@ impl language::File for GitBlob {
     }
 }
 
-async fn build_buffer(
+pub(crate) async fn build_buffer(
     mut text: String,
     blob: Arc<dyn File>,
     language_registry: &Arc<language::LanguageRegistry>,
@@ -1235,6 +1254,7 @@ impl Item for CommitView {
                 project: self.project.clone(),
                 workspace: self.workspace.clone(),
                 remote: self.remote.clone(),
+                _load_diff_task: Task::ready(Ok(())),
             }
         })))
     }
