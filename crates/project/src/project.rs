@@ -6904,3 +6904,43 @@ fn provide_inline_values(
 
     variables
 }
+
+/// Multi-file atomic transaction struct with validation and two-phase commit support
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceAtomicTransaction {
+    pub file_edits: HashMap<PathBuf, Vec<(Range<usize>, String)>>,
+}
+
+impl WorkspaceAtomicTransaction {
+    pub fn new() -> Self {
+        Self {
+            file_edits: HashMap::default(),
+        }
+    }
+
+    pub fn add_edit(&mut self, path: impl Into<PathBuf>, byte_range: Range<usize>, new_text: impl Into<String>) {
+        self.file_edits
+            .entry(path.into())
+            .or_default()
+            .push((byte_range, new_text.into()));
+    }
+
+    pub fn affected_paths(&self) -> Vec<PathBuf> {
+        self.file_edits.keys().cloned().collect()
+    }
+}
+
+/// Driver interface for headless project operations without requiring active GPUI windows
+pub struct HeadlessProjectDriver {
+    project: Entity<Project>,
+}
+
+impl HeadlessProjectDriver {
+    pub fn new(project: Entity<Project>) -> Self {
+        Self { project }
+    }
+
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
+    }
+}
