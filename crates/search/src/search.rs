@@ -239,3 +239,31 @@ pub(crate) fn show_no_more_matches(window: &mut Window, cx: &mut App) {
         })
     });
 }
+
+/// Headless search match for autonomous agent code discovery
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HeadlessSearchMatch {
+    pub path: String,
+    pub line_number: u32,
+    pub match_text: String,
+}
+
+/// Headless search engine query for background whole-repo regex and literal text searches
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HeadlessSearchQuery {
+    pub pattern: String,
+    pub is_regex: bool,
+    pub case_sensitive: bool,
+    pub include_ignored: bool,
+}
+
+impl HeadlessSearchQuery {
+    pub fn new(pattern: impl Into<String>) -> Self {
+        Self {
+            pattern: pattern.into(),
+            is_regex: false,
+            case_sensitive: false,
+            include_ignored: false,
+        }
+    }
+}
