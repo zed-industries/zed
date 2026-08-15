@@ -1239,13 +1239,13 @@ dependencies = [
 [[package]]
 name = "async-tar"
 version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6affe71e5b6180fb5eaf9e8127a243694baf6ae1120c199227167302f56c14b"
+source = "git+https://github.com/hooiv/async-tar.git?branch=fix-pax-binary-newlines#42f343bf5ef0c904e51405cde3e29bb35ab05ad3"
 dependencies = [
  "async-std",
  "filetime",
  "futures-core",
  "libc",
+ "pin-project",
  "redox_syscall 0.7.5",
  "xattr",
 ]

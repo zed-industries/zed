@@ -529,4 +529,66 @@ mod tests {
             assert_eq!(leftover_entries, 0, "staging directory should be removed");
         });
     }
+
+    #[test]
+    fn downloads_tar_gz_with_binary_pax_headers_and_extracts_contents() {
+        futures::executor::block_on(async {
+            use async_compression::futures::write::GzipEncoder;
+            use futures::AsyncWriteExt as _;
+
+            let mut tar_bytes = Vec::new();
+
+            // 1. PAX Extended Header
+            let pax_record = b"45 SCHILY.xattr.test=binary\nwith\nnewlines\x00data\n";
+            let mut pax_header = async_tar::Header::new_ustar();
+            pax_header.set_path("PaxHeader/test_file").unwrap();
+            pax_header.set_entry_type(async_tar::EntryType::XHeader);
+            pax_header.set_size(pax_record.len() as u64);
+            pax_header.set_cksum();
+            tar_bytes.extend_from_slice(pax_header.as_bytes());
+            tar_bytes.extend_from_slice(pax_record);
+            let pax_pad = (512 - (pax_record.len() % 512)) % 512;
+            tar_bytes.extend(std::iter::repeat(0).take(pax_pad));
+
+            // 2. Regular File Header
+            let mut file_header = async_tar::Header::new_ustar();
+            file_header.set_path("test_file").unwrap();
+            file_header.set_entry_type(async_tar::EntryType::Regular);
+            file_header.set_size(5);
+            file_header.set_cksum();
+            tar_bytes.extend_from_slice(file_header.as_bytes());
+            tar_bytes.extend_from_slice(b"hello");
+            let file_pad = (512 - (5 % 512)) % 512;
+            tar_bytes.extend(std::iter::repeat(0).take(file_pad));
+
+            // 3. End of archive padding (two 512-byte zero blocks)
+            tar_bytes.extend(std::iter::repeat(0).take(1024));
+
+            let mut gz_bytes = Vec::new();
+            {
+                let mut encoder = GzipEncoder::new(&mut gz_bytes);
+                encoder.write_all(&tar_bytes).await.unwrap();
+                encoder.close().await.unwrap();
+            }
+
+            let client = StaticResponseClient { body: gz_bytes };
+            let temp_dir = tempfile::tempdir().unwrap();
+            let destination_path = temp_dir.path().join("extracted");
+
+            download_server_binary(
+                &client,
+                "https://example.com/agent.tar.gz",
+                None,
+                &destination_path,
+                AssetKind::TarGz,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                std::fs::read(destination_path.join("test_file")).unwrap(),
+                b"hello"
+            );
+        });
+    }
 }
