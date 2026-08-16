@@ -18,6 +18,7 @@ use ui::{
 
 use crate::{
     CsvPreviewView,
+    renderer::table_cell::with_copy_on_right_click,
     settings::FilterSortOrder,
     table_data_engine::{
         filtering_by_column::{FilterEntry, FilterEntryState},
@@ -549,14 +550,23 @@ impl CsvPreviewView {
             .items_center()
             .font_buffer(cx)
             .text_buffer(cx)
-            .child(
-                div()
+            .child({
+                let header_text_cell = div()
+                    .id(ElementId::NamedInteger(
+                        "csv-col-header-text".into(),
+                        col_idx.get() as u64,
+                    ))
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(header_text),
-            )
+                    .whitespace_nowrap();
+                with_copy_on_right_click(
+                    header_text_cell,
+                    header_text.clone(),
+                    "Right click to copy column name",
+                )
+                .child(header_text)
+            })
             .child(
                 GradientFade::new(base_bg, base_bg, base_bg)
                     .width(grad_width)
