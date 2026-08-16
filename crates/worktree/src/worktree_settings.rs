@@ -18,6 +18,7 @@ pub struct WorktreeSettings {
     /// determine whether to terminate worktree scanning for a given dir.
     pub parent_dir_scan_inclusions: PathMatcher,
     pub scan_symlinks: ScanSymlinksSetting,
+    pub file_scan_depth: Option<u32>,
     pub private_files: PathMatcher,
     pub hidden_files: PathMatcher,
     pub read_only_files: PathMatcher,
@@ -98,6 +99,7 @@ impl Settings for WorktreeSettings {
                 .log_err()
                 .unwrap_or_default(),
             scan_symlinks,
+            file_scan_depth: worktree.file_scan_depth.filter(|depth| *depth > 0),
         }
     }
 }

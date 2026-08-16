@@ -2110,7 +2110,7 @@ impl DisplaySnapshot {
             });
         chars.collect::<String>().graphemes(true).next().map(|s| {
             if let Some(invisible) = s.chars().next().filter(|&c| is_invisible(c)) {
-                replacement(invisible).unwrap_or(s).to_owned().into()
+                replacement(invisible).map_or_else(|| s.to_owned().into(), SharedString::from)
             } else if s == "\n" {
                 " ".into()
             } else {

@@ -889,6 +889,12 @@ pub trait GitRepository: Send + Sync {
         line_ending: LineEnding,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
+    fn blame_at_revision(
+        &self,
+        path: RepoPath,
+        revision: Oid,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
+
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
     fn path(&self) -> PathBuf;
@@ -1723,6 +1729,11 @@ impl GitRepository for RealGitRepository {
                 if revisions.is_empty() {
                     return Ok(Vec::new());
                 }
+                if let Some(revision) = revisions.iter().find(|revision| revision.contains('\n')) {
+                    anyhow::bail!(
+                        "revision spec {revision:?} contains a newline and cannot be passed to git cat-file --batch"
+                    );
+                }
 
                 let mut process = git
                     .build_command(&["cat-file", "--batch"])
@@ -2369,6 +2380,21 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git?;
                 crate::blame::Blame::for_path(&git, &path, &content, line_ending).await
+            })
+            .boxed()
+    }
+
+    fn blame_at_revision(
+        &self,
+        path: RepoPath,
+        revision: Oid,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
+        let git = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git = git?;
+                crate::blame::Blame::for_path_at_revision(&git, &path, revision).await
             })
             .boxed()
     }
@@ -5446,6 +5472,74 @@ mod tests {
                 Some("space file committed contents".into()),
                 None,
             ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_blame_at_revision(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let file_name = "ürlich file1";
+        fs::write(repo_dir.path().join(file_name), "line one\n").unwrap();
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "First commit"]);
+        let first_sha = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
+
+        fs::write(repo_dir.path().join(file_name), "line one\nline two\n").unwrap();
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "Second commit"]);
+        let second_sha = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
+
+        let blame_at_head = repo
+            .blame_at_revision(repo_path(file_name), second_sha.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            blame_at_head
+                .entries
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.sha.to_string(),
+                        entry.range.clone(),
+                        entry.filename.clone(),
+                        entry.previous.clone(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                (first_sha.clone(), 0..1, file_name.to_owned(), None),
+                (
+                    second_sha.clone(),
+                    1..2,
+                    file_name.to_owned(),
+                    Some(format!("{first_sha} {file_name}"))
+                ),
+            ]
+        );
+
+        let blame_at_first = repo
+            .blame_at_revision(repo_path(file_name), first_sha.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            blame_at_first
+                .entries
+                .iter()
+                .map(|entry| (entry.sha.to_string(), entry.range.clone()))
+                .collect::<Vec<_>>(),
+            vec![(first_sha.clone(), 0..1)]
         );
     }
 

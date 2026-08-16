@@ -26,7 +26,7 @@ test-support = [
     "x11",
     "proptest",
 ]
-bench = ["test-support", "dep:criterion", "dep:hdrhistogram"]
+bench = ["test-support", "profiler", "dep:criterion"]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
 wayland = []
@@ -37,9 +37,7 @@ screen-capture = [
     "scap",
 ]
 windows-manifest = ["dep:embed-resource"]
-input-latency-histogram = ["dep:hdrhistogram"]
-frame-duration-histogram = ["dep:hdrhistogram"]
-profiler = []
+profiler = ["dep:hdrhistogram"]
 
 [lib]
 path = "src/gpui.rs"
@@ -92,7 +90,7 @@ async-channel.workspace = true
 stacksafe.workspace = true
 strum.workspace = true
 sum_tree.workspace = true
-taffy = "=0.12.2"
+taffy = "=0.13.0"
 thiserror.workspace = true
 tracing.workspace = true
 gpui_util.workspace = true
