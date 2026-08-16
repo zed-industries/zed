@@ -1613,8 +1613,19 @@ impl Element for TerminalElement {
         let paint_start = Instant::now();
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let scroll_top = self.terminal_view.read(cx).scroll_top;
-
-            window.paint_quad(fill(bounds, layout.background_color));
+            let island_layout = workspace::WorkspaceSettings::get_global(cx).island_layout;
+            let corner_radii = if island_layout.enabled {
+                let radius = px(island_layout.corner_radius);
+                gpui::Corners {
+                    top_left: px(0.),
+                    top_right: px(0.),
+                    bottom_right: radius,
+                    bottom_left: radius,
+                }
+            } else {
+                gpui::Corners::default()
+            };
+            window.paint_quad(fill(bounds, layout.background_color).corner_radii(corner_radii));
             let origin = layout.dimensions.bounds.origin - GpuiPoint::new(px(0.), scroll_top);
             let scale_factor = window.scale_factor();
             let snap_px = |value: Pixels| {

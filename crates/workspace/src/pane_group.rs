@@ -609,7 +609,7 @@ impl Member {
 
     pub fn render_member_element(
         is_maximized: bool,
-        island_layout: &crate::workspace_settings::IslandLayoutSettings,
+        _island_layout: &crate::workspace_settings::IslandLayoutSettings,
         pane_el: Div,
     ) -> Div {
         div()
@@ -617,9 +617,6 @@ impl Member {
             .flex_1()
             .size_full()
             .when(is_maximized, |this| this.p_2())
-            .when(island_layout.enabled, |this| {
-                this.p(px(island_layout.gap / 2.0))
-            })
             .child(pane_el)
     }
 
@@ -1635,7 +1632,7 @@ mod element {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AbsoluteLength, DefiniteLength, EdgesRefinement, px};
+    use gpui::EdgesRefinement;
 
     #[test]
     fn test_member_render_element_default_padding() {
@@ -1646,7 +1643,7 @@ mod tests {
     }
 
     #[test]
-    fn test_member_render_element_island_gap_padding() {
+    fn test_member_render_element_island_layout() {
         let island_layout = crate::workspace_settings::IslandLayoutSettings {
             enabled: true,
             corner_radius: 18.0,
@@ -1656,14 +1653,6 @@ mod tests {
         };
         let mut el = Member::render_member_element(false, &island_layout, div());
         let style = el.style();
-        assert_eq!(
-            style.padding,
-            EdgesRefinement {
-                top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(4.0)))),
-                right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(4.0)))),
-                bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(4.0)))),
-                left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(4.0)))),
-            }
-        );
+        assert_eq!(style.padding, EdgesRefinement::default());
     }
 }

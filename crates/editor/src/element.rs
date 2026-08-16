@@ -4903,11 +4903,43 @@ impl EditorElement {
         window.paint_layer(layout.hitbox.bounds, |window| {
             let scroll_top = layout.position_map.scroll_position.y;
             let gutter_bg = cx.theme().colors().editor_gutter_background;
-            window.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
-            window.paint_quad(fill(
-                layout.position_map.text_hitbox.bounds,
-                self.style.background,
-            ));
+            let island_layout = cx.try_global::<settings::SettingsStore>().and_then(|s| {
+                s.raw_user_settings()
+                    .and_then(|u| u.content.workspace.island_layout.as_ref())
+                    .or_else(|| s.raw_default_settings().workspace.island_layout.as_ref())
+            });
+            let (corner_radii, gutter_corner_radii) =
+                if island_layout.is_some_and(|l| l.enabled.unwrap_or(false)) {
+                    let radius = px(island_layout.and_then(|l| l.corner_radius).unwrap_or(18.0));
+                    let has_gutter = !layout.gutter_hitbox.bounds.is_empty();
+                    (
+                        Corners {
+                            top_left: px(0.),
+                            top_right: px(0.),
+                            bottom_right: radius,
+                            bottom_left: if has_gutter { px(0.) } else { radius },
+                        },
+                        Corners {
+                            top_left: px(0.),
+                            top_right: px(0.),
+                            bottom_right: px(0.),
+                            bottom_left: radius,
+                        },
+                    )
+                } else {
+                    (Corners::default(), Corners::default())
+                };
+
+            window.paint_quad(
+                fill(layout.gutter_hitbox.bounds, gutter_bg).corner_radii(gutter_corner_radii),
+            );
+            window.paint_quad(
+                fill(
+                    layout.position_map.text_hitbox.bounds,
+                    self.style.background,
+                )
+                .corner_radii(corner_radii),
+            );
 
             if matches!(
                 layout.mode,

@@ -4371,6 +4371,7 @@ impl Pane {
         };
 
         let island_layout = WorkspaceSettings::get_global(cx).island_layout;
+        let is_island_card = island_layout.enabled && self.in_center_group;
 
         v_flex()
             .key_context(key_context)
@@ -4378,7 +4379,7 @@ impl Pane {
             .size_full()
             .flex_none()
             .overflow_hidden()
-            .when(island_layout.enabled, |this| {
+            .when(is_island_card, |this| {
                 this.rounded(px(island_layout.corner_radius))
                     .shadow_sm()
                     .when(island_layout.border, |this| {

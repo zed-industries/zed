@@ -1704,8 +1704,6 @@ impl WorkspaceDb {
                 host = Some(format!("mock-{}", id));
                 user = Some(format!("mock-user-{}", id));
             }
-            #[cfg(not(any(test, feature = "test-support")))]
-            _ => unreachable!(),
         }
 
         if let RemoteConnectionOptions::Docker(options) = options {
