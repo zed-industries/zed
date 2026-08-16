@@ -20,6 +20,7 @@ once_cell.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
+zed_core_lib = { path = "../zed_core_lib" }
 code_graph = { path = "../code_graph" }
 outline = { path = "../outline" }
 search = { path = "../search" }

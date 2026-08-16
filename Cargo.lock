@@ -10325,6 +10325,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tree-sitter",
+ "zed_core_lib",
 ]
 
 [[package]]
@@ -23783,6 +23784,7 @@ dependencies = [
  "smol",
  "tasks_ui",
  "workspace",
+ "zed_core_lib",
 ]
 
 [[package]]

@@ -15,6 +15,7 @@ path = "src/lib.rs"
 
 [dependencies]
 rope.workspace = true
+zed_core_lib = { path = "../zed_core_lib" }
 language.workspace = true
 tree-sitter.workspace = true
 anyhow.workspace = true

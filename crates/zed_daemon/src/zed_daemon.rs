@@ -17,50 +17,29 @@ fn safe_lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Global in-memory stateful store for headless buffers backed by immutable Rope structures
+/// Global in-memory stateful store for headless buffers backed by zed_core_lib::ZedEngine
 #[derive(Clone, Default)]
 pub struct InMemoryBufferStore {
-    buffers: Arc<Mutex<HashMap<u64, rope::Rope>>>,
-    next_id: Arc<Mutex<u64>>,
+    engine: zed_core_lib::ZedEngine,
 }
 
 impl InMemoryBufferStore {
     pub fn new() -> Self {
         Self {
-            buffers: Arc::new(Mutex::new(HashMap::new())),
-            next_id: Arc::new(Mutex::new(1)),
+            engine: zed_core_lib::ZedEngine::new(),
         }
     }
 
     pub fn create_buffer(&self, content: String) -> u64 {
-        let mut id_guard = safe_lock(&self.next_id);
-        let id = *id_guard;
-        *id_guard += 1;
-        let mut r = rope::Rope::new();
-        r.push(&content);
-        safe_lock(&self.buffers).insert(id, r);
-        id
+        self.engine.create_buffer(content)
     }
 
     pub fn get_text(&self, id: u64) -> Option<String> {
-        safe_lock(&self.buffers)
-            .get(&id)
-            .map(|r| r.to_string())
+        self.engine.get_text(id)
     }
 
     pub fn apply_transaction(&self, id: u64, edits: Vec<(usize, usize, String)>) -> bool {
-        let mut guard = safe_lock(&self.buffers);
-        if let Some(rope_buf) = guard.get_mut(&id) {
-            for (start, end, rep) in edits {
-                let len = rope_buf.len();
-                if start <= end && end <= len {
-                    rope_buf.replace(start..end, &rep);
-                }
-            }
-            true
-        } else {
-            false
-        }
+        self.engine.apply_transaction(id, edits)
     }
 }
 
