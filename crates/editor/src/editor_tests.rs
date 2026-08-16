@@ -59,6 +59,7 @@ use settings::{
 };
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     sync::{Arc, atomic},
 };
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -3328,6 +3329,44 @@ async fn test_scroll_page_up_page_down(cx: &mut TestAppContext) {
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_newest_selection_on_screen_with_multibyte_chars(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let multibyte_line = "ã".repeat(40);
+    cx.set_state(&format!("{multibyte_line}ˇx\n"));
+    cx.update_editor(|editor, window, cx| {
+        editor.set_visible_line_count(50., window, cx);
+        editor.set_visible_column_count(60.);
+        assert_eq!(
+            editor.newest_selection_on_screen(window, cx),
+            Ordering::Equal
+        );
+        editor.set_visible_column_count(20.);
+        assert_eq!(
+            editor.newest_selection_on_screen(window, cx),
+            Ordering::Greater
+        );
+    });
+
+    let ascii_line = "a".repeat(40);
+    cx.set_state(&format!("{ascii_line}ˇx\n"));
+    cx.update_editor(|editor, window, cx| {
+        editor.set_visible_line_count(50., window, cx);
+        editor.set_visible_column_count(60.);
+        assert_eq!(
+            editor.newest_selection_on_screen(window, cx),
+            Ordering::Equal
+        );
+        editor.set_visible_column_count(20.);
+        assert_eq!(
+            editor.newest_selection_on_screen(window, cx),
+            Ordering::Greater
         );
     });
 }
@@ -33167,6 +33206,88 @@ async fn test_go_to_bookmark_with_out_of_order_bookmarks(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_empty_rename_is_no_op(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..Default::default()
+    };
+    let mut cx = EditorLspTestContext::new_rust(capabilities, cx).await;
+
+    cx.set_state("let aˇbc = 1;");
+
+    let rename_request_count = Arc::new(AtomicUsize::new(0));
+    let _rename_handler = cx.set_request_handler::<lsp::request::Rename, _, _>({
+        let rename_request_count = rename_request_count.clone();
+        move |_, _, _| {
+            rename_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+            async { Ok(None) }
+        }
+    });
+    let mut prepare_rename_handler = cx
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+            move |_, _, _| async move {
+                Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 4,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                })))
+            },
+        );
+
+    for new_name in ["", "   "] {
+        let prepare_rename_task = cx
+            .update_editor(|editor, window, cx| editor.rename(&Rename, window, cx))
+            .expect("Prepare rename was not started");
+        prepare_rename_handler.next().await.unwrap();
+        prepare_rename_task.await.expect("Prepare rename failed");
+
+        let rename_editor = cx.editor(|editor, _, _| {
+            editor
+                .pending_rename()
+                .expect("Rename should still be pending")
+                .editor
+                .clone()
+        });
+        rename_editor.update_in(&mut cx.cx.cx, |editor, window, cx| {
+            editor.backspace(&Backspace, window, cx);
+            editor.insert(new_name, window, cx);
+        });
+        assert_eq!(
+            cx.editor(|editor, _, cx| {
+                editor
+                    .pending_rename()
+                    .expect("Rename should still be pending")
+                    .editor
+                    .read(cx)
+                    .text(cx)
+            }),
+            new_name
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            editor
+                .confirm_rename(&ConfirmRename, window, cx)
+                .expect("Confirm rename should consume the action")
+        })
+        .await
+        .expect("Confirm rename failed");
+
+        assert_eq!(rename_request_count.load(atomic::Ordering::SeqCst), 0);
+        assert!(cx.editor(|editor, _, _| editor.pending_rename().is_none()));
+        assert_eq!(cx.buffer_text(), "let abc = 1;");
+    }
+}
+
+#[gpui::test]
 async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let capabilities = lsp::ServerCapabilities {
@@ -42298,6 +42419,66 @@ async fn test_align_selections_multicolumn(cx: &mut TestAppContext) {
     );
     cx.set_state(before);
     cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+}
+
+#[gpui::test]
+async fn test_align_selections_with_multibyte_chars(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // The reported case: `←` and `π` take more bytes than they take columns, so
+    // aligning on the buffer column padded the first row one space too far.
+    let before = "a ← 1  ˇ# one\nbc ← π  ˇ# two";
+    let after = "a ← 1   ˇ# one\nbc ← π  ˇ# two";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // A multi-byte character before the first column also has to shift the
+    // offset that is carried into the second column.
+    let before = "π aˇ bbbˇc\nxy aˇ bˇc";
+    let after = "π a ˇ bbbˇc\nxy aˇ b  ˇc";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // The display map expands tabs before the row is laid out, so a leading tab
+    // counts as its expanded width rather than as one byte.
+    let before = "\taˇbc\nxyzaˇbc";
+    let after = "\taˇbc\nxyza ˇbc";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // A non-BMP character advances two columns, so counting characters rather
+    // than measuring advances would pad this row twice as far as it needs.
+    let before = "😀ˇb\nxyzˇb";
+    let after = "😀 ˇb\nxyzˇb";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // Multi-byte characters after the cursors do not move them.
+    let before = "abˇ←z\ncdˇqz";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(before);
+}
+
+#[gpui::test]
+async fn test_align_selections_with_soft_wrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let before = "aaaaaaaaaaaaˇx\nbbbbbˇy";
+    let after = "aaaaaaaaaaaaˇx\nbbbbb       ˇy";
+    cx.set_state(before);
+    cx.update_editor(|e, _, cx| e.set_wrap_width(Some(100.0.into()), cx));
+    cx.update_editor(|e, window, cx| {
+        assert!(e.display_text(cx).lines().count() > 2);
+        e.align_selections(&AlignSelections, window, cx)
+    });
     cx.assert_editor_state(after);
 }
 

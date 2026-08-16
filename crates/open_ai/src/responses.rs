@@ -197,6 +197,10 @@ impl ResponseInput {
     pub fn retain(&mut self, predicate: impl FnMut(&ResponseInputItem) -> bool) {
         self.generated_items.retain(predicate);
     }
+
+    pub fn push(&mut self, item: ResponseInputItem) {
+        self.generated_items.push(item);
+    }
 }
 
 impl Serialize for ResponseInput {
@@ -242,6 +246,7 @@ pub enum ResponseInputItem {
     CustomToolCallOutput(ResponseCustomToolCallOutputItem),
     Reasoning(ResponseReasoningInputItem),
     Compaction(ResponseCompactionItem),
+    CompactionTrigger,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -753,7 +758,7 @@ pub async fn compact_response(
             provider: provider_name.to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
 }
@@ -943,7 +948,7 @@ pub async fn stream_response(
             provider: provider_name.to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
 }

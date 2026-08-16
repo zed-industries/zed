@@ -66,6 +66,7 @@ pub struct FakeGitRepositoryState {
     pub merge_base_contents: HashMap<RepoPath, Oid>,
     pub oids: HashMap<Oid, String>,
     pub blames: HashMap<RepoPath, Blame>,
+    pub blames_at_revision: HashMap<(RepoPath, Oid), Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
     /// List of remotes, keys are names and values are URLs
@@ -90,6 +91,7 @@ impl FakeGitRepositoryState {
             index_contents: Default::default(),
             unmerged_paths: Default::default(),
             blames: Default::default(),
+            blames_at_revision: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
@@ -269,7 +271,14 @@ impl GitRepository for FakeGitRepository {
                     match prefix {
                         "" => state.index_contents.get(&repo_path).cloned(),
                         "HEAD" => state.head_contents.get(&repo_path).cloned(),
-                        _ => None,
+                        _ if state.refs.get("HEAD").map(String::as_str) == Some(prefix) => {
+                            state.head_contents.get(&repo_path).cloned()
+                        }
+                        _ => state
+                            .commit_history
+                            .iter()
+                            .find(|snapshot| snapshot.sha == prefix)
+                            .and_then(|snapshot| snapshot.head_contents.get(&repo_path).cloned()),
                     }
                 })
                 .collect())
@@ -985,6 +994,20 @@ impl GitRepository for FakeGitRepository {
                 .blames
                 .get(&path)
                 .with_context(|| format!("failed to get blame for {:?}", path))
+                .cloned()
+        })
+    }
+
+    fn blame_at_revision(
+        &self,
+        path: RepoPath,
+        revision: Oid,
+    ) -> BoxFuture<'_, Result<git::blame::Blame>> {
+        self.with_state_async(false, move |state| {
+            state
+                .blames_at_revision
+                .get(&(path.clone(), revision))
+                .with_context(|| format!("failed to get blame for {path:?} at {revision}"))
                 .cloned()
         })
     }
