@@ -8156,7 +8156,6 @@ dependencies = [
  "criterion",
  "language_core",
  "rust-embed",
- "strum 0.27.2",
  "toml 0.8.23",
  "tree-sitter",
  "tree-sitter-bash",
