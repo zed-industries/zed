@@ -182,7 +182,6 @@ pub struct Snapshot {
     entries_by_id: SumTree<PathEntry>,
     root_repo_common_dir: Option<Arc<SanitizedPath>>,
     root_repo_is_linked_worktree: bool,
-    always_included_entries: Vec<Arc<RelPath>>,
 
     /// A number that increases every time the worktree begins scanning
     /// a set of paths from the filesystem. This scanning could be caused
@@ -1317,7 +1316,12 @@ impl LocalWorktree {
         self.path_prefixes_to_scan_tx = path_prefixes_to_scan_tx;
 
         self.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
-        let always_included_entries = mem::take(&mut self.snapshot.always_included_entries);
+        let always_included_entries = self
+            .snapshot
+            .entries(true, 0)
+            .filter(|entry| entry.is_always_included)
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
         log::debug!(
             "refreshing entries for the following always included paths: {:?}",
             always_included_entries
@@ -2564,7 +2568,6 @@ impl Snapshot {
                 .map(|c| c.to_ascii_lowercase())
                 .collect(),
             root_name,
-            always_included_entries: Default::default(),
             entries_by_path: Default::default(),
             entries_by_id: Default::default(),
             root_repo_common_dir: None,
@@ -5602,12 +5605,6 @@ impl BackgroundScanner {
                     }
                 }
                 job_ix += 1;
-            }
-            if entry.is_always_included {
-                state
-                    .snapshot
-                    .always_included_entries
-                    .push(entry.path.clone());
             }
         }
 
