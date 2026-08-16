@@ -8118,6 +8118,7 @@ impl Workspace {
                         this.track_focus(self.region_focus_handles.dock(position))
                     })
             })
+            .when(!dock_is_open, |this| this.hidden())
             .flex()
             .overflow_hidden()
             .flex_none()
@@ -8170,6 +8171,49 @@ impl Workspace {
         }
 
         Some(container)
+    }
+
+    pub(crate) fn style_workspace_container(
+        div: Div,
+        island_layout: &crate::workspace_settings::IslandLayoutSettings,
+        colors: &theme::ThemeColors,
+    ) -> Stateful<Div> {
+        div.id("workspace")
+            .bg(colors.background)
+            .relative()
+            .flex_1()
+            .w_full()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .when(!island_layout.enabled, |this| {
+                this.border_t_1()
+                    .border_b_1()
+                    .border_color(colors.border)
+            })
+            .when(island_layout.enabled, |this| {
+                this.p(px(island_layout.gap))
+            })
+    }
+
+    pub(crate) fn render_floating_status_bar(
+        &self,
+        island_layout: &crate::workspace_settings::IslandLayoutSettings,
+        cx: &App,
+    ) -> Stateful<Div> {
+        div()
+            .id("floating-status-bar")
+            .mx(px(island_layout.gap))
+            .mb(px(island_layout.gap))
+            .rounded(px(island_layout.corner_radius * 0.75))
+            .overflow_hidden()
+            .bg(cx.theme().colors().status_bar_background)
+            .when(island_layout.border, |this| {
+                this.border_1()
+                    .border_color(cx.theme().colors().border_variant)
+            })
+            .shadow_sm()
+            .child(self.status_bar.clone())
     }
 
     /// Returns the currently-visible major window regions ("parts"), in a stable
@@ -9036,6 +9080,7 @@ impl Render for Workspace {
             .map(|(_, notification)| notification.entity_id())
             .collect::<Vec<_>>();
         let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
+        let island_layout = WorkspaceSettings::get_global(cx).island_layout;
 
         let pane_render_context = PaneRenderContext {
             follower_states: &self.follower_states,
@@ -9106,18 +9151,7 @@ impl Render for Workspace {
                     .flex()
                     .flex_col()
                     .child(
-                        div()
-                            .id("workspace")
-                            .bg(colors.background)
-                            .relative()
-                            .flex_1()
-                            .w_full()
-                            .flex()
-                            .flex_col()
-                            .overflow_hidden()
-                            .border_t_1()
-                            .border_b_1()
-                            .border_color(colors.border)
+                        Self::style_workspace_container(div(), &island_layout, colors)
                             .child({
                                 let this = cx.entity();
                                 canvas(
@@ -9204,12 +9238,14 @@ impl Render for Workspace {
                                         .flex()
                                         .flex_col()
                                         .h_full()
+                                        .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
                                         .child(
                                             div()
                                                 .flex()
                                                 .flex_row()
                                                 .flex_1()
                                                 .overflow_hidden()
+                                                .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
                                                 .children(self.render_dock(
                                                     DockPosition::Left,
                                                     &self.left_dock,
@@ -9248,28 +9284,36 @@ impl Render for Workspace {
                                                     cx,
                                                 )),
                                         )
-                                        .child(div().w_full().children(self.render_dock(
-                                            DockPosition::Bottom,
-                                            &self.bottom_dock,
-                                            window,
-                                            cx,
-                                        ))),
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .when(!self.bottom_dock.read(cx).is_open(), |this| this.hidden())
+                                                .children(self.render_dock(
+                                                    DockPosition::Bottom,
+                                                    &self.bottom_dock,
+                                                    window,
+                                                    cx,
+                                                )),
+                                        ),
 
                                     BottomDockLayout::LeftAligned => div()
                                         .flex()
                                         .flex_row()
                                         .h_full()
+                                        .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
                                         .child(
                                             div()
                                                 .flex()
                                                 .flex_col()
                                                 .flex_1()
                                                 .h_full()
+                                                .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
                                                 .child(
                                                     div()
                                                         .flex()
                                                         .flex_row()
                                                         .flex_1()
+                                                        .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
                                                         .children(self.render_dock(
                                                             DockPosition::Left,
                                                             &self.left_dock,
@@ -9309,12 +9353,17 @@ impl Render for Workspace {
                                                                 ),
                                                         ),
                                                 )
-                                                .child(div().w_full().children(self.render_dock(
-                                                    DockPosition::Bottom,
-                                                    &self.bottom_dock,
-                                                    window,
-                                                    cx,
-                                                ))),
+                                                .child(
+                                                    div()
+                                                        .w_full()
+                                                        .when(!self.bottom_dock.read(cx).is_open(), |this| this.hidden())
+                                                        .children(self.render_dock(
+                                                            DockPosition::Bottom,
+                                                            &self.bottom_dock,
+                                                            window,
+                                                            cx,
+                                                        )),
+                                                ),
                                         )
                                         .children(self.render_dock(
                                             DockPosition::Right,
@@ -9322,10 +9371,12 @@ impl Render for Workspace {
                                             window,
                                             cx,
                                         )),
+
                                     BottomDockLayout::RightAligned => div()
                                         .flex()
                                         .flex_row()
                                         .h_full()
+                                        .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
                                         .children(self.render_dock(
                                             DockPosition::Left,
                                             &self.left_dock,
@@ -9338,11 +9389,13 @@ impl Render for Workspace {
                                                 .flex_col()
                                                 .flex_1()
                                                 .h_full()
+                                                .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
                                                 .child(
                                                     div()
                                                         .flex()
                                                         .flex_row()
                                                         .flex_1()
+                                                        .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
                                                         .child(
                                                             div()
                                                                 .flex()
@@ -9382,17 +9435,24 @@ impl Render for Workspace {
                                                             cx,
                                                         )),
                                                 )
-                                                .child(div().w_full().children(self.render_dock(
-                                                    DockPosition::Bottom,
-                                                    &self.bottom_dock,
-                                                    window,
-                                                    cx,
-                                                ))),
+                                                .child(
+                                                    div()
+                                                        .w_full()
+                                                        .when(!self.bottom_dock.read(cx).is_open(), |this| this.hidden())
+                                                        .children(self.render_dock(
+                                                            DockPosition::Bottom,
+                                                            &self.bottom_dock,
+                                                            window,
+                                                            cx,
+                                                        )),
+                                                ),
                                         ),
+
                                     BottomDockLayout::Contained => div()
                                         .flex()
                                         .flex_row()
                                         .h_full()
+                                        .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
                                         .children(self.render_dock(
                                             DockPosition::Left,
                                             &self.left_dock,
@@ -9405,6 +9465,7 @@ impl Render for Workspace {
                                                 .flex_col()
                                                 .flex_1()
                                                 .overflow_hidden()
+                                                .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
                                                 .child(
                                                     h_flex()
                                                         .flex_1()
@@ -9461,7 +9522,11 @@ impl Render for Workspace {
                             .children(self.render_notifications(window, cx)),
                     )
                     .when(self.status_bar_visible(cx), |parent| {
-                        parent.child(self.status_bar.clone())
+                        if island_layout.enabled {
+                            parent.child(self.render_floating_status_bar(&island_layout, cx))
+                        } else {
+                            parent.child(self.status_bar.clone())
+                        }
                     })
                     .child(self.toast_layer.clone()),
             )
@@ -16793,6 +16858,195 @@ mod tests {
             let visible = workspace.status_bar_visible(cx);
             assert!(visible, "Status bar should be visible when show is true");
         });
+    }
+
+    #[gpui::test]
+    async fn test_workspace_canvas_backdrop_and_borders_default(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let (mut div, border_color) = workspace.update_in(cx, |_, _, cx| {
+            let island_layout = WorkspaceSettings::get_global(cx).island_layout;
+            let colors = cx.theme().colors().clone();
+            let div = Workspace::style_workspace_container(div(), &island_layout, &colors);
+            (div, colors.border)
+        });
+
+        let style = div.style();
+        assert_eq!(
+            style.border_widths,
+            gpui::EdgesRefinement {
+                top: Some(gpui::AbsoluteLength::Pixels(gpui::px(1.))),
+                right: None,
+                bottom: Some(gpui::AbsoluteLength::Pixels(gpui::px(1.))),
+                left: None,
+            }
+        );
+        assert_eq!(style.border_color, Some(border_color));
+        assert_eq!(style.padding, gpui::EdgesRefinement::default());
+    }
+
+    #[gpui::test]
+    async fn test_workspace_canvas_backdrop_and_padding_island_layout(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.island_layout = Some(settings::IslandLayoutSettings {
+                        enabled: Some(true),
+                        corner_radius: Some(18.0),
+                        gap: Some(8.0),
+                        border: Some(true),
+                        pill_tabs: Some(true),
+                    });
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let (mut div, bg_color) = workspace.update_in(cx, |_, _, cx| {
+            let island_layout = WorkspaceSettings::get_global(cx).island_layout;
+            let colors = cx.theme().colors().clone();
+            let div = Workspace::style_workspace_container(div(), &island_layout, &colors);
+            (div, colors.background)
+        });
+
+        let style = div.style();
+        assert_eq!(style.border_widths, gpui::EdgesRefinement::default());
+        assert_eq!(
+            style.padding,
+            gpui::EdgesRefinement {
+                top: Some(gpui::px(8.).into()),
+                right: Some(gpui::px(8.).into()),
+                bottom: Some(gpui::px(8.).into()),
+                left: Some(gpui::px(8.).into()),
+            }
+        );
+        assert_eq!(style.background, Some(gpui::Fill::Color(bg_color.into())));
+    }
+
+    #[gpui::test]
+    async fn test_floating_status_bar_styling_island_layout(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.island_layout = Some(settings::IslandLayoutSettings {
+                        enabled: Some(true),
+                        corner_radius: Some(20.0),
+                        gap: Some(6.0),
+                        border: Some(true),
+                        pill_tabs: Some(true),
+                    });
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let (mut div, border_variant, status_bar_bg) = workspace.update_in(cx, |workspace, _, cx| {
+            let island_layout = WorkspaceSettings::get_global(cx).island_layout;
+            let border_variant = cx.theme().colors().border_variant;
+            let status_bar_bg = cx.theme().colors().status_bar_background;
+            let div = workspace.render_floating_status_bar(&island_layout, cx);
+            (div, border_variant, status_bar_bg)
+        });
+
+        let style = div.style();
+        assert_eq!(
+            style.border_widths,
+            gpui::EdgesRefinement {
+                top: Some(gpui::AbsoluteLength::Pixels(gpui::px(1.))),
+                right: Some(gpui::AbsoluteLength::Pixels(gpui::px(1.))),
+                bottom: Some(gpui::AbsoluteLength::Pixels(gpui::px(1.))),
+                left: Some(gpui::AbsoluteLength::Pixels(gpui::px(1.))),
+            }
+        );
+        assert_eq!(style.border_color, Some(border_variant));
+        assert_eq!(
+            style.corner_radii,
+            gpui::CornersRefinement {
+                top_left: Some(gpui::AbsoluteLength::Pixels(gpui::px(15.))),
+                top_right: Some(gpui::AbsoluteLength::Pixels(gpui::px(15.))),
+                bottom_right: Some(gpui::AbsoluteLength::Pixels(gpui::px(15.))),
+                bottom_left: Some(gpui::AbsoluteLength::Pixels(gpui::px(15.))),
+            }
+        );
+        assert_eq!(
+            style.margin,
+            gpui::EdgesRefinement {
+                top: None,
+                right: Some(gpui::px(6.).into()),
+                bottom: Some(gpui::px(6.).into()),
+                left: Some(gpui::px(6.).into()),
+            }
+        );
+        assert_eq!(style.background, Some(gpui::Fill::Color(status_bar_bg.into())));
+        assert!(style.box_shadow.is_some());
+    }
+
+    #[gpui::test]
+    async fn test_floating_status_bar_styling_without_border(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.island_layout = Some(settings::IslandLayoutSettings {
+                        enabled: Some(true),
+                        corner_radius: Some(16.0),
+                        gap: Some(4.0),
+                        border: Some(false),
+                        pill_tabs: Some(true),
+                    });
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let mut div = workspace.update_in(cx, |workspace, _, cx| {
+            let island_layout = WorkspaceSettings::get_global(cx).island_layout;
+            workspace.render_floating_status_bar(&island_layout, cx)
+        });
+
+        let style = div.style();
+        assert_eq!(style.border_widths, gpui::EdgesRefinement::default());
+        assert_eq!(
+            style.corner_radii,
+            gpui::CornersRefinement {
+                top_left: Some(gpui::AbsoluteLength::Pixels(gpui::px(12.))),
+                top_right: Some(gpui::AbsoluteLength::Pixels(gpui::px(12.))),
+                bottom_right: Some(gpui::AbsoluteLength::Pixels(gpui::px(12.))),
+                bottom_left: Some(gpui::AbsoluteLength::Pixels(gpui::px(12.))),
+            }
+        );
+        assert_eq!(
+            style.margin,
+            gpui::EdgesRefinement {
+                top: None,
+                right: Some(gpui::px(4.).into()),
+                bottom: Some(gpui::px(4.).into()),
+                left: Some(gpui::px(4.).into()),
+            }
+        );
+        assert!(style.box_shadow.is_some());
     }
 
     #[gpui::test]
