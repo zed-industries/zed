@@ -550,6 +550,8 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
             let mut config = wasmtime::Config::new();
             config.wasm_component_model(true);
             config.async_support(true);
+            config.max_wasm_stack(2 * 1024 * 1024); // 2MB max stack
+            config.wasm_memory_limit(128 * 1024 * 1024); // 128MB max memory per instance
             config
                 .enable_incremental_compilation(cache_store())
                 .unwrap();
@@ -733,8 +735,6 @@ impl WasmHost {
             .await
             .context("failed to create extension work dir")?;
 
-        let file_perms = wasmtime_wasi::FilePerms::all();
-        let dir_perms = wasmtime_wasi::DirPerms::all();
         let path = SanitizedPath::new(&extension_work_dir).to_string();
         #[cfg(target_os = "windows")]
         let path = path.replace('\\', "/");
@@ -742,10 +742,22 @@ impl WasmHost {
         let mut ctx = WasiCtxBuilder::new();
         ctx.inherit_stdio()
             .env("PWD", &path)
-            .env("RUST_BACKTRACE", "full");
+            .env("RUST_BACKTRACE", "full")
+            // Restrict filesystem to only the extension's work directory.
+            // No read/write access outside the approved workspace.
+            .preopened_dir(&path, ".", 
+                wasmtime_wasi::DirPerms::read(), 
+                wasmtime_wasi::FilePerms::read())?;
+            // Also preopen the work dir itself as cwd for convenience
+            .preopened_dir(&path, &path, 
+                wasmtime_wasi::DirPerms::read(), 
+                wasmtime_wasi::FilePerms::read())?;
 
-        ctx.preopened_dir(&path, ".", dir_perms, file_perms)?;
-        ctx.preopened_dir(&path, &path, dir_perms, file_perms)?;
+        // Strip sensitive environment variables from the extension context
+        ctx.env("AWS_SECRET_ACCESS_KEY", "");
+        ctx.env("SSH_AUTH_SOCK", "");
+        ctx.env("GITHUB_TOKEN", "");
+        ctx.env("OPENAI_API_KEY", "");
 
         Ok(ctx.build())
     }

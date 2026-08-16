@@ -557,18 +557,26 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    if args.daemon {
-        eprintln!(
-            "🚀 Starting Zed JSON-RPC 2.0 Headless Daemon on {}",
-            args.daemon_listen_addr
-        );
+if args.daemon {
+        // Space-Grade Security: Daemon authentication is HARD ENFORCED, not optional.
+        // Running `zed --daemon` without `--daemon-auth-token` or `ZED_DAEMON_TOKEN`
+        // must FAIL with a clear error, not silently proceed without authentication.
         let auth_token = args
             .daemon_auth_token
             .or_else(|| std::env::var("ZED_DAEMON_TOKEN").ok());
+        let auth_token = match auth_token {
+            Some(token) => token,
+            None => {
+                eprintln!(
+                    "Error: Daemon mode requires --daemon-auth-token or ZED_DAEMON_TOKEN environment variable"
+                );
+                std::process::exit(1);
+            }
+        };
         let config = zed_daemon::DaemonConfig {
             listen_addr: args.daemon_listen_addr,
             max_connections: 64,
-            auth_token,
+            auth_token: Some(auth_token),
         };
         let registry = zed_daemon::default_registry();
         let server = zed_daemon::DaemonServer::new(config, registry);

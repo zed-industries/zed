@@ -230,3 +230,4 @@
   - [Glossary](./development/glossary.md)
 - [Release Notes](./development/release-notes.md)
 - [Debugging Crashes](./development/debugging-crashes.md)
+- [Space-Grade Plan](./development/space-grade-plan.md)

@@ -246,6 +246,7 @@ members = [
     "crates/ztracing_macro",
     "crates/zed_daemon",
     "crates/libzed_core",
+    "crates/zed_core_lib",
     "crates/code_graph",
 
     #
@@ -506,6 +507,7 @@ x_ai = { path = "crates/x_ai" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zed_daemon = { path = "crates/zed_daemon" }
+zed_core_lib = { path = "crates/zed_core_lib" }
 zed_credentials_provider = { path = "crates/zed_credentials_provider" }
 zed_env_vars = { path = "crates/zed_env_vars" }
 edit_prediction = { path = "crates/edit_prediction" }

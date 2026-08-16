@@ -1,0 +1,27 @@
+[package]
+name = "zed_core_lib"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[features]
+default = ["full"]
+ffi = []
+wasm = []
+full = ["ffi", "wasm"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rope = { path = "../rope" }
+language = { path = "../language" }
+code_graph = { path = "../code_graph" }
+text = { path = "../text" }
+search = { path = "../search" }
+project = { path = "../project" }
+diagnostics = { path = "../diagnostics" }
+fs = { path = "../fs" }
+
+[dev-dependencies]
+serde_json.workspace = true

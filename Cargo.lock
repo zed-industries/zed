@@ -23727,6 +23727,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_core_lib"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "code_graph",
+ "diagnostics",
+ "fs",
+ "language",
+ "project",
+ "rope",
+ "search",
+ "serde",
+ "serde_json",
+ "text",
+]
+
+[[package]]
 name = "zed_credentials_provider"
 version = "0.1.0"
 dependencies = [

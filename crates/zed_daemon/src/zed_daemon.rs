@@ -251,18 +251,22 @@ impl DaemonServer {
             return serde_json::to_string(&resp).unwrap_or_default();
         }
 
-        // Space-Grade Security: Verify authentication token if configured
-        if let Some(ref required_token) = self.config.auth_token {
-            let is_authorized = request.auth_token.as_ref().map(|t| t == required_token).unwrap_or(false);
-            if !is_authorized {
-                let resp = JsonRpcResponse::err(
-                    request.id.clone(),
-                    UNAUTHORIZED,
-                    "Unauthorized: valid auth_token required",
-                );
-                return serde_json::to_string(&resp).unwrap_or_default();
-            }
-        }
+        // Space-Grade Security: Hard authentication enforcement.
+// The auth_token must be valid for all daemon RPC endpoints.
+// This check runs unconditionally because the CLI now requires auth_token
+// when starting the daemon (see cli/src/main.rs).
+if self.config.auth_token.is_none() {
+    unreachable!("Daemon auth_token should always be set by the CLI");
+}
+let is_authorized = request.auth_token.as_ref().map(|t| t == self.config.auth_token.as_ref().unwrap()).unwrap_or(false);
+if !is_authorized {
+    let resp = JsonRpcResponse::err(
+        request.id.clone(),
+        UNAUTHORIZED,
+        "Unauthorized: valid auth_token required",
+    );
+    return serde_json::to_string(&resp).unwrap_or_default();
+}
 
         let response = self.registry.dispatch(&request);
         serde_json::to_string(&response).unwrap_or_default()
@@ -624,12 +628,25 @@ pub fn default_registry() -> MethodRegistry {
         };
         safe_lock(&tr).schedule_plan(plan.clone());
 
-        // Space-Grade Hardening: Spawn child with 30s execution timeout & 1MB output cap
-        let mut child = match std::process::Command::new(command)
-            .args(&args_vec)
+        // Space-Grade Hardening: Spawn child with 30s execution timeout, 1MB output cap, & env sanitization
+        let mut cmd = std::process::Command::new(command);
+        cmd.args(&args_vec)
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
+            .stderr(std::process::Stdio::piped());
+
+        // Sanitize sensitive tokens from execution environment unless explicitly configured
+        for sensitive_var in [
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "GITHUB_TOKEN",
+            "GH_TOKEN",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+        ] {
+            cmd.env_remove(sensitive_var);
+        }
+
+        let mut child = match cmd.spawn()
         {
             Ok(c) => c,
             Err(e) => {
@@ -1024,6 +1041,37 @@ pub fn default_registry() -> MethodRegistry {
         })
     });
 
+    registry.register("daemon/schema", |_params| {
+        serde_json::json!({
+            "protocol": "json-rpc-2.0",
+            "version": env!("CARGO_PKG_VERSION"),
+            "methods": [
+                "project/open",
+                "project/get_outline",
+                "code_graph/index",
+                "code_graph/search",
+                "project/search",
+                "task/run",
+                "git/commit",
+                "markdown/render",
+                "editor/snapshot",
+                "diagnostics/filter",
+                "breadcrumbs/get",
+                "language/tokenize",
+                "workspace/context",
+                "audio/channels",
+                "buffer/create",
+                "buffer/apply_transaction",
+                "buffer/get_text",
+                "agent/prompt",
+                "daemon/status",
+                "daemon/health",
+                "daemon/metrics",
+                "daemon/schema"
+            ]
+        })
+    });
+
     registry
 }
 
@@ -1278,5 +1326,18 @@ mod tests {
             let parsed: Result<JsonRpcResponse, _> = serde_json::from_str(&response);
             assert!(parsed.is_ok(), "Failed to produce valid JSON response envelope for input: {:?}", input);
         }
+    }
+
+    #[test]
+    fn test_daemon_schema_reflection() {
+        let server = DaemonServer::new(DaemonConfig::default(), default_registry());
+        let request = r#"{"jsonrpc":"2.0","id":60,"method":"daemon/schema","params":{}}"#;
+        let response = server.process_line(request);
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        assert!(parsed.error.is_none());
+        let result = parsed.result.unwrap();
+        assert_eq!(result["protocol"], "json-rpc-2.0");
+        let methods = result["methods"].as_array().unwrap();
+        assert_eq!(methods.len(), 22);
     }
 }
