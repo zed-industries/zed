@@ -3493,6 +3493,116 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_clicking_a_bar_segment_opens_that_segments_listing(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor_with_project;
+        use gpui::{px, size};
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "outer": { "inner": { "file.rs": "fn main() {}" } } }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/outer/inner/file.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct BarHost {
+            editor: Entity<Editor>,
+        }
+        impl gpui::Render for BarHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                let placeholder = vec![HighlightedText {
+                    text: "placeholder".into(),
+                    highlights: vec![],
+                }];
+                h_flex().size_full().child(render_breadcrumb_text(
+                    placeholder,
+                    None,
+                    None,
+                    &self.editor,
+                    false,
+                    cx,
+                ))
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor =
+                cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            });
+            BarHost { editor }
+        });
+        let editor = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.editor.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+
+        // Wide enough that nothing collapses, so segment indices map to the real path.
+        cx.simulate_resize(size(px(1400.), px(600.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        // Every other test reaches the menu through a test-only shim; this one goes through the
+        // bar's own `on_click`, so a segment that stops being clickable is caught here.
+        let segment = cx
+            .debug_bounds("breadcrumb-segment-1")
+            .expect("the 'outer' path segment should paint as a clickable trigger");
+        cx.simulate_click(segment.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        editor.read_with(cx, |editor, cx| {
+            let listing = editor
+                .breadcrumb_navigation_menu()
+                .expect("clicking a path segment opens its listing")
+                .read(cx)
+                .listing()
+                .clone();
+            match listing {
+                BreadcrumbListing::Directory { path, .. } => {
+                    assert_eq!(path.as_unix_str(), "outer")
+                }
+                other => panic!("expected a directory listing, got {other:?}"),
+            }
+        });
+
+        // A second click on the same segment toggles it shut rather than reopening it.
+        cx.simulate_click(segment.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                editor.breadcrumb_navigation_menu().is_none(),
+                "clicking the open segment again should dismiss the menu"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_breadcrumb_menu_keyboard_survives_click_on_popup_chrome(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
         use crate::test::build_editor;
@@ -4816,6 +4926,131 @@ mod tests {
         assert_eq!(
             entry_git_aware_label_color(untracked.git_summary, untracked.is_ignored, false),
             Color::Created,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_confirming_a_symbol_row_moves_the_cursor_and_refocuses_the_editor(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use gpui::KeyBinding;
+        use language::OutlineItem;
+        use multi_buffer::MultiBufferOffset;
+
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "enter",
+                Confirm,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            )]);
+        });
+
+        let buffer = cx.new(|cx| {
+            language::Buffer::local(
+                "class Outer {\n  fn child_a() {}\n  fn child_b() {}\n}\nclass Peer {}\n",
+                cx,
+            )
+        });
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let snapshot = multi_buffer.read_with(cx, |mb, cx| mb.snapshot(cx));
+        let anchor_at = |offset: usize| {
+            snapshot.anchor_before(MultiBufferOffset(offset))
+                ..snapshot.anchor_before(MultiBufferOffset(offset + 1))
+        };
+        let item =
+            |depth: usize, text: &str, range: std::ops::Range<multi_buffer::Anchor>| OutlineItem {
+                depth,
+                range: range.clone(),
+                selection_range: range.clone(),
+                source_range_for_text: range,
+                text: text.into(),
+                highlight_ranges: vec![],
+                name_ranges: vec![],
+                body_range: None,
+                annotation_range: None,
+            };
+        let child_b_range = anchor_at(40);
+        let all_items = vec![
+            item(0, "Outer", anchor_at(0)),
+            item(1, "child_a", anchor_at(20)),
+            item(1, "child_b", child_b_range.clone()),
+        ];
+        let buffer_id =
+            multi_buffer.read_with(cx, |mb, cx| mb.as_singleton().unwrap().read(cx).remote_id());
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+            editor: Entity<Editor>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer.clone(), window, cx));
+            let menu = BreadcrumbNavigationMenu::new_with_symbols_for_test(
+                editor.downgrade(),
+                buffer_id,
+                all_items,
+                vec![1, 2],
+                Vec::new(),
+                window,
+                cx,
+            );
+            MenuHost { menu, editor }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let editor = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.editor.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+
+        menu.update_in(cx, |menu, window, cx| {
+            window.focus(&menu.focus_handle(cx), cx);
+            menu.set_selected_row(1, cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        // The whole point of the feature, and nothing covered it: confirming a symbol row must
+        // move the cursor to that symbol and hand focus back to the editor.
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+
+        let expected = child_b_range.start.to_offset(&snapshot);
+        editor.read_with(cx, |editor, _| {
+            let head = editor
+                .selections
+                .newest_anchor()
+                .head()
+                .to_offset(&snapshot);
+            assert_eq!(
+                head, expected,
+                "confirming a symbol row should move the cursor to that symbol"
+            );
+        });
+        let editor_focused = editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle(cx).is_focused(window)
+        });
+        assert!(
+            editor_focused,
+            "focus should return to the editor after navigating"
         );
     }
 

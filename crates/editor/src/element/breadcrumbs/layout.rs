@@ -273,6 +273,9 @@ pub(super) struct BreadcrumbSegmentMetrics {
     widths: Vec<Pixels>,
     ellipsis_width: Pixels,
     protected_index: Option<usize>,
+    /// Carried rather than rebuilt: request_layout and prepaint both plan the layout, and the
+    /// bar replans on every repaint.
+    kinds: Vec<BreadcrumbSegmentKind>,
 }
 
 fn breadcrumb_layout_plan_width(
@@ -391,6 +394,7 @@ impl BreadcrumbStrip {
             widths,
             ellipsis_width,
             protected_index: None,
+            kinds: self.segments.iter().map(|segment| segment.kind).collect(),
         }
     }
 
@@ -706,7 +710,7 @@ impl gpui::Element for BreadcrumbStrip {
 
         let widths = metrics.widths.clone();
         let ellipsis_width = metrics.ellipsis_width;
-        let kinds: Vec<BreadcrumbSegmentKind> = self.segments.iter().map(|s| s.kind).collect();
+        let kinds = metrics.kinds.clone();
         let protected_index = metrics.protected_index;
 
         let layout_id = window.request_measured_layout(
@@ -744,11 +748,11 @@ impl gpui::Element for BreadcrumbStrip {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let kinds: Vec<BreadcrumbSegmentKind> = self.segments.iter().map(|s| s.kind).collect();
         let protected_index = metrics.protected_index;
+        let kinds = &metrics.kinds;
         let plan = plan_breadcrumb_layout(
             &metrics.widths,
-            &kinds,
+            kinds,
             metrics.ellipsis_width,
             bounds.size.width,
             protected_index,
