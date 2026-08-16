@@ -363,6 +363,56 @@ pub fn default_registry() -> MethodRegistry {
         })
     });
 
+    let code_graph = std::sync::Arc::new(code_graph::CodeGraphIndex::new("."));
+
+    let cg_index = code_graph.clone();
+    registry.register("code_graph/index", move |params| {
+        let path = params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let symbol_name = params
+            .get("symbol")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let occ = code_graph::SymbolOccurrence {
+            symbol: code_graph::ScipSymbol(symbol_name.to_string()),
+            path: std::path::PathBuf::from(path),
+            range_start: (0, 0),
+            range_end: (0, 0),
+            role: code_graph::SymbolRole::Definition,
+            documentation: Some(format!("Documentation for {symbol_name}")),
+        };
+        cg_index.index_document(path, vec![occ]);
+
+        serde_json::json!({
+            "status": "indexed",
+            "path": path,
+            "symbol": symbol_name
+        })
+    });
+
+    let cg_search = code_graph.clone();
+    registry.register("code_graph/search", move |params| {
+        let query = params
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let top_k = params
+            .get("top_k")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as usize;
+
+        let results = cg_search.hybrid_search(query, top_k);
+
+        serde_json::json!({
+            "status": "ok",
+            "query": query,
+            "matches": results
+        })
+    });
+
     registry.register("project/search", |params| {
         let query = params
             .get("query")

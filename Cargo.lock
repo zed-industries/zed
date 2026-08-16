@@ -23743,7 +23743,9 @@ name = "zed_daemon"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "code_graph",
  "futures 0.3.32",
+ "libzed_core",
  "log",
  "serde",
  "serde_json",

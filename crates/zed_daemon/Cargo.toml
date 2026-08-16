@@ -19,3 +19,5 @@ log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
+code_graph = { path = "../code_graph" }
+libzed_core = { path = "../libzed_core" }
