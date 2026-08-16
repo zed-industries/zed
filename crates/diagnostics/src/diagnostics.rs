@@ -1153,6 +1153,14 @@ fn is_line_blank_or_indented_less(
     line_indent.is_line_blank() || line_indent.len(tab_size) < indent_level
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct AgentDiagnosticFilterParams {
+    /// Include warnings in the filter
+    pub include_warnings: bool,
+    /// Optional target file path
+    pub target_file: Option<String>,
+}
+
 /// Agent-targeted diagnostic filter for automated error-correction loops
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentDiagnosticFilter {

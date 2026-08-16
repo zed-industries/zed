@@ -2450,6 +2450,7 @@ name = "breadcrumbs"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "serde",
  "ui",
  "workspace",
 ]
@@ -10916,6 +10917,7 @@ dependencies = [
  "log",
  "markdown",
  "project",
+ "serde",
  "serde_json",
  "settings",
  "tempfile",
@@ -23754,6 +23756,7 @@ dependencies = [
  "language",
  "log",
  "markdown_preview",
+ "once_cell",
  "outline",
  "regex",
  "rope",

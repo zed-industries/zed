@@ -126,6 +126,13 @@ impl ToolbarItemView for Breadcrumbs {
     }
 }
 
+/// Parameters for getting breadcrumbs
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct HeadlessBreadcrumbsGetParams {
+    /// Path to get breadcrumbs for
+    pub path: String,
+}
+
 /// Headless breadcrumb entry for external agent AST and location tracking
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HeadlessBreadcrumbEntry {

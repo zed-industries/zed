@@ -4,6 +4,15 @@ mod call_impl;
 
 pub use call_impl::*;
 
+/// Parameters for audio channels registration
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct HeadlessAudioChannelParams {
+    /// Channel ID
+    pub channel_id: Option<String>,
+    /// Participant ID
+    pub participant_id: Option<String>,
+}
+
 /// Headless audio bridge for transmitting synthesized agent audio and speech streams
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AgentVoiceChannel {

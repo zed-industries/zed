@@ -56,6 +56,13 @@ pub struct MarkdownArtifactSpec {
     pub section_count: usize,
 }
 
+/// Parameters for markdown rendering
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct HeadlessMarkdownRenderParams {
+    /// Markdown content to render
+    pub markdown: String,
+}
+
 /// Headless renderer for converting markdown syntax to plain-text / AST structures for external agents
 #[derive(Clone, Debug, Default)]
 pub struct HeadlessMarkdownRenderer;

@@ -12634,6 +12634,14 @@ pub struct AgentFocusRegion {
     pub label: Option<String>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct HeadlessEditorSnapshotParams {
+    /// Editor text content
+    pub text: String,
+    /// Optional agent ID for focus region
+    pub agent_id: Option<String>,
+}
+
 /// Lightweight snapshot of editor buffer state for external agent headless querying
 #[derive(Clone, Debug, Default)]
 pub struct HeadlessEditorSnapshot {

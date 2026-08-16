@@ -54,7 +54,7 @@ postage.workspace = true
 project.workspace = true
 remote.workspace = true
 schemars.workspace = true
-serde.workspace = true
+serde = { version = "1.0.221", features = ["derive", "rc"] }
 serde_json.workspace = true
 session.workspace = true
 settings.workspace = true

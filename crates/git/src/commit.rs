@@ -5,7 +5,13 @@ use crate::{
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use gpui::SharedString;
+use serde::{Deserialize, Serialize};
 use std::{str::FromStr, sync::Arc};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HeadlessCommitParams {
+    pub message: String,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct ParsedCommitMessage {

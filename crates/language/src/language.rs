@@ -1985,6 +1985,13 @@ pub struct HeadlessSyntaxToken {
     pub highlight_name: Option<String>,
 }
 
+/// Parameters for tokenizing buffer content
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct HeadlessBufferTokenizerParams {
+    /// Content to tokenize
+    pub content: String,
+}
+
 /// Tokenizer for extracting AST tokens headlessly without GPUI contexts
 #[derive(Default)]
 pub struct HeadlessBufferTokenizer;

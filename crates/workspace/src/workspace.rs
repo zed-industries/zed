@@ -17435,6 +17435,15 @@ mod tests {
     }
 }
 
+/// Parameters for workspace context
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct HeadlessWorkspaceContextParams {
+    /// Workspace ID
+    pub workspace_id: String,
+    /// Root path
+    pub root_path: String,
+}
+
 /// Headless workspace context representation for external agent automation and background task execution
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HeadlessWorkspaceContext {
