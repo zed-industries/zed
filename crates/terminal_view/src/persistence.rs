@@ -92,13 +92,11 @@ pub(crate) fn deserialize_terminal_panel(
     project: Entity<Project>,
     database_id: WorkspaceId,
     serialized_panel: SerializedTerminalPanel,
+    terminal_panel: WeakEntity<TerminalPanel>,
     window: &mut Window,
     cx: &mut App,
-) -> Task<anyhow::Result<Entity<TerminalPanel>>> {
+) -> Task<anyhow::Result<()>> {
     window.spawn(cx, async move |cx| {
-        let terminal_panel = workspace.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| TerminalPanel::new(workspace, window, cx))
-        })?;
         match &serialized_panel.items {
             SerializedItems::NoSplits(item_ids) => {
                 let items = deserialize_terminal_views(
@@ -131,12 +129,12 @@ pub(crate) fn deserialize_terminal_panel(
                         terminal_panel.center = PaneGroup::with_root(center_group);
                         terminal_panel.active_pane =
                             active_pane.unwrap_or_else(|| terminal_panel.center.first_pane());
-                    });
+                    })?;
                 }
             }
         }
 
-        Ok(terminal_panel)
+        Ok(())
     })
 }
 
@@ -163,7 +161,7 @@ fn populate_pane_items(
 async fn deserialize_pane_group(
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    panel: Entity<TerminalPanel>,
+    panel: WeakEntity<TerminalPanel>,
     workspace_id: WorkspaceId,
     serialized: &SerializedPaneGroup,
     cx: &mut AsyncWindowContext,
