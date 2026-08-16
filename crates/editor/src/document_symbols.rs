@@ -766,10 +766,8 @@ mod tests {
                     // Bytes 0-3: "/// ", bytes 4-5: α (2-byte UTF-8), bytes 6-11: "yzabc\n"
                     // Line 1 starts at byte 12: "fn test() {}"
                     //
-                    // Symbol range includes doc comment (line 0-1).
-                    // Selection points to "test" on line 1.
-                    // enriched_symbol_text extracts "fn test" with source_range_for_text.start at byte 12.
-                    // search_start = max(12 - 7, 0) = 5, which is INSIDE the 2-byte 'α' char.
+                    // The symbol range covers the doc comment too, so the text the outline
+                    // shows starts on line 1 while the range starts on line 0.
                     Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
                         nested_symbol(
                             "test",
@@ -783,7 +781,6 @@ mod tests {
             );
 
         // "/// αyzabc\n" = 12 bytes, then "fn test() {}\n"
-        // search_start = 12 - 7 = 5, which is byte 5 = second byte of 'α' (not a char boundary)
         cx.set_state("/// αyzabc\nfn teˇst() {}\n");
         assert!(symbol_request.next().await.is_some());
         cx.run_until_parked();
@@ -811,9 +808,25 @@ mod tests {
             );
 
             // The buffer's leading 'α' is two bytes wide, so a byte-vs-char mix-up upstream
-            // shifts these ranges by one.
-            assert_eq!(symbol.text, "fn test");
+            // shifts these ranges.
             assert_eq!(symbol.name_ranges, vec![3..7]);
+
+            // `highlight_ranges` reaches `StyledText::with_default_highlights`, which slices
+            // `text` by them, so a non-boundary offset panics rather than renders wrong.
+            for (range, _style) in &symbol.highlight_ranges {
+                assert!(
+                    symbol.text.is_char_boundary(range.start),
+                    "highlight start {} is not a char boundary of {:?}",
+                    range.start,
+                    symbol.text
+                );
+                assert!(
+                    symbol.text.is_char_boundary(range.end),
+                    "highlight end {} is not a char boundary of {:?}",
+                    range.end,
+                    symbol.text
+                );
+            }
             assert_eq!(&symbol.text[3..7], "test");
         });
     }

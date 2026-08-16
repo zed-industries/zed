@@ -1196,20 +1196,9 @@
       // Editor bindings.
     },
   },
-  {
-    "context": "BreadcrumbNavigationMenu > Editor",
-    "use_key_equivalents": true,
-    "bindings": {
-      "up": "menu::SelectPrevious",
-      "down": "menu::SelectNext",
-      "left": "menu::SelectParent",
-      "right": "menu::SelectChild",
-      "home": "menu::SelectFirst",
-      "end": "menu::SelectLast",
-      "enter": "menu::Confirm",
-      "escape": "menu::Cancel",
-    },
-  },
+  // Breadcrumb navigation menu bindings live in keymaps/specific-overrides*.json,
+  // which is loaded after the base keymaps so they win over conflicting
+  // base-keymap Editor bindings (Emacs binds home/end there, for example).
   {
     "context": "ChannelModal > Picker > Editor",
     "use_key_equivalents": true,

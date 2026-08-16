@@ -10,7 +10,7 @@ pub(super) fn breadcrumb_path_prefixes(path: &RelPath) -> Vec<&RelPath> {
     prefixes
 }
 
-pub(crate) fn breadcrumb_path_segments(
+pub(super) fn breadcrumb_path_segments(
     worktree_id: WorktreeId,
     root_name: &str,
     path: &Arc<RelPath>,
@@ -56,7 +56,7 @@ pub(crate) fn breadcrumb_path_segments(
     (labels, targets)
 }
 
-pub(crate) const MAX_BREADCRUMB_MENU_ROWS: usize = 200;
+pub(super) const MAX_BREADCRUMB_MENU_ROWS: usize = 200;
 
 pub(super) fn breadcrumb_menu_truncated_label(filter_active: bool) -> String {
     if filter_active {
@@ -66,9 +66,9 @@ pub(super) fn breadcrumb_menu_truncated_label(filter_active: bool) -> String {
     }
 }
 
-pub(crate) const MAX_UNARY_DIRECTORY_SKIP_DEPTH: usize = 64;
+pub(super) const MAX_UNARY_DIRECTORY_SKIP_DEPTH: usize = 64;
 
-pub(crate) fn single_child_directory(children: &[(Arc<RelPath>, bool)]) -> Option<Arc<RelPath>> {
+pub(super) fn single_child_directory(children: &[(Arc<RelPath>, bool)]) -> Option<Arc<RelPath>> {
     match children {
         [(path, true)] => Some(path.clone()),
         _ => None,
@@ -82,9 +82,12 @@ pub(super) fn breadcrumb_file_icon(path: Option<&RelPath>, cx: &App) -> Option<S
     file_icons::FileIcons::get_icon(path?.as_std_path(), cx)
 }
 
+/// Takes `limit` children at most: callers only ever ask whether there is exactly one, and the
+/// auto-fold walk asks that once per level.
 pub(super) fn directory_child_paths(
     worktree: &Entity<project::Worktree>,
     path: &RelPath,
+    limit: usize,
     cx: &App,
 ) -> Vec<(Arc<RelPath>, bool)> {
     let settings = BreadcrumbListingSettings::get_global(cx);
@@ -94,19 +97,20 @@ pub(super) fn directory_child_paths(
         .child_entries(path)
         .filter(|entry| !settings.hide_gitignore || !entry.is_ignored)
         .filter(|entry| !settings.hide_hidden || !entry.is_hidden)
+        .take(limit)
         .map(|entry| (entry.path.clone(), entry.is_dir()))
         .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DirectoryEntryIconSource {
+pub(super) enum DirectoryEntryIconSource {
     File,
     Folder,
     Chevron,
     None,
 }
 
-pub(crate) fn directory_entry_icon_source(
+pub(super) fn directory_entry_icon_source(
     is_dir: bool,
     show_file_icons: bool,
     show_folder_icons: bool,
@@ -124,7 +128,8 @@ pub(crate) fn directory_entry_icon_source(
     }
 }
 
-/// Panel listing settings, read directly to avoid a project_panel crate cycle.
+/// Read from the settings store directly: project_panel depends on editor, so the reverse
+/// dependency would be a cycle.
 #[derive(Clone, Copy, PartialEq, Eq, settings::RegisterSetting)]
 pub(super) struct BreadcrumbListingSettings {
     pub(super) sort_mode: settings::ProjectPanelSortMode,
@@ -170,30 +175,101 @@ pub(super) struct BreadcrumbDirectoryEntry {
     pub(super) git_summary: GitSummary,
 }
 
-pub(super) fn breadcrumb_directory_entries(
+#[derive(Clone, Copy, Debug)]
+pub(super) struct WorktreeChildListingOptions {
+    sort_mode: util::paths::SortMode,
+    sort_order: util::paths::SortOrder,
+    hide_gitignore: bool,
+    hide_hidden: bool,
+    git_status_enabled: bool,
+}
+
+#[derive(Clone, Debug)]
+struct WorktreeChildListingEntry {
+    path: Arc<RelPath>,
+    id: ProjectEntryId,
+    is_dir: bool,
+    is_ignored: bool,
+    git_summary: GitSummary,
+}
+
+fn worktree_child_listing(
+    worktree_snapshot: &project::WorktreeSnapshot,
+    repo_snapshots: &collections::HashMap<project::RepositoryId, project::RepositorySnapshot>,
+    parent_path: &RelPath,
+    options: WorktreeChildListingOptions,
+) -> Vec<WorktreeChildListingEntry> {
+    let mut entries =
+        project::ChildEntriesGitIter::new(repo_snapshots, worktree_snapshot, parent_path)
+            .filter(|entry| !options.hide_gitignore || !entry.is_ignored)
+            .filter(|entry| !options.hide_hidden || !entry.is_hidden)
+            .map(|entry| entry.to_owned())
+            .collect::<Vec<_>>();
+    entries.sort_by(|a, b| {
+        util::paths::compare_rel_paths_by(
+            (&*a.path, a.is_file()),
+            (&*b.path, b.is_file()),
+            options.sort_mode,
+            options.sort_order,
+        )
+    });
+
+    entries
+        .into_iter()
+        .map(|entry| WorktreeChildListingEntry {
+            path: entry.path.clone(),
+            id: entry.id,
+            is_dir: entry.is_dir(),
+            is_ignored: entry.is_ignored,
+            git_summary: if options.git_status_enabled {
+                entry.git_summary
+            } else {
+                GitSummary::UNCHANGED
+            },
+        })
+        .collect()
+}
+
+pub(super) struct BreadcrumbDirectoryListingInputs {
+    worktree_snapshot: project::WorktreeSnapshot,
+    repo_snapshots: collections::HashMap<project::RepositoryId, project::RepositorySnapshot>,
+    options: WorktreeChildListingOptions,
+}
+
+/// Snapshots everything the listing needs, so the traversal, git walk and sort can run off the
+/// foreground thread.
+pub(super) fn breadcrumb_directory_listing_inputs(
     project: &Entity<project::Project>,
     worktree: &Entity<project::Worktree>,
-    path: &RelPath,
     cx: &App,
-) -> Vec<BreadcrumbDirectoryEntry> {
+) -> BreadcrumbDirectoryListingInputs {
     let settings = BreadcrumbListingSettings::get_global(cx);
-    let worktree_snapshot = worktree.read(cx).snapshot();
-    let repo_snapshots = project
-        .read(cx)
-        .git_store()
-        .read(cx)
-        .display_repo_snapshots(cx);
-    project::worktree_child_listing(
-        &worktree_snapshot,
-        &repo_snapshots,
-        path,
-        project::WorktreeChildListingOptions {
+    BreadcrumbDirectoryListingInputs {
+        worktree_snapshot: worktree.read(cx).snapshot(),
+        repo_snapshots: project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .display_repo_snapshots(cx),
+        options: WorktreeChildListingOptions {
             sort_mode: settings.sort_mode.into(),
             sort_order: settings.sort_order.into(),
             hide_gitignore: settings.hide_gitignore,
             hide_hidden: settings.hide_hidden,
             git_status_enabled: settings.git_status,
         },
+    }
+}
+
+pub(super) fn breadcrumb_directory_entries(
+    inputs: &BreadcrumbDirectoryListingInputs,
+    path: &RelPath,
+) -> Vec<BreadcrumbDirectoryEntry> {
+    worktree_child_listing(
+        &inputs.worktree_snapshot,
+        &inputs.repo_snapshots,
+        path,
+        inputs.options,
     )
     .into_iter()
     .filter_map(|entry| {

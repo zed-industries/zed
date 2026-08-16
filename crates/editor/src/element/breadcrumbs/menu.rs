@@ -1,20 +1,21 @@
 use super::super::*;
 use super::outline::{
     child_outline_indices, flatten_text_for_single_line_display, outline_parents,
-    render_outline_item_menu_row, sibling_outline_indices, top_level_outline_indices,
+    render_outline_item_menu_row, same_symbol_item, sibling_outline_indices,
+    top_level_outline_indices,
 };
 use super::path::{
     BreadcrumbDirectoryEntry, BreadcrumbListingSettings, DirectoryEntryIconSource,
     MAX_BREADCRUMB_MENU_ROWS, MAX_UNARY_DIRECTORY_SKIP_DEPTH, breadcrumb_directory_entries,
-    breadcrumb_menu_truncated_label, directory_child_paths, directory_entry_icon_source,
-    single_child_directory,
+    breadcrumb_directory_listing_inputs, breadcrumb_menu_truncated_label, directory_child_paths,
+    directory_entry_icon_source, single_child_directory,
 };
 use crate::EditorEvent;
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{ListSizingBehavior, ScrollStrategy, Task, UniformListScrollHandle, uniform_list};
+use gpui::Task;
 use settings::SettingsStore;
 use std::sync::atomic::AtomicBool;
-use ui::{ScrollAxes, Scrollbars, WithScrollbar, utils::WithRemSize};
+use ui::utils::WithRemSize;
 
 #[derive(Clone, Debug)]
 pub enum BreadcrumbListing {
@@ -54,7 +55,7 @@ impl PartialEq for BreadcrumbListing {
                 a_id == b_id
                     && match (a_parent, b_parent) {
                         (None, None) => true,
-                        (Some(a), Some(b)) => a.range == b.range && a.depth == b.depth,
+                        (Some(a), Some(b)) => same_symbol_item(a, b),
                         _ => false,
                     }
             }
@@ -79,17 +80,22 @@ pub struct BreadcrumbNavigationMenu {
     loading: bool,
     load_epoch: u64,
     load_task: Option<Task<()>>,
+    row_refresh_task: Option<Task<()>>,
     selected_index: Option<usize>,
     pending_initial_selection: bool,
-    filter_editor: Entity<Editor>,
+    query: String,
+    rows: Rc<Vec<BreadcrumbMenuRow>>,
+    rows_dirty: bool,
+    scroll_to_selection_pending: bool,
+    picker: Option<Entity<picker::Picker<BreadcrumbPickerDelegate>>>,
     pressed_outside: bool,
     ranked_matches: Vec<StringMatch>,
     filter_task: Option<Task<()>>,
+    filter_cancel: Option<Arc<AtomicBool>>,
     filter_epoch: u64,
     ranked_epoch: u64,
     filter_match_truncated: bool,
     filter_candidates: Arc<Vec<StringMatchCandidate>>,
-    scroll_handle: UniformListScrollHandle,
     last_listing_settings: BreadcrumbListingSettings,
     #[cfg(test)]
     directory_reload_count: usize,
@@ -108,11 +114,6 @@ impl BreadcrumbNavigationMenu {
         cx: &mut App,
     ) -> Entity<Self> {
         let menu = cx.new(|cx| {
-            let filter_editor = cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Type to filter…", window, cx);
-                editor
-            });
             let navigated_path = match (&listing, navigated) {
                 (BreadcrumbListing::Directory { worktree_id, path }, true) => {
                     Some((*worktree_id, path.clone()))
@@ -133,17 +134,22 @@ impl BreadcrumbNavigationMenu {
                 loading: true,
                 load_epoch: 0,
                 load_task: None,
+                row_refresh_task: None,
                 selected_index: None,
                 pending_initial_selection: true,
-                filter_editor,
+                query: String::new(),
+                rows: Rc::new(Vec::new()),
+                rows_dirty: false,
+                scroll_to_selection_pending: false,
+                picker: None,
                 pressed_outside: false,
                 ranked_matches: Vec::new(),
                 filter_task: None,
+                filter_cancel: None,
                 filter_epoch: 0,
                 ranked_epoch: 0,
                 filter_match_truncated: false,
                 filter_candidates: Arc::new(Vec::new()),
-                scroll_handle: UniformListScrollHandle::new(),
                 last_listing_settings: *BreadcrumbListingSettings::get_global(cx),
                 #[cfg(test)]
                 directory_reload_count: 0,
@@ -152,20 +158,25 @@ impl BreadcrumbNavigationMenu {
             }
         });
         menu.update(cx, |this, cx| {
-            this._subscriptions.push(cx.subscribe(
-                &this.filter_editor,
-                |this, _, event: &EditorEvent, cx| {
-                    if matches!(event, EditorEvent::BufferEdited) {
-                        this.apply_filter_edit(cx);
-                    }
-                },
-            ));
-            let filter_focus = this.filter_editor.focus_handle(cx);
-            this._subscriptions.push(cx.on_blur(&filter_focus, window, {
+            let delegate = BreadcrumbPickerDelegate::new(cx.weak_entity());
+            let picker = cx.new(|cx| {
+                let available = window.viewport_size().width / window.rem_size();
+                picker::Picker::uniform_list(delegate, window, cx)
+                    .popover()
+                    .show_scrollbar(true)
+                    .initial_width(rems(available.clamp(10., 24.)))
+            });
+            this._subscriptions
+                .push(cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
+                    cx.emit(DismissEvent);
+                }));
+            let picker_focus = picker.focus_handle(cx);
+            this._subscriptions.push(cx.on_blur(&picker_focus, window, {
                 |_: &mut Self, _, cx| {
                     cx.emit(DismissEvent);
                 }
             }));
+            this.picker = Some(picker);
             if let Some(project) = this.project(cx) {
                 this._subscriptions
                     .push(cx.subscribe(&project, |this, _, event, cx| {
@@ -265,6 +276,7 @@ impl BreadcrumbNavigationMenu {
             self._buffer_subscription = None;
         }
         self.listing = listing;
+        self.publish_rows(cx);
         self.clear_filter(window, cx);
         self.pending_initial_selection = true;
         self.selected_index = None;
@@ -279,8 +291,8 @@ impl BreadcrumbNavigationMenu {
     }
 
     #[cfg(test)]
-    pub fn filter(&self, cx: &App) -> String {
-        self.filter_query(cx)
+    pub fn filter(&self) -> String {
+        self.filter_query().to_string()
     }
 
     #[cfg(test)]
@@ -309,8 +321,27 @@ impl BreadcrumbNavigationMenu {
     }
 
     #[cfg(test)]
-    pub fn filtered_entry_names(&self, cx: &App) -> Vec<SharedString> {
-        self.visible_row_labels(cx)
+    pub fn filtered_entry_names(&self) -> Vec<SharedString> {
+        self.visible_row_labels()
+    }
+
+    /// What the picker is actually rendering, as opposed to what the menu would render. The two
+    /// diverge whenever a mutation forgets to publish, and only this side is visible to the user.
+    #[cfg(test)]
+    pub fn published_row_labels(&self, cx: &App) -> Vec<SharedString> {
+        let Some(picker) = self.picker.as_ref() else {
+            return Vec::new();
+        };
+        picker
+            .read(cx)
+            .delegate
+            .rows
+            .iter()
+            .map(|row| match row {
+                BreadcrumbMenuRow::Directory { entry, .. } => entry.name.clone(),
+                BreadcrumbMenuRow::Symbol { item, .. } => item.text.clone(),
+            })
+            .collect()
     }
 
     #[cfg(test)]
@@ -322,11 +353,6 @@ impl BreadcrumbNavigationMenu {
     #[cfg(test)]
     pub fn directory_reload_count_for_test(&self) -> usize {
         self.directory_reload_count
-    }
-
-    #[cfg(test)]
-    pub fn scroll_offset_for_test(&self) -> Pixels {
-        self.scroll_handle.0.borrow().base_handle.offset().y
     }
 
     #[cfg(test)]
@@ -345,82 +371,271 @@ impl BreadcrumbNavigationMenu {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let menu = cx.new(|cx| {
-            let filter_editor = cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Type to filter…", window, cx);
-                editor
-            });
-            Self {
-                editor,
-                workspace: WeakEntity::new_invalid(),
-                listing: BreadcrumbListing::Symbols {
-                    buffer_id,
-                    parent: None,
-                },
-                navigated_path: None,
-                symbol_trail: Vec::new(),
-                active_file_path: None,
-                directory_entries: Vec::new(),
-                all_symbol_items: all_items,
-                listed_symbol_indices: listed_indices,
-                cursor_symbol_ranges,
-                loading: false,
-                load_epoch: 0,
-                load_task: None,
-                selected_index: None,
-                pending_initial_selection: true,
-                filter_editor,
-                pressed_outside: false,
-                ranked_matches: Vec::new(),
-                filter_task: None,
-                filter_epoch: 0,
-                ranked_epoch: 0,
-                filter_match_truncated: false,
-                filter_candidates: Arc::new(Vec::new()),
-                scroll_handle: UniformListScrollHandle::new(),
-                last_listing_settings: *BreadcrumbListingSettings::get_global(cx),
-                #[cfg(test)]
-                directory_reload_count: 0,
-                _subscriptions: Vec::new(),
-                _buffer_subscription: None,
-            }
+        let menu = cx.new(|cx| Self {
+            editor,
+            workspace: WeakEntity::new_invalid(),
+            listing: BreadcrumbListing::Symbols {
+                buffer_id,
+                parent: None,
+            },
+            navigated_path: None,
+            symbol_trail: Vec::new(),
+            active_file_path: None,
+            directory_entries: Vec::new(),
+            all_symbol_items: all_items,
+            listed_symbol_indices: listed_indices,
+            cursor_symbol_ranges,
+            loading: false,
+            load_epoch: 0,
+            load_task: None,
+            row_refresh_task: None,
+            selected_index: None,
+            pending_initial_selection: true,
+            query: String::new(),
+            rows: Rc::new(Vec::new()),
+            rows_dirty: false,
+            scroll_to_selection_pending: false,
+            picker: None,
+            pressed_outside: false,
+            ranked_matches: Vec::new(),
+            filter_task: None,
+            filter_cancel: None,
+            filter_epoch: 0,
+            ranked_epoch: 0,
+            filter_match_truncated: false,
+            filter_candidates: Arc::new(Vec::new()),
+            last_listing_settings: *BreadcrumbListingSettings::get_global(cx),
+            #[cfg(test)]
+            directory_reload_count: 0,
+            _subscriptions: Vec::new(),
+            _buffer_subscription: None,
         });
         menu.update(cx, |this, cx| {
-            this._subscriptions.push(cx.subscribe(
-                &this.filter_editor,
-                |this, _, event: &EditorEvent, cx| {
-                    if matches!(event, EditorEvent::BufferEdited) {
-                        this.apply_filter_edit(cx);
-                    }
-                },
-            ));
+            let delegate = BreadcrumbPickerDelegate::new(cx.weak_entity());
+            let picker = cx.new(|cx| {
+                let available = window.viewport_size().width / window.rem_size();
+                picker::Picker::uniform_list(delegate, window, cx)
+                    .popover()
+                    .show_scrollbar(true)
+                    .initial_width(rems(available.clamp(10., 24.)))
+            });
+            this.picker = Some(picker);
+            this.publish_rows(cx);
         });
         menu
     }
 
     fn focus_menu(&self, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.filter_editor.focus_handle(cx), cx);
+        // Deferred: reached from delegate callbacks that hold the picker's lease.
+        let Some(picker) = self.picker.clone() else {
+            return;
+        };
+        cx.defer_in(window, move |_, window, cx| {
+            window.focus(&picker.focus_handle(cx), cx);
+        });
     }
 
-    fn filter_query(&self, cx: &App) -> String {
-        self.filter_editor.read(cx).text(cx)
+    fn filter_query(&self) -> &str {
+        &self.query
     }
 
-    fn filter_is_empty(&self, cx: &App) -> bool {
-        self.filter_editor.read(cx).is_empty(cx)
+    fn filter_is_empty(&self) -> bool {
+        self.query.is_empty()
+    }
+
+    pub(super) fn set_filter_query(&mut self, query: String, cx: &mut Context<Self>) {
+        if self.query == query {
+            return;
+        }
+        self.query = query;
+        if !self.filter_is_empty() {
+            self.pending_initial_selection = false;
+        }
+        self.rerank_filter(cx);
+        // `selected_index` and the row lookups address the ranked matches the moment the
+        // query is non-empty, so the delegate cannot keep serving the old rows.
+        self.publish_rows(cx);
+        cx.notify();
     }
 
     fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.filter_editor.update(cx, |editor, cx| {
-            if !editor.is_empty(cx) {
-                editor.set_text("", window, cx);
-            }
-        });
+        self.query.clear();
+        // Deferred for the same reason as `publish_rows`.
+        if let Some(picker) = self.picker.clone() {
+            cx.defer_in(window, move |_, window, cx| {
+                picker.update(cx, |picker, cx| picker.set_query("", window, cx));
+            });
+        }
         self.ranked_matches.clear();
         self.filter_match_truncated = false;
         self.filter_epoch = self.filter_epoch.wrapping_add(1);
         self.filter_task = None;
+    }
+
+    pub(super) fn set_selected_row(&mut self, position: usize, cx: &mut Context<Self>) {
+        if self.selected_index != Some(position) {
+            self.move_selection(Some(position), cx);
+            // The picker already scrolls for selections it originates, and deliberately does
+            // not for hover. Scrolling again here would drag rows under a resting cursor and
+            // retrigger hover on the row that lands beneath it.
+            self.scroll_to_selection_pending = false;
+        }
+    }
+
+    /// By index, not by the menu's own selection: the picker sets the selection and confirms
+    /// in one call, while the menu's copy lands a cycle later, so a click would otherwise act
+    /// on the previously selected row.
+    pub(super) fn confirm_row(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.selected_index = Some(index);
+        self.confirm(&menu::Confirm, window, cx);
+    }
+
+    /// Reports whether the listing moved, so a typed query survives a drill that goes nowhere.
+    pub(super) fn drill_into_selection(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.selected_index = Some(index);
+        let (listing_before, epoch_before) = (self.listing.clone(), self.load_epoch);
+        self.select_child(&menu::SelectChild, window, cx);
+        // A directory drill only changes the listing once its load resolves, but it bumps the
+        // load epoch immediately.
+        self.listing != listing_before || self.load_epoch != epoch_before
+    }
+
+    pub(super) fn step_out_of_listing(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let (listing_before, epoch_before) = (self.listing.clone(), self.load_epoch);
+        self.select_parent(&menu::SelectParent, window, cx);
+        self.listing != listing_before || self.load_epoch != epoch_before
+    }
+
+    /// The picker renders from its delegate alone, so every state change has to land here.
+    /// Deferred and coalesced: delegate callbacks hold the picker's lease, so publishing
+    /// inline would try to update it mid-update.
+    pub(super) fn publish_rows(&mut self, cx: &mut Context<Self>) {
+        if self.rows_dirty {
+            return;
+        }
+        self.rows_dirty = true;
+        let menu = cx.weak_entity();
+        cx.defer(move |cx| {
+            menu.update(cx, |this, cx| {
+                this.rows_dirty = false;
+                this.publish_rows_now(cx);
+            })
+            .ok();
+        });
+    }
+
+    fn publish_rows_now(&mut self, cx: &mut Context<Self>) {
+        let Some(picker) = self.picker.clone() else {
+            return;
+        };
+        let settings = *BreadcrumbListingSettings::get_global(cx);
+        let filter_active = !self.filter_is_empty();
+        let visible = self.visible_row_count();
+        let deepest_current = self.deepest_cursor_symbol_range().cloned();
+        let is_directory = matches!(self.listing, BreadcrumbListing::Directory { .. });
+
+        let mut rows = Vec::with_capacity(visible);
+        for position in 0..visible {
+            if is_directory {
+                if let Some((entry, match_positions)) = self.directory_row_data(position) {
+                    rows.push(BreadcrumbMenuRow::Directory {
+                        entry,
+                        match_positions,
+                    });
+                }
+            } else if let Some((item, outline_index, match_positions)) =
+                self.symbol_row_data(position)
+            {
+                let is_current = deepest_current
+                    .as_ref()
+                    .is_some_and(|range| item.range == *range);
+                rows.push(BreadcrumbMenuRow::Symbol {
+                    item,
+                    outline_index,
+                    match_positions,
+                    is_current,
+                });
+            }
+        }
+        let show_current_column = rows.iter().any(|row| match row {
+            BreadcrumbMenuRow::Symbol { is_current, .. } => *is_current,
+            BreadcrumbMenuRow::Directory { .. } => false,
+        });
+
+        // Named like Zed's other pickers ("Search project files…"), and distinguishing the two
+        // listings, rather than a bare "Type to filter…".
+        let placeholder: Arc<str> = if is_directory {
+            "Search this directory…".into()
+        } else {
+            "Search these symbols…".into()
+        };
+
+        let empty_message: SharedString = if self.loading {
+            "Loading…".into()
+        } else if filter_active {
+            if self.ranked_epoch != self.filter_epoch && self.ranked_matches.is_empty() {
+                "Searching…".into()
+            } else {
+                "No matches".into()
+            }
+        } else if is_directory {
+            "Empty directory".into()
+        } else {
+            "No symbols".into()
+        };
+
+        let truncation_note = self
+            .is_display_truncated()
+            .then(|| SharedString::from(breadcrumb_menu_truncated_label(filter_active)));
+
+        let match_count_label =
+            (filter_active && self.ranked_epoch == self.filter_epoch).then(|| -> SharedString {
+                if self.filter_match_truncated {
+                    format!("{}+ matches", MAX_BREADCRUMB_MENU_ROWS).into()
+                } else if self.ranked_matches.len() == 1 {
+                    "1 match".into()
+                } else {
+                    format!("{} matches", self.ranked_matches.len()).into()
+                }
+            });
+
+        let selected_index = self
+            .selected_index
+            .unwrap_or(0)
+            .min(rows.len().saturating_sub(1));
+        let scroll_to_selection = std::mem::take(&mut self.scroll_to_selection_pending);
+        let rows = Rc::new(rows);
+        self.rows = rows.clone();
+        picker.update(cx, |picker, cx| {
+            let delegate = &mut picker.delegate;
+            delegate.rows = rows;
+            delegate.selected_index = selected_index;
+            delegate.empty_message = empty_message;
+            delegate.placeholder = placeholder;
+            delegate.truncation_note = truncation_note;
+            delegate.match_count_label = match_count_label;
+            delegate.show_current_column = show_current_column;
+            delegate.show_file_icons = settings.file_icons;
+            delegate.show_folder_icons = settings.folder_icons;
+            if scroll_to_selection {
+                picker.scroll_to_selected_index();
+            }
+            cx.notify();
+        });
     }
 
     fn emit_bar_changed(&self, cx: &mut Context<Self>) {
@@ -474,7 +689,8 @@ impl BreadcrumbNavigationMenu {
         {
             self.directory_reload_count = self.directory_reload_count.wrapping_add(1);
         }
-        let filter_active = !self.filter_is_empty(cx);
+        let (worktree_id, path) = (*worktree_id, path.clone());
+        let filter_active = !self.filter_is_empty();
         let selected_path = self.selected_index.and_then(|position| {
             if filter_active {
                 let match_ = self.ranked_matches.get(position)?;
@@ -487,17 +703,47 @@ impl BreadcrumbNavigationMenu {
                     .map(|entry| entry.path.clone())
             }
         });
-        let Some((worktree, project)) = self.worktree(*worktree_id, cx).zip(self.project(cx))
-        else {
+        let Some((worktree, project)) = self.worktree(worktree_id, cx).zip(self.project(cx)) else {
             self.directory_entries.clear();
+            self.publish_rows(cx);
             cx.notify();
             return;
         };
-        self.directory_entries = breadcrumb_directory_entries(&project, &worktree, path, cx);
-        self.rebuild_filter_candidates();
-        // `expand_entry` itself emits the worktree updates that land here, so a listing
-        // taken now can be partial; only the load that requested the expansion may end it.
-        if !self.filter_is_empty(cx) {
+        let inputs = breadcrumb_directory_listing_inputs(&project, &worktree, cx);
+        // Deliberately does not take `load_task` or bump `load_epoch`: a refresh must never
+        // cancel a listing switch that is still resolving. It captures the epoch it observed,
+        // so a switch starting meanwhile discards this result instead.
+        let epoch = self.load_epoch;
+        let listing = self.listing.clone();
+        self.row_refresh_task = Some(cx.spawn(async move |this, cx| {
+            let entries = cx
+                .background_spawn(async move { breadcrumb_directory_entries(&inputs, &path) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.load_epoch != epoch || this.listing != listing {
+                    return;
+                }
+                this.directory_entries = entries;
+                this.rebuild_filter_candidates();
+                // `loading` stays owned by the listing load. Expanding an unscanned directory
+                // emits the very entry updates this refresh listens for, so a refresh lands
+                // mid-load with a partially scanned worktree; clearing the flag here would let
+                // it spend the one-shot initial selection on that partial listing and leave the
+                // open file unselected once the full one arrives.
+                this.publish_rows(cx);
+                this.apply_reloaded_selection(selected_path, cx);
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    fn apply_reloaded_selection(
+        &mut self,
+        selected_path: Option<Arc<RelPath>>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.filter_is_empty() {
             self.ranked_matches.clear();
             self.selected_index = None;
             self.rerank_filter(cx);
@@ -513,7 +759,7 @@ impl BreadcrumbNavigationMenu {
             }
             self.apply_initial_selection_if_needed(cx);
         } else {
-            let visible = self.visible_row_count(cx);
+            let visible = self.visible_row_count();
             if let Some(position) = self.selected_index
                 && position >= visible
             {
@@ -521,7 +767,6 @@ impl BreadcrumbNavigationMenu {
             }
             self.apply_initial_selection_if_needed(cx);
         }
-        cx.notify();
     }
 
     fn spawn_directory_load(
@@ -550,21 +795,38 @@ impl BreadcrumbNavigationMenu {
             if let Some(task) = expand_task {
                 task.await.log_err();
             }
+            let inputs = this
+                .update(cx, |this, cx| {
+                    if this.load_epoch != epoch {
+                        return None;
+                    }
+                    let (worktree, project) =
+                        this.worktree(worktree_id, cx).zip(this.project(cx))?;
+                    Some(breadcrumb_directory_listing_inputs(&project, &worktree, cx))
+                })
+                .ok()
+                .flatten();
+            let entries = match inputs {
+                Some(inputs) => {
+                    let path = path.clone();
+                    cx.background_spawn(async move { breadcrumb_directory_entries(&inputs, &path) })
+                        .await
+                }
+                // Renders identically to a genuinely empty directory, so say so in the log.
+                None => {
+                    log::warn!("breadcrumb listing found no worktree or project for {path:?}");
+                    Vec::new()
+                }
+            };
             this.update(cx, |this, cx| {
                 if this.load_epoch != epoch {
                     return;
                 }
-                let entries = this
-                    .worktree(worktree_id, cx)
-                    .zip(this.project(cx))
-                    .map(|(worktree, project)| {
-                        breadcrumb_directory_entries(&project, &worktree, &path, cx)
-                    })
-                    .unwrap_or_default();
                 this.directory_entries = entries;
                 this.rebuild_filter_candidates();
                 this.loading = false;
-                if this.filter_is_empty(cx) {
+                this.publish_rows(cx);
+                if this.filter_is_empty() {
                     this.apply_initial_selection_if_needed(cx);
                 } else {
                     this.ranked_matches.clear();
@@ -618,53 +880,63 @@ impl BreadcrumbNavigationMenu {
                 if this.load_epoch != epoch {
                     return;
                 }
-                let Some(editor) = this.editor.upgrade() else {
-                    this.loading = false;
-                    cx.notify();
+                if !this.apply_loaded_outline(buffer_id, &text_items, parent.clone(), cx) {
                     return;
-                };
-                let (all_items, cursor_ranges) = editor.update(cx, |editor, cx| {
-                    let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                    let all_items =
-                        editor.map_text_outline_items(&text_items, &multi_buffer_snapshot);
-                    let cursor_ranges = editor
-                        .outline_symbols_at_cursor
-                        .as_ref()
-                        .filter(|(id, _)| *id == buffer_id)
-                        .map(|(_, ancestors)| {
-                            ancestors.iter().map(|item| item.range.clone()).collect()
-                        })
-                        .unwrap_or_default();
-                    (all_items, cursor_ranges)
-                });
-
-                this.cursor_symbol_ranges = cursor_ranges;
-                this.all_symbol_items = all_items;
-                this.loading = false;
-
-                if this.all_symbol_items.is_empty() {
-                    if parent.is_none() {
-                        if let Some(callback) = zed_actions::outline::TOGGLE_OUTLINE.get() {
-                            callback(editor.to_any_view(), window, cx);
-                        }
-                        cx.emit(DismissEvent);
-                        return;
-                    }
                 }
-
-                this.apply_symbol_parent(parent, cx);
-                if this.filter_is_empty(cx) {
-                    this.apply_initial_selection_if_needed(cx);
-                } else {
-                    this.ranked_matches.clear();
-                    this.selected_index = None;
-                    this.rerank_filter(cx);
+                // A file with no symbols at all has nothing to show, so hand over to the
+                // outline picker rather than opening an empty menu.
+                if this.all_symbol_items.is_empty()
+                    && parent.is_none()
+                    && let Some(editor) = this.editor.upgrade()
+                    && let Some(callback) = zed_actions::outline::TOGGLE_OUTLINE.get()
+                {
+                    callback(editor.to_any_view(), window, cx);
+                    cx.emit(DismissEvent);
                 }
-                this.emit_bar_changed(cx);
-                cx.notify();
             })
             .ok();
         }));
+    }
+
+    /// Applies a freshly fetched outline; both symbol load paths end here.
+    fn apply_loaded_outline(
+        &mut self,
+        buffer_id: BufferId,
+        text_items: &[OutlineItem<text::Anchor>],
+        parent: Option<OutlineItem<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(editor) = self.editor.upgrade() else {
+            self.loading = false;
+            cx.notify();
+            return false;
+        };
+        let (all_items, cursor_ranges) = editor.update(cx, |editor, cx| {
+            let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+            let all_items = editor.map_text_outline_items(text_items, &multi_buffer_snapshot);
+            let cursor_ranges = editor
+                .outline_symbols_at_cursor
+                .as_ref()
+                .filter(|(id, _)| *id == buffer_id)
+                .map(|(_, ancestors)| ancestors.iter().map(|item| item.range.clone()).collect())
+                .unwrap_or_default();
+            (all_items, cursor_ranges)
+        });
+        self.cursor_symbol_ranges = cursor_ranges;
+        self.all_symbol_items = all_items;
+        self.loading = false;
+        self.publish_rows(cx);
+        self.apply_symbol_parent(parent, cx);
+        if self.filter_is_empty() {
+            self.apply_initial_selection_if_needed(cx);
+        } else {
+            self.ranked_matches.clear();
+            self.selected_index = None;
+            self.rerank_filter(cx);
+        }
+        self.emit_bar_changed(cx);
+        cx.notify();
+        true
     }
 
     fn reload_symbols_from_buffer(
@@ -673,13 +945,16 @@ impl BreadcrumbNavigationMenu {
         parent: Option<OutlineItem<Anchor>>,
         cx: &mut Context<Self>,
     ) {
+        // `symbol_trail` is deliberately kept: it is what the bar paints the menu's anchor
+        // segment from, and a frame without an anchor dismisses the menu.
         self.all_symbol_items.clear();
         self.listed_symbol_indices.clear();
-        // The trail must outlive the reload: it is what the bar paints the menu's anchor
-        // segment from, and a frame without an anchor dismisses the menu.
         self.load_epoch = self.load_epoch.wrapping_add(1);
         let epoch = self.load_epoch;
         self.loading = true;
+        // Rows carry their own item, so leaving the old ones up would let a click act on a
+        // symbol this buffer no longer has. Publishing here empties them until the reload lands.
+        self.publish_rows(cx);
         self.load_task = Some(cx.spawn(async move |this, cx| {
             let outline_task = this
                 .update(cx, |this, cx| {
@@ -702,38 +977,7 @@ impl BreadcrumbNavigationMenu {
                 if this.load_epoch != epoch {
                     return;
                 }
-                let Some(editor) = this.editor.upgrade() else {
-                    this.loading = false;
-                    cx.notify();
-                    return;
-                };
-                let (all_items, cursor_ranges) = editor.update(cx, |editor, cx| {
-                    let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                    let all_items =
-                        editor.map_text_outline_items(&text_items, &multi_buffer_snapshot);
-                    let cursor_ranges = editor
-                        .outline_symbols_at_cursor
-                        .as_ref()
-                        .filter(|(id, _)| *id == buffer_id)
-                        .map(|(_, ancestors)| {
-                            ancestors.iter().map(|item| item.range.clone()).collect()
-                        })
-                        .unwrap_or_default();
-                    (all_items, cursor_ranges)
-                });
-                this.cursor_symbol_ranges = cursor_ranges;
-                this.all_symbol_items = all_items;
-                this.loading = false;
-                this.apply_symbol_parent(parent, cx);
-                if this.filter_is_empty(cx) {
-                    this.apply_initial_selection_if_needed(cx);
-                } else {
-                    this.ranked_matches.clear();
-                    this.selected_index = None;
-                    this.rerank_filter(cx);
-                }
-                this.emit_bar_changed(cx);
-                cx.notify();
+                this.apply_loaded_outline(buffer_id, &text_items, parent, cx);
             })
             .ok();
         }));
@@ -827,6 +1071,7 @@ impl BreadcrumbNavigationMenu {
         self.listed_symbol_indices = listed_indices;
         self.rebuild_filter_candidates();
         self.rebuild_symbol_trail(cx);
+        self.publish_rows(cx);
     }
 
     fn rebuild_symbol_trail(&mut self, _cx: &mut Context<Self>) {
@@ -861,24 +1106,17 @@ impl BreadcrumbNavigationMenu {
         self.symbol_trail = trail;
     }
 
-    fn apply_filter_edit(&mut self, cx: &mut Context<Self>) {
-        // Listing switches clear the query, and that edit arrives after the switch has
-        // already asked for a fresh initial selection.
-        if !self.filter_is_empty(cx) {
-            self.pending_initial_selection = false;
-        }
-        self.rerank_filter(cx);
-        cx.notify();
-    }
-
     fn rerank_filter(&mut self, cx: &mut Context<Self>) {
+        if let Some(cancel) = self.filter_cancel.take() {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         self.filter_epoch = self.filter_epoch.wrapping_add(1);
         let epoch = self.filter_epoch;
-        let query = self.filter_query(cx);
+        let query = self.filter_query().to_string();
 
         if query.is_empty() {
-            // `selected_index` addresses the ranked matches while a query is active and the
-            // listing itself once it is gone, so carry the selection over by identity.
+            // `selected_index` changes what it addresses when the query clears, so carry the
+            // selection over by identity.
             let unranked_selection = self
                 .selected_index
                 .and_then(|position| self.ranked_matches.get(position))
@@ -887,15 +1125,14 @@ impl BreadcrumbNavigationMenu {
             self.filter_match_truncated = false;
             self.filter_task = None;
             self.ranked_epoch = epoch;
+            self.publish_rows(cx);
             if let Some(position) = unranked_selection {
                 self.selected_index = Some(position);
-                self.scroll_handle
-                    .scroll_to_item(position, ScrollStrategy::Nearest);
             }
             if self.selected_index.is_none() {
                 self.apply_initial_selection_if_needed(cx);
             } else {
-                let visible = self.visible_row_count(cx);
+                let visible = self.visible_row_count();
                 if let Some(position) = self.selected_index
                     && position >= visible
                 {
@@ -908,8 +1145,9 @@ impl BreadcrumbNavigationMenu {
 
         let candidates = self.filter_candidates.clone();
         let executor = cx.background_executor().clone();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        self.filter_cancel = Some(cancel_flag.clone());
         self.filter_task = Some(cx.spawn(async move |this, cx| {
-            let cancel_flag = AtomicBool::new(false);
             let matches = fuzzy::match_strings(
                 candidates.as_slice(),
                 &query,
@@ -926,12 +1164,25 @@ impl BreadcrumbNavigationMenu {
                 }
                 this.ranked_epoch = epoch;
                 this.filter_match_truncated = matches.len() > MAX_BREADCRUMB_MENU_ROWS;
+                let mut matches = matches;
+                // Equal scores otherwise come back in reverse listing order, so filtering a
+                // directory of item_000..item_199 opened on item_199.
+                matches.sort_by(|a, b| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(Ordering::Equal)
+                        .then(a.candidate_id.cmp(&b.candidate_id))
+                });
                 this.ranked_matches = matches.into_iter().take(MAX_BREADCRUMB_MENU_ROWS).collect();
-                this.selected_index = (!this.ranked_matches.is_empty()).then_some(0);
-                if let Some(0) = this.selected_index {
-                    this.scroll_handle
-                        .scroll_to_item(0, ScrollStrategy::Nearest);
-                }
+                // Kept if it still addresses a row: the user can arrow through results while
+                // the rank is in flight, and a new query clears it so that case still lands
+                // on the best match.
+                this.selected_index = match this.selected_index {
+                    Some(index) if index < this.ranked_matches.len() => Some(index),
+                    _ => (!this.ranked_matches.is_empty()).then_some(0),
+                };
+                this.scroll_to_selection_pending = true;
+                this.publish_rows(cx);
                 cx.notify();
             })
             .ok();
@@ -959,8 +1210,8 @@ impl BreadcrumbNavigationMenu {
         self.filter_candidates = Arc::new(candidates);
     }
 
-    fn visible_row_count(&self, cx: &App) -> usize {
-        if !self.filter_is_empty(cx) {
+    fn visible_row_count(&self) -> usize {
+        if !self.filter_is_empty() {
             return self.ranked_matches.len().min(MAX_BREADCRUMB_MENU_ROWS);
         }
         match &self.listing {
@@ -975,8 +1226,8 @@ impl BreadcrumbNavigationMenu {
     }
 
     #[cfg(test)]
-    fn visible_row_labels(&self, cx: &App) -> Vec<SharedString> {
-        if !self.filter_is_empty(cx) {
+    fn visible_row_labels(&self) -> Vec<SharedString> {
+        if !self.filter_is_empty() {
             return self
                 .ranked_matches
                 .iter()
@@ -1004,8 +1255,8 @@ impl BreadcrumbNavigationMenu {
         }
     }
 
-    fn is_display_truncated(&self, cx: &App) -> bool {
-        if !self.filter_is_empty(cx) {
+    fn is_display_truncated(&self) -> bool {
+        if !self.filter_is_empty() {
             return self.ranked_epoch == self.filter_epoch && self.filter_match_truncated;
         }
         match &self.listing {
@@ -1019,19 +1270,17 @@ impl BreadcrumbNavigationMenu {
     }
 
     fn apply_initial_selection_if_needed(&mut self, cx: &mut Context<Self>) {
-        if !self.pending_initial_selection || !self.filter_is_empty(cx) || self.loading {
+        if !self.pending_initial_selection || !self.filter_is_empty() || self.loading {
             return;
         }
-        let visible = self.visible_row_count(cx);
+        let visible = self.visible_row_count();
         if visible == 0 {
             return;
         }
         self.pending_initial_selection = false;
         self.selected_index = self.initial_selected_index();
-        if let Some(position) = self.selected_index {
-            self.scroll_handle
-                .scroll_to_item(position, ScrollStrategy::Nearest);
-        }
+        self.scroll_to_selection_pending = true;
+        self.publish_rows(cx);
         cx.notify();
     }
 
@@ -1085,66 +1334,9 @@ impl BreadcrumbNavigationMenu {
     fn move_selection(&mut self, position: Option<usize>, cx: &mut Context<Self>) {
         self.pending_initial_selection = false;
         self.selected_index = position;
-        if let Some(position) = position {
-            self.scroll_handle
-                .scroll_to_item(position, ScrollStrategy::Nearest);
-        }
+        self.scroll_to_selection_pending = true;
+        self.publish_rows(cx);
         cx.notify();
-    }
-
-    pub(super) fn select_next(
-        &mut self,
-        _: &menu::SelectNext,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let visible = self.visible_row_count(cx);
-        if visible == 0 {
-            return;
-        }
-        let next = self
-            .selected_index
-            .map(|position| (position + 1) % visible)
-            .unwrap_or(0);
-        self.move_selection(Some(next), cx);
-    }
-
-    fn select_previous(
-        &mut self,
-        _: &menu::SelectPrevious,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let visible = self.visible_row_count(cx);
-        if visible == 0 {
-            return;
-        }
-        let previous = self
-            .selected_index
-            .map(|position| {
-                if position == 0 {
-                    visible - 1
-                } else {
-                    position - 1
-                }
-            })
-            .unwrap_or(visible - 1);
-        self.move_selection(Some(previous), cx);
-    }
-
-    fn select_first(&mut self, _: &menu::SelectFirst, _: &mut Window, cx: &mut Context<Self>) {
-        if self.visible_row_count(cx) == 0 {
-            return;
-        }
-        self.move_selection(Some(0), cx);
-    }
-
-    fn select_last(&mut self, _: &menu::SelectLast, _: &mut Window, cx: &mut Context<Self>) {
-        let visible = self.visible_row_count(cx);
-        if visible == 0 {
-            return;
-        }
-        self.move_selection(Some(visible - 1), cx);
     }
 
     pub(super) fn confirm(
@@ -1155,13 +1347,13 @@ impl BreadcrumbNavigationMenu {
     ) {
         match self.listing.clone() {
             BreadcrumbListing::Directory { .. } => {
-                let Some(entry) = self.selected_directory_entry(cx) else {
+                let Some(entry) = self.selected_directory_entry() else {
                     return;
                 };
                 self.choose_directory_entry(entry, window, cx);
             }
             BreadcrumbListing::Symbols { .. } => {
-                let Some(item) = self.selected_symbol_item(cx) else {
+                let Some(item) = self.selected_symbol_item() else {
                     return;
                 };
                 self.navigate_to_symbol(&item, window, cx);
@@ -1172,7 +1364,7 @@ impl BreadcrumbNavigationMenu {
     fn select_child(&mut self, _: &menu::SelectChild, window: &mut Window, cx: &mut Context<Self>) {
         match self.listing.clone() {
             BreadcrumbListing::Directory { .. } => {
-                let Some(entry) = self.selected_directory_entry(cx) else {
+                let Some(entry) = self.selected_directory_entry() else {
                     return;
                 };
                 if entry.is_dir {
@@ -1207,7 +1399,7 @@ impl BreadcrumbNavigationMenu {
                 }
             }
             BreadcrumbListing::Symbols { .. } => {
-                let Some(outline_index) = self.selected_symbol_outline_index(cx) else {
+                let Some(outline_index) = self.selected_symbol_outline_index() else {
                     return;
                 };
                 let depths: Vec<usize> = self
@@ -1224,18 +1416,31 @@ impl BreadcrumbNavigationMenu {
                     BreadcrumbListing::Symbols { buffer_id, .. } => *buffer_id,
                     _ => return,
                 };
-                self.clear_filter(window, cx);
-                self.pending_initial_selection = true;
-                self.selected_index = None;
-                self.listing = BreadcrumbListing::Symbols { buffer_id, parent };
-                self.listed_symbol_indices = children;
-                self.rebuild_filter_candidates();
-                self.rebuild_symbol_trail(cx);
-                self.apply_initial_selection_if_needed(cx);
-                self.emit_bar_changed(cx);
-                cx.notify();
+                self.transition_to_symbol_listing(buffer_id, parent, children, window, cx);
             }
         }
+    }
+
+    /// The one navigation path that swaps one symbol listing for another.
+    fn transition_to_symbol_listing(
+        &mut self,
+        buffer_id: BufferId,
+        parent: Option<OutlineItem<Anchor>>,
+        listed_indices: Vec<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_filter(window, cx);
+        self.pending_initial_selection = true;
+        self.selected_index = None;
+        self.listing = BreadcrumbListing::Symbols { buffer_id, parent };
+        self.listed_symbol_indices = listed_indices;
+        self.rebuild_filter_candidates();
+        self.rebuild_symbol_trail(cx);
+        self.apply_initial_selection_if_needed(cx);
+        self.publish_rows(cx);
+        self.emit_bar_changed(cx);
+        cx.notify();
     }
 
     fn select_parent(
@@ -1276,19 +1481,8 @@ impl BreadcrumbNavigationMenu {
                     .collect();
                 let parents = outline_parents(&depths);
                 let Some(parent_index) = parents.get(first).copied().flatten() else {
-                    self.clear_filter(window, cx);
-                    self.pending_initial_selection = true;
-                    self.selected_index = None;
-                    self.listing = BreadcrumbListing::Symbols {
-                        buffer_id,
-                        parent: None,
-                    };
-                    self.listed_symbol_indices = top_level_outline_indices(&depths);
-                    self.rebuild_filter_candidates();
-                    self.symbol_trail.clear();
-                    self.apply_initial_selection_if_needed(cx);
-                    self.emit_bar_changed(cx);
-                    cx.notify();
+                    let top_level = top_level_outline_indices(&depths);
+                    self.transition_to_symbol_listing(buffer_id, None, top_level, window, cx);
                     return;
                 };
                 let siblings = sibling_outline_indices(&depths, parent_index);
@@ -1297,19 +1491,7 @@ impl BreadcrumbNavigationMenu {
                     .copied()
                     .flatten()
                     .and_then(|index| self.all_symbol_items.get(index).cloned());
-                self.clear_filter(window, cx);
-                self.pending_initial_selection = true;
-                self.selected_index = None;
-                self.listing = BreadcrumbListing::Symbols {
-                    buffer_id,
-                    parent: new_parent,
-                };
-                self.listed_symbol_indices = siblings;
-                self.rebuild_filter_candidates();
-                self.rebuild_symbol_trail(cx);
-                self.apply_initial_selection_if_needed(cx);
-                self.emit_bar_changed(cx);
-                cx.notify();
+                self.transition_to_symbol_listing(buffer_id, new_parent, siblings, window, cx);
             }
         }
     }
@@ -1353,34 +1535,32 @@ impl BreadcrumbNavigationMenu {
         self.emit_bar_changed(cx);
     }
 
-    fn selected_directory_entry(&self, cx: &App) -> Option<BreadcrumbDirectoryEntry> {
-        let BreadcrumbListing::Directory { .. } = &self.listing else {
-            return None;
-        };
-        let position = self.selected_index?;
-        if !self.filter_is_empty(cx) {
-            let match_ = self.ranked_matches.get(position)?;
-            return self.directory_entries.get(match_.candidate_id).cloned();
-        }
-        self.directory_entries.get(position).cloned()
+    /// Resolved from the row the picker rendered, not re-derived from the selection. The row
+    /// already holds its entry, so an acting-on-the-wrong-item bug would have to be a mismatch
+    /// the user could see, rather than a silent disagreement between two index spaces.
+    fn selected_row(&self) -> Option<&BreadcrumbMenuRow> {
+        self.rows.get(self.selected_index?)
     }
 
-    fn selected_symbol_item(&self, cx: &App) -> Option<OutlineItem<Anchor>> {
-        let outline_index = self.selected_symbol_outline_index(cx)?;
-        self.all_symbol_items.get(outline_index).cloned()
+    fn selected_directory_entry(&self) -> Option<BreadcrumbDirectoryEntry> {
+        match self.selected_row()? {
+            BreadcrumbMenuRow::Directory { entry, .. } => Some(entry.clone()),
+            BreadcrumbMenuRow::Symbol { .. } => None,
+        }
     }
 
-    fn selected_symbol_outline_index(&self, cx: &App) -> Option<usize> {
-        let BreadcrumbListing::Symbols { .. } = &self.listing else {
-            return None;
-        };
-        let position = self.selected_index?;
-        if !self.filter_is_empty(cx) {
-            let match_ = self.ranked_matches.get(position)?;
-            let listed_position = match_.candidate_id;
-            return self.listed_symbol_indices.get(listed_position).copied();
+    fn selected_symbol_item(&self) -> Option<OutlineItem<Anchor>> {
+        match self.selected_row()? {
+            BreadcrumbMenuRow::Symbol { item, .. } => Some(item.clone()),
+            BreadcrumbMenuRow::Directory { .. } => None,
         }
-        self.listed_symbol_indices.get(position).copied()
+    }
+
+    fn selected_symbol_outline_index(&self) -> Option<usize> {
+        match self.selected_row()? {
+            BreadcrumbMenuRow::Symbol { outline_index, .. } => Some(*outline_index),
+            BreadcrumbMenuRow::Directory { .. } => None,
+        }
     }
 
     fn choose_directory_entry(
@@ -1423,7 +1603,7 @@ impl BreadcrumbNavigationMenu {
                     let step = this
                         .update(cx, |this, cx| {
                             let worktree = this.worktree(worktree_id, cx)?;
-                            let children = directory_child_paths(&worktree, &path, cx);
+                            let children = directory_child_paths(&worktree, &path, 2, cx);
                             let child_path = single_child_directory(&children)?;
                             let child_id = worktree
                                 .read(cx)
@@ -1513,82 +1693,6 @@ impl BreadcrumbNavigationMenu {
         });
     }
 
-    fn render_directory_entry(
-        &self,
-        position: usize,
-        entry: BreadcrumbDirectoryEntry,
-        match_positions: &[usize],
-        show_file_icons: bool,
-        show_folder_icons: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let is_open_ancestor = entry.is_dir
-            && self
-                .active_file_path
-                .as_ref()
-                .is_some_and(|active_path| active_path.starts_with(&entry.path));
-        let is_selected = self.selected_index == Some(position);
-
-        let icon_path =
-            match directory_entry_icon_source(entry.is_dir, show_file_icons, show_folder_icons) {
-                DirectoryEntryIconSource::File => {
-                    file_icons::FileIcons::get_icon(entry.path.as_std_path(), cx)
-                }
-                DirectoryEntryIconSource::Folder => file_icons::FileIcons::get_folder_icon(
-                    is_open_ancestor,
-                    entry.path.as_std_path(),
-                    cx,
-                ),
-                DirectoryEntryIconSource::Chevron => {
-                    file_icons::FileIcons::get_chevron_icon(false, cx)
-                }
-                DirectoryEntryIconSource::None => None,
-            };
-        let icon = icon_path
-            .map(Icon::from_path)
-            .map(|icon| {
-                icon.color(Color::Muted)
-                    .size(IconSize::Small)
-                    .into_any_element()
-            })
-            .unwrap_or_else(|| div().size(IconSize::Small.rems()).into_any_element());
-
-        let label_color = crate::items::entry_git_aware_label_color(
-            entry.git_summary,
-            entry.is_ignored,
-            is_selected,
-        );
-
-        let entry_for_click = entry.clone();
-        let full_name = entry.name.clone();
-        let label = if match_positions.is_empty() {
-            Label::new(entry.name.clone())
-                .color(label_color)
-                .truncate_middle()
-                .into_any_element()
-        } else {
-            ui::HighlightedLabel::new(entry.name.clone(), match_positions.to_vec())
-                .color(label_color)
-                .truncate_middle()
-                .into_any_element()
-        };
-
-        ListItem::new(SharedString::from(format!(
-            "breadcrumb-directory-entry-{}",
-            entry.name
-        )))
-        .inset(true)
-        .toggle_state(is_selected)
-        .start_slot(icon)
-        .child(label)
-        .when(row_label_needs_tooltip(&full_name), |this| {
-            this.tooltip(move |_window, cx| Tooltip::simple(full_name.clone(), cx))
-        })
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.choose_directory_entry(entry_for_click.clone(), window, cx);
-        }))
-    }
-
     fn deepest_cursor_symbol_range(&self) -> Option<&Range<Anchor>> {
         self.cursor_symbol_ranges.last()
     }
@@ -1596,9 +1700,8 @@ impl BreadcrumbNavigationMenu {
     fn directory_row_data(
         &self,
         position: usize,
-        cx: &App,
     ) -> Option<(BreadcrumbDirectoryEntry, Vec<usize>)> {
-        if !self.filter_is_empty(cx) {
+        if !self.filter_is_empty() {
             let match_ = self.ranked_matches.get(position)?;
             let entry = self.directory_entries.get(match_.candidate_id)?.clone();
             return Some((entry, match_.positions.clone()));
@@ -1607,64 +1710,17 @@ impl BreadcrumbNavigationMenu {
         Some((entry, Vec::new()))
     }
 
-    fn symbol_row_data(
-        &self,
-        position: usize,
-        cx: &App,
-    ) -> Option<(OutlineItem<Anchor>, Vec<usize>)> {
-        if !self.filter_is_empty(cx) {
+    fn symbol_row_data(&self, position: usize) -> Option<(OutlineItem<Anchor>, usize, Vec<usize>)> {
+        if !self.filter_is_empty() {
             let match_ = self.ranked_matches.get(position)?;
             let listed_position = match_.candidate_id;
             let outline_index = *self.listed_symbol_indices.get(listed_position)?;
             let item = self.all_symbol_items.get(outline_index)?.clone();
-            return Some((item, match_.positions.clone()));
+            return Some((item, outline_index, match_.positions.clone()));
         }
         let outline_index = *self.listed_symbol_indices.get(position)?;
         let item = self.all_symbol_items.get(outline_index)?.clone();
-        Some((item, Vec::new()))
-    }
-
-    fn render_filter_row(&self, cx: &Context<Self>) -> impl IntoElement {
-        let filter_empty = self.filter_is_empty(cx);
-        let match_count: Option<SharedString> =
-            if filter_empty || self.ranked_epoch != self.filter_epoch {
-                None
-            } else if self.filter_match_truncated {
-                Some(format!("{}+ matches", MAX_BREADCRUMB_MENU_ROWS).into())
-            } else {
-                let count = self.ranked_matches.len();
-                Some(if count == 1 {
-                    "1 match".into()
-                } else {
-                    format!("{count} matches").into()
-                })
-            };
-        h_flex()
-            .px_2()
-            .py_1()
-            .gap_2()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(
-                h_flex()
-                    .gap_2()
-                    .min_w_0()
-                    .flex_1()
-                    .child(
-                        Icon::new(IconName::MagnifyingGlass)
-                            .color(Color::Muted)
-                            .size(IconSize::Small),
-                    )
-                    .child(div().min_w_0().flex_1().child(self.filter_editor.clone())),
-            )
-            .when_some(match_count, |this, match_count| {
-                this.child(
-                    Label::new(match_count)
-                        .color(Color::Muted)
-                        .size(LabelSize::Small),
-                )
-            })
+        Some((item, outline_index, Vec::new()))
     }
 }
 
@@ -1676,169 +1732,35 @@ fn row_label_needs_tooltip(label: &str) -> bool {
 
 impl gpui::Focusable for BreadcrumbNavigationMenu {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.filter_editor.focus_handle(cx)
+        match &self.picker {
+            Some(picker) => picker.focus_handle(cx),
+            None => cx.focus_handle(),
+        }
     }
 }
 
 impl EventEmitter<DismissEvent> for BreadcrumbNavigationMenu {}
 
 impl Render for BreadcrumbNavigationMenu {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let visible = self.visible_row_count(cx);
-        let listing_settings = BreadcrumbListingSettings::get_global(cx);
-        let show_file_icons = listing_settings.file_icons;
-        let show_folder_icons = listing_settings.folder_icons;
-        let is_directory = matches!(self.listing, BreadcrumbListing::Directory { .. });
-        let deepest_current = self.deepest_cursor_symbol_range().cloned();
-        let show_current_column = match &self.listing {
-            BreadcrumbListing::Directory { .. } => false,
-            BreadcrumbListing::Symbols { .. } => {
-                if self.loading {
-                    false
-                } else if !self.filter_is_empty(cx) {
-                    self.ranked_matches.iter().any(|match_| {
-                        self.listed_symbol_indices
-                            .get(match_.candidate_id)
-                            .and_then(|&outline_index| self.all_symbol_items.get(outline_index))
-                            .is_some_and(|item| {
-                                deepest_current
-                                    .as_ref()
-                                    .is_some_and(|range| item.range == *range)
-                            })
-                    })
-                } else {
-                    self.listed_symbol_indices.iter().any(|&outline_index| {
-                        self.all_symbol_items
-                            .get(outline_index)
-                            .is_some_and(|item| {
-                                deepest_current
-                                    .as_ref()
-                                    .is_some_and(|range| item.range == *range)
-                            })
-                    })
-                }
-            }
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(picker) = self.picker.clone() else {
+            return div().into_any_element();
         };
-
-        let empty_message = if self.loading {
-            "Loading…"
-        } else if !self.filter_is_empty(cx) {
-            if self.ranked_epoch != self.filter_epoch && self.ranked_matches.is_empty() {
-                "Searching…"
-            } else {
-                "No matches"
-            }
-        } else if is_directory {
-            "Empty directory"
-        } else {
-            "No symbols"
-        };
-
-        let truncated = self.is_display_truncated(cx);
-        let filter_active = !self.filter_is_empty(cx);
         let theme_settings = theme::theme_settings(cx);
         let ui_font_size = theme_settings.ui_font_size(cx);
         let ui_font_family = theme_settings.ui_font(cx).family.clone();
-        let list_count = if self.loading { 0 } else { visible };
-        let max_height = vh(0.75, window);
-        let window_size = window.viewport_size();
-        let rem_size = window.rem_size();
-        let is_wide_window = window_size.width / rem_size > rems_from_px(800_f32).0;
-        let (min_width, max_width) = if is_wide_window {
-            (rems(12.5), rems(24.))
-        } else {
-            (rems(10.), rems(12.))
-        };
-
-        let rows_list = uniform_list(
-            "breadcrumb-navigation-menu-rows",
-            list_count,
-            cx.processor(move |this, range: Range<usize>, window, cx| {
-                range
-                    .map(|position| {
-                        if is_directory {
-                            let Some((entry, match_positions)) =
-                                this.directory_row_data(position, cx)
-                            else {
-                                return div().into_any_element();
-                            };
-                            this.render_directory_entry(
-                                position,
-                                entry,
-                                &match_positions,
-                                show_file_icons,
-                                show_folder_icons,
-                                cx,
-                            )
-                            .into_any_element()
-                        } else {
-                            let Some((item, match_positions)) = this.symbol_row_data(position, cx)
-                            else {
-                                return div().into_any_element();
-                            };
-                            let is_current = deepest_current
-                                .as_ref()
-                                .is_some_and(|range| item.range == *range);
-                            let is_selected = this.selected_index == Some(position);
-                            let full_name = SharedString::from(
-                                flatten_text_for_single_line_display(&item.text),
-                            );
-                            let row = render_outline_item_menu_row(
-                                &item,
-                                &match_positions,
-                                is_current,
-                                show_current_column,
-                                window,
-                                cx,
-                            );
-                            ListItem::new(position)
-                                .inset(true)
-                                .toggle_state(is_selected)
-                                .child(row)
-                                .when(row_label_needs_tooltip(&full_name), {
-                                    let full_name = full_name.clone();
-                                    move |this| {
-                                        this.tooltip(move |_window, cx| {
-                                            Tooltip::simple(full_name.clone(), cx)
-                                        })
-                                    }
-                                })
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.navigate_to_symbol(&item, window, cx);
-                                }))
-                                .into_any_element()
-                        }
-                    })
-                    .collect()
-            }),
-        )
-        .with_sizing_behavior(ListSizingBehavior::Infer)
-        .track_scroll(&self.scroll_handle)
-        .w_full()
-        .flex_grow(1.)
-        .max_h(max_height);
-
         WithRemSize::new(ui_font_size)
             .font_family(ui_font_family)
-            .elevation_2(cx)
             .occlude()
             .child(
-                v_flex()
+                div()
                     .id("breadcrumb-navigation-menu")
                     .debug_selector(|| "breadcrumb-navigation-menu".into())
                     .key_context("BreadcrumbNavigationMenu")
-                    .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| cx.emit(DismissEvent)))
-                    .on_action(cx.listener(Self::select_next))
-                    .on_action(cx.listener(Self::select_previous))
-                    .on_action(cx.listener(Self::select_first))
-                    .on_action(cx.listener(Self::select_last))
-                    .on_action(cx.listener(Self::confirm))
-                    .on_action(cx.listener(Self::select_child))
-                    .on_action(cx.listener(Self::select_parent))
-                    // Arming is the geometric out-test rather than an inside listener because
-                    // the scrollbar blocks hit testing over its thumb: a drag starting there
-                    // reaches no hitbox listener of ours. Between the two clearing paths every
-                    // release resets the flag, so no press is judged by an earlier one.
+                    // Geometric out-test rather than an inside listener: the scrollbar blocks
+                    // hit testing over its thumb, so a press there reaches no hitbox listener
+                    // of ours. The two clearing paths are mutually exclusive and cover every
+                    // release between them, so no press is ever judged by an earlier one.
                     .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, _| {
                         this.pressed_outside = matches!(
                             event.button,
@@ -1860,44 +1782,283 @@ impl Render for BreadcrumbNavigationMenu {
                         MouseButton::Middle,
                         cx.listener(Self::dismiss_on_mouse_up_out),
                     )
-                    .min_w(min_width)
-                    .max_w(max_width)
-                    .child(self.render_filter_row(cx))
-                    .child(
-                        v_flex()
-                            .id("breadcrumb-navigation-menu-list")
-                            .relative()
-                            .py(DynamicSpacing::Base04.rems(cx))
-                            .max_h(max_height)
-                            .min_h_0()
-                            .overflow_hidden()
-                            .when(list_count == 0, |this| {
-                                this.child(
-                                    h_flex().px_2().py_1().child(
-                                        Label::new(empty_message)
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small),
-                                    ),
-                                )
-                            })
-                            .when(list_count > 0, |this| {
-                                this.child(rows_list).custom_scrollbars(
-                                    Scrollbars::new(ScrollAxes::Vertical)
-                                        .tracked_scroll_handle(&self.scroll_handle),
-                                    window,
-                                    cx,
-                                )
-                            }),
-                    )
-                    .when(truncated, |this| {
-                        this.child(
-                            Label::new(breadcrumb_menu_truncated_label(filter_active))
-                                .color(Color::Muted)
-                                .size(LabelSize::Small)
-                                .mx_2()
-                                .mb_1(),
-                        )
-                    }),
+                    .child(picker),
             )
+            .into_any_element()
+    }
+}
+
+/// The delegate owns these: `PickerDelegate` renders from `&self` while the menu is itself
+/// mid-render, so it cannot read the menu back.
+#[derive(Clone)]
+pub(super) enum BreadcrumbMenuRow {
+    Directory {
+        entry: BreadcrumbDirectoryEntry,
+        match_positions: Vec<usize>,
+    },
+    Symbol {
+        item: OutlineItem<Anchor>,
+        outline_index: usize,
+        match_positions: Vec<usize>,
+        is_current: bool,
+    },
+}
+
+pub struct BreadcrumbPickerDelegate {
+    menu: WeakEntity<BreadcrumbNavigationMenu>,
+    rows: Rc<Vec<BreadcrumbMenuRow>>,
+    selected_index: usize,
+    empty_message: SharedString,
+    placeholder: Arc<str>,
+    truncation_note: Option<SharedString>,
+    match_count_label: Option<SharedString>,
+    show_current_column: bool,
+    show_file_icons: bool,
+    show_folder_icons: bool,
+}
+
+impl BreadcrumbPickerDelegate {
+    fn new(menu: WeakEntity<BreadcrumbNavigationMenu>) -> Self {
+        Self {
+            menu,
+            rows: Rc::new(Vec::new()),
+            selected_index: 0,
+            empty_message: "Loading…".into(),
+            placeholder: "Search…".into(),
+            truncation_note: None,
+            match_count_label: None,
+            show_current_column: false,
+            show_file_icons: true,
+            show_folder_icons: true,
+        }
+    }
+
+    fn render_directory_row(
+        &self,
+        entry: &BreadcrumbDirectoryEntry,
+        match_positions: &[usize],
+        selected: bool,
+        cx: &mut App,
+    ) -> gpui::AnyElement {
+        let icon_path = match directory_entry_icon_source(
+            entry.is_dir,
+            self.show_file_icons,
+            self.show_folder_icons,
+        ) {
+            DirectoryEntryIconSource::File => {
+                file_icons::FileIcons::get_icon(entry.path.as_std_path(), cx)
+            }
+            DirectoryEntryIconSource::Folder => {
+                file_icons::FileIcons::get_folder_icon(false, entry.path.as_std_path(), cx)
+            }
+            DirectoryEntryIconSource::Chevron => file_icons::FileIcons::get_chevron_icon(false, cx),
+            DirectoryEntryIconSource::None => None,
+        };
+        let icon = icon_path
+            .map(Icon::from_path)
+            .map(|icon| {
+                icon.color(Color::Muted)
+                    .size(IconSize::Small)
+                    .into_any_element()
+            })
+            .unwrap_or_else(|| div().size(IconSize::Small.rems()).into_any_element());
+        let label_color = crate::items::entry_git_aware_label_color(
+            entry.git_summary,
+            entry.is_ignored,
+            selected,
+        );
+        let label = if match_positions.is_empty() {
+            Label::new(entry.name.clone())
+                .color(label_color)
+                .truncate_middle()
+                .into_any_element()
+        } else {
+            ui::HighlightedLabel::new(entry.name.clone(), match_positions.to_vec())
+                .color(label_color)
+                .truncate_middle()
+                .into_any_element()
+        };
+        let full_name = entry.name.clone();
+        h_flex()
+            .id(("breadcrumb-directory-row", entry.entry_id.to_usize()))
+            .gap_1p5()
+            .min_w_0()
+            .child(icon)
+            .child(label)
+            .when(row_label_needs_tooltip(&full_name), |this| {
+                this.tooltip(move |_window, cx| Tooltip::simple(full_name.clone(), cx))
+            })
+            .into_any_element()
+    }
+}
+
+impl picker::PickerDelegate for BreadcrumbPickerDelegate {
+    type ListItem = gpui::AnyElement;
+
+    fn name() -> &'static str {
+        "BreadcrumbNavigationMenu"
+    }
+
+    fn match_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+        let menu = self.menu.clone();
+        cx.defer(move |cx| {
+            menu.update(cx, |menu, cx| menu.set_selected_row(ix, cx))
+                .ok();
+        });
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        self.placeholder.clone()
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some(self.empty_message.clone())
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
+    ) -> Task<()> {
+        let menu = self.menu.clone();
+        cx.spawn(async move |_, cx| {
+            menu.update(cx, |menu, cx| menu.set_filter_query(query, cx))
+                .ok();
+        })
+    }
+
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
+    ) {
+        let index = self.selected_index;
+        self.menu
+            .update(cx, |menu, cx| menu.confirm_row(index, window, cx))
+            .ok();
+    }
+
+    fn select_child(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
+    ) -> Option<String> {
+        let index = self.selected_index;
+        let drilled = self
+            .menu
+            .update(cx, |menu, cx| menu.drill_into_selection(index, window, cx))
+            .ok()?;
+        drilled.then(String::new)
+    }
+
+    fn select_parent(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
+    ) -> Option<String> {
+        let stepped_out = self
+            .menu
+            .update(cx, |menu, cx| menu.step_out_of_listing(window, cx))
+            .ok()?;
+        stepped_out.then(String::new)
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
+        self.menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let row = self.rows.get(ix)?;
+        let content = match row {
+            BreadcrumbMenuRow::Directory {
+                entry,
+                match_positions,
+            } => self.render_directory_row(entry, match_positions, selected, cx),
+            BreadcrumbMenuRow::Symbol {
+                item,
+                match_positions,
+                is_current,
+                ..
+            } => {
+                let full_name =
+                    SharedString::from(flatten_text_for_single_line_display(&item.text));
+                let row = render_outline_item_menu_row(
+                    item,
+                    match_positions,
+                    *is_current,
+                    self.show_current_column,
+                    window,
+                    cx,
+                );
+                h_flex()
+                    .id(("breadcrumb-symbol-row", ix))
+                    .min_w_0()
+                    .child(row)
+                    .when(row_label_needs_tooltip(&full_name), |this| {
+                        this.tooltip(move |_window, cx| Tooltip::simple(full_name.clone(), cx))
+                    })
+                    .into_any_element()
+            }
+        };
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ui::ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(content)
+                .into_any_element(),
+        )
+    }
+
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<picker::Picker<Self>>,
+    ) -> Option<gpui::AnyElement> {
+        let note = self.truncation_note.clone()?;
+        Some(
+            Label::new(note)
+                .color(Color::Muted)
+                .size(LabelSize::Small)
+                .mx_2()
+                .mb_1()
+                .into_any_element(),
+        )
+    }
+
+    fn searchbar_trailer(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<picker::Picker<Self>>,
+    ) -> Option<gpui::AnyElement> {
+        let label = self.match_count_label.clone()?;
+        Some(
+            Label::new(label)
+                .color(Color::Muted)
+                .size(LabelSize::Small)
+                .into_any_element(),
+        )
     }
 }

@@ -1278,6 +1278,19 @@ impl<D: PickerDelegate> Picker<D> {
         cx.notify();
     }
 
+    /// Scrolls the results to the delegate's current selection. Unlike `set_selected_index`
+    /// this needs no window, so a delegate whose selection is driven from outside the picker
+    /// can still keep the selected row visible.
+    pub fn scroll_to_selected_index(&self) {
+        let ix = self.delegate.selected_index();
+        match &self.element_container {
+            ElementContainer::UniformList(handle) => {
+                handle.scroll_to_item(ix, gpui::ScrollStrategy::Nearest)
+            }
+            ElementContainer::List(state) => state.scroll_to_reveal_item(ix),
+        }
+    }
+
     pub fn query(&self, cx: &App) -> String {
         match &self.head {
             Head::Editor(editor) => editor.text(cx),
@@ -1607,7 +1620,7 @@ impl<D: PickerDelegate> Picker<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{Subscription, TestAppContext};
     use std::cell::Cell;
 
     struct TestDelegate {
@@ -1749,12 +1762,62 @@ mod tests {
         }
     }
 
+    /// Stands in for the factory `editor::init` installs. Picker cannot take `editor` even as a
+    /// dev-dependency: `editor` depends on `picker`, so linking it into this test binary would
+    /// compile `picker` a second time and register its actions twice.
+    struct TestQueryEditor {
+        focus_handle: FocusHandle,
+        text: std::sync::RwLock<String>,
+    }
+
+    impl ui_input::ErasedEditor for TestQueryEditor {
+        fn text(&self, _: &App) -> String {
+            self.text.read().expect("test editor lock").clone()
+        }
+        fn set_text(&self, text: &str, _: &mut Window, _: &mut App) {
+            *self.text.write().expect("test editor lock") = text.to_string();
+        }
+        fn clear(&self, _: &mut Window, _: &mut App) {
+            self.text.write().expect("test editor lock").clear();
+        }
+        fn set_placeholder_text(&self, _: &str, _: &mut Window, _: &mut App) {}
+        fn move_selection_to_end(&self, _: &mut Window, _: &mut App) {}
+        fn select_all(&self, _: &mut Window, _: &mut App) {}
+        fn set_masked(&self, _: bool, _: &mut Window, _: &mut App) {}
+        fn set_read_only(&self, _: bool, _: &mut App) {}
+        fn set_multiline(&self, _: Option<usize>, _: &mut Window, _: &mut App) {}
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+        fn subscribe(
+            &self,
+            _: Box<dyn FnMut(ErasedEditorEvent, &mut Window, &mut App) + 'static>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Subscription {
+            Subscription::new(|| {})
+        }
+        fn render(&self, _: &mut Window, _: &App) -> AnyElement {
+            gpui::Empty.into_any_element()
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
-            editor::init(cx);
+            ui_input::ERASED_EDITOR_FACTORY
+                .set(|_window, cx| {
+                    Arc::new(TestQueryEditor {
+                        focus_handle: cx.focus_handle(),
+                        text: std::sync::RwLock::new(String::new()),
+                    })
+                })
+                .ok();
         });
     }
 

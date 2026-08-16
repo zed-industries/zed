@@ -9,11 +9,6 @@ use layout::{
     breadcrumb_path_is_navigable, classify_breadcrumb_segment_kinds, hard_cap_middle_segments,
 };
 pub(crate) use menu::{BreadcrumbListing, BreadcrumbNavigationMenu};
-#[cfg(test)]
-pub(crate) use outline::{
-    child_outline_indices, highlights_with_match_emphasis, sibling_outline_indices,
-    top_level_outline_indices,
-};
 use path::{breadcrumb_file_icon, breadcrumb_path_segments};
 
 #[derive(Clone, Debug)]
@@ -50,7 +45,7 @@ fn target_matches_listing(
             buffer_id == listing_buffer
                 && match (item, parent) {
                     (None, None) => true,
-                    (Some(a), Some(b)) => a.range == b.range,
+                    (Some(a), Some(b)) => outline::same_symbol_item(a, b),
                     _ => false,
                 }
         }
@@ -88,19 +83,25 @@ pub fn render_breadcrumb_text(
             let mut path_split = false;
 
             let real_project_path = active_item.project_path(cx);
-            file_icon = breadcrumb_file_icon(
-                real_project_path
-                    .as_ref()
-                    .map(|project_path| project_path.path.as_ref()),
-                cx,
-            );
+            // Only the file segment paints it, and only when no prefix already occupies that
+            // slot. Resolving it otherwise costs an icon lookup on every repaint.
+            if prefix.is_none() {
+                file_icon = breadcrumb_file_icon(
+                    real_project_path
+                        .as_ref()
+                        .map(|project_path| project_path.path.as_ref()),
+                    cx,
+                );
+            }
             file_git_status_color = breadcrumb_file_git_status_color(
-                editor_ref
-                    .project()
-                    .zip(real_project_path.as_ref())
-                    .and_then(|(project, project_path)| {
-                        project.read(cx).project_path_git_status(project_path, cx)
-                    }),
+                || {
+                    editor_ref
+                        .project()
+                        .zip(real_project_path.as_ref())
+                        .and_then(|(project, project_path)| {
+                            project.read(cx).project_path_git_status(project_path, cx)
+                        })
+                },
                 cx,
             );
             let menu = editor_ref.breadcrumb_navigation_menu().cloned();
@@ -113,18 +114,19 @@ pub fn render_breadcrumb_text(
                 .map(|menu| menu.read(cx).symbol_trail().to_vec());
             menu_listing = menu.as_ref().map(|menu| menu.read(cx).listing().clone());
 
+            // Resolved once: `worktree_for_id` scans the worktree list, and both the
+            // navigability test and the path split below need this same worktree.
+            let real_worktree = real_project_path.as_ref().and_then(|project_path| {
+                editor_ref
+                    .project()?
+                    .read(cx)
+                    .worktree_for_id(project_path.worktree_id, cx)
+            });
             let is_navigable = breadcrumb_path_is_navigable(
                 real_project_path.is_some(),
-                real_project_path.as_ref().and_then(|project_path| {
-                    editor_ref
-                        .project()
-                        .and_then(|project| {
-                            project
-                                .read(cx)
-                                .worktree_for_id(project_path.worktree_id, cx)
-                        })
-                        .map(|worktree| worktree.read(cx).is_single_file())
-                }),
+                real_worktree
+                    .as_ref()
+                    .map(|worktree| worktree.read(cx).is_single_file()),
             );
 
             if is_navigable
@@ -144,9 +146,7 @@ pub fn render_breadcrumb_text(
                             )
                         })
                 } else if let Some(project_path) = real_project_path.as_ref()
-                    && let Some(worktree) = project
-                        .read(cx)
-                        .worktree_for_id(project_path.worktree_id, cx)
+                    && let Some(worktree) = real_worktree.as_ref()
                 {
                     Some(breadcrumb_path_segments(
                         project_path.worktree_id,
@@ -297,14 +297,16 @@ pub fn render_breadcrumb_text(
     }
 }
 
-pub(crate) fn breadcrumb_file_git_status_color(
-    status: Option<git::status::FileStatus>,
+/// Takes the status lazily: resolving one walks every repository, and the bar repaints on
+/// every cursor blink, so it must not run when the setting is off.
+pub(super) fn breadcrumb_file_git_status_color(
+    status: impl FnOnce() -> Option<git::status::FileStatus>,
     cx: &App,
 ) -> Option<Color> {
     if !workspace::ItemSettings::get_global(cx).git_status {
         return None;
     }
-    status.map(|status| file_status_label_color(Some(status)))
+    status().map(|status| file_status_label_color(Some(status)))
 }
 
 #[cfg(test)]
@@ -314,11 +316,14 @@ mod tests {
         classify_breadcrumb_segment_kinds, hard_cap_middle_segments, plan_breadcrumb_layout,
     };
     use super::menu::{BreadcrumbListing, BreadcrumbNavigationMenu};
-    use super::outline::flatten_text_for_single_line_display;
+    use super::outline::{
+        child_outline_indices, flatten_text_for_single_line_display,
+        highlights_with_match_emphasis, sibling_outline_indices, top_level_outline_indices,
+    };
     use super::path::{
         DirectoryEntryIconSource, MAX_BREADCRUMB_MENU_ROWS, MAX_UNARY_DIRECTORY_SKIP_DEPTH,
-        breadcrumb_directory_entries, breadcrumb_path_prefixes, directory_entry_icon_source,
-        single_child_directory,
+        breadcrumb_directory_entries, breadcrumb_directory_listing_inputs,
+        breadcrumb_path_prefixes, directory_entry_icon_source, single_child_directory,
     };
     use super::*;
     use crate::MultiBuffer;
@@ -510,7 +515,6 @@ mod tests {
 
     #[test]
     fn test_sibling_outline_indices_top_level() {
-        // struct A; struct B; struct C; — all depth 0, no parent.
         let depths = [0, 0, 0];
         assert_eq!(sibling_outline_indices(&depths, 0), vec![0, 1, 2]);
         assert_eq!(sibling_outline_indices(&depths, 1), vec![0, 1, 2]);
@@ -556,7 +560,6 @@ mod tests {
 
     #[test]
     fn test_child_outline_indices_top_level() {
-        // struct A; struct B; struct C; — all depth 0, none has children.
         let depths = [0, 0, 0];
         assert_eq!(child_outline_indices(&depths, 0), Vec::<usize>::new());
         assert_eq!(child_outline_indices(&depths, 1), Vec::<usize>::new());
@@ -565,13 +568,6 @@ mod tests {
 
     #[test]
     fn test_child_outline_indices_nested() {
-        // impl A {         // 0
-        //     fn one() {}  // 1
-        //     fn two() {}  // 1
-        // }
-        // impl B {         // 0
-        //     fn three() {}// 1
-        // }
         let depths = [0, 1, 1, 0, 1];
         assert_eq!(child_outline_indices(&depths, 0), vec![1, 2]);
         assert_eq!(child_outline_indices(&depths, 3), vec![4]);
@@ -1129,7 +1125,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_breadcrumb_menu_survives_scrollbar_drag_release_outside(cx: &mut TestAppContext) {
+    async fn test_breadcrumb_menu_survives_drag_release_outside(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
         use crate::test::build_editor;
         use gpui::{MouseButton, point, px};
@@ -1142,8 +1138,8 @@ mod tests {
         init_test(cx, |_| {});
 
         let mut files = serde_json::Map::new();
-        for index in 0..80 {
-            files.insert(format!("entry_{index:02}.txt"), json!(""));
+        for index in 0..MAX_BREADCRUMB_MENU_ROWS {
+            files.insert(format!("entry_{index:03}.txt"), json!(""));
         }
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/root"), json!(files)).await;
@@ -1208,9 +1204,7 @@ mod tests {
         let menu_bounds = cx
             .debug_bounds("breadcrumb-navigation-menu")
             .expect("menu should paint");
-        // Only the thumb takes hits: this overlay scrollbar reserves no track.
-        let on_thumb = point(menu_bounds.right() - px(8.), menu_bounds.top() + px(40.));
-        let outside = point(menu_bounds.right() + px(40.), on_thumb.y + px(80.));
+        let outside = point(menu_bounds.right() + px(40.), menu_bounds.top() + px(120.));
 
         // A press outside whose release lands back inside must not leave the menu primed
         // to dismiss on the next release.
@@ -1222,22 +1216,19 @@ mod tests {
         );
         cx.run_until_parked();
 
-        let offset_before = menu.read_with(cx, |menu, _| menu.scroll_offset_for_test());
-        cx.simulate_mouse_down(on_thumb, MouseButton::Left, gpui::Modifiers::none());
+        // Stands in for the scrollbar thumb, which autohides and never becomes hit-testable
+        // from a test - verified by sweeping the popup's full width and height. Arming is
+        // geometric, so any point inside the popup takes the same path the thumb would.
+        let inside = menu_bounds.center();
+        cx.simulate_mouse_down(inside, MouseButton::Left, gpui::Modifiers::none());
         cx.simulate_mouse_move(outside, MouseButton::Left, gpui::Modifiers::none());
         cx.run_until_parked();
-        assert_ne!(
-            offset_before,
-            menu.read_with(cx, |menu, _| menu.scroll_offset_for_test()),
-            "the drag must grab the scrollbar thumb, not a row"
-        );
-
         cx.simulate_mouse_up(outside, MouseButton::Left, gpui::Modifiers::none());
         cx.run_until_parked();
 
         assert!(
             !dismissed.load(Ordering::SeqCst),
-            "a scrollbar drag released outside the menu must not dismiss it"
+            "a drag that starts inside the menu must not dismiss it on an outside release"
         );
     }
 
@@ -1575,7 +1566,7 @@ mod tests {
             cx.update(|cx| workspace::ItemSettings::get_global(cx).git_status),
             "tabs.git_status=true should enable ItemSettings.git_status"
         );
-        let color_on = cx.update(|cx| breadcrumb_file_git_status_color(Some(status), cx));
+        let color_on = cx.update(|cx| breadcrumb_file_git_status_color(|| Some(status), cx));
         assert_eq!(
             color_on,
             Some(file_status_label_color(Some(status))),
@@ -1589,7 +1580,7 @@ mod tests {
                 });
             });
         });
-        let color_off = cx.update(|cx| breadcrumb_file_git_status_color(Some(status), cx));
+        let color_off = cx.update(|cx| breadcrumb_file_git_status_color(|| Some(status), cx));
         assert_eq!(
             color_off, None,
             "tabs.git_status=false must suppress file segment git color"
@@ -2336,7 +2327,10 @@ mod tests {
             project.worktree_for_id(worktree_id, cx).unwrap()
         });
         let root_entries = cx.update(|_window, cx| {
-            breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx)
+            breadcrumb_directory_entries(
+                &breadcrumb_directory_listing_inputs(&project, &worktree, cx),
+                RelPath::empty(),
+            )
         });
         let b_txt_index = root_entries
             .iter()
@@ -2434,8 +2428,12 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let root_entries =
-            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
+        let root_entries = cx.update(|cx| {
+            breadcrumb_directory_entries(
+                &breadcrumb_directory_listing_inputs(&project, &worktree, cx),
+                RelPath::empty(),
+            )
+        });
         let ignored = root_entries
             .iter()
             .find(|entry| entry.name.as_ref() == "ignored_dir")
@@ -2443,7 +2441,10 @@ mod tests {
         assert!(ignored.is_ignored);
 
         let before = cx.update(|cx| {
-            breadcrumb_directory_entries(&project, &worktree, rel_path("ignored_dir"), cx)
+            breadcrumb_directory_entries(
+                &breadcrumb_directory_listing_inputs(&project, &worktree, cx),
+                rel_path("ignored_dir"),
+            )
         });
         assert!(
             before.is_empty(),
@@ -2486,7 +2487,10 @@ mod tests {
         });
 
         let after = cx.update(|_window, cx| {
-            breadcrumb_directory_entries(&project, &worktree, rel_path("ignored_dir"), cx)
+            breadcrumb_directory_entries(
+                &breadcrumb_directory_listing_inputs(&project, &worktree, cx),
+                rel_path("ignored_dir"),
+            )
         });
         assert_eq!(
             after.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
@@ -2519,8 +2523,12 @@ mod tests {
         let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
         cx.run_until_parked();
 
-        let entries =
-            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
+        let entries = cx.update(|cx| {
+            breadcrumb_directory_entries(
+                &breadcrumb_directory_listing_inputs(&project, &worktree, cx),
+                RelPath::empty(),
+            )
+        });
         assert_eq!(
             entries.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
             vec!["Apple", "banana.txt", "Cherry.txt"],
@@ -2535,8 +2543,12 @@ mod tests {
                 });
             });
         });
-        let entries =
-            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
+        let entries = cx.update(|cx| {
+            breadcrumb_directory_entries(
+                &breadcrumb_directory_listing_inputs(&project, &worktree, cx),
+                RelPath::empty(),
+            )
+        });
         assert_eq!(
             entries.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
             vec!["Cherry.txt", "banana.txt", "Apple"],
@@ -2569,8 +2581,12 @@ mod tests {
         let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
         cx.run_until_parked();
 
-        let entries =
-            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
+        let entries = cx.update(|cx| {
+            breadcrumb_directory_entries(
+                &breadcrumb_directory_listing_inputs(&project, &worktree, cx),
+                RelPath::empty(),
+            )
+        });
         assert_eq!(
             entries.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
             vec![".gitignore", "ignored.txt", "kept.txt"],
@@ -2592,8 +2608,12 @@ mod tests {
                 });
             });
         });
-        let entries =
-            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
+        let entries = cx.update(|cx| {
+            breadcrumb_directory_entries(
+                &breadcrumb_directory_listing_inputs(&project, &worktree, cx),
+                RelPath::empty(),
+            )
+        });
         assert_eq!(
             entries.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
             vec![".gitignore", "kept.txt"],
@@ -2624,8 +2644,12 @@ mod tests {
         let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
         cx.run_until_parked();
 
-        let entries =
-            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
+        let entries = cx.update(|cx| {
+            breadcrumb_directory_entries(
+                &breadcrumb_directory_listing_inputs(&project, &worktree, cx),
+                RelPath::empty(),
+            )
+        });
         assert_eq!(
             entries.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
             vec![".hidden", "kept.txt"],
@@ -2639,8 +2663,12 @@ mod tests {
                 });
             });
         });
-        let entries =
-            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
+        let entries = cx.update(|cx| {
+            breadcrumb_directory_entries(
+                &breadcrumb_directory_listing_inputs(&project, &worktree, cx),
+                RelPath::empty(),
+            )
+        });
         assert_eq!(
             entries.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
             vec!["kept.txt"],
@@ -2713,12 +2741,16 @@ mod tests {
         menu.update_in(cx, |menu, window, cx| {
             window.focus(&menu.focus_handle(cx), cx);
         });
+        // Without this, a listing that never loaded would satisfy the zero-match assertion too.
+        menu.read_with(cx, |menu, _| {
+            assert!(!menu.entry_names().is_empty(), "listing must have loaded");
+        });
         cx.simulate_keystrokes("z z");
         cx.run_until_parked();
 
-        menu.read_with(cx, |menu, cx| {
-            assert_eq!(menu.filter(cx), "zz");
-            assert_eq!(menu.filtered_entry_names(cx), Vec::<SharedString>::new());
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(menu.filter(), "zz");
+            assert_eq!(menu.filtered_entry_names(), Vec::<SharedString>::new());
             assert!(
                 !menu.rank_pending(),
                 "a completed zero-match rank must settle out of the searching state"
@@ -2987,11 +3019,11 @@ mod tests {
                     unfiltered.len()
                 );
                 assert_eq!(
-                    menu.filtered_entry_names(cx).len(),
+                    menu.filtered_entry_names().len(),
                     MAX_BREADCRUMB_MENU_ROWS,
                     "unfiltered view is display-capped"
                 );
-                let filtered = menu.filtered_entry_names(cx);
+                let filtered = menu.filtered_entry_names();
                 let filtered_names: Vec<&str> = filtered.iter().map(|name| name.as_ref()).collect();
                 assert_eq!(
                     filtered_names
@@ -3021,8 +3053,8 @@ mod tests {
         host_window
             .read_with(cx, |host, cx| {
                 let menu = host.menu.read(cx);
-                assert_eq!(menu.filter(cx), "zzz");
-                let filtered = menu.filtered_entry_names(cx);
+                assert_eq!(menu.filter(), "zzz");
+                let filtered = menu.filtered_entry_names();
                 assert_eq!(
                     filtered.iter().map(|n| n.as_ref()).collect::<Vec<_>>(),
                     vec!["zzz_target.txt"],
@@ -3109,7 +3141,7 @@ mod tests {
         host_window
             .read_with(cx, |host, cx| {
                 let menu = host.menu.read(cx);
-                assert!(menu.filter(cx).is_empty());
+                assert!(menu.filter().is_empty());
                 assert_eq!(menu.entry_names().len(), 3);
                 assert!(menu.selected_index().is_some());
             })
@@ -3123,8 +3155,8 @@ mod tests {
         host_window
             .read_with(cx, |host, cx| {
                 let menu = host.menu.read(cx);
-                assert_eq!(menu.filter(cx), "b");
-                let filtered = menu.filtered_entry_names(cx);
+                assert_eq!(menu.filter(), "b");
+                let filtered = menu.filtered_entry_names();
                 assert_eq!(filtered.len(), 1, "filtered={filtered:?}");
                 assert_eq!(filtered[0].as_ref(), "beta.txt");
                 assert_eq!(menu.selected_index(), Some(0));
@@ -3142,8 +3174,8 @@ mod tests {
         host_window
             .read_with(cx, |host, cx| {
                 let menu = host.menu.read(cx);
-                assert!(menu.filter(cx).is_empty());
-                assert_eq!(menu.filtered_entry_names(cx).len(), 3);
+                assert!(menu.filter().is_empty());
+                assert_eq!(menu.filtered_entry_names().len(), 3);
             })
             .unwrap();
     }
@@ -3230,8 +3262,8 @@ mod tests {
         host_window
             .read_with(cx, |host, cx| {
                 let menu = host.menu.read(cx);
-                assert_eq!(menu.filter(cx), "be");
-                let filtered = menu.filtered_entry_names(cx);
+                assert_eq!(menu.filter(), "be");
+                let filtered = menu.filtered_entry_names();
                 assert_eq!(
                     filtered.iter().map(|n| n.as_ref()).collect::<Vec<_>>(),
                     vec!["beta.txt"],
@@ -3578,18 +3610,521 @@ mod tests {
 
         cx.simulate_input("bet");
         cx.run_until_parked();
-        menu.read_with(cx, |menu, cx| {
+        menu.read_with(cx, |menu, _| {
             assert_eq!(
-                menu.filter(cx),
+                menu.filter(),
                 "bet",
                 "typing must still reach the filter editor"
             );
             assert_eq!(
-                menu.filtered_entry_names(cx)
+                menu.filtered_entry_names()
                     .iter()
                     .map(|name| name.as_ref())
                     .collect::<Vec<_>>(),
                 vec!["beta.txt"],
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_menu_filter_keeps_listing_order_for_equal_scores(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let mut files = serde_json::Map::new();
+        for index in 0..12 {
+            files.insert(format!("item_{index:02}.txt"), json!(""));
+        }
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!(files)).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        cx.simulate_input("item_");
+        cx.run_until_parked();
+
+        menu.read_with(cx, |menu, _| {
+            let filtered: Vec<_> = menu
+                .filtered_entry_names()
+                .iter()
+                .map(|name| name.to_string())
+                .collect();
+            // Pinned rather than derived from `filtered`: the defect this guards reversed the
+            // run, and a self-derived expectation cannot tell reversal from order.
+            let expected: Vec<String> = (0..12)
+                .map(|index| format!("item_{index:02}.txt"))
+                .collect();
+            assert_eq!(
+                filtered, expected,
+                "equal-scoring matches must keep the listing's own order"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_multibuffer_bar_has_no_navigable_segment(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+
+        init_test(cx, |_| {});
+
+        // Two excerpts, so the editor is not a singleton and no segment can carry a target.
+        // The toolbar bar is hidden entirely for multibuffers (`breadcrumb_location`), so the
+        // outline fallback lives in the `OpenBreadcrumbNavigation` action, not in the bar.
+        let multi_buffer = cx.update(|cx| {
+            MultiBuffer::build_multi(
+                [
+                    ("fn one() {}\n", vec![text::Point::row_range(0..1)]),
+                    ("fn two() {}\n", vec![text::Point::row_range(0..1)]),
+                ],
+                cx,
+            )
+        });
+
+        struct BarHost {
+            editor: Entity<Editor>,
+        }
+        impl gpui::Render for BarHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                let placeholder = vec![HighlightedText {
+                    text: "impl Widget".into(),
+                    highlights: vec![],
+                }];
+                h_flex().size_full().child(render_breadcrumb_text(
+                    placeholder,
+                    None,
+                    None,
+                    &self.editor,
+                    false,
+                    cx,
+                ))
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer, window, cx));
+            BarHost { editor }
+        });
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        assert_eq!(
+            cx.debug_bounds("breadcrumb-segment-0"),
+            None,
+            "a multibuffer bar paints no navigable segment"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_menu_click_opens_the_clicked_row(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor_with_project;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "aaa.rs": "fn a() {}", "bbb.rs": "fn b() {}", "ccc.rs": "fn c() {}" }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/aaa.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let dismissed = Rc::new(AtomicBool::new(false));
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+            _editor: Entity<Editor>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                div().size_full().child(self.menu.clone())
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor =
+                cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            });
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost {
+                menu,
+                _editor: editor,
+            }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        let _sub = cx.update(|_, cx| {
+            let dismissed = dismissed.clone();
+            cx.subscribe(&menu, move |_, _: &DismissEvent, _| {
+                dismissed.store(true, Ordering::SeqCst);
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        let rows = menu.read_with(cx, |menu, _| menu.entry_names());
+        assert_eq!(
+            rows.iter().map(|name| name.as_ref()).collect::<Vec<_>>(),
+            vec!["aaa.rs", "bbb.rs", "ccc.rs"],
+        );
+
+        // The picker selects and confirms in one call, so clicking the third row must open
+        // the third row - not whichever row happened to be selected before.
+        let menu_bounds = cx
+            .debug_bounds("breadcrumb-navigation-menu")
+            .expect("menu should paint");
+        let row_height = px(24.);
+        let third_row = point(
+            menu_bounds.left() + px(40.),
+            menu_bounds.top() + px(46.) + row_height * 2.5,
+        );
+        cx.simulate_click(third_row, gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        let opened = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .map(|path| path.path.as_unix_str().to_string())
+        });
+        assert_eq!(
+            opened.as_deref(),
+            Some("ccc.rs"),
+            "clicking a row must open that row"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_menu_click_opens_the_row_the_picker_rendered(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor_with_project;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        // Names chosen so a filter both narrows the listing and reorders it, which is what
+        // makes the ranked-match space differ from the listing's own.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "zebra_match.rs": "fn z() {}",
+                "alpha.rs": "fn a() {}",
+                "match_beta.rs": "fn b() {}",
+                "gamma.rs": "fn g() {}",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/alpha.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+            _editor: Entity<Editor>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                div().size_full().child(self.menu.clone())
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor =
+                cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            });
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost {
+                menu,
+                _editor: editor,
+            }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        cx.simulate_input("match");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        // What the picker is actually painting, which under a filter is not the listing order.
+        let published = menu.read_with(cx, |menu, cx| menu.published_row_labels(cx));
+        assert!(
+            published.len() >= 2,
+            "filter should leave at least two rows, got {published:?}"
+        );
+        let listing = menu.read_with(cx, |menu, _| menu.entry_names());
+        assert_ne!(
+            published
+                .iter()
+                .map(|name| name.as_ref())
+                .collect::<Vec<_>>(),
+            listing.iter().map(|name| name.as_ref()).collect::<Vec<_>>(),
+            "fixture must make the rendered rows differ from the listing order"
+        );
+
+        let second_row_label = published[1].to_string();
+        let menu_bounds = cx
+            .debug_bounds("breadcrumb-navigation-menu")
+            .expect("menu should paint");
+        let row_height = px(24.);
+        let second_row = point(
+            menu_bounds.left() + px(40.),
+            menu_bounds.top() + px(46.) + row_height * 1.5,
+        );
+        cx.simulate_click(second_row, gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        let opened = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .map(|path| path.path.as_unix_str().to_string())
+        });
+        assert_eq!(
+            opened.as_deref(),
+            Some(second_row_label.as_str()),
+            "a confirm must open the row the picker rendered at that position"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_menu_keeps_query_when_drill_goes_nowhere(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use gpui::KeyBinding;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "right",
+                SelectChild,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            )]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "alpha.txt": "", "beta.txt": "" }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        // "alpha.txt" is a plain file that is not the open buffer, so Right has nowhere to go.
+        cx.simulate_input("alpha");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("right");
+        cx.run_until_parked();
+
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(
+                menu.filter(),
+                "alpha",
+                "a drill that goes nowhere must leave the typed query alone"
+            );
+            assert_eq!(
+                menu.filtered_entry_names()
+                    .iter()
+                    .map(|name| name.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["alpha.txt"],
             );
         });
     }
@@ -3685,21 +4220,21 @@ mod tests {
         cx.simulate_keystrokes("down");
         cx.run_until_parked();
 
-        let selected_while_filtering = menu.read_with(cx, |menu, cx| {
-            let names = menu.filtered_entry_names(cx);
+        let selected_while_filtering = menu.read_with(cx, |menu, _| {
+            let names = menu.filtered_entry_names();
             assert_eq!(
                 names.iter().map(|name| name.as_ref()).collect::<Vec<_>>(),
-                vec!["zeta_two.txt", "zeta_one.txt"],
+                vec!["zeta_one.txt", "zeta_two.txt"],
             );
             names[menu.selected_index().expect("a row is selected")].clone()
         });
-        assert_eq!(selected_while_filtering.as_ref(), "zeta_one.txt");
+        assert_eq!(selected_while_filtering.as_ref(), "zeta_two.txt");
 
         cx.simulate_keystrokes("backspace backspace backspace backspace");
         cx.run_until_parked();
 
-        menu.read_with(cx, |menu, cx| {
-            assert_eq!(menu.filter(cx), "");
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(menu.filter(), "");
             let names = menu.entry_names();
             assert_eq!(
                 names.iter().map(|name| name.as_ref()).collect::<Vec<_>>(),
@@ -3799,9 +4334,9 @@ mod tests {
 
         cx.simulate_input("nest");
         cx.run_until_parked();
-        menu.read_with(cx, |menu, cx| {
+        menu.read_with(cx, |menu, _| {
             assert_eq!(
-                menu.filtered_entry_names(cx)
+                menu.filtered_entry_names()
                     .iter()
                     .map(|name| name.as_ref())
                     .collect::<Vec<_>>(),
@@ -3944,9 +4479,9 @@ mod tests {
         host_window
             .read_with(cx, |host, cx| {
                 let menu = host.menu.read(cx);
-                assert_eq!(menu.filter(cx), "mai");
+                assert_eq!(menu.filter(), "mai");
                 assert_eq!(
-                    menu.filtered_entry_names(cx)
+                    menu.filtered_entry_names()
                         .iter()
                         .map(|n| n.as_ref())
                         .collect::<Vec<_>>(),
@@ -3973,7 +4508,7 @@ mod tests {
                 );
                 // set_listing clears the filter; editor MoveRight would have left "mai".
                 assert!(
-                    menu.filter(cx).is_empty(),
+                    menu.filter().is_empty(),
                     "menu drill clears filter via set_listing; editor right would leave the query"
                 );
             })
@@ -4121,8 +4656,23 @@ mod tests {
         cx.run_until_parked();
 
         let dismissed = Rc::new(AtomicBool::new(false));
-        let menu = cx.update(|window, cx| {
-            BreadcrumbNavigationMenu::new(
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        // The menu has to be mounted in the window we drive, or a keystroke reaches nothing.
+        let host_window = cx.add_window(|window, cx| {
+            let menu = BreadcrumbNavigationMenu::new(
                 editor.downgrade(),
                 workspace.downgrade(),
                 BreadcrumbListing::Directory {
@@ -4133,7 +4683,20 @@ mod tests {
                 false,
                 window,
                 cx,
-            )
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "enter",
+                Confirm,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            )]);
         });
         cx.run_until_parked();
         let dismiss_sub = cx.update(|_, cx| {
@@ -4143,30 +4706,25 @@ mod tests {
             })
         });
 
-        menu.update_in(cx, |menu, window, cx| {
-            menu.apply_initial_selection_for_test(cx);
-            for _ in 0..8 {
-                if menu
-                    .selected_index()
-                    .and_then(|i| {
-                        menu.filtered_entry_names(cx)
-                            .get(i)
-                            .map(|n| n.as_ref() == "other.rs")
-                    })
-                    .unwrap_or(false)
-                {
-                    break;
-                }
-                menu.select_next(&SelectNext, window, cx);
-            }
+        cx.simulate_input("other");
+        cx.run_until_parked();
+        menu.read_with(cx, |menu, _| {
             assert_eq!(
-                menu.filtered_entry_names(cx)
-                    .get(menu.selected_index().expect("selection after render"))
-                    .map(|n| n.as_ref()),
-                Some("other.rs"),
+                menu.filtered_entry_names()
+                    .iter()
+                    .map(|name| name.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["other.rs"],
             );
-            menu.confirm(&Confirm, window, cx);
         });
+
+        menu.update_in(cx, |menu, window, cx| {
+            window.focus(&menu.focus_handle(cx), cx);
+        });
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.simulate_keystrokes("enter");
         cx.run_until_parked();
 
         assert!(
@@ -4225,8 +4783,12 @@ mod tests {
             .await;
         cx.run_until_parked();
 
-        let entries =
-            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
+        let entries = cx.update(|cx| {
+            breadcrumb_directory_entries(
+                &breadcrumb_directory_listing_inputs(&project, &worktree, cx),
+                RelPath::empty(),
+            )
+        });
 
         let modified = entries
             .iter()

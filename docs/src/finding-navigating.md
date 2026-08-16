@@ -54,6 +54,12 @@ Quickly switch between open tabs with {#kb tab_switcher::Toggle}. Tabs are sorte
 
 [Learn more about the Tab Switcher →](./tab-switcher.md)
 
+## Breadcrumb Navigation
+
+The breadcrumb bar above the editor is clickable. Selecting a directory segment lists that directory's contents; selecting the file or a symbol segment lists sibling symbols. Type to filter, use `left` and `right` to move between levels, and `enter` to open. You can also open it with {#kb editor::OpenBreadcrumbNavigation}.
+
+Menu rows follow the project panel's `sort_mode`, `hide_gitignore`, `hide_hidden`, `file_icons`, `folder_icons`, `git_status` and `auto_fold_dirs` settings, so changing those changes the menu too.
+
 ## Quick Reference
 
 | Task               | Keybinding                           |
@@ -68,4 +74,5 @@ Quickly switch between open tabs with {#kb tab_switcher::Toggle}. Tabs are sorte
 | Symbol in project  | {#kb project_symbols::Toggle}        |
 | Outline Panel      | {#kb outline_panel::ToggleFocus}     |
 | Tab Switcher       | {#kb tab_switcher::Toggle}           |
+| Breadcrumb menu    | {#kb editor::OpenBreadcrumbNavigation} |
 | Project Panel      | {#kb project_panel::ToggleFocus}     |

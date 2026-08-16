@@ -47,4 +47,17 @@
       "ctrl-shift-enter": "text_finder::ToggleFoldAll",
     },
   },
+  {
+    "context": "BreadcrumbNavigationMenu > Editor",
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
+      "left": "menu::SelectParent",
+      "right": "menu::SelectChild",
+      "home": "menu::SelectFirst",
+      "end": "menu::SelectLast",
+      "enter": "menu::Confirm",
+      "escape": "menu::Cancel",
+    },
+  },
 ]

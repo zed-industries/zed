@@ -16,7 +16,7 @@ pub(super) fn outline_parents(depths: &[usize]) -> Vec<Option<usize>> {
     parents
 }
 
-pub(crate) fn sibling_outline_indices(depths: &[usize], target_index: usize) -> Vec<usize> {
+pub(super) fn sibling_outline_indices(depths: &[usize], target_index: usize) -> Vec<usize> {
     if target_index >= depths.len() {
         return Vec::new();
     }
@@ -30,7 +30,7 @@ pub(crate) fn sibling_outline_indices(depths: &[usize], target_index: usize) -> 
         .collect()
 }
 
-pub(crate) fn child_outline_indices(depths: &[usize], target_index: usize) -> Vec<usize> {
+pub(super) fn child_outline_indices(depths: &[usize], target_index: usize) -> Vec<usize> {
     if target_index >= depths.len() {
         return Vec::new();
     }
@@ -43,13 +43,20 @@ pub(crate) fn child_outline_indices(depths: &[usize], target_index: usize) -> Ve
         .collect()
 }
 
-pub(crate) fn top_level_outline_indices(depths: &[usize]) -> Vec<usize> {
+pub(super) fn top_level_outline_indices(depths: &[usize]) -> Vec<usize> {
     let parents = outline_parents(depths);
     parents
         .iter()
         .enumerate()
         .filter_map(|(index, &parent)| parent.is_none().then_some(index))
         .collect()
+}
+
+/// Identity for outline items across the bar and the open listing. Anchors already pin an item
+/// to its position, and the two resolve items from separate snapshots, so the range is what
+/// stays comparable between them.
+pub(super) fn same_symbol_item(a: &OutlineItem<Anchor>, b: &OutlineItem<Anchor>) -> bool {
+    a.range == b.range
 }
 
 pub(super) fn resolve_bar_symbol_trail(
@@ -62,7 +69,7 @@ pub(super) fn resolve_bar_symbol_trail(
                 && menu_trail
                     .iter()
                     .zip(&cursor_chain)
-                    .all(|(a, b)| a.range == b.range);
+                    .all(|(a, b)| same_symbol_item(a, b));
             if is_prefix_of_cursor_chain {
                 cursor_chain
             } else {
@@ -82,7 +89,7 @@ pub(super) fn flatten_text_for_single_line_display(text: &str) -> String {
 
 /// Overlays fuzzy-match emphasis on the outline's own syntax highlights, so a filtered row
 /// keeps its colours instead of falling back to one flat colour.
-pub(crate) fn highlights_with_match_emphasis(
+pub(super) fn highlights_with_match_emphasis(
     text: &str,
     syntax_highlights: &[(Range<usize>, gpui::HighlightStyle)],
     match_positions: &[usize],
@@ -91,6 +98,10 @@ pub(crate) fn highlights_with_match_emphasis(
     if match_positions.is_empty() {
         return syntax_highlights.to_vec();
     }
+    // A set rather than a scan per character, and without assuming the matcher returns them
+    // in order.
+    let match_positions: std::collections::HashSet<usize> =
+        match_positions.iter().copied().collect();
 
     let mut merged: Vec<(Range<usize>, gpui::HighlightStyle)> = Vec::new();
     for (start, character) in text.char_indices() {

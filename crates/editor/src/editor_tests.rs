@@ -425,25 +425,26 @@ async fn test_open_breadcrumb_navigation_via_keystroke(cx: &mut TestAppContext) 
 async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppContext) {
     use project::{FakeFs, Project};
     use serde_json::json;
-    use std::sync::OnceLock;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use util::path;
     use workspace::Workspace;
 
-    use gpui::EntityId;
-    use std::collections::HashMap;
-
-    static OUTLINE_TOGGLE_FLAGS: OnceLock<parking_lot::Mutex<HashMap<EntityId, Arc<AtomicBool>>>> =
-        OnceLock::new();
-    fn outline_toggle_for_test(view: gpui::AnyView, _: &mut gpui::Window, _: &mut gpui::App) {
-        let entity_id = view.entity_id();
-        if let Some(flags) = OUTLINE_TOGGLE_FLAGS.get()
-            && let Some(flag) = flags.lock().get(&entity_id)
-        {
-            flag.store(true, Ordering::SeqCst);
-        }
+    // `TOGGLE_OUTLINE` is a process-global the whole test binary shares, so record the call in a
+    // thread local. Keying by entity id does not separate concurrent tests: ids restart low in
+    // every `App`.
+    thread_local! {
+        static OUTLINE_TOGGLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
-    let _ = zed_actions::outline::TOGGLE_OUTLINE.set(outline_toggle_for_test);
+    fn outline_toggle_probe(_: gpui::AnyView, _: &mut gpui::Window, _: &mut gpui::App) {
+        OUTLINE_TOGGLED.with(|toggled| toggled.set(true));
+    }
+    fn outline_toggled() -> bool {
+        OUTLINE_TOGGLED.with(std::cell::Cell::get)
+    }
+    fn reset_outline_toggled() {
+        OUTLINE_TOGGLED.with(|toggled| toggled.set(false));
+    }
+    zed_actions::outline::TOGGLE_OUTLINE.get_or_init(|| outline_toggle_probe);
+    reset_outline_toggled();
 
     init_test(cx, |_| {});
 
@@ -484,11 +485,6 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
     let editor = cx.update(|window, cx| {
         cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx))
     });
-    let outline_toggled = Arc::new(AtomicBool::new(false));
-    OUTLINE_TOGGLE_FLAGS
-        .get_or_init(|| parking_lot::Mutex::new(HashMap::new()))
-        .lock()
-        .insert(editor.entity_id(), outline_toggled.clone());
     workspace.update_in(cx, |workspace, window, cx| {
         workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
     });
@@ -512,11 +508,11 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
         );
     });
     assert!(
-        outline_toggled.load(Ordering::SeqCst),
+        outline_toggled(),
         "empty outline must invoke the outline picker fallthrough"
     );
 
-    outline_toggled.store(false, Ordering::SeqCst);
+    reset_outline_toggled();
     editor.update_in(cx, |editor, window, cx| {
         editor.open_breadcrumb_navigation_action(&OpenBreadcrumbNavigation, window, cx);
     });
@@ -537,12 +533,7 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
             "still falls through once empty outline resolves"
         );
     });
-    assert!(outline_toggled.load(Ordering::SeqCst));
-    OUTLINE_TOGGLE_FLAGS
-        .get()
-        .unwrap()
-        .lock()
-        .remove(&editor.entity_id());
+    assert!(outline_toggled());
 }
 
 #[gpui::test]
@@ -572,7 +563,7 @@ async fn test_open_breadcrumb_symbols_shows_rows_after_delayed_lsp(cx: &mut Test
             let rx = respond_rx.lock().unwrap().take();
             async move {
                 if let Some(rx) = rx {
-                    let _ = rx.await;
+                    rx.await.ok();
                 }
                 #[allow(deprecated)]
                 Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
@@ -617,6 +608,10 @@ async fn test_open_breadcrumb_symbols_shows_rows_after_delayed_lsp(cx: &mut Test
             cx,
         );
     });
+    // Without pumping first, the rows below would be empty simply because the load task has
+    // not been polled, and the test would pass with no delay in play at all.
+    cx.run_until_parked();
+
     cx.update_editor(|editor, _window, cx| {
         let menu = editor
             .breadcrumb_navigation_menu()
@@ -651,6 +646,41 @@ async fn test_open_breadcrumb_symbols_shows_rows_after_delayed_lsp(cx: &mut Test
                 .collect::<Vec<_>>(),
             vec!["fn delayed_fn"],
             "rows appear once the delayed document-symbol response lands"
+        );
+        assert_eq!(
+            menu.read(cx).published_row_labels(cx).len(),
+            1,
+            "the picker renders the row the menu resolved"
+        );
+    });
+
+    // An edit reloads the outline, which drops every item the open rows resolve through. The
+    // picker renders from its delegate, so rows left standing here would look live and confirm
+    // to nothing until the next response lands.
+    cx.update_buffer(|buffer, cx| {
+        buffer.edit([(0..0, "// touch\n")], None, cx);
+    });
+    // The refetch is debounced; without this the outline never reloads and the rows below
+    // would agree at zero.
+    cx.executor()
+        .advance_clock(crate::LSP_REQUEST_DEBOUNCE_TIMEOUT + std::time::Duration::from_millis(100));
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, _window, cx| {
+        let menu = editor
+            .breadcrumb_navigation_menu()
+            .expect("menu remains open across a reload");
+        let menu = menu.read(cx);
+        let published = menu.published_row_labels(cx);
+        // Guards the comparison below from passing as 0 == 0 once the reload settles.
+        assert!(
+            !published.is_empty(),
+            "the reloaded outline should have republished its rows"
+        );
+        assert_eq!(
+            published.len(),
+            menu.entry_names().len(),
+            "the picker must never render rows the menu can no longer resolve"
         );
     });
 }

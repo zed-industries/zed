@@ -29,7 +29,8 @@ use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
 pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
-use git_store::{Repository, RepositoryId};
+use git_store::Repository;
+pub use git_store::RepositoryId;
 pub mod search_history;
 pub mod yarn;
 
@@ -46,12 +47,10 @@ use crate::{
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
+pub use git_store::RepositorySnapshot;
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
-    git_traversal::{
-        ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal, WorktreeChildListingEntry,
-        WorktreeChildListingOptions, worktree_child_listing,
-    },
+    git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
     is_submodule_git_dir, linked_worktree_short_name, repo_identity_path,
     worktrees_directory_for_repo,
 };
@@ -150,8 +149,8 @@ use util::{
 use worktree::{CreatedEntry, Snapshot, Traversal};
 pub use worktree::{
     Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
-    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
-    discover_root_repo_common_dir,
+    Snapshot as WorktreeSnapshot, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree,
+    WorktreeId, WorktreeSettings, discover_root_repo_common_dir,
 };
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 

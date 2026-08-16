@@ -3,17 +3,19 @@ use super::BreadcrumbSegmentTarget;
 use super::menu::BreadcrumbListing;
 use super::outline::flatten_text_for_single_line_display;
 use super::path::reveal_directory_in_project_panel;
+use crate::actions::OpenBreadcrumbNavigation;
 use gpui::{anchored, deferred};
+use util::paths::PathStyle;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BreadcrumbSegmentKind {
+pub(super) enum BreadcrumbSegmentKind {
     Root,
     Middle,
     File,
     Symbol,
 }
 
-pub(crate) fn classify_breadcrumb_segment_kinds(
+pub(super) fn classify_breadcrumb_segment_kinds(
     segment_count: usize,
     file_segment_index: Option<usize>,
     has_root_segment: bool,
@@ -44,11 +46,14 @@ pub(super) fn align_symbol_segments(
     }
 }
 
-pub(crate) const MAX_BREADCRUMB_SEGMENTS_HARD_CAP: usize = 64;
+pub(super) const MAX_BREADCRUMB_SEGMENTS_HARD_CAP: usize = 64;
+
+pub(super) const ELLIPSIS_GLYPH: &str = "⋯";
+pub(super) const SEPARATOR_GLYPH: &str = "›";
 
 fn hard_cap_ellipsis() -> HighlightedText {
     HighlightedText {
-        text: "⋯".into(),
+        text: ELLIPSIS_GLYPH.into(),
         highlights: vec![],
     }
 }
@@ -74,7 +79,7 @@ fn splice_middle_run(
     }
 }
 
-pub(crate) fn hard_cap_middle_segments(
+pub(super) fn hard_cap_middle_segments(
     mut segments: Vec<HighlightedText>,
     mut symbol_segments: Vec<Option<BreadcrumbSegmentTarget>>,
     mut kinds: Vec<BreadcrumbSegmentKind>,
@@ -144,7 +149,7 @@ pub(crate) fn hard_cap_middle_segments(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BreadcrumbLayoutPlan {
+pub(super) struct BreadcrumbLayoutPlan {
     pub(crate) visible: Vec<usize>,
     pub(crate) ellipses: Vec<Range<usize>>,
 }
@@ -190,7 +195,7 @@ fn breadcrumb_layout_plan_from_dropped(dropped: &[bool]) -> BreadcrumbLayoutPlan
     BreadcrumbLayoutPlan { visible, ellipses }
 }
 
-pub(crate) fn plan_breadcrumb_layout(
+pub(super) fn plan_breadcrumb_layout(
     widths: &[Pixels],
     kinds: &[BreadcrumbSegmentKind],
     ellipsis_width: Pixels,
@@ -315,7 +320,7 @@ impl BreadcrumbStrip {
                         item,
                     }) if segment_buffer == buffer_id => match (parent, item) {
                         (None, None) => true,
-                        (Some(a), Some(b)) => a.range == b.range,
+                        (Some(a), Some(b)) => super::outline::same_symbol_item(a, b),
                         _ => false,
                     },
                     _ => false,
@@ -340,16 +345,16 @@ impl BreadcrumbStrip {
         let font_size = text_style.font_size.to_pixels(window.rem_size());
         let gap = window.rem_size() * 0.25;
 
-        let arrow_run = text_style.to_run("›".len());
+        let arrow_run = text_style.to_run(SEPARATOR_GLYPH.len());
         let arrow_width = window
             .text_system()
-            .shape_line("›".into(), font_size, &[arrow_run], None)
+            .shape_line(SEPARATOR_GLYPH.into(), font_size, &[arrow_run], None)
             .width();
 
-        let ellipsis_run = text_style.to_run("⋯".len());
+        let ellipsis_run = text_style.to_run(ELLIPSIS_GLYPH.len());
         let ellipsis_label_width = window
             .text_system()
-            .shape_line("⋯".into(), font_size, &[ellipsis_run], None)
+            .shape_line(ELLIPSIS_GLYPH.into(), font_size, &[ellipsis_run], None)
             .width();
         let ellipsis_width = ellipsis_label_width + arrow_width + gap * 2.;
 
@@ -405,7 +410,7 @@ impl BreadcrumbStrip {
         window: &Window,
         cx: &App,
     ) -> gpui::AnyElement {
-        let separator = self.styled_separator_glyph("›", window, cx);
+        let separator = self.styled_separator_glyph(SEPARATOR_GLYPH, window, cx);
         h_flex()
             .items_center()
             .gap_1()
@@ -470,11 +475,14 @@ impl BreadcrumbStrip {
             label
         };
 
+        // One deep clone per segment: the tooltip, click and right-click closures each need
+        // the target for the life of the frame, and they repaint on every cursor blink.
         let content = match (segment.target.clone(), self.editor.clone()) {
             (Some(target), Some(editor)) => self.render_clickable_segment(
                 ("breadcrumb-segment", index).into(),
-                format!("breadcrumb-segment-{index}").into(),
-                target,
+                |index| format!("breadcrumb-segment-{index}"),
+                index,
+                Rc::new(target),
                 label,
                 editor,
                 cx,
@@ -487,29 +495,28 @@ impl BreadcrumbStrip {
     fn render_clickable_segment(
         &self,
         element_id: ElementId,
-        debug_selector: SharedString,
-        target: BreadcrumbSegmentTarget,
+        debug_selector: fn(usize) -> String,
+        debug_index: usize,
+        target: Rc<BreadcrumbSegmentTarget>,
         label: gpui::AnyElement,
         editor: WeakEntity<Editor>,
         cx: &mut App,
     ) -> gpui::AnyElement {
-        let tooltip_title: SharedString = match &target {
-            BreadcrumbSegmentTarget::Directory { path, .. } => {
-                if path.is_empty() {
-                    "Browse project root".into()
-                } else {
-                    format!("Browse {}", path.as_unix_str()).into()
-                }
-            }
-            BreadcrumbSegmentTarget::Symbol { item, .. } => {
-                if item.is_some() {
-                    "Navigate related symbols".into()
-                } else {
-                    "Navigate file symbols".into()
-                }
-            }
+        // The title is built inside the tooltip closure: formatting a path here would allocate
+        // for every segment on every repaint, for a string the user usually never sees.
+        let tooltip_target = target.clone();
+        let tooltip_editor = editor.clone();
+        // A buffer with no file has no path to copy, so neither the tooltip line nor the
+        // right-click handler may claim otherwise.
+        let copyable_path = match target.as_ref() {
+            BreadcrumbSegmentTarget::Directory { .. } => true,
+            BreadcrumbSegmentTarget::Symbol { .. } => editor.upgrade().is_some_and(|editor| {
+                let editor = editor.read(cx);
+                editor
+                    .active_buffer(cx)
+                    .is_some_and(|buffer| buffer.read(cx).file().is_some())
+            }),
         };
-        let tooltip_meta: SharedString = "Right-click to copy this path".into();
 
         let menu_open = editor
             .upgrade()
@@ -521,7 +528,38 @@ impl BreadcrumbStrip {
             .child(div().px(px(SEGMENT_TRIGGER_PADDING_X)).child(label))
             .when(!menu_open, |this| {
                 this.tooltip(move |_, cx| {
-                    Tooltip::with_meta(tooltip_title.clone(), None, tooltip_meta.clone(), cx)
+                    let title: SharedString = match tooltip_target.as_ref() {
+                        BreadcrumbSegmentTarget::Directory { path, .. } => {
+                            if path.is_empty() {
+                                "Browse project root".into()
+                            } else {
+                                let path_style = tooltip_editor
+                                    .upgrade()
+                                    .and_then(|editor| {
+                                        Some(editor.read(cx).project()?.read(cx).path_style(cx))
+                                    })
+                                    .unwrap_or(PathStyle::local());
+                                format!("Browse {}", path.display(path_style)).into()
+                            }
+                        }
+                        BreadcrumbSegmentTarget::Symbol { item, .. } => {
+                            if item.is_some() {
+                                "Navigate related symbols".into()
+                            } else {
+                                "Navigate file symbols".into()
+                            }
+                        }
+                    };
+                    if copyable_path {
+                        Tooltip::with_meta(
+                            title,
+                            Some(&OpenBreadcrumbNavigation),
+                            "Right-click to copy this path",
+                            cx,
+                        )
+                    } else {
+                        Tooltip::for_action(title, &OpenBreadcrumbNavigation, cx)
+                    }
                 })
             })
             .on_click({
@@ -535,24 +573,24 @@ impl BreadcrumbStrip {
                         return;
                     };
                     editor_entity.update(cx, |editor, cx| {
-                        editor.open_or_toggle_breadcrumb_listing(target.clone(), window, cx);
+                        editor.open_or_toggle_breadcrumb_listing((*target).clone(), window, cx);
                     });
                 }
             });
 
         let mut wrapper = div()
             .id(element_id)
-            .debug_selector(move || debug_selector.to_string())
+            .debug_selector(move || debug_selector(debug_index))
             .mx(px(-SEGMENT_TRIGGER_PADDING_X));
 
-        {
+        if copyable_path {
             let editor = editor.clone();
             let target = target.clone();
             wrapper = wrapper.on_mouse_down(MouseButton::Right, move |_, _, cx| {
                 let Some(editor_entity) = editor.upgrade() else {
                     return;
                 };
-                let abs_path = match &target {
+                let abs_path = match target.as_ref() {
                     BreadcrumbSegmentTarget::Directory { worktree_id, path } => {
                         editor_entity.read(cx).project().and_then(|project| {
                             let worktree = project.read(cx).worktree_for_id(*worktree_id, cx)?;
@@ -574,7 +612,7 @@ impl BreadcrumbStrip {
 
         if let BreadcrumbSegmentTarget::Directory {
             worktree_id, path, ..
-        } = &target
+        } = target.as_ref()
         {
             let worktree_id = *worktree_id;
             let path = path.clone();
@@ -603,7 +641,7 @@ impl BreadcrumbStrip {
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::AnyElement {
-        let content = self.styled_separator_glyph("⋯", window, cx);
+        let content = self.styled_separator_glyph(ELLIPSIS_GLYPH, window, cx);
         // Standing in for a run of hidden segments, the ellipsis browses the deepest of
         // them, so collapsing the bar never puts an ancestor out of reach.
         let deepest_hidden = hidden
@@ -613,8 +651,9 @@ impl BreadcrumbStrip {
         let content = match (deepest_hidden, self.editor.clone()) {
             (Some(target), Some(editor)) => self.render_clickable_segment(
                 ("breadcrumb-collapsed-run", hidden.start).into(),
-                "breadcrumb-collapsed-run".into(),
-                target,
+                |_| "breadcrumb-collapsed-run".to_string(),
+                0,
+                Rc::new(target),
                 content,
                 editor,
                 cx,
@@ -734,9 +773,15 @@ impl gpui::Element for BreadcrumbStrip {
         }
 
         let gap = window.rem_size() * 0.25;
-        // A tail with no room left paints as a separator pointing at nothing; let the
-        // ellipsis stand in for it instead.
-        if sequence.len() > 1 {
+        // The planner keeps the protected segment, but it is usually also the last one, and
+        // dropping it here would leave an open menu with nothing to anchor to.
+        let tail_is_protected = matches!(
+            sequence.last(),
+            Some(FinalItem::Segment(index)) if protected_index == Some(*index)
+        );
+        // Drop a tail that has less than an ellipsis of room: it would otherwise paint as
+        // a separator pointing at nothing.
+        if sequence.len() > 1 && !tail_is_protected {
             let tail_start = sequence
                 .iter()
                 .rev()
@@ -759,9 +804,9 @@ impl gpui::Element for BreadcrumbStrip {
                 FinalItem::Segment(index) => Some(*index),
                 FinalItem::Ellipsis(_) => None,
             };
-            // The layout plan never drops the last segment, so it is the one that can still
-            // overrun the strip. Cap its label to the width that is actually left instead of
-            // letting the toolbar clip it mid-word.
+            // The plan never drops the last segment, so it is the one that can overrun the
+            // strip. Cap its label to the room left rather than let the toolbar clip it
+            // mid-word.
             let remaining_width = (bounds.origin.x + bounds.size.width - x).max(Pixels::ZERO);
             let is_last = position == last_position;
             let label_budget = (remaining_width - metrics.ellipsis_width).max(Pixels::ZERO);
@@ -888,12 +933,15 @@ fn highlighted_text_runs(
     let mut runs = Vec::new();
     let mut cursor = 0usize;
     for (range, highlight) in &segment.highlights {
-        let range = range.start.min(text.len())..range.end.min(text.len());
-        if range.start >= range.end {
+        // Clamped to `cursor` as well as to the text: overlapping highlights would otherwise
+        // emit a run for ground already covered, and the run lengths must sum to `text.len()`.
+        let start = range.start.max(cursor).min(text.len());
+        let end = range.end.min(text.len());
+        if start >= end {
             continue;
         }
-        if range.start > cursor {
-            runs.push(text_style.to_run(range.start - cursor));
+        if start > cursor {
+            runs.push(text_style.to_run(start - cursor));
         }
         let mut styled = text_style.clone();
         if let Some(weight) = highlight.font_weight {
@@ -902,8 +950,8 @@ fn highlighted_text_runs(
         if let Some(style) = highlight.font_style {
             styled.font_style = style;
         }
-        runs.push(styled.to_run(range.end - range.start.min(range.end)));
-        cursor = range.end;
+        runs.push(styled.to_run(end - start));
+        cursor = end;
     }
     if cursor < text.len() {
         runs.push(text_style.to_run(text.len() - cursor));
