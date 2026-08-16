@@ -593,14 +593,11 @@ impl Member {
                     })
                     .children(decoration.status_box);
 
+                let island_layout = WorkspaceSettings::get_global(cx).island_layout;
+                let container = Self::render_member_element(is_maximized, &island_layout, pane);
+
                 PaneRenderResult {
-                    element: div()
-                        .relative()
-                        .flex_1()
-                        .size_full()
-                        .when(is_maximized, |this| this.p_2())
-                        .child(pane)
-                        .into_any(),
+                    element: container.into_any(),
                     contains_active_pane: is_active,
                     #[cfg(any(test, feature = "test-support"))]
                     decorated_pane_ix: None,
@@ -608,6 +605,22 @@ impl Member {
             }
             Member::Axis(axis) => axis.render(basis + 1, zoomed, maximized, render_cx, window, cx),
         }
+    }
+
+    pub fn render_member_element(
+        is_maximized: bool,
+        island_layout: &crate::workspace_settings::IslandLayoutSettings,
+        pane_el: Div,
+    ) -> Div {
+        div()
+            .relative()
+            .flex_1()
+            .size_full()
+            .when(is_maximized, |this| this.p_2())
+            .when(island_layout.enabled, |this| {
+                this.p(px(island_layout.gap / 2.0))
+            })
+            .child(pane_el)
     }
 
     pub fn contains_pane(&self, needle: &Entity<Pane>) -> bool {
@@ -1543,10 +1556,12 @@ mod element {
                         window.set_cursor_style(cursor_style, &handle.hitbox);
                     }
 
-                    window.paint_quad(gpui::fill(
-                        handle.divider_bounds,
-                        cx.theme().colors().pane_group_border,
-                    ));
+                    if !WorkspaceSettings::get_global(cx).island_layout.enabled {
+                        window.paint_quad(gpui::fill(
+                            handle.divider_bounds,
+                            cx.theme().colors().pane_group_border,
+                        ));
+                    }
 
                     window.on_mouse_event({
                         let dragged_handle = layout.dragged_handle.clone();
@@ -1614,5 +1629,41 @@ mod element {
 
     fn flex_values_in_bounds(flexes: &[f32]) -> bool {
         (flexes.iter().copied().sum::<f32>() - flexes.len() as f32).abs() < 0.001
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{AbsoluteLength, DefiniteLength, EdgesRefinement, px};
+
+    #[test]
+    fn test_member_render_element_default_padding() {
+        let island_layout = crate::workspace_settings::IslandLayoutSettings::default();
+        let mut el = Member::render_member_element(false, &island_layout, div());
+        let style = el.style();
+        assert_eq!(style.padding, EdgesRefinement::default());
+    }
+
+    #[test]
+    fn test_member_render_element_island_gap_padding() {
+        let island_layout = crate::workspace_settings::IslandLayoutSettings {
+            enabled: true,
+            corner_radius: 18.0,
+            gap: 8.0,
+            border: true,
+            pill_tabs: true,
+        };
+        let mut el = Member::render_member_element(false, &island_layout, div());
+        let style = el.style();
+        assert_eq!(
+            style.padding,
+            EdgesRefinement {
+                top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(4.0)))),
+                right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(4.0)))),
+                bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(4.0)))),
+                left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(4.0)))),
+            }
+        );
     }
 }

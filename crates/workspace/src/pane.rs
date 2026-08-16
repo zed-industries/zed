@@ -2895,8 +2895,12 @@ impl Pane {
 
         let has_file_icon = icon.is_some();
 
+        let island_layout = WorkspaceSettings::get_global(cx).island_layout;
+        let pill_style = island_layout.enabled && island_layout.pill_tabs;
+
         let capability = item.capability(cx);
         let tab = Tab::new(ix)
+            .pill_style(pill_style)
             .position(if is_first_item {
                 TabPosition::First
             } else if is_last_item {
@@ -3540,9 +3544,12 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Pane>,
     ) -> AnyElement {
+        let island_layout = WorkspaceSettings::get_global(cx).island_layout;
+        let pill_style = island_layout.enabled && island_layout.pill_tabs;
+
         let tab_bar = self
             .configure_tab_bar_start(
-                TabBar::new("tab_bar"),
+                TabBar::new("tab_bar").pill_style(pill_style),
                 navigate_backward,
                 navigate_forward,
                 window,
@@ -3578,9 +3585,12 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Pane>,
     ) -> AnyElement {
+        let island_layout = WorkspaceSettings::get_global(cx).island_layout;
+        let pill_style = island_layout.enabled && island_layout.pill_tabs;
+
         let pinned_tab_bar = self
             .configure_tab_bar_start(
-                TabBar::new("pinned_tab_bar"),
+                TabBar::new("pinned_tab_bar").pill_style(pill_style),
                 navigate_backward,
                 navigate_forward,
                 window,
@@ -3600,11 +3610,13 @@ impl Pane {
             .flex_none()
             .child(pinned_tab_bar)
             .child(
-                TabBar::new("unpinned_tab_bar").child(self.render_unpinned_tabs_container(
-                    unpinned_tabs,
-                    tab_count,
-                    cx,
-                )),
+                TabBar::new("unpinned_tab_bar")
+                    .pill_style(pill_style)
+                    .child(self.render_unpinned_tabs_container(
+                        unpinned_tabs,
+                        tab_count,
+                        cx,
+                    )),
             )
             .into_any_element()
     }
@@ -4339,8 +4351,12 @@ impl Focusable for Pane {
     }
 }
 
-impl Render for Pane {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl Pane {
+    pub fn render_pane(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Pane");
         if self.active_item().is_none() {
@@ -4362,12 +4378,23 @@ impl Render for Pane {
             project.is_local() || project.is_via_wsl(cx)
         };
 
+        let island_layout = WorkspaceSettings::get_global(cx).island_layout;
+
         v_flex()
             .key_context(key_context)
             .track_focus(&self.focus_handle(cx))
             .size_full()
             .flex_none()
             .overflow_hidden()
+            .when(island_layout.enabled, |this| {
+                this.rounded(px(island_layout.corner_radius))
+                    .shadow_sm()
+                    .when(island_layout.border, |this| {
+                        this.border_1()
+                            .border_color(cx.theme().colors().border_variant)
+                    })
+                    .bg(cx.theme().colors().editor_background)
+            })
             .on_action(cx.listener(|pane, split: &SplitLeft, window, cx| {
                 pane.split(SplitDirection::Left, split.mode, window, cx)
             }))
@@ -4584,6 +4611,9 @@ impl Render for Pane {
                             .invisible()
                             .absolute()
                             .bg(cx.theme().colors().drop_target_background)
+                            .when(island_layout.enabled, |this| {
+                                this.rounded(px(island_layout.corner_radius))
+                            })
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
                             .group_drag_over::<DraggedSelection>("", |style| style.visible())
                             .when(accepts_external_paths, |div| {
@@ -4657,6 +4687,12 @@ impl Render for Pane {
                     }
                 }),
             )
+    }
+}
+
+impl Render for Pane {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.render_pane(window, cx)
     }
 }
 
@@ -4982,6 +5018,8 @@ pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &App) -> Option<Indi
 
 impl Render for DraggedTab {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let island_layout = WorkspaceSettings::get_global(cx).island_layout;
+        let pill_style = island_layout.enabled && island_layout.pill_tabs;
         let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
         let label = self.item.tab_content(
             TabContentParams {
@@ -5000,6 +5038,7 @@ impl Render for DraggedTab {
                 .read(cx)
                 .tab_icon_element(self.item.as_ref(), self.is_active, window, cx);
         Tab::new("")
+            .pill_style(pill_style)
             .toggle_state(self.is_active)
             .children(icon)
             .child(label)
@@ -5019,7 +5058,7 @@ mod tests {
     };
     use gpui::{
         AppContext, Axis, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-        TestAppContext, VisualTestContext, size,
+        TestAppContext, UpdateGlobal, VisualTestContext, size,
     };
     use project::FakeFs;
     use settings::SettingsStore;
@@ -9553,4 +9592,125 @@ mod tests {
             }
         }
     }
+
+    #[gpui::test]
+    async fn test_pane_render_default_flat_styling(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let mut div = workspace.update_in(cx, |_, window, cx| {
+            pane.update(cx, |pane, cx| pane.render_pane(window, cx))
+        });
+
+        let style = div.style();
+        assert_eq!(style.corner_radii, gpui::CornersRefinement::default());
+        assert_eq!(style.border_widths, gpui::EdgesRefinement::default());
+        assert!(style.box_shadow.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_pane_render_island_layout_card_styling(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.island_layout = Some(settings::IslandLayoutSettings {
+                        enabled: Some(true),
+                        corner_radius: Some(18.0),
+                        gap: Some(6.0),
+                        border: Some(true),
+                        pill_tabs: Some(true),
+                    });
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let (mut div, border_variant, editor_bg) = workspace.update_in(cx, |_, window, cx| {
+            let border_variant = cx.theme().colors().border_variant;
+            let editor_bg = cx.theme().colors().editor_background;
+            let div = pane.update(cx, |pane, cx| pane.render_pane(window, cx));
+            (div, border_variant, editor_bg)
+        });
+
+        let style = div.style();
+        assert_eq!(
+            style.border_widths,
+            gpui::EdgesRefinement {
+                top: Some(gpui::AbsoluteLength::Pixels(gpui::px(1.))),
+                right: Some(gpui::AbsoluteLength::Pixels(gpui::px(1.))),
+                bottom: Some(gpui::AbsoluteLength::Pixels(gpui::px(1.))),
+                left: Some(gpui::AbsoluteLength::Pixels(gpui::px(1.))),
+            }
+        );
+        assert_eq!(style.border_color, Some(border_variant));
+        assert_eq!(
+            style.corner_radii,
+            gpui::CornersRefinement {
+                top_left: Some(gpui::AbsoluteLength::Pixels(gpui::px(18.))),
+                top_right: Some(gpui::AbsoluteLength::Pixels(gpui::px(18.))),
+                bottom_right: Some(gpui::AbsoluteLength::Pixels(gpui::px(18.))),
+                bottom_left: Some(gpui::AbsoluteLength::Pixels(gpui::px(18.))),
+            }
+        );
+        assert_eq!(style.background, Some(gpui::Fill::Color(editor_bg.into())));
+        assert!(style.box_shadow.is_some());
+    }
+
+    #[gpui::test]
+    async fn test_pane_render_island_layout_without_border(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.island_layout = Some(settings::IslandLayoutSettings {
+                        enabled: Some(true),
+                        corner_radius: Some(12.0),
+                        gap: Some(6.0),
+                        border: Some(false),
+                        pill_tabs: Some(true),
+                    });
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let mut div = workspace.update_in(cx, |_, window, cx| {
+            pane.update(cx, |pane, cx| pane.render_pane(window, cx))
+        });
+
+        let style = div.style();
+        assert_eq!(style.border_widths, gpui::EdgesRefinement::default());
+        assert_eq!(
+            style.corner_radii,
+            gpui::CornersRefinement {
+                top_left: Some(gpui::AbsoluteLength::Pixels(gpui::px(12.))),
+                top_right: Some(gpui::AbsoluteLength::Pixels(gpui::px(12.))),
+                bottom_right: Some(gpui::AbsoluteLength::Pixels(gpui::px(12.))),
+                bottom_left: Some(gpui::AbsoluteLength::Pixels(gpui::px(12.))),
+            }
+        );
+        assert!(style.box_shadow.is_some());
+    }
 }
+
