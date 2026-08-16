@@ -1227,19 +1227,27 @@ impl Dock {
                         })
                     }
                 })
-                .child(
+                .child({
+                    let cached_style = if island_layout.enabled {
+                        StyleRefinement::default()
+                            .v_flex()
+                            .size_full()
+                            .overflow_hidden()
+                            .rounded(px(island_layout.corner_radius))
+                    } else {
+                        StyleRefinement::default().v_flex().size_full()
+                    };
                     div()
                         .map(|this| match self.position().axis() {
                             Axis::Horizontal => this.w_full().h_full(),
                             Axis::Vertical => this.h_full().w_full(),
                         })
-                        .child(
-                            entry
-                                .panel
-                                .to_any()
-                                .cached(StyleRefinement::default().v_flex().size_full()),
-                        ),
-                )
+                        .overflow_hidden()
+                        .when(island_layout.enabled, |this| {
+                            this.rounded(px(island_layout.corner_radius))
+                        })
+                        .child(entry.panel.to_any().cached(cached_style))
+                })
                 .when(self.resizable(cx), |this| {
                     this.child(create_resize_handle())
                 })
@@ -1724,12 +1732,12 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let _left_panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+        let _bottom_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
             workspace.add_panel(panel.clone(), window, cx);
-            workspace.left_dock().update(cx, |left_dock, cx| {
-                left_dock.activate_panel(0, window, cx);
-                left_dock.set_open(true, window, cx);
+            workspace.bottom_dock().update(cx, |bottom_dock, cx| {
+                bottom_dock.activate_panel(0, window, cx);
+                bottom_dock.set_open(true, window, cx);
             });
             panel
         });
@@ -1737,7 +1745,7 @@ mod tests {
         let (mut div, border_variant) = workspace.update_in(cx, |workspace, window, cx| {
             let border_variant = cx.theme().colors().border_variant;
             let div = workspace
-                .left_dock()
+                .bottom_dock()
                 .update(cx, |dock, cx| dock.render_panel(window, cx));
             (div, border_variant)
         });
@@ -1763,6 +1771,42 @@ mod tests {
             }
         );
         assert!(style.box_shadow.is_some());
+
+        // Left dock should be seamless (no card borders/radii)
+        let _left_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.left_dock().update(cx, |left_dock, cx| {
+                left_dock.activate_panel(0, window, cx);
+                left_dock.set_open(true, window, cx);
+            });
+            panel
+        });
+
+        let mut left_div = workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .left_dock()
+                .update(cx, |dock, cx| dock.render_panel(window, cx))
+        });
+        let left_style = left_div.style();
+        assert_eq!(
+            left_style.border_widths,
+            EdgesRefinement {
+                top: Some(AbsoluteLength::Pixels(px(1.))),
+                right: Some(AbsoluteLength::Pixels(px(1.))),
+                bottom: Some(AbsoluteLength::Pixels(px(1.))),
+                left: Some(AbsoluteLength::Pixels(px(1.))),
+            }
+        );
+        assert_eq!(
+            left_style.corner_radii,
+            CornersRefinement {
+                top_left: Some(AbsoluteLength::Pixels(px(18.))),
+                top_right: Some(AbsoluteLength::Pixels(px(18.))),
+                bottom_right: Some(AbsoluteLength::Pixels(px(18.))),
+                bottom_left: Some(AbsoluteLength::Pixels(px(18.))),
+            }
+        );
     }
 
     #[gpui::test]

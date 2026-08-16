@@ -5813,6 +5813,19 @@ impl EditorElement {
         for (scrollbar_layout, axis) in scrollbars_layout.iter_scrollbars() {
             let hitbox = &scrollbar_layout.hitbox;
             if scrollbars_layout.visible {
+                let island_layout = cx
+                    .try_global::<settings::SettingsStore>()
+                    .and_then(|s| {
+                        s.raw_user_settings()
+                            .and_then(|u| u.content.workspace.island_layout.as_ref())
+                            .or_else(|| s.raw_default_settings().workspace.island_layout.as_ref())
+                    });
+                let corner_radius = if island_layout.is_some_and(|l| l.enabled.unwrap_or(false)) {
+                    px(island_layout.and_then(|l| l.corner_radius).unwrap_or(18.0))
+                } else {
+                    px(0.)
+                };
+
                 let scrollbar_edges = match axis {
                     ScrollbarAxis::Horizontal => Edges {
                         top: Pixels::ZERO,
@@ -5824,14 +5837,35 @@ impl EditorElement {
                         top: Pixels::ZERO,
                         right: Pixels::ZERO,
                         bottom: Pixels::ZERO,
-                        left: ScrollbarLayout::BORDER_WIDTH,
+                        left: if corner_radius > px(0.) {
+                            Pixels::ZERO
+                        } else {
+                            ScrollbarLayout::BORDER_WIDTH
+                        },
                     },
                 };
 
-                window.paint_layer(hitbox.bounds, |window| {
+                let mut hitbox_bounds = hitbox.bounds;
+                if corner_radius > px(0.) && axis == ScrollbarAxis::Vertical {
+                    hitbox_bounds.size.width -= px(2.);
+                    hitbox_bounds.size.height -= px(8.);
+                }
+
+                let track_corners = if corner_radius > px(0.) && axis == ScrollbarAxis::Vertical {
+                    Corners {
+                        top_left: px(0.),
+                        top_right: px(0.),
+                        bottom_right: px(4.),
+                        bottom_left: px(4.),
+                    }
+                } else {
+                    Corners::default()
+                };
+
+                window.paint_layer(hitbox_bounds, |window| {
                     window.paint_quad(quad(
-                        hitbox.bounds,
-                        Corners::default(),
+                        hitbox_bounds,
+                        track_corners,
                         cx.theme().colors().scrollbar_track_background,
                         scrollbar_edges,
                         cx.theme().colors().scrollbar_track_border,
@@ -5853,7 +5887,7 @@ impl EditorElement {
                         }
                     }
 
-                    if let Some(thumb_bounds) = scrollbar_layout.thumb_bounds {
+                    if let Some(mut thumb_bounds) = scrollbar_layout.thumb_bounds {
                         let scrollbar_thumb_color = match scrollbar_layout.thumb_state {
                             ScrollbarThumbState::Dragging => {
                                 cx.theme().colors().scrollbar_thumb_active_background
@@ -5865,9 +5899,21 @@ impl EditorElement {
                                 cx.theme().colors().scrollbar_thumb_background
                             }
                         };
+                        if corner_radius > px(0.) && axis == ScrollbarAxis::Vertical {
+                            thumb_bounds.size.width -= px(2.);
+                            if thumb_bounds.bottom() > hitbox_bounds.bottom() {
+                                thumb_bounds.origin.y =
+                                    hitbox_bounds.bottom() - thumb_bounds.size.height;
+                            }
+                        }
+                        let thumb_corners = if corner_radius > px(0.) {
+                            Corners::all(px(3.))
+                        } else {
+                            Corners::default()
+                        };
                         window.paint_quad(quad(
                             thumb_bounds,
-                            Corners::default(),
+                            thumb_corners,
                             scrollbar_thumb_color,
                             scrollbar_edges,
                             cx.theme().colors().scrollbar_thumb_border,

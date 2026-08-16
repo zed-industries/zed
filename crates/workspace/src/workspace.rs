@@ -9146,6 +9146,7 @@ impl Render for Workspace {
                     .flex_1()
                     .flex()
                     .flex_col()
+                    .when(island_layout.enabled, |this| this.bg(colors.background))
                     .child(
                         Self::style_workspace_container(div(), &island_layout, colors)
                             .child({
@@ -9234,9 +9235,11 @@ impl Render for Workspace {
                                         .flex()
                                         .flex_col()
                                         .h_full()
-                                        .when(island_layout.enabled, |this| {
-                                            this.gap(px(island_layout.gap))
-                                        })
+                                        .when(
+                                            island_layout.enabled
+                                                && self.bottom_dock.read(cx).is_open(),
+                                            |this| this.gap(px(island_layout.gap)),
+                                        )
                                         .child(
                                             div()
                                                 .flex()
@@ -9312,9 +9315,11 @@ impl Render for Workspace {
                                                 .flex_col()
                                                 .flex_1()
                                                 .h_full()
-                                                .when(island_layout.enabled, |this| {
-                                                    this.gap(px(island_layout.gap))
-                                                })
+                                                .when(
+                                                    island_layout.enabled
+                                                        && self.bottom_dock.read(cx).is_open(),
+                                                    |this| this.gap(px(island_layout.gap)),
+                                                )
                                                 .child(
                                                     div()
                                                         .flex()
@@ -9403,9 +9408,11 @@ impl Render for Workspace {
                                                 .flex_col()
                                                 .flex_1()
                                                 .h_full()
-                                                .when(island_layout.enabled, |this| {
-                                                    this.gap(px(island_layout.gap))
-                                                })
+                                                .when(
+                                                    island_layout.enabled
+                                                        && self.bottom_dock.read(cx).is_open(),
+                                                    |this| this.gap(px(island_layout.gap)),
+                                                )
                                                 .child(
                                                     div()
                                                         .flex()
@@ -9488,9 +9495,11 @@ impl Render for Workspace {
                                                 .flex_col()
                                                 .flex_1()
                                                 .overflow_hidden()
-                                                .when(island_layout.enabled, |this| {
-                                                    this.gap(px(island_layout.gap))
-                                                })
+                                                .when(
+                                                    island_layout.enabled
+                                                        && self.bottom_dock.read(cx).is_open(),
+                                                    |this| this.gap(px(island_layout.gap)),
+                                                )
                                                 .child(
                                                     h_flex()
                                                         .flex_1()

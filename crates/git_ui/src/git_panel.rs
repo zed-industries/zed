@@ -6160,11 +6160,26 @@ impl GitPanel {
         let workspace = self.workspace.clone();
         let this = cx.entity();
 
+        let island_layout = cx
+            .try_global::<settings::SettingsStore>()
+            .and_then(|s| {
+                s.raw_user_settings()
+                    .and_then(|u| u.content.workspace.island_layout.as_ref())
+                    .or_else(|| s.raw_default_settings().workspace.island_layout.as_ref())
+            });
+        let corner_radius = if island_layout.is_some_and(|l| l.enabled.unwrap_or(false)) {
+            px(island_layout.and_then(|l| l.corner_radius).unwrap_or(18.0))
+        } else {
+            px(0.)
+        };
+
         Some(
             h_flex()
                 .p_1p5()
                 .gap_1p5()
                 .justify_between()
+                .overflow_hidden()
+                .when(corner_radius > px(0.), |this| this.rounded_b(corner_radius))
                 .border_t_1()
                 .border_color(cx.theme().colors().border.opacity(0.8))
                 .child(
@@ -6257,14 +6272,33 @@ impl GitPanel {
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = self.active_tab;
 
+        let island_layout = cx
+            .try_global::<settings::SettingsStore>()
+            .and_then(|s| {
+                s.raw_user_settings()
+                    .and_then(|u| u.content.workspace.island_layout.as_ref())
+                    .or_else(|| s.raw_default_settings().workspace.island_layout.as_ref())
+            });
+        let corner_radius = if island_layout.is_some_and(|l| l.enabled.unwrap_or(false)) {
+            px(island_layout.and_then(|l| l.corner_radius).unwrap_or(18.0))
+        } else {
+            px(0.)
+        };
+
+        let element_hover = cx.theme().colors().element_hover;
+        let editor_bg = cx.theme().colors().editor_background;
+        let border_color = cx.theme().colors().border;
+        let tab_height = Tab::container_height(cx);
+
         let focus_handle = self.focus_handle.clone();
-        let tab = |id: ElementId,
+        let tab = move |id: ElementId,
                    active: bool,
                    show_changes: bool,
                    label: SharedString,
                    set_active_tab: GitPanelTab,
                    tooltip_action: Box<dyn Action>| {
             let focus_handle = focus_handle.clone();
+            let is_changes = set_active_tab == GitPanelTab::Changes;
 
             h_flex()
                 .cursor_pointer()
@@ -6274,11 +6308,19 @@ impl GitPanel {
                 .gap_1()
                 .flex_1()
                 .justify_center()
-                .hover(|s| s.bg(cx.theme().colors().element_hover))
+                .overflow_hidden()
+                .when(corner_radius > px(0.), |this| {
+                    if is_changes {
+                        this.rounded_tl(corner_radius)
+                    } else {
+                        this.rounded_tr(corner_radius)
+                    }
+                })
+                .hover(|s| s.bg(element_hover))
                 .border_b_1()
                 .when(!active, |s| {
-                    s.bg(cx.theme().colors().editor_background.opacity(0.6))
-                        .border_color(cx.theme().colors().border.opacity(0.6))
+                    s.bg(editor_bg.opacity(0.6))
+                        .border_color(border_color.opacity(0.6))
                 })
                 .child(Label::new(label.clone()).when(!active, |this| this.color(Color::Muted)))
                 .when(show_changes && self.changes_count > 0, |this| {
@@ -6300,8 +6342,10 @@ impl GitPanel {
 
         h_flex()
             .relative()
-            .h(Tab::container_height(cx))
+            .h(tab_height)
             .w_full()
+            .overflow_hidden()
+            .when(corner_radius > px(0.), |this| this.rounded_t(corner_radius))
             .child(tab(
                 ElementId::Name("changes-tab".into()),
                 active_tab == GitPanelTab::Changes,
@@ -8248,6 +8292,19 @@ impl Render for GitPanel {
         let has_entries = !self.entries.is_empty();
         let has_write_access = self.has_write_access(cx);
 
+        let island_layout = cx
+            .try_global::<settings::SettingsStore>()
+            .and_then(|s| {
+                s.raw_user_settings()
+                    .and_then(|u| u.content.workspace.island_layout.as_ref())
+                    .or_else(|| s.raw_default_settings().workspace.island_layout.as_ref())
+            });
+        let corner_radius = if island_layout.is_some_and(|l| l.enabled.unwrap_or(false)) {
+            px(island_layout.and_then(|l| l.corner_radius).unwrap_or(18.0))
+        } else {
+            px(0.)
+        };
+
         #[cfg(feature = "call")]
         let has_co_authors = self
             .workspace
@@ -8326,6 +8383,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::activate_history_tab))
             .size_full()
             .overflow_hidden()
+            .when(corner_radius > px(0.), |this| this.rounded(corner_radius))
             .bg(cx.theme().colors().panel_background)
             .child(
                 v_flex()

@@ -4353,9 +4353,24 @@ impl ThreadView {
         let has_messages = self.list_state.item_count() > 0;
         let fills_container = !has_messages || editor_expanded;
 
+        let island_layout = cx
+            .try_global::<settings::SettingsStore>()
+            .and_then(|s| {
+                s.raw_user_settings()
+                    .and_then(|u| u.content.workspace.island_layout.as_ref())
+                    .or_else(|| s.raw_default_settings().workspace.island_layout.as_ref())
+            });
+        let corner_radius = if island_layout.is_some_and(|l| l.enabled.unwrap_or(false)) {
+            px(island_layout.and_then(|l| l.corner_radius).unwrap_or(18.0))
+        } else {
+            px(0.)
+        };
+
         h_flex()
             .py_2()
             .bg(editor_bg_color)
+            .overflow_hidden()
+            .when(corner_radius > px(0.), |this| this.rounded_b(corner_radius))
             .justify_center()
             .on_action(cx.listener(Self::handle_message_editor_move_up))
             .map(|this| {

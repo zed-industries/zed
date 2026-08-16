@@ -1340,10 +1340,19 @@ impl Render for TerminalView {
 
         let focused = self.focus_handle.is_focused(window);
 
+        let island_layout = workspace::WorkspaceSettings::get_global(cx).island_layout;
+        let corner_radius = if island_layout.enabled {
+            px(island_layout.corner_radius)
+        } else {
+            px(0.)
+        };
+
         div()
             .id("terminal-view")
             .size_full()
             .relative()
+            .overflow_hidden()
+            .when(corner_radius > px(0.), |this| this.rounded(corner_radius))
             .track_focus(&self.focus_handle(cx))
             .key_context(self.dispatch_context(cx))
             .on_action(cx.listener(TerminalView::send_text))
@@ -1394,7 +1403,8 @@ impl Render for TerminalView {
                 div()
                     .id("terminal-view-container")
                     .size_full()
-                    .bg(cx.theme().colors().editor_background)
+                    .overflow_hidden()
+                    .when(corner_radius > px(0.), |this| this.rounded(corner_radius))
                     .child(TerminalElement::new(
                         terminal_handle,
                         terminal_view_handle,
@@ -1406,14 +1416,9 @@ impl Render for TerminalView {
                         self.mode.clone(),
                     ))
                     .when(self.content_mode(window, cx).is_scrollable(), |div| {
-                        let colors = cx.theme().colors();
                         div.custom_scrollbars(
                             Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
                                 .show_along(ScrollAxes::Vertical)
-                                .with_stable_track_along(
-                                    ScrollAxes::Vertical,
-                                    colors.editor_background,
-                                )
                                 .tracked_scroll_handle(&self.scroll_handle),
                             window,
                             cx,

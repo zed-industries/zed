@@ -2901,6 +2901,9 @@ impl Pane {
         let capability = item.capability(cx);
         let tab = Tab::new(ix)
             .pill_style(pill_style)
+            .when(island_layout.enabled && !island_layout.pill_tabs, |tab| {
+                tab.corner_radius(px(island_layout.corner_radius))
+            })
             .position(if is_first_item {
                 TabPosition::First
             } else if is_last_item {
@@ -3549,7 +3552,11 @@ impl Pane {
 
         let tab_bar = self
             .configure_tab_bar_start(
-                TabBar::new("tab_bar").pill_style(pill_style),
+                TabBar::new("tab_bar")
+                    .pill_style(pill_style)
+                    .when(island_layout.enabled, |tb| {
+                        tb.corner_radius(px(island_layout.corner_radius))
+                    }),
                 navigate_backward,
                 navigate_forward,
                 window,
@@ -3590,7 +3597,11 @@ impl Pane {
 
         let pinned_tab_bar = self
             .configure_tab_bar_start(
-                TabBar::new("pinned_tab_bar").pill_style(pill_style),
+                TabBar::new("pinned_tab_bar")
+                    .pill_style(pill_style)
+                    .when(island_layout.enabled, |tb| {
+                        tb.corner_radius(px(island_layout.corner_radius))
+                    }),
                 navigate_backward,
                 navigate_forward,
                 window,

@@ -151,7 +151,14 @@ impl Render for StatusBar {
             .justify_between()
             .gap(DynamicSpacing::Base08.rems(cx))
             .p(DynamicSpacing::Base04.rems(cx))
-            .bg(cx.theme().colors().status_bar_background)
+            .map(|el| {
+                let island_layout = crate::WorkspaceSettings::get_global(cx).island_layout;
+                if island_layout.enabled {
+                    let radius = px(island_layout.corner_radius * 0.75);
+                    return el.overflow_hidden().rounded(radius);
+                }
+                el.bg(cx.theme().colors().status_bar_background)
+            })
             .map(|el| {
                 if crate::WorkspaceSettings::get_global(cx)
                     .island_layout

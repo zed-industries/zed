@@ -5784,17 +5784,35 @@ impl ProjectPanel {
             (entry_id.to_proto() as usize).into()
         };
 
+        let island_layout = cx
+            .try_global::<settings::SettingsStore>()
+            .and_then(|s| {
+                s.raw_user_settings()
+                    .and_then(|u| u.content.workspace.island_layout.as_ref())
+                    .or_else(|| s.raw_default_settings().workspace.island_layout.as_ref())
+            });
+        let is_island = island_layout.is_some_and(|l| l.enabled.unwrap_or(false));
+
         div()
             .id(id.clone())
             .relative()
             .group(GROUP_NAME)
             .cursor_pointer()
-            .rounded_none()
+            .when(is_island, |this| this.rounded_md().overflow_hidden())
+            .when(!is_island, |this| {
+                this.rounded_none()
+                    .border_1()
+                    .border_r_2()
+                    .border_color(border_color)
+            })
             .bg(bg_color)
-            .border_1()
-            .border_r_2()
-            .border_color(border_color)
-            .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
+            .hover(|mut style| {
+                style = style.bg(bg_hover_color);
+                if !is_island {
+                    style = style.border_color(border_hover_color);
+                }
+                style
+            })
             .when(is_sticky, |this| this.block_mouse_except_scroll())
             .when(!is_sticky, |this| {
                 this.when(
@@ -7037,9 +7055,24 @@ impl Render for ProjectPanel {
                     }
                 }));
             }
+            let island_layout = cx
+                .try_global::<settings::SettingsStore>()
+                .and_then(|s| {
+                    s.raw_user_settings()
+                        .and_then(|u| u.content.workspace.island_layout.as_ref())
+                        .or_else(|| s.raw_default_settings().workspace.island_layout.as_ref())
+                });
+            let corner_radius = if island_layout.is_some_and(|l| l.enabled.unwrap_or(false)) {
+                px(island_layout.and_then(|l| l.corner_radius).unwrap_or(18.0))
+            } else {
+                px(0.)
+            };
+
             h_flex()
                 .id("project-panel")
                 .group("project-panel")
+                .overflow_hidden()
+                .when(corner_radius > px(0.), |this| this.rounded(corner_radius))
                 .when(panel_settings.drag_and_drop, |this| {
                     this.on_drag_move(cx.listener(handle_drag_move::<ExternalPaths>))
                         .on_drag_move(cx.listener(handle_drag_move::<DraggedSelection>))
@@ -7125,6 +7158,11 @@ impl Render for ProjectPanel {
                 .track_focus(&self.focus_handle(cx))
                 .child(
                     v_flex()
+                        .size_full()
+                        .overflow_hidden()
+                        .when(corner_radius > px(0.), |this| {
+                            this.rounded(corner_radius).p(px(8.))
+                        })
                         .child(
                             uniform_list("entries", item_count, {
                                 cx.processor(|this, range: Range<usize>, window, cx| {

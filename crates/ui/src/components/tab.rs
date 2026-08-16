@@ -36,6 +36,7 @@ pub struct Tab {
     position: TabPosition,
     close_side: TabCloseSide,
     pill_style: bool,
+    corner_radius: Option<Pixels>,
     start_slot: Option<AnyElement>,
     end_slot: Option<AnyElement>,
     children: SmallVec<[AnyElement; 2]>,
@@ -52,10 +53,16 @@ impl Tab {
             position: TabPosition::First,
             close_side: TabCloseSide::End,
             pill_style: false,
+            corner_radius: None,
             start_slot: None,
             end_slot: None,
             children: SmallVec::new(),
         }
+    }
+
+    pub fn corner_radius(mut self, corner_radius: Pixels) -> Self {
+        self.corner_radius = Some(corner_radius);
+        self
     }
 
     pub fn position(mut self, position: TabPosition) -> Self {
@@ -148,24 +155,26 @@ impl RenderOnce for Tab {
             }
         };
 
-        let tab_content = h_flex()
-            .group("")
-            .relative()
-            .h(Tab::content_height(cx))
-            .px(DynamicSpacing::Base04.px(cx))
-            .gap(DynamicSpacing::Base04.rems(cx))
-            .text_color(text_color)
-            .child(start_slot)
-            .children(self.children)
-            .child(end_slot);
-
         if self.pill_style {
+            let tab_content = h_flex()
+                .group("")
+                .relative()
+                .h_full()
+                .items_center()
+                .px(DynamicSpacing::Base04.px(cx))
+                .gap(DynamicSpacing::Base04.rems(cx))
+                .text_color(text_color)
+                .child(start_slot)
+                .children(self.children)
+                .child(end_slot);
+
             self.div
                 .rounded_md()
                 .mx_0p5()
-                .my_1()
-                .px_2()
-                .h(Tab::container_height(cx) - px(6.))
+                .px_1p5()
+                .h(px(26.))
+                .flex()
+                .items_center()
                 .when(self.selected, |this| {
                     this.bg(tab_bg)
                         .border_1()
@@ -178,9 +187,25 @@ impl RenderOnce for Tab {
                 .cursor_pointer()
                 .child(tab_content)
         } else {
+            let tab_content = h_flex()
+                .group("")
+                .relative()
+                .h(Tab::content_height(cx))
+                .px(DynamicSpacing::Base04.px(cx))
+                .gap(DynamicSpacing::Base04.rems(cx))
+                .text_color(text_color)
+                .child(start_slot)
+                .children(self.children)
+                .child(end_slot);
+
             self.div
                 .h(Tab::container_height(cx))
                 .bg(tab_bg)
+                .when_some(self.corner_radius, |this, radius| match self.position {
+                    TabPosition::First => this.rounded_tl(radius),
+                    TabPosition::Last => this.rounded_tr(radius),
+                    _ => this,
+                })
                 .border_color(cx.theme().colors().border)
                 .map(|this| match self.position {
                     TabPosition::First => {

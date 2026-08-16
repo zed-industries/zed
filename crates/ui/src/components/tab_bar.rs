@@ -12,6 +12,7 @@ pub struct TabBar {
     end_children: SmallVec<[AnyElement; 2]>,
     scroll_handle: Option<ScrollHandle>,
     pill_style: bool,
+    corner_radius: Option<Pixels>,
 }
 
 impl TabBar {
@@ -23,6 +24,7 @@ impl TabBar {
             end_children: SmallVec::new(),
             scroll_handle: None,
             pill_style: false,
+            corner_radius: None,
         }
     }
 
@@ -33,6 +35,11 @@ impl TabBar {
 
     pub fn pill_style(mut self, pill_style: bool) -> Self {
         self.pill_style = pill_style;
+        self
+    }
+
+    pub fn corner_radius(mut self, corner_radius: Pixels) -> Self {
+        self.corner_radius = Some(corner_radius);
         self
     }
 
@@ -106,11 +113,13 @@ impl RenderOnce for TabBar {
             .flex_none()
             .w_full()
             .h(Tab::container_height(cx))
+            .overflow_hidden()
+            .when_some(self.corner_radius, |this, radius| this.rounded_t(radius))
             .when(!pill_style, |this| {
                 this.bg(cx.theme().colors().tab_bar_background)
             })
             .when(pill_style, |this| {
-                this.bg(gpui::transparent_black()).py_0p5().px_1()
+                this.bg(gpui::transparent_black()).px_1().items_center()
             })
             .when(!self.start_children.is_empty(), |this| {
                 this.child(

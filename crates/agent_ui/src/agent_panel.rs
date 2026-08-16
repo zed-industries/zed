@@ -6440,11 +6440,26 @@ impl Render for AgentPanel {
         // - Font size works as expected and can be changed with cmd-+/cmd-
         // - Scrolling in all views works as expected
         // - Files can be dropped into the panel
+        let island_layout = cx
+            .try_global::<settings::SettingsStore>()
+            .and_then(|s| {
+                s.raw_user_settings()
+                    .and_then(|u| u.content.workspace.island_layout.as_ref())
+                    .or_else(|| s.raw_default_settings().workspace.island_layout.as_ref())
+            });
+        let corner_radius = if island_layout.is_some_and(|l| l.enabled.unwrap_or(false)) {
+            px(island_layout.and_then(|l| l.corner_radius).unwrap_or(18.0))
+        } else {
+            px(0.)
+        };
+
         let content = v_flex()
             .key_context(self.key_context())
             .relative()
             .size_full()
             .justify_between()
+            .overflow_hidden()
+            .when(corner_radius > px(0.), |this| this.rounded(corner_radius))
             .track_focus(&self.focus_handle)
             .bg(cx.theme().colors().panel_background)
             .on_action(cx.listener(|this, action: &NewThread, window, cx| {
