@@ -2029,7 +2029,7 @@ impl MarkdownElement {
         rendered_text: &RenderedText,
         window: &mut Window,
     ) {
-        for bounds in rendered_text.bounds_for_source_range(start..end) {
+        for bounds in rendered_text.visible_bounds_for_source_range(start..end) {
             window.paint_quad(quad(
                 bounds,
                 Pixels::ZERO,
@@ -2062,7 +2062,7 @@ impl MarkdownElement {
         let active_index = markdown.active_search_highlight;
         let colors = cx.theme().colors();
 
-        let highlight_bounds = rendered_text.bounds_for_sorted_source_ranges(
+        let highlight_bounds = rendered_text.visible_bounds_for_sorted_source_ranges(
             markdown
                 .search_highlights
                 .iter()
@@ -2665,6 +2665,7 @@ impl Element for MarkdownElement {
                                     builder.push_text_style(self.style.code_block.text.to_owned());
                                     builder.push_code_block(language);
                                     builder.push_div(code_block, range, markdown_end);
+                                    builder.track_visible_bounds_of_current_div();
                                 }
                                 (CodeBlockRenderer::Custom { .. }, _) => {}
                             }
@@ -2828,6 +2829,7 @@ impl Element for MarkdownElement {
                                 range,
                                 markdown_end,
                             );
+                            builder.track_visible_bounds_of_current_div();
                         }
                         MarkdownTag::TableHead => {
                             builder.table.start_head();
@@ -3488,6 +3490,7 @@ struct MarkdownElementBuilder {
 struct DivStackEntry {
     div: AnyDiv,
     line_break_mode: LineBreakMode,
+    visible_bounds: Option<Rc<Cell<Option<Bounds<Pixels>>>>>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -3501,6 +3504,7 @@ impl DivStackEntry {
         Self {
             div: div.into(),
             line_break_mode: LineBreakMode::TextLayout,
+            visible_bounds: None,
         }
     }
 }
@@ -3642,6 +3646,28 @@ impl MarkdownElementBuilder {
             entry.div = f(entry.div);
             self.div_stack.push(entry);
         }
+    }
+
+    fn track_visible_bounds_of_current_div(&mut self) {
+        let visible_bounds = Rc::new(Cell::new(None));
+        let entry = self.div_stack.last_mut().unwrap();
+        entry.visible_bounds = Some(visible_bounds.clone());
+        entry.div.extend([canvas(
+            |_, _, _| {},
+            move |_, _, window, _| visible_bounds.set(Some(window.content_mask().bounds)),
+        )
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .into_any_element()]);
+    }
+
+    fn current_visible_bounds(&self) -> Option<Rc<Cell<Option<Bounds<Pixels>>>>> {
+        self.div_stack
+            .iter()
+            .rev()
+            .find_map(|entry| entry.visible_bounds.clone())
     }
 
     fn pop_root_block(
@@ -3862,6 +3888,7 @@ impl MarkdownElementBuilder {
             source_end: source_range.end,
             language: None,
             text_align: TextAlign::Left,
+            visible_bounds: self.current_visible_bounds(),
         });
         div()
             .absolute()
@@ -3886,6 +3913,7 @@ impl MarkdownElementBuilder {
             source_end: self.current_source_index,
             language: self.code_block_stack.last().cloned().flatten(),
             text_align,
+            visible_bounds: self.current_visible_bounds(),
         });
         self.append_child(text.into_any());
     }
@@ -3911,6 +3939,7 @@ struct RenderedLine {
     source_end: usize,
     language: Option<Arc<Language>>,
     text_align: TextAlign,
+    visible_bounds: Option<Rc<Cell<Option<Bounds<Pixels>>>>>,
 }
 
 impl RenderedLine {
@@ -4130,6 +4159,7 @@ struct RenderedFootnoteRef {
 }
 
 impl RenderedText {
+    #[cfg(test)]
     fn bounds_for_source_range(&self, range: Range<usize>) -> Vec<Bounds<Pixels>> {
         self.bounds_for_sorted_source_ranges([(0, range)])
             .into_iter()
@@ -4137,9 +4167,32 @@ impl RenderedText {
             .collect()
     }
 
+    fn visible_bounds_for_source_range(&self, range: Range<usize>) -> Vec<Bounds<Pixels>> {
+        self.visible_bounds_for_sorted_source_ranges([(0, range)])
+            .into_iter()
+            .map(|(_, bounds)| bounds)
+            .collect()
+    }
+
+    #[cfg(test)]
     fn bounds_for_sorted_source_ranges(
         &self,
         ranges: impl IntoIterator<Item = (usize, Range<usize>)>,
+    ) -> Vec<(usize, Bounds<Pixels>)> {
+        self.bounds_for_sorted_source_ranges_impl(ranges, false)
+    }
+
+    fn visible_bounds_for_sorted_source_ranges(
+        &self,
+        ranges: impl IntoIterator<Item = (usize, Range<usize>)>,
+    ) -> Vec<(usize, Bounds<Pixels>)> {
+        self.bounds_for_sorted_source_ranges_impl(ranges, true)
+    }
+
+    fn bounds_for_sorted_source_ranges_impl(
+        &self,
+        ranges: impl IntoIterator<Item = (usize, Range<usize>)>,
+        clip_to_visible_bounds: bool,
     ) -> Vec<(usize, Bounds<Pixels>)> {
         let ranges = ranges.into_iter().collect::<Vec<_>>();
         let mut all_bounds = Vec::new();
@@ -4166,6 +4219,12 @@ impl RenderedText {
                 continue;
             }
 
+            let clip = if clip_to_visible_bounds {
+                line.visible_bounds.as_ref().and_then(|bounds| bounds.get())
+            } else {
+                None
+            };
+
             let mut range_ix = first_possible_range_ix;
             while let Some((highlight_ix, range)) = ranges.get(range_ix) {
                 if range.start >= line.source_end {
@@ -4177,6 +4236,7 @@ impl RenderedText {
                     line,
                     &wrapped_line_segments,
                     range.start.max(line_source_start)..range.end.min(line.source_end),
+                    clip,
                 );
                 range_ix += 1;
             }
@@ -4214,6 +4274,7 @@ impl RenderedText {
         line: &RenderedLine,
         wrapped_line_segments: &[WrappedLineSegment],
         range: Range<usize>,
+        clip: Option<Bounds<Pixels>>,
     ) {
         if range.start >= range.end {
             return;
@@ -4269,13 +4330,17 @@ impl RenderedText {
                             + unwrapped_layout.x_for_index(index - wrapped_line_start)
                             - row_start_x
                     };
-                    all_bounds.push((
-                        highlight_ix,
-                        Bounds::from_corners(
-                            point(x_for_index(selection_start), row_top),
-                            point(x_for_index(selection_end), row_top + line_height),
-                        ),
-                    ));
+                    let bounds = Bounds::from_corners(
+                        point(x_for_index(selection_start), row_top),
+                        point(x_for_index(selection_end), row_top + line_height),
+                    );
+                    let bounds = match clip {
+                        Some(clip) => bounds.intersect(&clip),
+                        None => bounds,
+                    };
+                    if clip.is_none() || !bounds.is_empty() {
+                        all_bounds.push((highlight_ix, bounds));
+                    }
                 }
 
                 row_start = row_end;
@@ -6395,5 +6460,84 @@ mod tests {
             right_cell_after_scroll.top(),
             right_cell_before_scroll.top()
         );
+    }
+
+    #[gpui::test]
+    fn test_selection_highlight_is_clipped_to_scrollable_code_block(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let source = indoc::indoc! {r#"
+            ```txt
+            one_extremely_long_code_line_that_overflows_the_viewport_and_keeps_going_and_going
+            ```
+        "#};
+        let code_line =
+            "one_extremely_long_code_line_that_overflows_the_viewport_and_keeps_going_and_going";
+        let code_start = source.find(code_line).expect("code line should be present");
+        let code_range = code_start..code_start + code_line.len();
+
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let rendered_text = rendered_text.clone();
+            move |_, _| MarkdownTestView {
+                markdown,
+                style: MarkdownStyle {
+                    code_block_overflow_x_scroll: true,
+                    ..MarkdownStyle::default()
+                },
+                code_span_link: None,
+                rendered_text,
+            }
+        });
+        let window_width = px(300.);
+        cx.simulate_resize(size(window_width, px(200.)));
+        cx.run_until_parked();
+
+        let event_position = {
+            let rendered_text = rendered_text.borrow();
+            let rendered_text = rendered_text
+                .as_ref()
+                .expect("markdown should be rendered before scrolling");
+            let full_bounds = rendered_text
+                .bounds_for_source_range(code_range.clone())
+                .into_iter()
+                .next()
+                .expect("code line should have bounds");
+            let visible_bounds = rendered_text
+                .visible_bounds_for_source_range(code_range.clone())
+                .into_iter()
+                .next()
+                .expect("code line should have visible bounds");
+            assert!(full_bounds.right() > window_width);
+            assert!(visible_bounds.right() <= window_width);
+            assert_eq!(visible_bounds.left(), full_bounds.left());
+            visible_bounds.center()
+        };
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: event_position,
+            delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        });
+        cx.run_until_parked();
+
+        let rendered_text = rendered_text.borrow();
+        let rendered_text = rendered_text
+            .as_ref()
+            .expect("markdown should be rendered after scrolling");
+        let full_bounds = rendered_text
+            .bounds_for_source_range(code_range.clone())
+            .into_iter()
+            .next()
+            .expect("code line should have bounds after scrolling");
+        let visible_bounds = rendered_text
+            .visible_bounds_for_source_range(code_range)
+            .into_iter()
+            .next()
+            .expect("code line should have visible bounds after scrolling");
+        assert!(full_bounds.left() < px(0.));
+        assert!(visible_bounds.left() >= px(0.));
+        assert!(visible_bounds.right() <= window_width);
     }
 }
