@@ -7,7 +7,6 @@ use gpui::{
     Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Role,
     Size, Subscription, TaskExt, anchored, canvas, prelude::*, px, relative,
 };
-use theme::BufferLineHeight;
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
 use std::{
     cell::{Cell, RefCell},
@@ -15,6 +14,7 @@ use std::{
     rc::Rc,
     time::{Duration, Instant},
 };
+use theme::BufferLineHeight;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SubmenuOpenTrigger {
