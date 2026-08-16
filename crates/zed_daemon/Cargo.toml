@@ -20,7 +20,6 @@ serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
 code_graph = { path = "../code_graph" }
-libzed_core = { path = "../libzed_core" }
 outline = { path = "../outline" }
 search = { path = "../search" }
 tasks_ui = { path = "../tasks_ui" }
@@ -29,6 +28,9 @@ markdown_preview = { path = "../markdown_preview" }
 editor = { path = "../editor" }
 diagnostics = { path = "../diagnostics" }
 breadcrumbs = { path = "../breadcrumbs" }
+language = { path = "../language" }
+workspace = { path = "../workspace" }
+call = { path = "../call" }
 rope.workspace = true
 regex.workspace = true
 ignore.workspace = true

@@ -23744,13 +23744,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "breadcrumbs",
+ "call",
  "code_graph",
  "diagnostics",
  "editor",
  "futures 0.3.32",
  "git",
  "ignore",
- "libzed_core",
+ "language",
  "log",
  "markdown_preview",
  "outline",
@@ -23761,6 +23762,7 @@ dependencies = [
  "serde_json",
  "smol",
  "tasks_ui",
+ "workspace",
 ]
 
 [[package]]

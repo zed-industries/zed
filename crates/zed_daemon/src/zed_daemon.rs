@@ -756,6 +756,60 @@ pub fn default_registry() -> MethodRegistry {
         })
     });
 
+    registry.register("language/tokenize", |params| {
+        let content = params.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let tokens = language::HeadlessBufferTokenizer::tokenize(content);
+        serde_json::json!({
+            "status": "ok",
+            "token_count": tokens.len(),
+            "tokens": tokens.iter().map(|t| {
+                serde_json::json!({
+                    "text": t.text,
+                    "start_offset": t.start_offset,
+                    "end_offset": t.end_offset,
+                    "highlight": t.highlight_name
+                })
+            }).collect::<Vec<_>>()
+        })
+    });
+
+    registry.register("workspace/context", |params| {
+        let workspace_id = params.get("workspace_id").and_then(|v| v.as_str()).unwrap_or("default");
+        let root_path = params.get("root_path").and_then(|v| v.as_str()).unwrap_or(".");
+        let ctx = workspace::HeadlessWorkspaceContext::new(workspace_id)
+            .with_root_path(root_path);
+
+        serde_json::json!({
+            "status": "ok",
+            "workspace_id": ctx.workspace_id,
+            "root_paths": ctx.root_paths.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+            "open_buffer_count": ctx.open_buffer_count,
+            "is_headless": ctx.is_headless
+        })
+    });
+
+    let audio_bridge = Arc::new(Mutex::new(call::HeadlessAudioBridge::new()));
+    let ab = audio_bridge.clone();
+    registry.register("audio/channels", move |params| {
+        if let Some(channel_id) = params.get("channel_id").and_then(|v| v.as_str()) {
+            let participant = params.get("participant_id").and_then(|v| v.as_str()).unwrap_or("agent-voice");
+            let channel = call::AgentVoiceChannel {
+                channel_id: channel_id.to_string(),
+                participant_id: participant.to_string(),
+                is_muted: false,
+                sample_rate: 48000,
+            };
+            ab.lock().unwrap().register_channel(channel);
+        }
+
+        let channels = ab.lock().unwrap().active_channels.clone();
+        serde_json::json!({
+            "status": "ok",
+            "active_channels_count": channels.len(),
+            "channels": channels
+        })
+    });
+
     let store_create = buffer_store.clone();
     registry.register("buffer/create", move |params| {
         let initial_text = params
