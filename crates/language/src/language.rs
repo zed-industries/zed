@@ -42,7 +42,7 @@ use http_client::HttpClient;
 
 pub use language_core::{
     SymbolKind,
-    highlight_map::{HighlightId, HighlightMap},
+    highlight_map::{CaptureId, CapturedRange, HighlightId, HighlightMap},
 };
 
 use futures::future::FutureExt as _;
@@ -51,11 +51,11 @@ pub use language_core::{
     BracketsPatternConfig, CodeLabel, CodeLabelBuilder, DebugVariablesConfig, DebuggerTextObject,
     DecreaseIndentConfig, Grammar, GrammarId, HighlightsConfig, IndentConfig, InjectionConfig,
     InjectionPatternConfig, JsxTagAutoCloseConfig, LanguageConfig, LanguageConfigOverride,
-    LanguageId, LanguageMatcher, OrderedListConfig, OutlineConfig, Override, OverrideConfig,
-    OverrideEntry, RedactionConfig, RunnableCapture, RunnableConfig, SoftWrap, Symbol,
-    TaskListConfig, TextObject, TextObjectConfig, WrapCharactersConfig, default_true,
-    deserialize_regex, deserialize_regex_vec, regex_json_schema, regex_vec_json_schema,
-    serialize_regex,
+    LanguageId, LanguageMatcher, MAX_TEXT_CAPTURES_ENTRY_BYTES, OrderedListConfig, OutlineConfig,
+    Override, OverrideConfig, OverrideEntry, RedactionConfig, RunnableCapture, RunnableConfig,
+    SoftWrap, Symbol, TaskListConfig, TextCapturesKey, TextObject, TextObjectConfig,
+    WrapCharactersConfig, default_true, deserialize_regex, deserialize_regex_vec,
+    regex_json_schema, regex_vec_json_schema, serialize_regex,
 };
 pub use language_registry::{
     LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
@@ -71,7 +71,6 @@ pub use runnable::{ResolvedRunnable, RunnableMatchCapture, RunnableRange, Runnab
 use semver::Version;
 use serde_json::Value;
 use settings::WorktreeId;
-use smallvec::SmallVec;
 use std::{
     ffi::OsStr,
     fmt::Debug,
@@ -82,7 +81,7 @@ use std::{
     str,
     sync::{Arc, LazyLock},
 };
-use syntax_map::{QueryCursorHandle, SyntaxMapCapture, SyntaxSnapshot};
+use syntax_map::{QueryCursorHandle, SyntaxSnapshot, flattened_highlight_regions};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider};
 pub use text_diff::{
@@ -929,12 +928,6 @@ pub struct FakeLspAdapter {
     >,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CapturedRange {
-    pub range: Range<usize>,
-    pub capture_ids: SmallVec<[u32; 4]>,
-}
-
 pub struct Language {
     pub(crate) id: LanguageId,
     pub(crate) config: LanguageConfig,
@@ -1122,10 +1115,10 @@ impl Language {
         };
         let highlight_map = grammar.highlight_map();
         self.highlight_text_captures(text, range)
-            .into_iter()
+            .iter()
             .filter_map(|captured| {
                 let highlight_id = highlight_map.get_innermost(&captured.capture_ids)?;
-                Some((captured.range, highlight_id))
+                Some((captured.range.clone(), highlight_id))
             })
             .collect()
     }
@@ -1134,59 +1127,66 @@ impl Language {
         self: &Arc<Self>,
         text: &Rope,
         range: Range<usize>,
-    ) -> Vec<CapturedRange> {
-        let mut result = Vec::new();
+    ) -> Arc<[CapturedRange]> {
         let Some(grammar) = &self.grammar else {
-            return result;
+            return Arc::default();
+        };
+        let Some(highlights_config) = &grammar.highlights_config else {
+            return Arc::default();
+        };
+        let captures = if text.len() > MAX_TEXT_CAPTURES_ENTRY_BYTES {
+            self.compute_text_captures(text)
+        } else {
+            let key = TextCapturesKey::new(text.chunks(), text.len());
+            match highlights_config
+                .text_captures_cache
+                .get(&key, text.chunks())
+            {
+                Some(captures) => captures,
+                None => highlights_config.text_captures_cache.insert(
+                    key,
+                    Arc::from(text.chunks().collect::<String>()),
+                    self.compute_text_captures(text),
+                ),
+            }
+        };
+        if range.start == 0 && range.end >= text.len() {
+            return captures;
+        }
+        captures
+            .iter()
+            .filter(|captured| captured.range.start < range.end && captured.range.end > range.start)
+            .map(|captured| CapturedRange {
+                range: captured.range.start.max(range.start) - range.start
+                    ..captured.range.end.min(range.end) - range.start,
+                capture_ids: captured.capture_ids.clone(),
+            })
+            .collect()
+    }
+
+    fn compute_text_captures(self: &Arc<Self>, text: &Rope) -> Arc<[CapturedRange]> {
+        let Some(grammar) = &self.grammar else {
+            return Arc::default();
         };
         let tree = parse_text(grammar, text, None);
-        let mut captures =
-            SyntaxSnapshot::single_tree_captures(range.clone(), text, &tree, self, |grammar| {
+        let captures =
+            SyntaxSnapshot::single_tree_captures(0..text.len(), text, &tree, self, |grammar| {
                 grammar
                     .highlights_config
                     .as_ref()
                     .map(|config| &config.query)
             });
-        let mut stack = Vec::<SyntaxMapCapture>::new();
-        let mut offset = range.start;
-        let mut next_capture = captures.next();
-        loop {
-            while stack
-                .last()
-                .is_some_and(|capture| capture.node.end_byte() <= offset)
-            {
-                stack.pop();
-            }
-            while let Some(capture) = next_capture.take() {
-                let capture_range = capture.node.byte_range();
-                if capture_range.start > offset {
-                    next_capture = Some(capture);
-                    break;
-                }
-                if capture_range.end > offset {
-                    stack.push(capture);
-                }
-                next_capture = captures.next();
-            }
-            let mut next_boundary = range.end;
-            if let Some(capture) = stack.last() {
-                next_boundary = next_boundary.min(capture.node.end_byte());
-            }
-            if let Some(capture) = &next_capture {
-                next_boundary = next_boundary.min(capture.node.start_byte());
-            }
-            if !stack.is_empty() && next_boundary > offset {
-                result.push(CapturedRange {
-                    range: offset - range.start..next_boundary - range.start,
-                    capture_ids: stack.iter().map(|capture| capture.index).collect(),
-                });
-            }
-            if next_boundary >= range.end {
-                break;
-            }
-            offset = next_boundary;
-        }
-        result
+        flattened_highlight_regions(captures, 0..text.len())
+            .into_iter()
+            .map(|region| CapturedRange {
+                range: region.range,
+                capture_ids: region
+                    .stack
+                    .iter()
+                    .map(|capture| capture.capture_id)
+                    .collect(),
+            })
+            .collect()
     }
 
     pub fn path_suffixes(&self) -> &[String] {
@@ -1705,15 +1705,15 @@ mod tests {
 
         let map = build_highlight_map(capture_names, &theme);
         assert_eq!(
-            theme.get_capture_name(map.get(0).unwrap()),
+            theme.get_capture_name(map.get(CaptureId(0)).unwrap()),
             Some("function")
         );
         assert_eq!(
-            theme.get_capture_name(map.get(1).unwrap()),
+            theme.get_capture_name(map.get(CaptureId(1)).unwrap()),
             Some("function.async")
         );
         assert_eq!(
-            theme.get_capture_name(map.get(2).unwrap()),
+            theme.get_capture_name(map.get(CaptureId(2)).unwrap()),
             Some("variable.builtin")
         );
     }
@@ -1756,7 +1756,7 @@ mod tests {
                     captured
                         .capture_ids
                         .iter()
-                        .map(|&capture_id| capture_names[capture_id as usize])
+                        .map(|capture_id| capture_names[capture_id.0 as usize])
                         .collect::<Vec<_>>(),
                 )
             })
@@ -1801,6 +1801,72 @@ mod tests {
                 (7..12, "function"),
             ],
             "an inner capture missing from the theme must fall back to its outer capture"
+        );
+
+        let memoized = language.highlight_text_captures(&Rope::from(code), 0..code.len());
+        assert!(
+            Arc::ptr_eq(&captures, &memoized),
+            "repeated highlighting of the same text must be memoized"
+        );
+        let partial = language.highlight_text_captures(&Rope::from(code), 0..2);
+        assert!(
+            !Arc::ptr_eq(&captures, &partial),
+            "a different range must not reuse the memoized captures"
+        );
+        assert_eq!(
+            partial.as_ref(),
+            &[CapturedRange {
+                range: 0..2,
+                capture_ids: captures[0].capture_ids.clone(),
+            }],
+        );
+    }
+
+    #[test]
+    fn test_oversized_text_is_highlighted_without_caching() {
+        let language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Rust".into(),
+                    ..LanguageConfig::default()
+                },
+                Some(tree_sitter_rust::LANGUAGE.into()),
+            )
+            .with_highlights_query("(identifier) @variable")
+            .unwrap(),
+        );
+
+        let small_code = "fn main() {}";
+        let small_captures =
+            language.highlight_text_captures(&Rope::from(small_code), 0..small_code.len());
+        let expected_captures = [CapturedRange {
+            range: 3..7,
+            capture_ids: [CaptureId(0)].into_iter().collect(),
+        }];
+        assert_eq!(
+            small_captures.as_ref(),
+            &expected_captures,
+            "texts within the size cap must be highlighted"
+        );
+
+        let oversized_code = format!(
+            "fn main() {{}}{}",
+            " ".repeat(MAX_TEXT_CAPTURES_ENTRY_BYTES)
+        );
+        let oversized_rope = Rope::from(oversized_code.as_str());
+        let first_captures =
+            language.highlight_text_captures(&oversized_rope, 0..oversized_code.len());
+        assert_eq!(
+            first_captures.as_ref(),
+            &expected_captures,
+            "texts over the cache entry cap must still be highlighted"
+        );
+        let second_captures =
+            language.highlight_text_captures(&oversized_rope, 0..oversized_code.len());
+        assert_eq!(second_captures.as_ref(), &expected_captures);
+        assert!(
+            !Arc::ptr_eq(&first_captures, &second_captures),
+            "texts over the cache entry cap must not be memoized"
         );
     }
 

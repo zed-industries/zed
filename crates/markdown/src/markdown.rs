@@ -948,7 +948,8 @@ impl Markdown {
                     .languages_by_path
                     .get(&path_range.path)
                     .cloned(),
-                CodeBlockKind::Fenced | CodeBlockKind::Indented => None,
+                CodeBlockKind::Fenced => self.parsed_markdown.fallback_code_block_language.clone(),
+                CodeBlockKind::Indented => None,
             }
         })
     }
@@ -1200,13 +1201,6 @@ impl Markdown {
         let should_parse_metadata_blocks = self.options.render_metadata_blocks;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
-        let previous_parse = (!should_parse_links_only).then(|| PreviousParse {
-            source: self.parsed_markdown.source.clone(),
-            languages_by_name: self.parsed_markdown.languages_by_name.clone(),
-            languages_by_path: self.parsed_markdown.languages_by_path.clone(),
-            fallback_code_block_language: self.parsed_markdown.fallback_code_block_language.clone(),
-            code_block_highlights: self.parsed_markdown.code_block_highlights.clone(),
-        });
 
         let parsed = cx.background_spawn(async move {
             if should_parse_links_only {
@@ -1290,7 +1284,6 @@ impl Markdown {
                 &languages_by_name,
                 &languages_by_path,
                 fallback_code_block_language.as_ref(),
-                previous_parse.as_ref(),
             );
 
             for (range, event) in &events {
@@ -1527,16 +1520,7 @@ impl ParsedMarkdown {
 
 struct PendingCodeBlock<'a> {
     language: Arc<Language>,
-    reusable_from_previous_parse: bool,
     texts: Vec<(Range<usize>, &'a str)>,
-}
-
-struct PreviousParse {
-    source: SharedString,
-    languages_by_name: TreeMap<SharedString, Arc<Language>>,
-    languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
-    fallback_code_block_language: Option<Arc<Language>>,
-    code_block_highlights: Arc<CodeBlockHighlights>,
 }
 
 fn compute_code_block_highlights(
@@ -1546,17 +1530,8 @@ fn compute_code_block_highlights(
     languages_by_name: &TreeMap<SharedString, Arc<Language>>,
     languages_by_path: &TreeMap<Arc<str>, Arc<Language>>,
     fallback_code_block_language: Option<&Arc<Language>>,
-    previous_parse: Option<&PreviousParse>,
 ) -> CodeBlockHighlights {
     let mut code_block_highlights = CodeBlockHighlights::default();
-    let shared_prefix_len = previous_parse.map_or(0, |previous_parse| {
-        source
-            .as_bytes()
-            .iter()
-            .zip(previous_parse.source.as_bytes())
-            .take_while(|(a, b)| a == b)
-            .count()
-    });
     let mut pending_block: Option<PendingCodeBlock> = None;
     for (range, event) in events {
         match event {
@@ -1565,48 +1540,22 @@ fn compute_code_block_highlights(
                     pending_block = None;
                     continue;
                 }
-                let (language, previous_language) = match kind {
-                    CodeBlockKind::FencedLang(name) => (
-                        languages_by_name.get(name).cloned(),
-                        previous_parse
-                            .and_then(|previous| previous.languages_by_name.get(name).cloned()),
-                    ),
-                    CodeBlockKind::FencedSrc(path_range) => (
-                        languages_by_path.get(&path_range.path).cloned(),
-                        previous_parse.and_then(|previous| {
-                            previous.languages_by_path.get(&path_range.path).cloned()
-                        }),
-                    ),
-                    CodeBlockKind::Fenced => (
-                        fallback_code_block_language.cloned(),
-                        previous_parse
-                            .and_then(|previous| previous.fallback_code_block_language.clone()),
-                    ),
-                    _ => (None, None),
+                let language = match kind {
+                    CodeBlockKind::FencedLang(name) => languages_by_name.get(name).cloned(),
+                    CodeBlockKind::FencedSrc(path_range) => {
+                        languages_by_path.get(&path_range.path).cloned()
+                    }
+                    CodeBlockKind::Fenced => fallback_code_block_language.cloned(),
+                    _ => None,
                 };
                 pending_block = language.map(|language| PendingCodeBlock {
-                    reusable_from_previous_parse: previous_language
-                        .is_some_and(|previous| Arc::ptr_eq(&previous, &language)),
                     language,
                     texts: Vec::new(),
                 });
             }
             MarkdownEvent::End(MarkdownTagEnd::CodeBlock) => {
                 if let Some(block) = pending_block.take() {
-                    if let Some(previous_parse) = previous_parse
-                        && block.reusable_from_previous_parse
-                        && range.end <= shared_prefix_len
-                    {
-                        for (text_range, _) in &block.texts {
-                            if let Some(highlights) =
-                                previous_parse.code_block_highlights.get(&text_range.start)
-                            {
-                                code_block_highlights.insert(text_range.start, highlights.clone());
-                            }
-                        }
-                    } else {
-                        highlight_code_block(block, &mut code_block_highlights);
-                    }
+                    highlight_code_block(block, &mut code_block_highlights);
                 }
             }
             MarkdownEvent::Text => {
@@ -1632,11 +1581,17 @@ fn highlight_code_block(block: PendingCodeBlock, code_block_highlights: &mut Cod
         text_offsets.push(combined.len());
         combined.push_str(text);
     }
-    let mut highlights = block
+    let captures = block
         .language
-        .highlight_text_captures(&Rope::from(combined.as_str()), 0..combined.len())
-        .into_iter()
-        .peekable();
+        .highlight_text_captures(&Rope::from(combined.as_str()), 0..combined.len());
+    if captures.is_empty() {
+        return;
+    }
+    if let [(source_range, _)] = block.texts.as_slice() {
+        code_block_highlights.insert(source_range.start, captures);
+        return;
+    }
+    let mut highlights = captures.iter().peekable();
     for ((source_range, text), text_offset) in block.texts.iter().zip(text_offsets) {
         let text_end = text_offset + text.len();
         let mut text_highlights = Vec::new();
@@ -5041,7 +4996,7 @@ mod tests {
             changed_highlights.as_ref(),
             language
                 .highlight_text_captures(&Rope::from(changed_code), 0..changed_code.len())
-                .as_slice(),
+                .as_ref(),
             "highlights of a changed code block must be recomputed"
         );
     }

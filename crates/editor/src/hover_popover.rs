@@ -676,16 +676,26 @@ fn combine_hover_blocks(blocks: &[HoverBlock]) -> String {
     let mut combined = String::new();
     let mut budget = MAX_HOVER_BYTES;
     let mut dropped_blocks = false;
+    let last_block_index = blocks
+        .iter()
+        .rposition(|block| !block.text.trim().is_empty());
     for (index, block) in blocks.iter().enumerate() {
         let text = block.text.trim();
+        if text.is_empty() {
+            continue;
+        }
         let separator = if combined.is_empty() { "" } else { "\n\n" };
-        let is_last_block = index + 1 == blocks.len();
+        let is_last_block = Some(index) == last_block_index;
         let reserved_for_dropped_marker = if is_last_block { 0 } else { "\n\n…".len() };
         let mut truncated_inline = false;
         let piece = match &block.kind {
             project::HoverBlockKind::PlainText | project::HoverBlockKind::Markdown => {
-                let block_budget =
-                    budget.saturating_sub(separator.len() + reserved_for_dropped_marker);
+                let Some(block_budget) =
+                    budget.checked_sub(separator.len() + reserved_for_dropped_marker)
+                else {
+                    dropped_blocks = true;
+                    break;
+                };
                 match fit_in_budget(text.len(), block_budget) {
                     BudgetFit::Fits => Cow::Borrowed(text),
                     BudgetFit::TooSmall => {
@@ -700,10 +710,16 @@ fn combine_hover_blocks(blocks: &[HoverBlock]) -> String {
             }
             project::HoverBlockKind::Code { language } => {
                 let language = language.replace(['`', '\r', '\n'], "");
-                let block_budget = budget
-                    .saturating_sub(separator.len() + reserved_for_dropped_marker)
-                    .saturating_sub(wrapping_code_fence(text).len() * 2)
-                    .saturating_sub(language.len() + "\n\n".len());
+                let fence = wrapping_code_fence(text);
+                let overhead = separator.len()
+                    + reserved_for_dropped_marker
+                    + fence.len() * 2
+                    + language.len()
+                    + "\n\n".len();
+                let Some(block_budget) = budget.checked_sub(overhead) else {
+                    dropped_blocks = true;
+                    break;
+                };
                 let text = match fit_in_budget(text.len(), block_budget) {
                     BudgetFit::Fits => Cow::Borrowed(text),
                     BudgetFit::TooSmall => {
@@ -718,7 +734,6 @@ fn combine_hover_blocks(blocks: &[HoverBlock]) -> String {
                         ))
                     }
                 };
-                let fence = wrapping_code_fence(&text);
                 Cow::Owned(format!("{fence}{language}\n{text}\n{fence}"))
             }
         };
@@ -2216,6 +2231,71 @@ mod tests {
             MAX_HOVER_BYTES,
             "The dropped-blocks indicator must fit within the byte budget"
         );
+    }
+
+    #[test]
+    fn test_whitespace_hover_blocks_are_skipped() {
+        let mut blocks = vec![HoverBlock {
+            text: "a".repeat(MAX_HOVER_BYTES - 6),
+            kind: HoverBlockKind::Markdown,
+        }];
+        blocks.extend((0..100).map(|_| HoverBlock {
+            text: " ".to_owned(),
+            kind: HoverBlockKind::Markdown,
+        }));
+        blocks.push(HoverBlock {
+            text: "bbb".to_owned(),
+            kind: HoverBlockKind::Markdown,
+        });
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!("{}\n\nbbb", "a".repeat(MAX_HOVER_BYTES - 6)),
+            "Whitespace-only blocks must not emit separators or consume the byte budget"
+        );
+    }
+
+    #[test]
+    fn test_unaffordable_code_fence_overhead_drops_the_block() {
+        let blocks = [
+            HoverBlock {
+                text: "a".repeat(MAX_HOVER_BYTES - 6),
+                kind: HoverBlockKind::Markdown,
+            },
+            HoverBlock {
+                text: "let x = 1;".to_owned(),
+                kind: HoverBlockKind::Code {
+                    language: "rust".to_owned(),
+                },
+            },
+        ];
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!("{}\n\n…", "a".repeat(MAX_HOVER_BYTES - 6)),
+            "A code block whose fence overhead does not fit must be dropped, not overflow the budget"
+        );
+    }
+
+    #[test]
+    fn test_dropping_the_last_block_stays_within_the_budget() {
+        let blocks = [
+            HoverBlock {
+                text: "a".repeat(MAX_HOVER_BYTES - 2),
+                kind: HoverBlockKind::Markdown,
+            },
+            HoverBlock {
+                text: "bbb".to_owned(),
+                kind: HoverBlockKind::Markdown,
+            },
+        ];
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!("{}…\n\n…", "a".repeat(MAX_HOVER_BYTES - 8)),
+            "Reserving the dropped-blocks marker must keep the total within the budget"
+        );
+        assert_eq!(combined.len(), MAX_HOVER_BYTES);
     }
 
     #[test]
