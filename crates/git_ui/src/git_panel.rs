@@ -2483,10 +2483,6 @@ impl GitPanel {
                 .collect();
             this.update(cx, |this, cx| this.change_file_stage(false, to_unstage, cx))?;
 
-            // Await all trash tasks concurrently rather than bailing on the
-            // first failure. With many untracked files, a single error (locked
-            // file, permission, race) would otherwise cancel every pending
-            // task, leaving the remaining files untrashed with no feedback.
             let results = futures::future::join_all(tasks).await;
             let errors: Vec<anyhow::Error> = results.into_iter().filter_map(|r| r.err()).collect();
             let failed_count = errors.len();
