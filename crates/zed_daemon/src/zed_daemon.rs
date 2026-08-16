@@ -991,6 +991,7 @@ mod tests {
             id: Some(serde_json::json!(1)),
             method: "daemon/status".into(),
             params: serde_json::Value::Null,
+            auth_token: None,
         };
         let response = registry.dispatch(&request);
         assert!(response.error.is_none());
@@ -1006,6 +1007,7 @@ mod tests {
             id: Some(serde_json::json!(2)),
             method: "nonexistent/method".into(),
             params: serde_json::Value::Null,
+            auth_token: None,
         };
         let response = registry.dispatch(&request);
         assert!(response.error.is_some());
