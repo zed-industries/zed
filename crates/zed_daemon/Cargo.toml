@@ -21,3 +21,9 @@ serde_json.workspace = true
 smol.workspace = true
 code_graph = { path = "../code_graph" }
 libzed_core = { path = "../libzed_core" }
+outline = { path = "../outline" }
+search = { path = "../search" }
+tasks_ui = { path = "../tasks_ui" }
+git = { path = "../git" }
+markdown_preview = { path = "../markdown_preview" }
+rope.workspace = true

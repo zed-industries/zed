@@ -23745,11 +23745,17 @@ dependencies = [
  "anyhow",
  "code_graph",
  "futures 0.3.32",
+ "git",
  "libzed_core",
  "log",
+ "markdown_preview",
+ "outline",
+ "rope",
+ "search",
  "serde",
  "serde_json",
  "smol",
+ "tasks_ui",
 ]
 
 [[package]]

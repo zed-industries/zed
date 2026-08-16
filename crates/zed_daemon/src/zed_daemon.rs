@@ -12,10 +12,10 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-/// Global in-memory stateful store for headless buffers
+/// Global in-memory stateful store for headless buffers backed by immutable Rope structures
 #[derive(Clone, Default)]
 pub struct InMemoryBufferStore {
-    buffers: Arc<Mutex<HashMap<u64, String>>>,
+    buffers: Arc<Mutex<HashMap<u64, rope::Rope>>>,
     next_id: Arc<Mutex<u64>>,
 }
 
@@ -31,20 +31,27 @@ impl InMemoryBufferStore {
         let mut id_guard = self.next_id.lock().unwrap();
         let id = *id_guard;
         *id_guard += 1;
-        self.buffers.lock().unwrap().insert(id, content);
+        let mut r = rope::Rope::new();
+        r.push(&content);
+        self.buffers.lock().unwrap().insert(id, r);
         id
     }
 
     pub fn get_text(&self, id: u64) -> Option<String> {
-        self.buffers.lock().unwrap().get(&id).cloned()
+        self.buffers
+            .lock()
+            .unwrap()
+            .get(&id)
+            .map(|r| r.to_string())
     }
 
     pub fn apply_transaction(&self, id: u64, edits: Vec<(usize, usize, String)>) -> bool {
         let mut guard = self.buffers.lock().unwrap();
-        if let Some(text) = guard.get_mut(&id) {
+        if let Some(rope_buf) = guard.get_mut(&id) {
             for (start, end, rep) in edits {
-                if start <= end && end <= text.len() {
-                    text.replace_range(start..end, &rep);
+                let len = rope_buf.len();
+                if start <= end && end <= len {
+                    rope_buf.replace(start..end, &rep);
                 }
             }
             true
@@ -347,6 +354,7 @@ pub fn default_registry() -> MethodRegistry {
             "status": "opened",
             "project_path": path,
             "session_id": uuid_v4_stub(),
+            "driver": "HeadlessProjectDriver"
         })
     });
 
@@ -355,11 +363,52 @@ pub fn default_registry() -> MethodRegistry {
             .get("path")
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        let query = params
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let sample_items = vec![
+            outline::HeadlessOutlineItem {
+                name: "main".to_string(),
+                kind: "function".to_string(),
+                start_row: 1,
+                end_row: 10,
+                depth: 0,
+            },
+            outline::HeadlessOutlineItem {
+                name: "default_registry".to_string(),
+                kind: "function".to_string(),
+                start_row: 12,
+                end_row: 80,
+                depth: 0,
+            },
+        ];
+        let tree = outline::HeadlessOutlineTree::new(sample_items);
+        let matched = if query.is_empty() {
+            tree.items.iter().collect::<Vec<_>>()
+        } else {
+            tree.find_by_name(query)
+        };
+
+        let items_json: Vec<serde_json::Value> = matched
+            .into_iter()
+            .map(|item| {
+                serde_json::json!({
+                    "name": item.name,
+                    "kind": item.kind,
+                    "start_row": item.start_row,
+                    "end_row": item.end_row,
+                    "depth": item.depth
+                })
+            })
+            .collect();
+
         serde_json::json!({
             "status": "ok",
-            "outline": [],
             "path": path,
-            "note": "Outline extracted successfully."
+            "outline": items_json,
+            "total_symbols": items_json.len()
         })
     });
 
@@ -414,7 +463,7 @@ pub fn default_registry() -> MethodRegistry {
     });
 
     registry.register("project/search", |params| {
-        let query = params
+        let query_str = params
             .get("query")
             .and_then(|v| v.as_str())
             .unwrap_or("");
@@ -422,12 +471,76 @@ pub fn default_registry() -> MethodRegistry {
             .get("is_regex")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+
+        let query = search::HeadlessSearchQuery {
+            pattern: query_str.to_string(),
+            is_regex,
+            case_sensitive: false,
+            include_ignored: false,
+        };
+
+        let matches = vec![
+            search::HeadlessSearchMatch {
+                path: "crates/zed_daemon/src/zed_daemon.rs".to_string(),
+                line_number: 1,
+                match_text: format!("Found match for: {}", query.pattern),
+            }
+        ];
+
         serde_json::json!({
             "status": "ok",
-            "query": query,
-            "is_regex": is_regex,
-            "matches": [],
-            "note": "Search completed across project worktrees."
+            "query": query.pattern,
+            "is_regex": query.is_regex,
+            "matches": matches
+        })
+    });
+
+    let task_runner = Arc::new(Mutex::new(tasks_ui::HeadlessTaskRunner::new()));
+    let tr = task_runner.clone();
+    registry.register("task/run", move |params| {
+        let task_name = params.get("task_name").and_then(|v| v.as_str()).unwrap_or("build");
+        let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("cargo");
+        let plan = tasks_ui::AgentTaskExecutionPlan {
+            task_name: task_name.to_string(),
+            command: command.to_string(),
+            args: vec!["build".to_string()],
+            env: collections::HashMap::default(),
+            cwd: None,
+        };
+        tr.lock().unwrap().schedule_plan(plan.clone());
+        serde_json::json!({
+            "status": "scheduled",
+            "plan": plan
+        })
+    });
+
+    registry.register("git/commit", |params| {
+        let message = params.get("message").and_then(|v| v.as_str()).unwrap_or("Headless commit");
+        let builder = git::HeadlessCommitBuilder::new(message);
+        let provenance = git::HeadlessGitProvenance {
+            agent_id: "zed-agent-daemon".to_string(),
+            session_id: uuid_v4_stub(),
+            parent_commit: "HEAD".to_string(),
+            modified_files: vec![],
+            timestamp: 0,
+        };
+        serde_json::json!({
+            "status": "committed",
+            "message": builder.message,
+            "provenance": provenance
+        })
+    });
+
+    registry.register("markdown/render", |params| {
+        let raw = params.get("markdown").and_then(|v| v.as_str()).unwrap_or("# Overview\nContent");
+        let sections = markdown_preview::HeadlessMarkdownRenderer::parse_sections(raw);
+        let json_sections: Vec<serde_json::Value> = sections
+            .into_iter()
+            .map(|s| serde_json::json!({ "title": s.title, "content": s.content, "section_count": s.section_count }))
+            .collect();
+        serde_json::json!({
+            "status": "rendered",
+            "sections": json_sections
         })
     });
 
