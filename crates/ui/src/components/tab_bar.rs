@@ -225,8 +225,18 @@ impl Component for TabBar {
                         "Pill Tabs",
                         TabBar::new("pill_tab_bar")
                             .pill_style(true)
-                            .child(Tab::new("p1").pill_style(true).toggle_state(true).child("Active Tab"))
-                            .child(Tab::new("p2").pill_style(true).toggle_state(false).child("Inactive Tab"))
+                            .child(
+                                Tab::new("p1")
+                                    .pill_style(true)
+                                    .toggle_state(true)
+                                    .child("Active Tab"),
+                            )
+                            .child(
+                                Tab::new("p2")
+                                    .pill_style(true)
+                                    .toggle_state(false)
+                                    .child("Inactive Tab"),
+                            )
                             .into_any_element(),
                     )],
                 ),
@@ -248,14 +258,28 @@ mod tests {
                 .child(
                     TabBar::new("pill_bar")
                         .pill_style(true)
-                        .child(Tab::new("tab1").pill_style(true).toggle_state(true).child("Active Pill"))
-                        .child(Tab::new("tab2").pill_style(true).toggle_state(false).child("Inactive Pill")),
+                        .child(
+                            Tab::new("tab1")
+                                .pill_style(true)
+                                .toggle_state(true)
+                                .child("Active Pill"),
+                        )
+                        .child(
+                            Tab::new("tab2")
+                                .pill_style(true)
+                                .toggle_state(false)
+                                .child("Inactive Pill"),
+                        ),
                 )
                 .child(
                     TabBar::new("default_bar")
                         .pill_style(false)
                         .child(Tab::new("tab3").toggle_state(true).child("Active Default"))
-                        .child(Tab::new("tab4").toggle_state(false).child("Inactive Default")),
+                        .child(
+                            Tab::new("tab4")
+                                .toggle_state(false)
+                                .child("Inactive Default"),
+                        ),
                 )
         }
     }
@@ -273,4 +297,3 @@ mod tests {
         cx.run_until_parked();
     }
 }
-

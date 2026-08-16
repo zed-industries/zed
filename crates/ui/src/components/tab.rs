@@ -199,7 +199,9 @@ impl RenderOnce for Tab {
                     }
                     TabPosition::Middle(Ordering::Equal) => this.border_l_1().border_r_1().pb_px(),
                     TabPosition::Middle(Ordering::Less) => this.border_l_1().pr_px().border_b_1(),
-                    TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
+                    TabPosition::Middle(Ordering::Greater) => {
+                        this.border_r_1().pl_px().border_b_1()
+                    }
                 })
                 .cursor_pointer()
                 .child(tab_content)
@@ -306,11 +308,7 @@ mod tests {
                         .toggle_state(false)
                         .child("Inactive Pill Tab"),
                 )
-                .child(
-                    Tab::new("tab3")
-                        .pill_style(false)
-                        .child("Default Tab"),
-                )
+                .child(Tab::new("tab3").pill_style(false).child("Default Tab"))
         }
     }
 
@@ -327,4 +325,3 @@ mod tests {
         cx.run_until_parked();
     }
 }
-

@@ -3612,11 +3612,7 @@ impl Pane {
             .child(
                 TabBar::new("unpinned_tab_bar")
                     .pill_style(pill_style)
-                    .child(self.render_unpinned_tabs_container(
-                        unpinned_tabs,
-                        tab_count,
-                        cx,
-                    )),
+                    .child(self.render_unpinned_tabs_container(unpinned_tabs, tab_count, cx)),
             )
             .into_any_element()
     }
@@ -4352,11 +4348,7 @@ impl Focusable for Pane {
 }
 
 impl Pane {
-    pub fn render_pane(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::Div {
+    pub fn render_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Pane");
         if self.active_item().is_none() {
@@ -9713,4 +9705,3 @@ mod tests {
         assert!(style.box_shadow.is_some());
     }
 }
-

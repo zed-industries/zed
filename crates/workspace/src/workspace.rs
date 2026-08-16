@@ -8187,13 +8187,9 @@ impl Workspace {
             .flex_col()
             .overflow_hidden()
             .when(!island_layout.enabled, |this| {
-                this.border_t_1()
-                    .border_b_1()
-                    .border_color(colors.border)
+                this.border_t_1().border_b_1().border_color(colors.border)
             })
-            .when(island_layout.enabled, |this| {
-                this.p(px(island_layout.gap))
-            })
+            .when(island_layout.enabled, |this| this.p(px(island_layout.gap)))
     }
 
     pub(crate) fn render_floating_status_bar(
@@ -9238,14 +9234,18 @@ impl Render for Workspace {
                                         .flex()
                                         .flex_col()
                                         .h_full()
-                                        .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
+                                        .when(island_layout.enabled, |this| {
+                                            this.gap(px(island_layout.gap))
+                                        })
                                         .child(
                                             div()
                                                 .flex()
                                                 .flex_row()
                                                 .flex_1()
                                                 .overflow_hidden()
-                                                .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
+                                                .when(island_layout.enabled, |this| {
+                                                    this.gap(px(island_layout.gap))
+                                                })
                                                 .children(self.render_dock(
                                                     DockPosition::Left,
                                                     &self.left_dock,
@@ -9287,7 +9287,10 @@ impl Render for Workspace {
                                         .child(
                                             div()
                                                 .w_full()
-                                                .when(!self.bottom_dock.read(cx).is_open(), |this| this.hidden())
+                                                .when(
+                                                    !self.bottom_dock.read(cx).is_open(),
+                                                    |this| this.hidden(),
+                                                )
                                                 .children(self.render_dock(
                                                     DockPosition::Bottom,
                                                     &self.bottom_dock,
@@ -9300,20 +9303,26 @@ impl Render for Workspace {
                                         .flex()
                                         .flex_row()
                                         .h_full()
-                                        .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
+                                        .when(island_layout.enabled, |this| {
+                                            this.gap(px(island_layout.gap))
+                                        })
                                         .child(
                                             div()
                                                 .flex()
                                                 .flex_col()
                                                 .flex_1()
                                                 .h_full()
-                                                .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
+                                                .when(island_layout.enabled, |this| {
+                                                    this.gap(px(island_layout.gap))
+                                                })
                                                 .child(
                                                     div()
                                                         .flex()
                                                         .flex_row()
                                                         .flex_1()
-                                                        .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
+                                                        .when(island_layout.enabled, |this| {
+                                                            this.gap(px(island_layout.gap))
+                                                        })
                                                         .children(self.render_dock(
                                                             DockPosition::Left,
                                                             &self.left_dock,
@@ -9356,7 +9365,10 @@ impl Render for Workspace {
                                                 .child(
                                                     div()
                                                         .w_full()
-                                                        .when(!self.bottom_dock.read(cx).is_open(), |this| this.hidden())
+                                                        .when(
+                                                            !self.bottom_dock.read(cx).is_open(),
+                                                            |this| this.hidden(),
+                                                        )
                                                         .children(self.render_dock(
                                                             DockPosition::Bottom,
                                                             &self.bottom_dock,
@@ -9376,7 +9388,9 @@ impl Render for Workspace {
                                         .flex()
                                         .flex_row()
                                         .h_full()
-                                        .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
+                                        .when(island_layout.enabled, |this| {
+                                            this.gap(px(island_layout.gap))
+                                        })
                                         .children(self.render_dock(
                                             DockPosition::Left,
                                             &self.left_dock,
@@ -9389,13 +9403,17 @@ impl Render for Workspace {
                                                 .flex_col()
                                                 .flex_1()
                                                 .h_full()
-                                                .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
+                                                .when(island_layout.enabled, |this| {
+                                                    this.gap(px(island_layout.gap))
+                                                })
                                                 .child(
                                                     div()
                                                         .flex()
                                                         .flex_row()
                                                         .flex_1()
-                                                        .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
+                                                        .when(island_layout.enabled, |this| {
+                                                            this.gap(px(island_layout.gap))
+                                                        })
                                                         .child(
                                                             div()
                                                                 .flex()
@@ -9438,7 +9456,10 @@ impl Render for Workspace {
                                                 .child(
                                                     div()
                                                         .w_full()
-                                                        .when(!self.bottom_dock.read(cx).is_open(), |this| this.hidden())
+                                                        .when(
+                                                            !self.bottom_dock.read(cx).is_open(),
+                                                            |this| this.hidden(),
+                                                        )
                                                         .children(self.render_dock(
                                                             DockPosition::Bottom,
                                                             &self.bottom_dock,
@@ -9452,7 +9473,9 @@ impl Render for Workspace {
                                         .flex()
                                         .flex_row()
                                         .h_full()
-                                        .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
+                                        .when(island_layout.enabled, |this| {
+                                            this.gap(px(island_layout.gap))
+                                        })
                                         .children(self.render_dock(
                                             DockPosition::Left,
                                             &self.left_dock,
@@ -9465,7 +9488,9 @@ impl Render for Workspace {
                                                 .flex_col()
                                                 .flex_1()
                                                 .overflow_hidden()
-                                                .when(island_layout.enabled, |this| this.gap(px(island_layout.gap)))
+                                                .when(island_layout.enabled, |this| {
+                                                    this.gap(px(island_layout.gap))
+                                                })
                                                 .child(
                                                     h_flex()
                                                         .flex_1()
@@ -16957,13 +16982,14 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let (mut div, border_variant, status_bar_bg) = workspace.update_in(cx, |workspace, _, cx| {
-            let island_layout = WorkspaceSettings::get_global(cx).island_layout;
-            let border_variant = cx.theme().colors().border_variant;
-            let status_bar_bg = cx.theme().colors().status_bar_background;
-            let div = workspace.render_floating_status_bar(&island_layout, cx);
-            (div, border_variant, status_bar_bg)
-        });
+        let (mut div, border_variant, status_bar_bg) =
+            workspace.update_in(cx, |workspace, _, cx| {
+                let island_layout = WorkspaceSettings::get_global(cx).island_layout;
+                let border_variant = cx.theme().colors().border_variant;
+                let status_bar_bg = cx.theme().colors().status_bar_background;
+                let div = workspace.render_floating_status_bar(&island_layout, cx);
+                (div, border_variant, status_bar_bg)
+            });
 
         let style = div.style();
         assert_eq!(
@@ -16994,7 +17020,10 @@ mod tests {
                 left: Some(gpui::px(6.).into()),
             }
         );
-        assert_eq!(style.background, Some(gpui::Fill::Color(status_bar_bg.into())));
+        assert_eq!(
+            style.background,
+            Some(gpui::Fill::Color(status_bar_bg.into()))
+        );
         assert!(style.box_shadow.is_some());
     }
 

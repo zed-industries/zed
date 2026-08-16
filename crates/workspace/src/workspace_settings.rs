@@ -259,4 +259,3 @@ mod tests {
         assert_eq!(defaults.pill_tabs, true);
     }
 }
-

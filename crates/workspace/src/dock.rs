@@ -1127,7 +1127,11 @@ impl Dock {
             .flatten()
             .and_then(|json| serde_json::from_str::<PanelSizeState>(&json).log_err())
     }
-    pub(crate) fn render_panel(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(crate) fn render_panel(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let dispatch_context = Self::dispatch_context();
         if let Some(entry) = self.visible_entry() {
             let position = self.position;
@@ -1214,12 +1218,13 @@ impl Dock {
                                     .border_color(cx.theme().colors().border_variant)
                             })
                     } else {
-                        this.border_color(cx.theme().colors().border)
-                            .map(|this| match self.position() {
+                        this.border_color(cx.theme().colors().border).map(|this| {
+                            match self.position() {
                                 DockPosition::Left => this.border_r_1(),
                                 DockPosition::Right => this.border_l_1(),
                                 DockPosition::Bottom => this.border_t_1(),
-                            })
+                            }
+                        })
                     }
                 })
                 .child(
@@ -1643,7 +1648,9 @@ mod tests {
     use crate::Workspace;
     use crate::dock::test::TestPanel;
     use fs::FakeFs;
-    use gpui::{AbsoluteLength, CornersRefinement, EdgesRefinement, TestAppContext, UpdateGlobal, px};
+    use gpui::{
+        AbsoluteLength, CornersRefinement, EdgesRefinement, TestAppContext, UpdateGlobal, px,
+    };
     use project::Project;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -1675,9 +1682,9 @@ mod tests {
         });
 
         let mut div = workspace.update_in(cx, |workspace, window, cx| {
-            workspace.left_dock().update(cx, |dock, cx| {
-                dock.render_panel(window, cx)
-            })
+            workspace
+                .left_dock()
+                .update(cx, |dock, cx| dock.render_panel(window, cx))
         });
 
         let style = div.style();
@@ -1729,9 +1736,9 @@ mod tests {
 
         let (mut div, border_variant) = workspace.update_in(cx, |workspace, window, cx| {
             let border_variant = cx.theme().colors().border_variant;
-            let div = workspace.left_dock().update(cx, |dock, cx| {
-                dock.render_panel(window, cx)
-            });
+            let div = workspace
+                .left_dock()
+                .update(cx, |dock, cx| dock.render_panel(window, cx));
             (div, border_variant)
         });
 
@@ -1792,9 +1799,9 @@ mod tests {
         });
 
         let mut div = workspace.update_in(cx, |workspace, window, cx| {
-            workspace.bottom_dock().update(cx, |dock, cx| {
-                dock.render_panel(window, cx)
-            })
+            workspace
+                .bottom_dock()
+                .update(cx, |dock, cx| dock.render_panel(window, cx))
         });
 
         let style = div.style();
@@ -1840,9 +1847,9 @@ mod tests {
         });
 
         let mut right_div = workspace.update_in(cx, |workspace, window, cx| {
-            workspace.right_dock().update(cx, |dock, cx| {
-                dock.render_panel(window, cx)
-            })
+            workspace
+                .right_dock()
+                .update(cx, |dock, cx| dock.render_panel(window, cx))
         });
 
         let right_style = right_div.style();
@@ -1868,9 +1875,9 @@ mod tests {
         });
 
         let mut bottom_div = workspace.update_in(cx, |workspace, window, cx| {
-            workspace.bottom_dock().update(cx, |dock, cx| {
-                dock.render_panel(window, cx)
-            })
+            workspace
+                .bottom_dock()
+                .update(cx, |dock, cx| dock.render_panel(window, cx))
         });
 
         let bottom_style = bottom_div.style();

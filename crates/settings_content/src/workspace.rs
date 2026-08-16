@@ -1136,4 +1136,3 @@ mod tests {
         assert_eq!(island.pill_tabs, None);
     }
 }
-

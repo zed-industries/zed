@@ -153,7 +153,10 @@ impl Render for StatusBar {
             .p(DynamicSpacing::Base04.rems(cx))
             .bg(cx.theme().colors().status_bar_background)
             .map(|el| {
-                if crate::WorkspaceSettings::get_global(cx).island_layout.enabled {
+                if crate::WorkspaceSettings::get_global(cx)
+                    .island_layout
+                    .enabled
+                {
                     return el;
                 }
                 match window.window_decorations() {
@@ -176,7 +179,8 @@ impl Render for StatusBar {
                             let needs_gap_fix = {
                                 // Running on Wayland and using some scaling levels other than 100% causes a
                                 // 1px gap above the status bar; adding a margin avoids this.
-                                gpui::guess_compositor() == "Wayland" && window.scale_factor() != 1.0
+                                gpui::guess_compositor() == "Wayland"
+                                    && window.scale_factor() != 1.0
                             };
                             #[cfg(not(target_os = "linux"))]
                             let needs_gap_fix = false;
