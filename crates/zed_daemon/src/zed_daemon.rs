@@ -374,9 +374,40 @@ pub fn default_registry() -> MethodRegistry {
                 let mut row = 1;
                 for line in content.lines() {
                     let trimmed = line.trim();
-                    if trimmed.starts_with("pub fn ") || trimmed.starts_with("fn ") || trimmed.starts_with("pub struct ") || trimmed.starts_with("struct ") || trimmed.starts_with("pub enum ") || trimmed.starts_with("enum ") || trimmed.starts_with("impl ") {
-                        let kind = if trimmed.contains("fn ") { "function" } else if trimmed.contains("struct ") { "struct" } else if trimmed.contains("enum ") { "enum" } else { "impl" };
-                        let name = trimmed.split_whitespace().nth(1).unwrap_or(trimmed).trim_end_matches('{').trim_end_matches('(').to_string();
+                    let (is_match, kind) = if trimmed.starts_with("pub fn ") || trimmed.starts_with("fn ") {
+                        (true, "function")
+                    } else if trimmed.starts_with("pub struct ") || trimmed.starts_with("struct ") {
+                        (true, "struct")
+                    } else if trimmed.starts_with("pub enum ") || trimmed.starts_with("enum ") {
+                        (true, "enum")
+                    } else if trimmed.starts_with("pub trait ") || trimmed.starts_with("trait ") {
+                        (true, "trait")
+                    } else if trimmed.starts_with("impl ") {
+                        (true, "impl")
+                    } else {
+                        (false, "")
+                    };
+
+                    if is_match {
+                        let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+                        let name_token = if tokens.len() > 2 && tokens[0] == "pub" {
+                            tokens[2]
+                        } else if tokens.len() > 1 {
+                            tokens[1]
+                        } else {
+                            trimmed
+                        };
+                        let name = name_token
+                            .split('(')
+                            .next()
+                            .unwrap_or(name_token)
+                            .split('<')
+                            .next()
+                            .unwrap_or(name_token)
+                            .trim_end_matches('{')
+                            .trim_end_matches(':')
+                            .to_string();
+
                         items.push(outline::HeadlessOutlineItem {
                             name,
                             kind: kind.to_string(),
@@ -489,27 +520,40 @@ pub fn default_registry() -> MethodRegistry {
             include_ignored: false,
         };
 
+        let regex_matcher = if query.is_regex && !query.pattern.is_empty() {
+            regex::Regex::new(&query.pattern).ok()
+        } else {
+            None
+        };
+
         let mut matches = Vec::new();
         if !query.pattern.is_empty() {
-            if let Ok(entries) = std::fs::read_dir(search_path) {
-                for entry in entries.flatten() {
+            for result in ignore::WalkBuilder::new(search_path).build() {
+                if let Ok(entry) = result {
                     let p = entry.path();
                     if p.is_file() {
-                        if let Ok(content) = std::fs::read_to_string(&p) {
+                        if let Ok(content) = std::fs::read_to_string(p) {
                             let mut line_no = 1;
                             for line in content.lines() {
-                                if line.contains(&query.pattern) {
+                                let is_hit = if let Some(ref re) = regex_matcher {
+                                    re.is_match(line)
+                                } else {
+                                    line.to_lowercase().contains(&query.pattern.to_lowercase())
+                                };
+
+                                if is_hit {
                                     matches.push(search::HeadlessSearchMatch {
                                         path: p.to_string_lossy().to_string(),
                                         line_number: line_no,
                                         match_text: line.trim().to_string(),
                                     });
-                                    if matches.len() >= 50 { break; }
+                                    if matches.len() >= 100 { break; }
                                 }
                                 line_no += 1;
                             }
                         }
                     }
+                    if matches.len() >= 100 { break; }
                 }
             }
         }
@@ -547,15 +591,20 @@ pub fn default_registry() -> MethodRegistry {
             .args(&args_vec)
             .output();
 
-        let (success, out_str) = match cmd_status {
-            Ok(output) => (output.status.success(), String::from_utf8_lossy(&output.stdout).to_string()),
-            Err(e) => (false, format!("Failed to spawn process: {e}")),
+        let (success, out_str, err_str) = match cmd_status {
+            Ok(output) => (
+                output.status.success(),
+                String::from_utf8_lossy(&output.stdout).to_string(),
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ),
+            Err(e) => (false, String::new(), format!("Failed to spawn process: {e}")),
         };
 
         serde_json::json!({
             "status": "executed",
             "success": success,
-            "output": out_str.trim(),
+            "stdout": out_str.trim(),
+            "stderr": err_str.trim(),
             "plan": plan
         })
     });
@@ -570,11 +619,23 @@ pub fn default_registry() -> MethodRegistry {
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_else(|_| "HEAD".to_string());
 
+        let modified_files: Vec<String> = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .output()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .map(|l| l.trim().to_string())
+                    .filter(|l| !l.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let provenance = git::HeadlessGitProvenance {
             agent_id: "zed-agent-daemon".to_string(),
             session_id: uuid_v4_stub(),
             parent_commit: git_head,
-            modified_files: vec![],
+            modified_files,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()

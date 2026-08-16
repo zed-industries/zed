@@ -27,3 +27,5 @@ tasks_ui = { path = "../tasks_ui" }
 git = { path = "../git" }
 markdown_preview = { path = "../markdown_preview" }
 rope.workspace = true
+regex.workspace = true
+ignore.workspace = true
