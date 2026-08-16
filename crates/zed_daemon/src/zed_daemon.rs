@@ -982,4 +982,41 @@ mod tests {
         let parsed3: JsonRpcResponse = serde_json::from_str(&res3).unwrap();
         assert_eq!(parsed3.result.unwrap()["text"], "fn run() {}");
     }
+
+    #[test]
+    fn test_process_line_editor_snapshot() {
+        let server = DaemonServer::new(DaemonConfig::default(), default_registry());
+        let request = r#"{"jsonrpc":"2.0","id":20,"method":"editor/snapshot","params":{"text":"fn hello() {}\nfn world() {}","agent_id":"agent-1"}}"#;
+        let response = server.process_line(request);
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        assert!(parsed.error.is_none());
+        let result = parsed.result.unwrap();
+        assert_eq!(result["status"], "ok");
+        assert_eq!(result["line_count"], 2);
+        assert_eq!(result["active_regions_count"], 1);
+    }
+
+    #[test]
+    fn test_process_line_diagnostics_filter() {
+        let server = DaemonServer::new(DaemonConfig::default(), default_registry());
+        let request = r#"{"jsonrpc":"2.0","id":21,"method":"diagnostics/filter","params":{"include_warnings":true,"file":"src/main.rs"}}"#;
+        let response = server.process_line(request);
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        assert!(parsed.error.is_none());
+        let result = parsed.result.unwrap();
+        assert_eq!(result["status"], "ok");
+        assert_eq!(result["filter"]["include_warnings"], true);
+    }
+
+    #[test]
+    fn test_process_line_breadcrumbs_get() {
+        let server = DaemonServer::new(DaemonConfig::default(), default_registry());
+        let request = r#"{"jsonrpc":"2.0","id":22,"method":"breadcrumbs/get","params":{"path":"crates/zed_daemon/src/zed_daemon.rs"}}"#;
+        let response = server.process_line(request);
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        assert!(parsed.error.is_none());
+        let result = parsed.result.unwrap();
+        assert_eq!(result["status"], "ok");
+        assert_eq!(result["entries_count"], 4);
+    }
 }
