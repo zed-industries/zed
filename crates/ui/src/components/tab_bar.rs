@@ -11,6 +11,7 @@ pub struct TabBar {
     children: SmallVec<[AnyElement; 2]>,
     end_children: SmallVec<[AnyElement; 2]>,
     scroll_handle: Option<ScrollHandle>,
+    pill_style: bool,
 }
 
 impl TabBar {
@@ -21,11 +22,17 @@ impl TabBar {
             children: SmallVec::new(),
             end_children: SmallVec::new(),
             scroll_handle: None,
+            pill_style: false,
         }
     }
 
     pub fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
         self.scroll_handle = Some(scroll_handle.clone());
+        self
+    }
+
+    pub fn pill_style(mut self, pill_style: bool) -> Self {
+        self.pill_style = pill_style;
         self
     }
 
@@ -91,6 +98,7 @@ impl ParentElement for TabBar {
 
 impl RenderOnce for TabBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let pill_style = self.pill_style;
         div()
             .id(self.id)
             .group("tab_bar")
@@ -98,16 +106,23 @@ impl RenderOnce for TabBar {
             .flex_none()
             .w_full()
             .h(Tab::container_height(cx))
-            .bg(cx.theme().colors().tab_bar_background)
+            .when(!pill_style, |this| {
+                this.bg(cx.theme().colors().tab_bar_background)
+            })
+            .when(pill_style, |this| {
+                this.bg(gpui::transparent_black()).py_0p5().px_1()
+            })
             .when(!self.start_children.is_empty(), |this| {
                 this.child(
                     h_flex()
                         .flex_none()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .px(DynamicSpacing::Base06.rems(cx))
-                        .border_b_1()
-                        .border_r_1()
-                        .border_color(cx.theme().colors().border)
+                        .when(!pill_style, |this| {
+                            this.border_b_1()
+                                .border_r_1()
+                                .border_color(cx.theme().colors().border)
+                        })
                         .children(self.start_children),
                 )
             })
@@ -117,15 +132,17 @@ impl RenderOnce for TabBar {
                     .flex_1()
                     .h_full()
                     .overflow_x_hidden()
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .size_full()
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border),
-                    )
+                    .when(!pill_style, |this| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border),
+                        )
+                    })
                     .child(
                         h_flex()
                             .id("tabs")
@@ -143,9 +160,11 @@ impl RenderOnce for TabBar {
                         .flex_none()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .px(DynamicSpacing::Base06.rems(cx))
-                        .border_color(cx.theme().colors().border)
-                        .border_b_1()
-                        .border_l_1()
+                        .when(!pill_style, |this| {
+                            this.border_color(cx.theme().colors().border)
+                                .border_b_1()
+                                .border_l_1()
+                        })
                         .children(self.end_children),
                 )
             })
@@ -200,7 +219,58 @@ impl Component for TabBar {
                             .into_any_element(),
                     )],
                 ),
+                example_group_with_title(
+                    "Pill Style TabBar",
+                    vec![single_example(
+                        "Pill Tabs",
+                        TabBar::new("pill_tab_bar")
+                            .pill_style(true)
+                            .child(Tab::new("p1").pill_style(true).toggle_state(true).child("Active Tab"))
+                            .child(Tab::new("p2").pill_style(true).toggle_state(false).child("Inactive Tab"))
+                            .into_any_element(),
+                    )],
+                ),
             ])
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Context, Render, TestAppContext};
+
+    struct TestTabBar;
+
+    impl Render for TestTabBar {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .child(
+                    TabBar::new("pill_bar")
+                        .pill_style(true)
+                        .child(Tab::new("tab1").pill_style(true).toggle_state(true).child("Active Pill"))
+                        .child(Tab::new("tab2").pill_style(true).toggle_state(false).child("Inactive Pill")),
+                )
+                .child(
+                    TabBar::new("default_bar")
+                        .pill_style(false)
+                        .child(Tab::new("tab3").toggle_state(true).child("Active Default"))
+                        .child(Tab::new("tab4").toggle_state(false).child("Inactive Default")),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn test_tab_bar_pill_style(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        let (_view, cx) = cx.add_window_view(|_, _| TestTabBar);
+
+        cx.run_until_parked();
+    }
+}
+

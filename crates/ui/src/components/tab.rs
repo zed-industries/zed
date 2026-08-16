@@ -35,6 +35,7 @@ pub struct Tab {
     selected: bool,
     position: TabPosition,
     close_side: TabCloseSide,
+    pill_style: bool,
     start_slot: Option<AnyElement>,
     end_slot: Option<AnyElement>,
     children: SmallVec<[AnyElement; 2]>,
@@ -50,6 +51,7 @@ impl Tab {
             selected: false,
             position: TabPosition::First,
             close_side: TabCloseSide::End,
+            pill_style: false,
             start_slot: None,
             end_slot: None,
             children: SmallVec::new(),
@@ -63,6 +65,11 @@ impl Tab {
 
     pub fn close_side(mut self, close_side: TabCloseSide) -> Self {
         self.close_side = close_side;
+        self
+    }
+
+    pub fn pill_style(mut self, pill_style: bool) -> Self {
+        self.pill_style = pill_style;
         self
     }
 
@@ -109,7 +116,7 @@ impl ParentElement for Tab {
 impl RenderOnce for Tab {
     #[allow(refining_impl_trait)]
     fn render(self, _: &mut Window, cx: &mut App) -> Stateful<Div> {
-        let (text_color, tab_bg, _tab_hover_bg, _tab_active_bg) = match self.selected {
+        let (text_color, tab_bg, tab_hover_bg, _tab_active_bg) = match self.selected {
             false => (
                 cx.theme().colors().text_muted,
                 cx.theme().colors().tab_inactive_background,
@@ -141,42 +148,62 @@ impl RenderOnce for Tab {
             }
         };
 
-        self.div
-            .h(Tab::container_height(cx))
-            .bg(tab_bg)
-            .border_color(cx.theme().colors().border)
-            .map(|this| match self.position {
-                TabPosition::First => {
-                    if self.selected {
-                        this.pl_px().border_r_1().pb_px()
-                    } else {
-                        this.pl_px().pr_px().border_b_1()
+        let tab_content = h_flex()
+            .group("")
+            .relative()
+            .h(Tab::content_height(cx))
+            .px(DynamicSpacing::Base04.px(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
+            .text_color(text_color)
+            .child(start_slot)
+            .children(self.children)
+            .child(end_slot);
+
+        if self.pill_style {
+            self.div
+                .rounded_md()
+                .mx_0p5()
+                .my_1()
+                .px_2()
+                .h(Tab::container_height(cx) - px(6.))
+                .when(self.selected, |this| {
+                    this.bg(tab_bg)
+                        .border_1()
+                        .border_color(cx.theme().colors().border_variant)
+                })
+                .when(!self.selected, |this| {
+                    this.bg(gpui::transparent_black())
+                        .hover(|s| s.bg(tab_hover_bg))
+                })
+                .cursor_pointer()
+                .child(tab_content)
+        } else {
+            self.div
+                .h(Tab::container_height(cx))
+                .bg(tab_bg)
+                .border_color(cx.theme().colors().border)
+                .map(|this| match self.position {
+                    TabPosition::First => {
+                        if self.selected {
+                            this.pl_px().border_r_1().pb_px()
+                        } else {
+                            this.pl_px().pr_px().border_b_1()
+                        }
                     }
-                }
-                TabPosition::Last => {
-                    if self.selected {
-                        this.border_l_1().border_r_1().pb_px()
-                    } else {
-                        this.pl_px().border_b_1().border_r_1()
+                    TabPosition::Last => {
+                        if self.selected {
+                            this.border_l_1().border_r_1().pb_px()
+                        } else {
+                            this.pl_px().border_b_1().border_r_1()
+                        }
                     }
-                }
-                TabPosition::Middle(Ordering::Equal) => this.border_l_1().border_r_1().pb_px(),
-                TabPosition::Middle(Ordering::Less) => this.border_l_1().pr_px().border_b_1(),
-                TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
-            })
-            .cursor_pointer()
-            .child(
-                h_flex()
-                    .group("")
-                    .relative()
-                    .h(Tab::content_height(cx))
-                    .px(DynamicSpacing::Base04.px(cx))
-                    .gap(DynamicSpacing::Base04.rems(cx))
-                    .text_color(text_color)
-                    .child(start_slot)
-                    .children(self.children)
-                    .child(end_slot),
-            )
+                    TabPosition::Middle(Ordering::Equal) => this.border_l_1().border_r_1().pb_px(),
+                    TabPosition::Middle(Ordering::Less) => this.border_l_1().pr_px().border_b_1(),
+                    TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
+                })
+                .cursor_pointer()
+                .child(tab_content)
+        }
     }
 }
 
@@ -193,43 +220,111 @@ impl Component for Tab {
     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
-            .children(vec![example_group_with_title(
-                "Variations",
-                vec![
-                    single_example(
-                        "Default",
-                        Tab::new("default").child("Default Tab").into_any_element(),
-                    ),
-                    single_example(
-                        "Selected",
-                        Tab::new("selected")
-                            .toggle_state(true)
-                            .child("Selected Tab")
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "First",
-                        Tab::new("first")
-                            .position(TabPosition::First)
-                            .child("First Tab")
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Middle",
-                        Tab::new("middle")
-                            .position(TabPosition::Middle(Ordering::Equal))
-                            .child("Middle Tab")
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Last",
-                        Tab::new("last")
-                            .position(TabPosition::Last)
-                            .child("Last Tab")
-                            .into_any_element(),
-                    ),
-                ],
-            )])
+            .children(vec![
+                example_group_with_title(
+                    "Variations",
+                    vec![
+                        single_example(
+                            "Default",
+                            Tab::new("default").child("Default Tab").into_any_element(),
+                        ),
+                        single_example(
+                            "Selected",
+                            Tab::new("selected")
+                                .toggle_state(true)
+                                .child("Selected Tab")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "First",
+                            Tab::new("first")
+                                .position(TabPosition::First)
+                                .child("First Tab")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Middle",
+                            Tab::new("middle")
+                                .position(TabPosition::Middle(Ordering::Equal))
+                                .child("Middle Tab")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Last",
+                            Tab::new("last")
+                                .position(TabPosition::Last)
+                                .child("Last Tab")
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Pill Style Variations",
+                    vec![
+                        single_example(
+                            "Pill Selected",
+                            Tab::new("pill_selected")
+                                .pill_style(true)
+                                .toggle_state(true)
+                                .child("Active Pill Tab")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Pill Inactive",
+                            Tab::new("pill_inactive")
+                                .pill_style(true)
+                                .toggle_state(false)
+                                .child("Inactive Pill Tab")
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Context, Render, TestAppContext};
+
+    struct TestTabs;
+
+    impl Render for TestTabs {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .child(
+                    Tab::new("tab1")
+                        .pill_style(true)
+                        .toggle_state(true)
+                        .child("Active Pill Tab"),
+                )
+                .child(
+                    Tab::new("tab2")
+                        .pill_style(true)
+                        .toggle_state(false)
+                        .child("Inactive Pill Tab"),
+                )
+                .child(
+                    Tab::new("tab3")
+                        .pill_style(false)
+                        .child("Default Tab"),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn test_tab_pill_style(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        let (_view, cx) = cx.add_window_view(|_, _| TestTabs);
+
+        cx.run_until_parked();
+    }
+}
+
