@@ -158,7 +158,10 @@ impl BreadcrumbNavigationMenu {
             }
         });
         menu.update(cx, |this, cx| {
-            let delegate = BreadcrumbPickerDelegate::new(cx.weak_entity());
+            let delegate = BreadcrumbPickerDelegate::new(
+                cx.weak_entity(),
+                Self::placeholder_for(&this.listing),
+            );
             let picker = cx.new(|cx| {
                 let available = window.viewport_size().width / window.rem_size();
                 picker::Picker::uniform_list(delegate, window, cx)
@@ -277,6 +280,7 @@ impl BreadcrumbNavigationMenu {
         }
         self.listing = listing;
         self.publish_rows(cx);
+        self.refresh_placeholder(window, cx);
         self.clear_filter(window, cx);
         self.pending_initial_selection = true;
         self.selected_index = None;
@@ -411,7 +415,10 @@ impl BreadcrumbNavigationMenu {
             _buffer_subscription: None,
         });
         menu.update(cx, |this, cx| {
-            let delegate = BreadcrumbPickerDelegate::new(cx.weak_entity());
+            let delegate = BreadcrumbPickerDelegate::new(
+                cx.weak_entity(),
+                Self::placeholder_for(&this.listing),
+            );
             let picker = cx.new(|cx| {
                 let available = window.viewport_size().width / window.rem_size();
                 picker::Picker::uniform_list(delegate, window, cx)
@@ -433,6 +440,28 @@ impl BreadcrumbNavigationMenu {
         cx.defer_in(window, move |_, window, cx| {
             window.focus(&picker.focus_handle(cx), cx);
         });
+    }
+
+    /// The picker copies the placeholder into its query editor when the head is built, so a
+    /// listing that changes kind has to push the new one through `refresh_placeholder`.
+    fn refresh_placeholder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(picker) = self.picker.clone() else {
+            return;
+        };
+        let placeholder = Self::placeholder_for(&self.listing);
+        cx.defer_in(window, move |_, window, cx| {
+            picker.update(cx, |picker, cx| {
+                picker.delegate.placeholder = placeholder;
+                picker.refresh_placeholder(window, cx);
+            });
+        });
+    }
+
+    fn placeholder_for(listing: &BreadcrumbListing) -> Arc<str> {
+        match listing {
+            BreadcrumbListing::Directory { .. } => "Search this directory…".into(),
+            BreadcrumbListing::Symbols { .. } => "Search these symbols…".into(),
+        }
     }
 
     fn filter_query(&self) -> &str {
@@ -576,13 +605,7 @@ impl BreadcrumbNavigationMenu {
             BreadcrumbMenuRow::Directory { .. } => false,
         });
 
-        // Named like Zed's other pickers ("Search project files…"), and distinguishing the two
-        // listings, rather than a bare "Type to filter…".
-        let placeholder: Arc<str> = if is_directory {
-            "Search this directory…".into()
-        } else {
-            "Search these symbols…".into()
-        };
+        let placeholder = Self::placeholder_for(&self.listing);
 
         let empty_message: SharedString = if self.loading {
             "Loading…".into()
@@ -1818,13 +1841,13 @@ pub struct BreadcrumbPickerDelegate {
 }
 
 impl BreadcrumbPickerDelegate {
-    fn new(menu: WeakEntity<BreadcrumbNavigationMenu>) -> Self {
+    fn new(menu: WeakEntity<BreadcrumbNavigationMenu>, placeholder: Arc<str>) -> Self {
         Self {
             menu,
             rows: Rc::new(Vec::new()),
             selected_index: 0,
             empty_message: "Loading…".into(),
-            placeholder: "Search…".into(),
+            placeholder,
             truncation_note: None,
             match_count_label: None,
             show_current_column: false,
