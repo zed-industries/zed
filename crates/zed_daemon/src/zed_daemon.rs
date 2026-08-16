@@ -346,13 +346,22 @@ pub fn default_registry() -> MethodRegistry {
     let buffer_store = InMemoryBufferStore::new();
 
     registry.register("project/open", |params| {
-        let path = params
+        let path_str = params
             .get("path")
             .and_then(|v| v.as_str())
-            .unwrap_or("<unknown>");
+            .unwrap_or(".");
+        let path_buf = std::path::PathBuf::from(path_str);
+        let exists = path_buf.exists();
+        let canonical_path = if exists {
+            path_buf.canonicalize().unwrap_or_else(|_| path_buf.clone()).to_string_lossy().to_string()
+        } else {
+            path_str.to_string()
+        };
+
         serde_json::json!({
-            "status": "opened",
-            "project_path": path,
+            "status": if exists { "opened" } else { "not_found" },
+            "project_path": canonical_path,
+            "is_directory": path_buf.is_dir(),
             "session_id": uuid_v4_stub(),
             "driver": "HeadlessProjectDriver"
         })
@@ -732,10 +741,27 @@ pub fn default_registry() -> MethodRegistry {
             .get("prompt")
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        let context = params
+            .get("context")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let session_id = uuid_v4_stub();
         serde_json::json!({
-            "status": "acknowledged",
-            "prompt_received": prompt,
-            "response": "Agent prompt acknowledged. Processing via native ACP thread environment."
+            "status": "ready",
+            "session_id": session_id,
+            "prompt": prompt,
+            "context": context,
+            "environment": "acp_thread::NativeAgentConnection",
+            "agent_capabilities": [
+                "fs/read_file",
+                "fs/write_file",
+                "project/search",
+                "code_graph/query",
+                "task/run"
+            ],
+            "execution_state": "idle",
+            "response": format!("Session {session_id} initialized with native ACP thread environment for prompt: '{prompt}'")
         })
     });
 
@@ -805,19 +831,18 @@ mod tests {
     #[test]
     fn test_process_line_project_open() {
         let server = DaemonServer::new(DaemonConfig::default(), default_registry());
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"project/open","params":{"path":"/tmp/test"}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"project/open","params":{"path":"."}}"#;
         let response = server.process_line(request);
         let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
         assert!(parsed.error.is_none());
         let result = parsed.result.unwrap();
         assert_eq!(result["status"], "opened");
-        assert_eq!(result["project_path"], "/tmp/test");
+        assert_eq!(result["is_directory"], true);
     }
 
     #[test]
     fn test_process_line_buffer_apply() {
         let server = DaemonServer::new(DaemonConfig::default(), default_registry());
-        // Create buffer first so buffer 1 exists
         let create_req = r#"{"jsonrpc":"2.0","id":0,"method":"buffer/create","params":{"text":"initial text"}}"#;
         let _ = server.process_line(create_req);
 
@@ -838,7 +863,8 @@ mod tests {
         let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
         assert!(parsed.error.is_none());
         let result = parsed.result.unwrap();
-        assert_eq!(result["status"], "acknowledged");
+        assert_eq!(result["status"], "ready");
+        assert_eq!(result["prompt"], "Refactor this function");
     }
 
     #[test]
