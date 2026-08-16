@@ -118,7 +118,7 @@ impl From<settings::NodeBinarySettings> for NodeBinarySettings {
             path: settings.path,
             npm_path: settings.npm_path,
             ignore_system_version: settings.ignore_system_version.unwrap_or(false),
-            allow_binary_download: settings.allow_binary_download.unwrap_or(true),
+            allow_binary_download: true,
         }
     }
 }
