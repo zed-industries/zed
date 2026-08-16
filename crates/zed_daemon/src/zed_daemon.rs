@@ -1238,4 +1238,42 @@ mod tests {
         assert_eq!(result["success"], true);
         assert!(result["stdout"].as_str().unwrap().contains("cargo"));
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn proptest_buffer_transaction_invariants(
+            initial in "\\PC{0,100}",
+            replacement in "\\PC{0,50}",
+            start_ratio in 0.0f64..=1.0f64,
+            end_ratio in 0.0f64..=1.0f64,
+        ) {
+            let store = InMemoryBufferStore::new();
+            let buf_id = store.create_buffer(initial.clone());
+            let len = initial.len();
+            
+            let pos1 = (start_ratio * (len as f64)).floor() as usize;
+            let pos2 = (end_ratio * (len as f64)).floor() as usize;
+            let start = pos1.min(pos2);
+            let end = pos1.max(pos2);
+
+            let applied = store.apply_transaction(buf_id, vec![(start, end, replacement.clone())]);
+            prop_assert!(applied);
+
+            let updated = store.get_text(buf_id);
+            prop_assert!(updated.is_some());
+        }
+
+        #[test]
+        fn proptest_daemon_arbitrary_json_fuzz_resilience(
+            input in "\\PC{0,200}"
+        ) {
+            let server = DaemonServer::new(DaemonConfig::default(), default_registry());
+            let response = server.process_line(&input);
+            // Must never panic and must always produce valid JSON response envelope
+            let parsed: Result<JsonRpcResponse, _> = serde_json::from_str(&response);
+            prop_assert!(parsed.is_ok());
+        }
+    }
 }

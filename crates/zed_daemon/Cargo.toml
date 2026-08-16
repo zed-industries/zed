@@ -34,3 +34,6 @@ call = { path = "../call" }
 rope.workspace = true
 regex.workspace = true
 ignore.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
