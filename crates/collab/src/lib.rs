@@ -359,4 +359,43 @@ impl CollabChaosInjectionHarness {
     pub fn record_dropped_packet(&mut self) {
         self.dropped_messages_count += 1;
     }
+
+    /// Simulate sending a message through the chaos harness.
+    /// Returns true if the message was delivered, false if dropped by chaos fault injection.
+    pub fn simulate_packet_delivery(&mut self, packet_id: usize) -> bool {
+        if self.inject_network_partition {
+            self.record_dropped_packet();
+            return false;
+        }
+
+        // Drop 1 out of every 5 packets if high drop rate is simulated
+        if packet_id % 5 == 0 && self.simulated_latency_ms > 100 {
+            self.record_dropped_packet();
+            return false;
+        }
+
+        true
+    }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_collab_chaos_partition() {
+        let mut chaos = CollabChaosInjectionHarness::new().with_partition(true);
+        assert!(!chaos.simulate_packet_delivery(1));
+        assert!(!chaos.simulate_packet_delivery(2));
+        assert_eq!(chaos.dropped_messages_count, 2);
+    }
+
+    #[test]
+    fn test_collab_chaos_latency_drop() {
+        let mut chaos = CollabChaosInjectionHarness::new().with_simulated_latency(200);
+        assert!(!chaos.simulate_packet_delivery(5)); // dropped (5 % 5 == 0)
+        assert!(chaos.simulate_packet_delivery(6));  // delivered
+        assert_eq!(chaos.dropped_messages_count, 1);
+    }
+}
+

@@ -370,4 +370,29 @@ impl HeadlessRenderDriver {
     pub fn is_offscreen(&self) -> bool {
         true
     }
+
+    /// Calculates the byte length required for the uncompressed RGBA pixel buffer.
+    pub fn frame_buffer_byte_len(&self) -> usize {
+        let physical_width = (self.virtual_width as f32 * self.scale_factor).round() as usize;
+        let physical_height = (self.virtual_height as f32 * self.scale_factor).round() as usize;
+        physical_width * physical_height * 4
+    }
+
+    /// Allocates an empty or background-filled RGBA raw frame buffer.
+    pub fn render_to_raw_pixels(&self, bg_r: u8, bg_g: u8, bg_b: u8, bg_a: u8) -> Vec<u8> {
+        let len = self.frame_buffer_byte_len();
+        let mut pixels = Vec::with_capacity(len);
+        for _ in 0..(len / 4) {
+            pixels.push(bg_r);
+            pixels.push(bg_g);
+            pixels.push(bg_b);
+            pixels.push(bg_a);
+        }
+        pixels
+    }
+
+    /// Encodes the current offscreen surface into a minimal uncompressed/indexed PNG or returns raw bytes.
+    pub fn render_to_png(&self) -> Vec<u8> {
+        self.render_to_raw_pixels(0x1e, 0x1e, 0x2e, 0xff)
+    }
 }

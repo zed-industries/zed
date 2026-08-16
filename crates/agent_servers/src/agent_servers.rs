@@ -181,4 +181,57 @@ impl ActorSupervisor {
     pub fn get_status(&self, process_id: &str) -> Option<&ActorProcessStatus> {
         self.process_status.get(process_id)
     }
+
+    /// Handle process crash / failure according to the supervisor restart policy.
+    /// Returns the list of process IDs that need to be restarted.
+    pub fn handle_failure(&mut self, failed_id: &str, reason: impl Into<String>) -> Vec<String> {
+        let reason_str = reason.into();
+        self.process_status.insert(
+            failed_id.to_string(),
+            ActorProcessStatus::Failed {
+                reason: reason_str,
+            },
+        );
+
+        match self.policy {
+            SupervisorRestartPolicy::OneForOne => vec![failed_id.to_string()],
+            SupervisorRestartPolicy::OneForAll => self.process_status.keys().cloned().collect(),
+            SupervisorRestartPolicy::ExponentialBackoff { .. } => vec![failed_id.to_string()],
+        }
+    }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_actor_supervisor_one_for_one() {
+        let mut sup = ActorSupervisor::new("lsp_supervisor", SupervisorRestartPolicy::OneForOne);
+        sup.register_process("rust-analyzer", ActorProcessStatus::Running { pid: 1234 });
+        sup.register_process("typescript-language-server", ActorProcessStatus::Running { pid: 5678 });
+
+        let to_restart = sup.handle_failure("rust-analyzer", "SIGSEGV");
+        assert_eq!(to_restart, vec!["rust-analyzer".to_string()]);
+        assert!(matches!(
+            sup.get_status("rust-analyzer"),
+            Some(ActorProcessStatus::Failed { .. })
+        ));
+        assert!(matches!(
+            sup.get_status("typescript-language-server"),
+            Some(ActorProcessStatus::Running { .. })
+        ));
+    }
+
+    #[test]
+    fn test_actor_supervisor_one_for_all() {
+        let mut sup = ActorSupervisor::new("mcp_supervisor", SupervisorRestartPolicy::OneForAll);
+        sup.register_process("server-1", ActorProcessStatus::Running { pid: 101 });
+        sup.register_process("server-2", ActorProcessStatus::Running { pid: 102 });
+
+        let mut to_restart = sup.handle_failure("server-1", "connection reset");
+        to_restart.sort();
+        assert_eq!(to_restart, vec!["server-1".to_string(), "server-2".to_string()]);
+    }
+}
+

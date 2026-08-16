@@ -1526,4 +1526,59 @@ impl WindowsAppContainerProfile {
         self.allowed_directories.push(path.into());
         self
     }
+
+    pub fn set_memory_limit(&mut self, bytes: u64) -> &mut Self {
+        self.max_memory_bytes = Some(bytes);
+        self
+    }
+
+    pub fn set_cpu_limit(&mut self, percent: u32) -> &mut Self {
+        self.max_cpu_percent = Some(percent.min(100));
+        self
+    }
+
+    /// Build a wrapped command configured for execution within Windows AppContainer and Job Object
+    pub fn build_execution_command(&self, command: &CommandAndArgs) -> WrappedCommand {
+        let mut env = command.env.clone();
+        env.insert("ZED_APPCONTAINER_PROFILE".to_string(), self.profile_name.clone());
+        if let Some(mem) = self.max_memory_bytes {
+            env.insert("ZED_JOB_OBJECT_MAX_MEM".to_string(), mem.to_string());
+        }
+        if let Some(cpu) = self.max_cpu_percent {
+            env.insert("ZED_JOB_OBJECT_MAX_CPU".to_string(), cpu.to_string());
+        }
+
+        WrappedCommand {
+            program: command.program.clone(),
+            args: command.args.clone(),
+            env,
+            cwd: command.cwd.clone(),
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_appcontainer_tests {
+    use super::*;
+
+    #[test]
+    fn test_windows_appcontainer_profile_limits() {
+        let mut profile = WindowsAppContainerProfile::new("zed_test_profile", "Zed Test");
+        profile.set_memory_limit(512 * 1024 * 1024);
+        profile.set_cpu_limit(50);
+        profile.allow_directory(r"C:\workspace");
+
+        let cmd = CommandAndArgs {
+            program: "cmd.exe".to_string(),
+            args: vec!["/c".to_string(), "echo Hello".to_string()],
+            env: HashMap::new(),
+            cwd: Some(PathBuf::from(r"C:\workspace")),
+        };
+
+        let wrapped = profile.build_execution_command(&cmd);
+        assert_eq!(wrapped.program, "cmd.exe");
+        assert_eq!(wrapped.env.get("ZED_APPCONTAINER_PROFILE").unwrap(), "zed_test_profile");
+        assert_eq!(wrapped.env.get("ZED_JOB_OBJECT_MAX_MEM").unwrap(), "536870912");
+        assert_eq!(wrapped.env.get("ZED_JOB_OBJECT_MAX_CPU").unwrap(), "50");
+    }
 }

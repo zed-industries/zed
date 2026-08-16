@@ -1,0 +1,29 @@
+[package]
+name = "code_graph"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/code_graph.rs"
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+db.workspace = true
+futures.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+rope.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlez.workspace = true
+util.workspace = true
+ztracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

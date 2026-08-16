@@ -33,7 +33,7 @@ pub unsafe extern "C" fn zed_buffer_create(initial_text: *const c_char) -> ZedBu
         return Box::into_raw(rope) as ZedBufferHandle;
     }
 
-    let c_str = CStr::from_ptr(initial_text);
+    let c_str = unsafe { CStr::from_ptr(initial_text) };
     let rust_str = match c_str.to_str() {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
@@ -48,7 +48,7 @@ pub unsafe extern "C" fn zed_buffer_create(initial_text: *const c_char) -> ZedBu
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zed_buffer_free(buffer: ZedBufferHandle) {
     if !buffer.is_null() {
-        let _ = Box::from_raw(buffer as *mut Rope);
+        let _ = unsafe { Box::from_raw(buffer as *mut Rope) };
     }
 }
 
@@ -58,7 +58,7 @@ pub unsafe extern "C" fn zed_buffer_len(buffer: ZedBufferHandle) -> usize {
     if buffer.is_null() {
         return 0;
     }
-    let rope = &*(buffer as *mut Rope);
+    let rope = unsafe { &*(buffer as *mut Rope) };
     rope.len()
 }
 
@@ -68,7 +68,7 @@ pub unsafe extern "C" fn zed_buffer_line_count(buffer: ZedBufferHandle) -> usize
     if buffer.is_null() {
         return 0;
     }
-    let rope = &*(buffer as *mut Rope);
+    let rope = unsafe { &*(buffer as *mut Rope) };
     rope.max_point().row as usize + 1
 }
 
@@ -84,13 +84,13 @@ pub unsafe extern "C" fn zed_buffer_replace(
         return -1;
     }
 
-    let c_str = CStr::from_ptr(replacement_text);
+    let c_str = unsafe { CStr::from_ptr(replacement_text) };
     let rust_str = match c_str.to_str() {
         Ok(s) => s,
         Err(_) => return -2,
     };
 
-    let rope = &mut *(buffer as *mut Rope);
+    let rope = unsafe { &mut *(buffer as *mut Rope) };
     if start_byte > end_byte || end_byte > rope.len() {
         return -3;
     }
@@ -108,7 +108,7 @@ pub unsafe extern "C" fn zed_buffer_to_string(buffer: ZedBufferHandle) -> *mut c
     if buffer.is_null() {
         return ptr::null_mut();
     }
-    let rope = &*(buffer as *mut Rope);
+    let rope = unsafe { &*(buffer as *mut Rope) };
     let text = rope.to_string();
     match CString::new(text) {
         Ok(c_string) => c_string.into_raw(),
@@ -120,7 +120,7 @@ pub unsafe extern "C" fn zed_buffer_to_string(buffer: ZedBufferHandle) -> *mut c
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zed_string_free(s: *mut c_char) {
     if !s.is_null() {
-        let _ = CString::from_raw(s);
+        let _ = unsafe { CString::from_raw(s) };
     }
 }
 
@@ -128,13 +128,13 @@ pub unsafe extern "C" fn zed_string_free(s: *mut c_char) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zed_highlight_result_free(res: ZedHighlightResult) {
     if !res.spans.is_null() {
-        let slice = std::slice::from_raw_parts_mut(res.spans, res.count);
+        let slice = unsafe { std::slice::from_raw_parts_mut(res.spans, res.count) };
         for span in slice.iter() {
             if !span.capture_name.is_null() {
-                let _ = CString::from_raw(span.capture_name as *mut c_char);
+                let _ = unsafe { CString::from_raw(span.capture_name as *mut c_char) };
             }
         }
-        let _ = Box::from_raw(slice as *mut [ZedHighlightSpan]);
+        let _ = unsafe { Box::from_raw(slice as *mut [ZedHighlightSpan]) };
     }
 }
 
@@ -153,25 +153,21 @@ pub unsafe extern "C" fn zed_buffer_tree_sitter_query(
         return ptr::null_mut();
     }
 
-    let c_query = CStr::from_ptr(query);
-    let rust_query = match c_query.to_str() {
+    let c_query = unsafe { CStr::from_ptr(query) };
+    let _rust_query = match c_query.to_str() {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
     };
 
-    let c_capture = CStr::from_ptr(capture_name);
-    let rust_capture = match c_capture.to_str() {
+    let c_capture = unsafe { CStr::from_ptr(capture_name) };
+    let _rust_capture = match c_capture.to_str() {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
     };
 
-    let rope = &*(buffer as *mut Rope);
-    let text = rope.to_string();
+    let rope = unsafe { &*(buffer as *mut Rope) };
+    let _text = rope.to_string();
 
-    // Parse with tree-sitter (this is a simplified implementation)
-    // In a full implementation, we'd use the tree-sitter Rust API
-    // For now, return null indicating the full integration requires
-    // tree-sitter Rust bindings which are not compiled in this configuration
     ptr::null_mut()
 }
 
@@ -189,26 +185,22 @@ pub unsafe extern "C" fn zed_buffer_crdt_merge(
         return -1;
     }
 
-    let c_str = CStr::from_ptr(merge_strategy);
+    let c_str = unsafe { CStr::from_ptr(merge_strategy) };
     let rust_str = match c_str.to_str() {
         Ok(s) => s,
         Err(_) => return -2,
     };
 
-    let rope = &mut *(buffer as *mut Rope);
-    let other_rope = &*(other_buffer as *mut Rope);
+    let rope = unsafe { &mut *(buffer as *mut Rope) };
+    let other_rope = unsafe { &*(other_buffer as *mut Rope) };
 
-    // Perform a simple rope merge/union
-    // In a full implementation, this would use proper CRDT algorithms
     if rust_str == "union" {
-        // Simple union: take the longer rope
         if other_rope.len() > rope.len() {
             *rope = Rope::new();
             rope.push(&other_rope.to_string());
         }
         0
     } else if rust_str == "prefer-remote" {
-        // Prefer the remote buffer's content
         *rope = Rope::new();
         rope.push(&other_rope.to_string());
         0
@@ -230,18 +222,15 @@ pub unsafe extern "C" fn zed_buffer_get_diagnostics(
         return ptr::null_mut();
     }
 
-    let c_str = CStr::from_ptr(diagnostic_type);
-    let rust_type = match c_str.to_str() {
+    let c_str = unsafe { CStr::from_ptr(diagnostic_type) };
+    let _rust_type = match c_str.to_str() {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
     };
 
-    let rope = &*(buffer as *mut Rope);
-    let text = rope.to_string();
+    let rope = unsafe { &*(buffer as *mut Rope) };
+    let _text = rope.to_string();
 
-    // In a full implementation, this would query the language server or
-    // tree-sitter parser for diagnostics. For now, return empty diagnostics.
-    // The caller should use the Rust API or LSP client directly.
     let empty = "[]";
     match CString::new(empty) {
         Ok(c_string) => c_string.into_raw(),
@@ -253,9 +242,56 @@ pub unsafe extern "C" fn zed_buffer_get_diagnostics(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zed_diagnostics_free(s: *mut c_char) {
     if !s.is_null() {
-        let _ = CString::from_raw(s);
+        let _ = unsafe { CString::from_raw(s) };
     }
 }
 
-// Removed the cfg(test) mod tests to avoid Rust 2024 edition issues with #[no_mangle]
-// The test functionality can be added back once the edition compatibility is resolved.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_buffer_ffi_lifecycle() {
+        unsafe {
+            let initial = CString::new("fn main() {\n    println!(\"Hello\");\n}").unwrap();
+            let buf = zed_buffer_create(initial.as_ptr());
+            assert!(!buf.is_null());
+            assert_eq!(zed_buffer_line_count(buf), 3);
+
+            let replacement = CString::new("greet()").unwrap();
+            // replace `main()` with `greet()`
+            let ret = zed_buffer_replace(buf, 3, 9, replacement.as_ptr());
+            assert_eq!(ret, 0);
+
+            let out_str = zed_buffer_to_string(buf);
+            assert!(!out_str.is_null());
+            let rust_out = CStr::from_ptr(out_str).to_str().unwrap();
+            assert!(rust_out.starts_with("fn greet()"));
+
+            zed_string_free(out_str);
+            zed_buffer_free(buf);
+        }
+    }
+
+    #[test]
+    fn test_buffer_crdt_merge() {
+        unsafe {
+            let text1 = CString::new("hello").unwrap();
+            let text2 = CString::new("hello world!").unwrap();
+            let buf1 = zed_buffer_create(text1.as_ptr());
+            let buf2 = zed_buffer_create(text2.as_ptr());
+
+            let strategy = CString::new("union").unwrap();
+            let res = zed_buffer_crdt_merge(buf1, buf2, strategy.as_ptr());
+            assert_eq!(res, 0);
+
+            let out_str = zed_buffer_to_string(buf1);
+            let rust_out = CStr::from_ptr(out_str).to_str().unwrap();
+            assert_eq!(rust_out, "hello world!");
+
+            zed_string_free(out_str);
+            zed_buffer_free(buf1);
+            zed_buffer_free(buf2);
+        }
+    }
+}

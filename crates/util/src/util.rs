@@ -57,6 +57,23 @@ pub const fn is_utf8_char_boundary(u8: u8) -> bool {
     (u8 as i8) >= -0x40
 }
 
+/// SIMD / SWAR 64-bit parallel scanning kernel for newlines and ASCII character boundaries.
+/// Returns (newlines_count, utf8_boundaries_count) for an 8-byte word in $O(1)$ operations.
+#[inline(always)]
+pub fn count_newlines_and_boundaries_u64(word: u64) -> (u32, u32) {
+    // SWAR pattern: match 0x0A (b'\n') in parallel across all 8 bytes
+    let newline_mask = word ^ 0x0A0A0A0A0A0A0A0Au64;
+    let has_zero = (newline_mask.wrapping_sub(0x0101010101010101u64)) & !newline_mask & 0x8080808080808080u64;
+    let newlines_count = (has_zero >> 7).wrapping_mul(0x0101010101010101u64) >> 56;
+
+    // Boundary mask: top 2 bits != 10 (i.e. not 0x80..=0xBF continuation bytes)
+    let cont_mask = (word & 0xC0C0C0C0C0C0C0C0u64) ^ 0x8080808080808080u64;
+    let is_boundary = (cont_mask.wrapping_sub(0x0101010101010101u64)) & !cont_mask & 0x8080808080808080u64;
+    let boundaries_count = (is_boundary >> 7).wrapping_mul(0x0101010101010101u64) >> 56;
+
+    (newlines_count as u32, boundaries_count as u32)
+}
+
 pub fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
         None => s,
