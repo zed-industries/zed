@@ -57,7 +57,10 @@ version = "0.0.1"
 
 3. Run `pnpm sort-extensions` to ensure `extensions.toml` and `.gitmodules` are sorted
 
-Once your PR is merged, the extension will be packaged and published to the Zed extension registry.
+That's it! Once your PR is merged, the extension will be packaged and published to the Zed extension registry.
+
+> We do our best to get back to you in a reasonable time frame. However, we are very aware that this is currently not always the case - we sincerely apologize for that. Please be informed we are continuously iterating on the process in an effort to provide every submission much more quickly with feedback and with an overall better contribution experience.
+> At the same time, we do have to enforce a strict time frame for PR authors: Please be advised that submissions will be closed after **3 weeks of no response to maintainer feedback**. We do this in the interest of everybody to keep the queue in a more manageable state. After your PR was closed, you may open another fresh PR and we will take another look.
 
 ## Updating an extension {#updating-an-extension}
 

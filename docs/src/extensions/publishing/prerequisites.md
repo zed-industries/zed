@@ -5,23 +5,94 @@ description: "Review the requirements for publishing an extension to the Zed Ext
 
 # Extension Publishing Prerequisites {#extension-publishing-prerequisites}
 
-Before publishing your extension, make sure that you have chosen a unique extension ID for your extension in the [extension manifest](../developing-extensions.md#directory-structure-of-a-zed-extension).
-This will be the primary identifier for your extension and cannot be changed after your extension has been published.
-Also, ensure that you have filled out all the required fields in the manifest.
+Before submitting your extension for publishing, make sure it meets the following requirements.
 
-Furthermore, please make sure that your extension fulfills the following preconditions before you move on to publishing your extension:
+Note that maintainters will raise non-compliance during the publishing process. Should you chose to not follow these requirements, publishing will be delayed or may outright be rejected.
 
-- Extension IDs and names must not contain the words `zed`, `Zed` or `extension`, since they are all Zed extensions.
-- Your extension ID should provide some information on what your extension tries to accomplish. E.g. for themes, it should be suffixed with `-theme`, snippet extensions should be suffixed with `-snippets` and so on. An exception to that rule is an extension that provides support for languages or popular tooling that people would expect to find under that ID. You can take a look at the list of [existing extensions](https://github.com/zed-industries/extensions/blob/main/extensions.toml) to get a grasp on how this usually is enforced.
-- Your extension must only include the resources it requires to function and nothing else.
-  - See the [directory structure of a Zed extension](../developing-extensions.md#directory-structure-of-a-zed-extension) and the [Rust and WebAssembly](../developing-extensions.md#rust-and-webassembly) sections for more information.
-- Extensions must in no way attempt to read nor modify the environment outside of the environment designated to them by Zed. Should they need to read the environment, they should use methods as provided by the [Zed Rust Extension API](https://docs.rs/zed_extension_api/latest/zed_extension_api/) and may fall back to appropriate methods from the Rust standard library. Should they need changes to the environment, they must instead ask the user to perform these for them using an appropriate method within the context (e.g. provide information for doing so using the `ContextServerConfiguration` for context servers).
-  - Please make sure to have read the [Rust and WebAssembly section](../developing-extensions.md#rust-and-webassembly) for more information and help regarding this topic.
-- Extensions should provide something that is not yet available in the marketplace as opposed to fixing something that could be resolved within an existing extension. For example, if you find that an existing extension's support for a language server is not functioning properly, first try contributing a fix to the existing extension as opposed to submitting a new extension immediately.
-  - If you receive no response or reaction within the upstream repository within a reasonable amount of time, feel free to submit a pull request that aims to fix said issue. Please ensure that you provide your previous efforts within the pull request to the extensions repository for adding your extension. Zed maintainers will then decide on how to proceed on a case by case basis.
-- Extensions that intend to provide a language, debugger or MCP server must not ship the language server as part of the extension. Instead, the extension should either download the language server or check for the availability of the language server in the user's environment using the APIs as provided by the [Zed Rust Extension API](https://docs.rs/zed_extension_api/latest/zed_extension_api/).
-- Themes and icon themes should not be published as part of extensions that provide other features, e.g. language support. Instead, they should be published as a distinct extension. This also applies to themes and icon themes living in the same repository.
+## General Requirements
 
-Furthermore, before publishing your extension, [install it locally as a dev extension](../developing-extensions.md#developing-an-extension-locally) and test it thoroughly. Submissions for extensions that have not been tested and do not function at all may be closed without further feedback.
+- Publish functionality that is not already available in the extension marketplace.
+  - If you face issues with an existing extension, first try contributing to the existing extension. See [the section below](#requirements-post-publishing) for more details on this reqirement.
+- Use an appropriate ID for the extension. The ID must be
+  - unique
+  - camel-cased
+  - not include the words `zed` nor `extension`
+  - be a good indicator for what your extension provides (more on this below)
+- Do not misuse existing APIs to workaround limitations of our current API interface.
+- Include only the resources the extension needs to function within your extension.
+- License your extension under one of the [allowed licenses](./license-requirements.md).
+- All user-facing text must be in English.
+- Do not read or modify anything outside the environment Zed designates for the extension.
+  - Use the [Zed Rust Extension API](https://docs.rs/zed_extension_api/latest/zed_extension_api/) to read and modify the environment.
+  - Use Rust standard library methods to read and modify the work directory provided to the extension.
+  - Ask the user to make any other required changes themselves.
 
-Non-compliance with these rules will be raised during the publishing process by reviewers. If you fail to comply with the laid out guidelines, the publishing of your extension will either be delayed or rejected.
+## Language Extensions
+
+- Your extension may only provide support for that language as well as any dialects that are directly associated with that language.
+- Your extension may also provide language servers and snippets for that language.
+- Your extension ID and name should be similar or equal to the name of the primary langauge you intend to add.
+- Your extension must not include any Rust-code should it not also provide language servers.
+
+## Language Server Extensions
+
+- Should your extension only provide a language server, make sure your extension ID reflects that (e.g., by suffixing it with `-language-server` or `-lsp`).
+- Do not bundle a language server with the extension. Download it or check for it in the user's environment through the [Zed Rust Extension API](https://docs.rs/zed_extension_api/latest/zed_extension_api/).
+
+## Debugger Extensions
+
+- Should your extension only provide a debugger, make sure your extension ID reflects that (e.g., by suffixing it with `-debugger`).
+- Do not bundle the debug adapter with the extension. Download it or check for it in the user's environment through the [Zed Rust Extension API](https://docs.rs/zed_extension_api/latest/zed_extension_api/).
+
+## Theme Extensions
+
+- Your extension must only provide themes and nothing else.
+- Your extension ID must include something to indicate it is a theme, e.g. be suffixed with `-theme`.
+
+## Icon Theme Extensions
+
+- Your extension must only provide an icon theme and nothing else.
+- Your extension ID must include something to indicate it is an icon theme, e.g. be suffixed with `-icon-theme` or `-icons`.
+
+## Snippet Extensions
+
+- Should your extension only provide snippets, make sure your extension ID reflects that (e.g., by suffixing it with `-snippets`).
+- Your snippets may only be scoped to the global scope if appropriate. Language-specific snippets must be scoped to the given languages
+
+## MCP Server Extensions
+
+> MCP server extensions will be deprecated in favor of the MCP registry in the future, progress for this is tracked in [#59351](https://github.com/zed-industries/zed/issues/59351). Please make sure to also publish your server against the registry to be sure it can be used with future versions of Zed.
+
+- Your extension must only provide one MCP server and nothing else.
+- Your extension ID must include something to indicate it is an MCP server, e.g. be prefixed with `mcp-server-` or suffixed with `-mcp-server`.
+- Do not bundle the MCP server with the extension. Download it or check for it in the user's environment through the [Zed Rust Extension API](https://docs.rs/zed_extension_api/latest/zed_extension_api/).
+
+## Agent Server and Slash Command Extensions
+
+Agent server and slash command extensions have been deprecated and submissions will no longer be accepted. If you intend on making an agent server available within Zed, publish it to the [ACP Registry](https://agentclientprotocol.com/registry) instead.
+
+Passing everything on this list? Let's [get your extension published!](./publishing-guide.md)
+
+# Requirements Post Publishing
+
+After you extension has been published, there are no further requirements from our side. Thank you for enriching the Zed extension collection, we really appreciate it!
+
+However, not every extension is perfect when it is first published and issues might arise, requiring maintenance effort. Generally, we expect
+
+- users to report issues in the original extension repository as well as
+- extension owners to get back to those users within a reasonable timeframe
+
+Now, maintaining an extension might not be everyones cup of tea or things might have changed since publishing - that is totally fine! We fully understand that maintenance can take a lot of time and as mentioned above, do not require it.
+Yet, at the same time, we do not want existing extensions to go stale in a bad state in an effort to provide a good experience to users of that extension, which obviously clashes with the aforementioned. Due to this, we intentionally do not just want to live with stale extensions.
+
+Thus, in the case an extension owner no longer wants to maintain an extension or is unresponsive, we provide the following options:
+
+- The current owner may transfer ownership of the repository to a new owner.
+- A contributor may fork the extension and publish their fork as a replacement for the current extension.
+- Zed staff can fork the extension into the `zed-extensions` organization and maintenance can continue from there as a joined effort of the community and Zed staff.
+- Open an issue or pull request against `zed-industries/extensions` asking for the removal of the extension.
+
+In order for any of the options to be applicable, we require either
+
+- written permission from the current extension owner or
+- proof of the reporting contributor that the upstream extension owner has been unresponsive to change requests for at least two months
