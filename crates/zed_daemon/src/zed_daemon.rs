@@ -504,7 +504,7 @@ pub fn default_registry() -> MethodRegistry {
             task_name: task_name.to_string(),
             command: command.to_string(),
             args: vec!["build".to_string()],
-            env: collections::HashMap::default(),
+            env: HashMap::default(),
             cwd: None,
         };
         tr.lock().unwrap().schedule_plan(plan.clone());
