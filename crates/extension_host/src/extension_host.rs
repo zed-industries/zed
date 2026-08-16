@@ -1417,45 +1417,7 @@ impl ExtensionStore {
                     move || {
                         let fs = fs.clone();
                         let language_path = language_path.clone();
-                        async move {
-                            let config = {
-                                let fs = fs.clone();
-                                let config_path = language_path.join(LanguageConfig::FILE_NAME);
-                                async move {
-                                    let contents = fs.load(&config_path).await?;
-                                    toml::from_str::<LanguageConfig>(&contents)
-                                        .map_err(anyhow::Error::from)
-                                }
-                            };
-                            let context_provider = {
-                                let fs = fs.clone();
-                                let tasks_path = language_path.join(TaskTemplates::FILE_NAME);
-                                async move {
-                                    Ok(fs.load(&tasks_path).await.ok().and_then(|contents| {
-                                        serde_json_lenient::from_str(&contents).log_err().map(
-                                            |definitions| {
-                                                Arc::new(ContextProviderWithTasks::new(definitions))
-                                                    as Arc<_>
-                                            },
-                                        )
-                                    }))
-                                }
-                            };
-                            let (config, queries, context_provider) = futures::try_join!(
-                                config,
-                                async { Ok(load_plugin_queries(fs, &language_path).await) },
-                                context_provider,
-                            )?;
-
-                            Ok(LoadedLanguage {
-                                config,
-                                queries,
-                                context_provider,
-                                toolchain_provider: None,
-                                manifest_name: None,
-                            })
-                        }
-                        .boxed()
+                        async move { load_plugin_language(fs, &language_path).await }.boxed()
                     }
                 }),
             );
@@ -1989,6 +1951,43 @@ impl ExtensionStore {
         self.remote_clients.push(client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
+}
+
+pub async fn load_plugin_language(fs: Arc<dyn Fs>, language_path: &Path) -> Result<LoadedLanguage> {
+    let config = {
+        let fs = fs.clone();
+        let config_path = language_path.join(LanguageConfig::FILE_NAME);
+        async move {
+            let contents = fs.load(&config_path).await?;
+            toml::from_str::<LanguageConfig>(&contents).map_err(anyhow::Error::from)
+        }
+    };
+    let context_provider = {
+        let fs = fs.clone();
+        let tasks_path = language_path.join(TaskTemplates::FILE_NAME);
+        async move {
+            fs.load(&tasks_path).await.ok().and_then(|contents| {
+                serde_json_lenient::from_str(&contents)
+                    .log_err()
+                    .map(|definitions| {
+                        Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>
+                    })
+            })
+        }
+    };
+    let (config, queries, context_provider) = futures::try_join!(
+        config,
+        load_plugin_queries(fs, language_path).map(Ok),
+        context_provider.map(Ok)
+    )?;
+
+    Ok(LoadedLanguage {
+        config,
+        queries,
+        context_provider,
+        toolchain_provider: None,
+        manifest_name: None,
+    })
 }
 
 pub async fn load_plugin_queries(fs: Arc<dyn Fs>, root_path: &Path) -> LanguageQueries {

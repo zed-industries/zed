@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use extension_host::load_plugin_queries;
+use extension_host::{load_plugin_language, load_plugin_queries};
 use fs::{Fs, RealFs};
 use gpui::{TestAppContext, TestDispatcher};
 use serde_json::json;
@@ -13,6 +13,8 @@ fn query_loading(criterion: &mut Criterion) {
     cx.executor().allow_parking();
 
     let queries = TempTree::new(json!({
+        "config.toml": "name = \"Benchmark\"\npath_suffixes = [\"bench\"]\n",
+        "tasks.json": "[]",
         "brackets.scm": "brackets query",
         "highlights.scm": "highlights query",
         "indents.scm": "indents query",
@@ -30,6 +32,16 @@ fn query_loading(criterion: &mut Criterion) {
             black_box(
                 cx.foreground_executor()
                     .block_on(load_plugin_queries(fs.clone(), &root_path)),
+            );
+        });
+    });
+
+    criterion.bench_function("load_plugin_language/parallel", |bencher| {
+        bencher.iter(|| {
+            black_box(
+                cx.foreground_executor()
+                    .block_on(load_plugin_language(fs.clone(), &root_path))
+                    .unwrap(),
             );
         });
     });
