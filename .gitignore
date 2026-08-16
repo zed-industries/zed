@@ -60,3 +60,10 @@ crates/docs_preprocessor/actions.json
 .nixos-test-history
 
 .local*
+
+# Windows installer and packaging artifacts
+/inno/
+/conpty/
+/AGS_SDK*
+*.nupkg
+*.appx
