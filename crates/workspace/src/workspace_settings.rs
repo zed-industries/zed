@@ -41,6 +41,28 @@ pub struct WorkspaceSettings {
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
     pub focus_follows_mouse: FocusFollowsMouse,
+    pub island_layout: IslandLayoutSettings,
+}
+
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct IslandLayoutSettings {
+    pub enabled: bool,
+    pub corner_radius: f32,
+    pub gap: f32,
+    pub border: bool,
+    pub pill_tabs: bool,
+}
+
+impl Default for IslandLayoutSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            corner_radius: 18.0,
+            gap: 6.0,
+            border: true,
+            pill_tabs: true,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Deserialize)]
@@ -79,6 +101,7 @@ pub struct TabBarSettings {
 impl Settings for WorkspaceSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let workspace = &content.workspace;
+        let island_layout = workspace.island_layout.as_ref();
         Self {
             active_pane_modifiers: ActivePanelModifiers {
                 border_size: Some(
@@ -141,6 +164,13 @@ impl Settings for WorkspaceSettings {
                         .debounce_ms
                         .unwrap_or(250),
                 ),
+            },
+            island_layout: IslandLayoutSettings {
+                enabled: island_layout.and_then(|s| s.enabled).unwrap_or(false),
+                corner_radius: island_layout.and_then(|s| s.corner_radius).unwrap_or(18.0),
+                gap: island_layout.and_then(|s| s.gap).unwrap_or(6.0),
+                border: island_layout.and_then(|s| s.border).unwrap_or(true),
+                pill_tabs: island_layout.and_then(|s| s.pill_tabs).unwrap_or(true),
             },
         }
     }
@@ -214,3 +244,19 @@ impl Settings for StatusBarSettings {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_island_layout_settings_defaults() {
+        let defaults = IslandLayoutSettings::default();
+        assert_eq!(defaults.enabled, false);
+        assert_eq!(defaults.corner_radius, 18.0);
+        assert_eq!(defaults.gap, 6.0);
+        assert_eq!(defaults.border, true);
+        assert_eq!(defaults.pill_tabs, true);
+    }
+}
+

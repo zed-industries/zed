@@ -140,6 +140,8 @@ pub struct WorkspaceSettingsContent {
     /// Whether the focused panel follows the mouse location
     /// Default: false
     pub focus_follows_mouse: Option<FocusFollowsMouse>,
+    /// Floating island layout settings.
+    pub island_layout: Option<IslandLayoutSettings>,
 }
 
 #[with_fallible_options]
@@ -1064,3 +1066,74 @@ pub struct FocusFollowsMouse {
     pub enabled: Option<bool>,
     pub debounce_ms: Option<u64>,
 }
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct IslandLayoutSettings {
+    /// Whether floating island layout mode is enabled.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+
+    /// Corner radius in pixels for floating panels and cards.
+    ///
+    /// Default: 18.0
+    pub corner_radius: Option<f32>,
+
+    /// Gap / padding around floating islands in pixels.
+    ///
+    /// Default: 6.0
+    pub gap: Option<f32>,
+
+    /// Whether to render a subtle border outline around floating panels.
+    ///
+    /// Default: true
+    pub border: Option<bool>,
+
+    /// Whether to display editor tabs as rounded pills inside the pane header.
+    ///
+    /// Default: true
+    pub pill_tabs: Option<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_island_layout_settings_deserialization() {
+        let json = r#"{
+            "enabled": true,
+            "corner_radius": 12.0,
+            "gap": 8.0,
+            "border": false,
+            "pill_tabs": true
+        }"#;
+
+        let settings: IslandLayoutSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(settings.enabled, Some(true));
+        assert_eq!(settings.corner_radius, Some(12.0));
+        assert_eq!(settings.gap, Some(8.0));
+        assert_eq!(settings.border, Some(false));
+        assert_eq!(settings.pill_tabs, Some(true));
+    }
+
+    #[test]
+    fn test_workspace_settings_content_island_layout() {
+        let json = r#"{
+            "island_layout": {
+                "enabled": true,
+                "corner_radius": 16.0
+            }
+        }"#;
+
+        let content: WorkspaceSettingsContent = serde_json::from_str(json).unwrap();
+        let island = content.island_layout.unwrap();
+        assert_eq!(island.enabled, Some(true));
+        assert_eq!(island.corner_radius, Some(16.0));
+        assert_eq!(island.gap, None);
+        assert_eq!(island.border, None);
+        assert_eq!(island.pill_tabs, None);
+    }
+}
+
