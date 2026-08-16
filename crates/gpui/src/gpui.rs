@@ -47,6 +47,7 @@ pub mod profiler;
 pub mod queue;
 mod scene;
 mod shared_uri;
+mod spring;
 mod style;
 mod styled;
 mod subscription;
@@ -104,6 +105,7 @@ pub use global::*;
 pub use gpui_macros::{
     AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,
 };
+pub use spring::*;
 
 /// Defines a Criterion benchmark group for benchmarks annotated with [`gpui::bench`].
 ///
