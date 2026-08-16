@@ -2342,24 +2342,28 @@ fn editor_page() -> SettingsPage {
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Git Gutter Width",
                 description: "Width, in pixels, of the git diff indicators in the gutter. When unset, the width scales with the buffer font size.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("gutter.git_gutter_width"),
-                    pick: |settings_content| {
-                        settings_content
-                            .editor
-                            .gutter
-                            .as_ref()
-                            .and_then(|gutter| gutter.git_gutter_width.as_ref())
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .editor
-                            .gutter
-                            .get_or_insert_default()
-                            .git_gutter_width = value;
-                    },
-                }),
+                field: Box::new(
+                    // todo(settings_ui): We don't currently render custom enums with data, so this is an Option that is actually nullable
+                    SettingField {
+                        organization_override: None,
+                        json_path: Some("gutter.git_gutter_width"),
+                        pick: |settings_content| {
+                            settings_content
+                                .editor
+                                .gutter
+                                .as_ref()
+                                .and_then(|gutter| gutter.git_gutter_width.as_ref())
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .editor
+                                .gutter
+                                .get_or_insert_default()
+                                .git_gutter_width = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
                 metadata: None,
                 files: USER,
             }),
