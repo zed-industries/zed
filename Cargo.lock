@@ -3198,6 +3198,7 @@ dependencies = [
  "release_channel",
  "serde",
  "serde_json",
+ "smol",
  "tempfile",
  "util",
  "walkdir",

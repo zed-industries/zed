@@ -155,14 +155,6 @@ struct Args {
     #[arg(long)]
     uninstall: bool,
 
-    /// Run Zed in headless daemon mode with JSON-RPC interface for external agents and tools
-    #[arg(long)]
-    daemon: bool,
-
-    /// Bind address or socket path for the headless JSON-RPC agent interface (e.g. 127.0.0.1:8765)
-    #[arg(long, value_name = "ADDR")]
-    rpc_listen: Option<String>,
-
     /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
@@ -563,16 +555,17 @@ fn run() -> Result<()> {
     }
 
     if args.daemon {
-        let listen_addr = args
-            .rpc_listen
-            .as_deref()
-            .unwrap_or("127.0.0.1:8765");
-        println!(
-            "Starting Zed Headless Agent Daemon on {} (protocol: JSON-RPC 2.0)...",
-            listen_addr
+        eprintln!(
+            "🚀 Starting Zed JSON-RPC 2.0 Headless Daemon on {}",
+            args.daemon_listen_addr
         );
-        // Headless daemon loop for external AI agents and tools
-        println!("Zed Headless Engine initialized successfully. Ready for external agent connections.");
+        let config = zed_daemon::DaemonConfig {
+            listen_addr: args.daemon_listen_addr,
+            max_connections: 64,
+        };
+        let registry = zed_daemon::default_registry();
+        let server = zed_daemon::DaemonServer::new(config, registry);
+        smol::block_on(server.run())?;
         return Ok(());
     }
 
@@ -607,18 +600,6 @@ fn run() -> Result<()> {
             .context("Failed to execute uninstall script")?;
 
         std::process::exit(status.code().unwrap_or(1));
-    }
-
-    if args.daemon {
-        eprintln!("🚀 Starting Zed JSON-RPC 2.0 Headless Daemon on {}", args.daemon_listen_addr);
-        let config = zed_daemon::DaemonConfig {
-            listen_addr: args.daemon_listen_addr,
-            max_connections: 64,
-        };
-        let registry = zed_daemon::default_registry();
-        let server = zed_daemon::DaemonServer::new(config, registry);
-        smol::block_on(server.run())?;
-        return Ok(());
     }
 
     let (server, server_name) =
