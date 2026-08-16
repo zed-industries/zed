@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use cocoa::appkit::CGFloat;
-use collections::{HashMap, HashSet};
+use collections::{HashMap, HashSet, hash_map::Entry};
 use core_foundation::{
     array::{CFArray, CFArrayRef},
     attributed_string::CFMutableAttributedString,
@@ -144,13 +144,18 @@ impl PlatformTextSystem for MacTextSystem {
                 font_features: font.features.clone(),
                 font_fallbacks: font.fallbacks.clone(),
             };
+            // Cloning the `SmallVec` keeps the borrow of `lock` short; its
+            // inline capacity makes the clone cheaper than the map searches
+            // it saves.
             let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
-                font_ids.as_slice()
+                font_ids.clone()
             } else {
                 let font_ids =
                     lock.load_family(&font.family, &font.features, font.fallbacks.as_ref())?;
-                lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
-                lock.font_ids_by_font_key[&font_key].as_ref()
+                lock.font_ids_by_font_key
+                    .entry(font_key)
+                    .or_insert(font_ids)
+                    .clone()
             };
 
             let candidate_properties = candidates
@@ -394,19 +399,18 @@ impl MacTextSystemState {
 
     fn id_for_native_font(&mut self, requested_font: CTFont) -> FontId {
         let postscript_name = requested_font.postscript_name();
-        if let Some(font_id) = self.font_ids_by_postscript_name.get(&postscript_name) {
-            *font_id
-        } else {
-            let font_id = FontId(self.fonts.len());
-            self.font_ids_by_postscript_name
-                .insert(postscript_name.clone(), font_id);
-            self.postscript_names_by_font_id
-                .insert(font_id, postscript_name);
-            self.fonts
-                .push(font_kit::font::Font::from_core_graphics_font(
-                    requested_font.copy_to_CGFont(),
-                ));
-            font_id
+        match self.font_ids_by_postscript_name.entry(postscript_name) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let font_id = FontId(self.fonts.len());
+                self.postscript_names_by_font_id
+                    .insert(font_id, entry.key().clone());
+                self.fonts
+                    .push(font_kit::font::Font::from_core_graphics_font(
+                        requested_font.copy_to_CGFont(),
+                    ));
+                *entry.insert(font_id)
+            }
         }
     }
 

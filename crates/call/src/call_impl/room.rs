@@ -8,7 +8,7 @@ use client::{
     ChannelId, Client, ParticipantIndex, TypedEnvelope, User, UserStore,
     proto::{self, PeerId},
 };
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet, btree_map};
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use futures::StreamExt;
@@ -857,25 +857,24 @@ impl Room {
                         let role = participant.role();
                         let location = ParticipantLocation::from_proto(participant.location)
                             .unwrap_or(ParticipantLocation::External);
-                        if let Some(remote_participant) =
-                            this.remote_participants.get_mut(&participant.user_id)
-                        {
-                            remote_participant.peer_id = peer_id;
-                            remote_participant.projects = participant.projects;
-                            remote_participant.participant_index = participant_index;
-                            if location != remote_participant.location
-                                || role != remote_participant.role
-                            {
-                                remote_participant.location = location;
-                                remote_participant.role = role;
-                                cx.emit(Event::ParticipantLocationChanged {
-                                    participant_id: peer_id,
-                                });
+                        match this.remote_participants.entry(participant.user_id) {
+                            btree_map::Entry::Occupied(mut entry) => {
+                                let remote_participant = entry.get_mut();
+                                remote_participant.peer_id = peer_id;
+                                remote_participant.projects = participant.projects;
+                                remote_participant.participant_index = participant_index;
+                                if location != remote_participant.location
+                                    || role != remote_participant.role
+                                {
+                                    remote_participant.location = location;
+                                    remote_participant.role = role;
+                                    cx.emit(Event::ParticipantLocationChanged {
+                                        participant_id: peer_id,
+                                    });
+                                }
                             }
-                        } else {
-                            this.remote_participants.insert(
-                                participant.user_id,
-                                RemoteParticipant {
+                            btree_map::Entry::Vacant(entry) => {
+                                entry.insert(RemoteParticipant {
                                     user: user.clone(),
                                     participant_index,
                                     peer_id,
@@ -886,38 +885,38 @@ impl Room {
                                     speaking: false,
                                     video_tracks: Default::default(),
                                     audio_tracks: Default::default(),
-                                },
-                            );
+                                });
 
-                            // When joining a room start_room_connection gets
-                            // called but we have already played the join sound.
-                            // Dont play extra sounds over that.
-                            if this.created.elapsed() > Duration::from_millis(100) {
-                                if let proto::ChannelRole::Guest = role {
-                                    Audio::play_sound(Sound::GuestJoined, cx);
-                                // Do not play join sound in large meetings
-                                } else if this.remote_participants().len() < 10 {
-                                    Audio::play_sound(Sound::Joined, cx);
+                                // When joining a room start_room_connection gets
+                                // called but we have already played the join sound.
+                                // Dont play extra sounds over that.
+                                if this.created.elapsed() > Duration::from_millis(100) {
+                                    if let proto::ChannelRole::Guest = role {
+                                        Audio::play_sound(Sound::GuestJoined, cx);
+                                    // Do not play join sound in large meetings
+                                    } else if this.remote_participants().len() < 10 {
+                                        Audio::play_sound(Sound::Joined, cx);
+                                    }
                                 }
-                            }
 
-                            if let Some(livekit_participants) = &livekit_participants
-                                && let Some(livekit_participant) = livekit_participants
-                                    .get(&ParticipantIdentity(user.legacy_id.to_string()))
-                            {
-                                for publication in
-                                    livekit_participant.track_publications().into_values()
+                                if let Some(livekit_participants) = &livekit_participants
+                                    && let Some(livekit_participant) = livekit_participants
+                                        .get(&ParticipantIdentity(user.legacy_id.to_string()))
                                 {
-                                    if let Some(track) = publication.track() {
-                                        this.livekit_room_updated(
-                                            RoomEvent::TrackSubscribed {
-                                                track,
-                                                publication,
-                                                participant: livekit_participant.clone(),
-                                            },
-                                            cx,
-                                        )
-                                        .warn_on_err();
+                                    for publication in
+                                        livekit_participant.track_publications().into_values()
+                                    {
+                                        if let Some(track) = publication.track() {
+                                            this.livekit_room_updated(
+                                                RoomEvent::TrackSubscribed {
+                                                    track,
+                                                    publication,
+                                                    participant: livekit_participant.clone(),
+                                                },
+                                                cx,
+                                            )
+                                            .warn_on_err();
+                                        }
                                     }
                                 }
                             }

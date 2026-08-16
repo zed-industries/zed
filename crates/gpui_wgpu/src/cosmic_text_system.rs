@@ -142,16 +142,22 @@ impl PlatformTextSystem for CosmicTextSystem {
             font.features.clone(),
             font.fallbacks.clone(),
         );
+        // Cloning the `SmallVec` keeps the borrow of `state` short; its
+        // inline capacity makes the clone cheaper than the map searches it
+        // saves.
         let candidates = if let Some(font_ids) = state.font_ids_by_family_cache.get(&key) {
-            font_ids.as_slice()
+            font_ids.clone()
         } else {
             let font_ids =
                 state.load_family(&font.family, &font.features, font.fallbacks.as_ref())?;
-            state.font_ids_by_family_cache.insert(key.clone(), font_ids);
-            state.font_ids_by_family_cache[&key].as_ref()
+            state
+                .font_ids_by_family_cache
+                .entry(key)
+                .or_insert(font_ids)
+                .clone()
         };
 
-        let ix = find_best_match(font, candidates, &state)?;
+        let ix = find_best_match(font, &candidates, &state)?;
 
         Ok(candidates[ix])
     }
@@ -306,8 +312,9 @@ impl CosmicTextSystemState {
                     } else {
                         let loaded = self.load_family(fallback_name, features, None)?;
                         self.font_ids_by_family_cache
-                            .insert(fb_key.clone(), loaded.clone());
-                        loaded
+                            .entry(fb_key)
+                            .or_insert(loaded)
+                            .clone()
                     };
                     let Some(&fb_id) = fb_ids.first() else {
                         continue;
