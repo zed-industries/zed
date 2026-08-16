@@ -18,7 +18,13 @@ use serde::Deserialize;
 use crate::CopilotChatConfiguration;
 
 /// The public OAuth application client ID of Zed
-pub const GITHUB_COPILOT_CLIENT_ID: &str = "6e3a0413e62d19d75ff1";
+pub const ZED_COPILOT_CLIENT_ID: &str = "6e3a0413e62d19d75ff1";
+
+/// GitHub Copilot's first-party GitHub App client ID. This is the default client
+/// the official `@github/copilot-language-server` uses for its device-code flow
+/// (its `findAppIdToAuthenticate()` returns this ID when no override is set), and
+/// GitHub federates it to GitHub Enterprise instances. 
+pub const GITHUB_COPILOT_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 
 const DEVICE_CODE_SCOPE: &str = "read:user";
 const DEVICE_CODE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
@@ -58,7 +64,7 @@ pub async fn request_device_code(
     configuration: &CopilotChatConfiguration,
 ) -> Result<DeviceFlow> {
     let body = form_encode(&[
-        ("client_id", GITHUB_COPILOT_CLIENT_ID),
+        ("client_id", configuration.oauth_client_id()),
         ("scope", DEVICE_CODE_SCOPE),
     ]);
 
@@ -99,7 +105,7 @@ pub async fn poll_for_access_token(
 ) -> Result<String> {
     let mut interval = device_flow.interval;
     let body = form_encode(&[
-        ("client_id", GITHUB_COPILOT_CLIENT_ID),
+        ("client_id", configuration.oauth_client_id()),
         ("device_code", device_flow.device_code.as_str()),
         ("grant_type", DEVICE_CODE_GRANT_TYPE),
     ]);
