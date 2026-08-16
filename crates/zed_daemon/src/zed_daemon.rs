@@ -229,23 +229,22 @@ impl DaemonServer {
             );
             return serde_json::to_string(&resp).unwrap_or_default();
         }
-
-        // Space-Grade Security: Hard authentication enforcement.
-// The auth_token must be valid for all daemon RPC endpoints.
-// This check runs unconditionally because the CLI now requires auth_token
-// when starting the daemon (see cli/src/main.rs).
-if self.config.auth_token.is_none() {
-    unreachable!("Daemon auth_token should always be set by the CLI");
-}
-let is_authorized = request.auth_token.as_ref().map(|t| t == self.config.auth_token.as_ref().unwrap()).unwrap_or(false);
-if !is_authorized {
-    let resp = JsonRpcResponse::err(
-        request.id.clone(),
-        UNAUTHORIZED,
-        "Unauthorized: valid auth_token required",
-    );
-    return serde_json::to_string(&resp).unwrap_or_default();
-}
+        // Space-Grade Security: Validate auth_token if configured on the daemon
+        if let Some(ref required_token) = self.config.auth_token {
+            let is_authorized = request
+                .auth_token
+                .as_ref()
+                .map(|t| t == required_token)
+                .unwrap_or(false);
+            if !is_authorized {
+                let resp = JsonRpcResponse::err(
+                    request.id.clone(),
+                    UNAUTHORIZED,
+                    "Unauthorized: valid auth_token required",
+                );
+                return serde_json::to_string(&resp).unwrap_or_default();
+            }
+        }
 
         let response = self.registry.dispatch(&request);
         serde_json::to_string(&response).unwrap_or_default()
