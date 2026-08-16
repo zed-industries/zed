@@ -31,7 +31,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
     Task,
 };
-use ignore::IgnoreStack;
+pub use ignore::{IgnoreKind, IgnoreStack};
 use language::{ByteContent, DiskState, FILE_ANALYSIS_BYTES, analyze_byte_content};
 
 use async_channel::{self, Sender};
@@ -76,8 +76,6 @@ use util::{
     rel_path::RelPath,
 };
 pub use worktree_settings::WorktreeSettings;
-
-use crate::ignore::IgnoreKind;
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
@@ -184,7 +182,6 @@ pub struct Snapshot {
     entries_by_id: SumTree<PathEntry>,
     root_repo_common_dir: Option<Arc<SanitizedPath>>,
     root_repo_is_linked_worktree: bool,
-    always_included_entries: Vec<Arc<RelPath>>,
 
     /// A number that increases every time the worktree begins scanning
     /// a set of paths from the filesystem. This scanning could be caused
@@ -290,11 +287,43 @@ struct BackgroundScannerState {
 /// inode-based rename heuristics in that case.
 #[derive(Default)]
 struct RemovedEntries {
+    current: RemovedEntriesGeneration,
+    previous: RemovedEntriesGeneration,
+}
+
+#[derive(Default)]
+struct RemovedEntriesGeneration {
     by_inode: HashMap<u64, Entry>,
     by_path: HashMap<Arc<RelPath>, Entry>,
 }
 
 impl RemovedEntries {
+    fn insert(&mut self, entry: &Entry) {
+        self.current.insert(entry);
+    }
+
+    fn take_by_path(&mut self, path: &RelPath, inode: u64) -> Option<Entry> {
+        self.current
+            .take_by_path(path, inode)
+            .or_else(|| self.previous.take_by_path(path, inode))
+    }
+
+    fn take_by_inode(&mut self, inode: u64) -> Option<Entry> {
+        self.current
+            .take_by_inode(inode)
+            .or_else(|| self.previous.take_by_inode(inode))
+    }
+
+    fn rotate(&mut self) -> impl Iterator<Item = Entry> {
+        let dropped = mem::replace(&mut self.previous, mem::take(&mut self.current));
+        dropped
+            .by_inode
+            .into_values()
+            .chain(dropped.by_path.into_values())
+    }
+}
+
+impl RemovedEntriesGeneration {
     fn insert(&mut self, entry: &Entry) {
         self.by_path.insert(entry.path.clone(), entry.clone());
         match self.by_inode.entry(entry.inode) {
@@ -1287,7 +1316,12 @@ impl LocalWorktree {
         self.path_prefixes_to_scan_tx = path_prefixes_to_scan_tx;
 
         self.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
-        let always_included_entries = mem::take(&mut self.snapshot.always_included_entries);
+        let always_included_entries = self
+            .snapshot
+            .entries(true, 0)
+            .filter(|entry| entry.is_always_included)
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
         log::debug!(
             "refreshing entries for the following always included paths: {:?}",
             always_included_entries
@@ -2534,7 +2568,6 @@ impl Snapshot {
                 .map(|c| c.to_ascii_lowercase())
                 .collect(),
             root_name,
-            always_included_entries: Default::default(),
             entries_by_path: Default::default(),
             entries_by_id: Default::default(),
             root_repo_common_dir: None,
@@ -2783,6 +2816,10 @@ impl Snapshot {
 
     pub fn visible_file_count(&self) -> usize {
         self.entries_by_path.summary().non_ignored_file_count
+    }
+
+    pub fn deferred_scan_dir_count(&self) -> usize {
+        self.entries_by_path.summary().deferred_scan_dir_count
     }
 
     fn traverse_from_offset(
@@ -3079,10 +3116,19 @@ impl LocalSnapshot {
                 repo_excludes.push(repo_exclude.clone());
             }
 
-            if repo_root.is_none() {
-                let metadata = fs.metadata(&ancestor.join(DOT_GIT)).await.ok().flatten();
-                if metadata.is_some() {
+            let is_repo_root = fs
+                .metadata(&ancestor.join(DOT_GIT))
+                .await
+                .is_ok_and(|metadata| metadata.is_some());
+            if is_repo_root {
+                if repo_root.is_none() {
                     repo_root = Some(Arc::from(ancestor));
+                }
+
+                // Stop at the repository containing the worktree root, but not at
+                // ones nested below it, where its rules still apply.
+                if self.abs_path.as_path().starts_with(ancestor) {
+                    break;
                 }
             }
         }
@@ -3118,10 +3164,23 @@ impl LocalSnapshot {
     }
 
     #[cfg(feature = "test-support")]
-    pub fn expanded_entries(&self) -> impl Iterator<Item = &Entry> {
-        self.entries_by_path
-            .cursor::<()>(())
-            .filter(|entry| entry.kind == EntryKind::Dir && (entry.is_external || entry.is_ignored))
+    pub fn expanded_entries(&self, file_scan_depth: Option<u32>) -> impl Iterator<Item = &Entry> {
+        let file_scan_depth = if self.root_repo_common_dir.is_some() {
+            None
+        } else {
+            file_scan_depth
+        };
+        self.entries_by_path.cursor::<()>(()).filter(move |entry| {
+            entry.kind == EntryKind::Dir
+                && (entry.is_external
+                    || entry.is_ignored
+                    || (!entry.is_always_included
+                        && is_beyond_scan_depth(file_scan_depth, &entry.path)
+                        && !self
+                            .git_repositories
+                            .values()
+                            .any(|repo| repo.work_directory.directory_contains(&entry.path))))
+        })
     }
 
     #[cfg(feature = "test-support")]
@@ -3376,9 +3435,11 @@ impl BackgroundScannerState {
         watcher: &dyn Watcher,
         preserve_repository_watches: bool,
     ) {
-        // When the caller preserves repository watches, it intends to re-scan
-        // this subtree and keep its git repositories; pruning them here would
-        // transiently drop and then re-create them with fresh `RepositoryId`s.
+        // When the caller preserves repository watches, the removal must not
+        // prune git repositories: either the subtree is about to be re-scanned,
+        // or its entries are being unloaded by depth deferral while the
+        // repositories stay active. Pruning here would transiently drop and
+        // then re-create them with fresh `RepositoryId`s.
         let prune_repositories = !preserve_repository_watches;
         let removed_descendant_abs_paths = self.remove_path_from_snapshot(path, prune_repositories);
         self.unwatch_path(
@@ -4177,6 +4238,12 @@ impl sum_tree::Item for Entry {
             non_ignored_count,
             file_count,
             non_ignored_file_count,
+            deferred_scan_dir_count: usize::from(
+                self.kind == EntryKind::UnloadedDir
+                    && !self.is_ignored
+                    && !self.is_external
+                    && !self.path.is_empty(),
+            ),
         }
     }
 }
@@ -4196,6 +4263,7 @@ pub struct EntrySummary {
     non_ignored_count: usize,
     file_count: usize,
     non_ignored_file_count: usize,
+    deferred_scan_dir_count: usize,
 }
 
 impl Default for EntrySummary {
@@ -4206,6 +4274,7 @@ impl Default for EntrySummary {
             non_ignored_count: 0,
             file_count: 0,
             non_ignored_file_count: 0,
+            deferred_scan_dir_count: 0,
         }
     }
 }
@@ -4221,6 +4290,7 @@ impl sum_tree::ContextLessSummary for EntrySummary {
         self.non_ignored_count += rhs.non_ignored_count;
         self.file_count += rhs.file_count;
         self.non_ignored_file_count += rhs.non_ignored_file_count;
+        self.deferred_scan_dir_count += rhs.deferred_scan_dir_count;
     }
 }
 
@@ -4447,6 +4517,17 @@ impl BackgroundScanner {
         {
             let mut state = self.state.lock().await;
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
+            if state.scanning_enabled {
+                let deferred_scan_dir_count = state.snapshot.deferred_scan_dir_count();
+                if deferred_scan_dir_count > 0
+                    && let Some(file_scan_depth) = self.settings.file_scan_depth
+                {
+                    log::info!(
+                        "deferred indexing of {deferred_scan_dir_count} directories in {:?} that are outside of git repositories and deeper than file_scan_depth={file_scan_depth}",
+                        root_abs_path.as_path(),
+                    );
+                }
+            }
         }
 
         self.send_status_update(false, SmallVec::new(), &[]).await;
@@ -4570,7 +4651,28 @@ impl BackgroundScanner {
     async fn process_scan_request(&self, mut request: ScanRequest, scanning: bool) -> bool {
         log::debug!("rescanning paths {:?}", request.relative_paths);
 
+        {
+            let state = self.state.lock().await;
+            let mut missing_ancestors = Vec::new();
+            for path in &request.relative_paths {
+                let mut candidates = Vec::new();
+                let mut covered_by_existing_ancestor = false;
+                for ancestor in path.ancestors().skip(1) {
+                    if let Some(entry) = state.snapshot.entry_for_path(ancestor) {
+                        covered_by_existing_ancestor =
+                            entry.kind == EntryKind::UnloadedDir || entry.kind == EntryKind::File;
+                        break;
+                    }
+                    candidates.push(ancestor.into_arc());
+                }
+                if !covered_by_existing_ancestor {
+                    missing_ancestors.extend(candidates);
+                }
+            }
+            request.relative_paths.extend(missing_ancestors);
+        }
         request.relative_paths.sort_unstable();
+        request.relative_paths.dedup();
         self.forcibly_load_paths(&request.relative_paths).await;
 
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
@@ -5092,8 +5194,8 @@ impl BackgroundScanner {
         {
             let mut state = self.state.lock().await;
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
-            let RemovedEntries { by_inode, by_path } = mem::take(&mut state.removed_entries);
-            for entry in by_inode.into_values().chain(by_path.into_values()) {
+            let dropped_entries = state.removed_entries.rotate().collect::<Vec<_>>();
+            for entry in dropped_entries {
                 state.scanned_dirs.remove(&entry.id);
             }
         }
@@ -5487,18 +5589,22 @@ impl BackgroundScanner {
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if !self.should_scan_directory(&state, entry) {
+                if !self.should_scan_directory(&state, entry, ignore_stack.repo_root.is_some()) {
                     log::debug!("defer scanning directory {:?}", entry.path);
                     entry.kind = EntryKind::UnloadedDir;
                     new_jobs[job_ix] = None;
+                    if !entry.is_ignored
+                        && !entry.is_external
+                        && state.snapshot.child_entries(&entry.path).next().is_some()
+                    {
+                        state.remove_path_from_snapshot_and_unwatch(
+                            &entry.path,
+                            self.watcher.as_ref(),
+                            true,
+                        );
+                    }
                 }
                 job_ix += 1;
-            }
-            if entry.is_always_included {
-                state
-                    .snapshot
-                    .always_included_entries
-                    .push(entry.path.clone());
             }
         }
 
@@ -5653,10 +5759,13 @@ impl BackgroundScanner {
                     fs_entry.is_hidden = self.settings.is_path_hidden(path);
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
-                        if self.should_scan_directory(&state, &fs_entry)
-                            || (self.track_git_repositories
-                                && fs_entry.path.is_empty()
-                                && abs_path.file_name() == Some(OsStr::new(DOT_GIT)))
+                        if self.should_scan_directory(
+                            &state,
+                            &fs_entry,
+                            ignore_stack.repo_root.is_some(),
+                        ) || (self.track_git_repositories
+                            && fs_entry.path.is_empty()
+                            && abs_path.file_name() == Some(OsStr::new(DOT_GIT)))
                         {
                             state
                                 .enqueue_scan_dir(
@@ -5939,9 +6048,7 @@ impl BackgroundScanner {
             return;
         };
 
-        if let Ok(Some(metadata)) = self.fs.metadata(&job.abs_path.join(DOT_GIT)).await
-            && metadata.is_dir
-        {
+        if let Ok(Some(_)) = self.fs.metadata(&job.abs_path.join(DOT_GIT)).await {
             ignore_stack.repo_root = Some(job.abs_path.clone());
         }
 
@@ -5957,10 +6064,16 @@ impl BackgroundScanner {
                     ignore_stack.clone()
                 };
 
-                // Scan any directories that were previously ignored and weren't previously scanned.
-                if was_ignored && !entry.is_ignored && entry.kind.is_unloaded() {
+                // Scan any unloaded directories that became scannable: no longer
+                // ignored, or newly inside a repository that exempts them from
+                // the scan depth limit.
+                if !entry.is_ignored
+                    && entry.kind.is_unloaded()
+                    && (was_ignored || ignore_stack.repo_root.is_some())
+                {
                     let state = self.state.lock().await;
-                    if self.should_scan_directory(&state, &entry) {
+                    if self.should_scan_directory(&state, &entry, ignore_stack.repo_root.is_some())
+                    {
                         state
                             .enqueue_scan_dir(
                                 abs_path.clone(),
@@ -6131,11 +6244,18 @@ impl BackgroundScanner {
         !self.share_private_files && self.settings.is_path_private(path)
     }
 
-    fn should_scan_directory(&self, state: &BackgroundScannerState, entry: &Entry) -> bool {
+    fn should_scan_directory(
+        &self,
+        state: &BackgroundScannerState,
+        entry: &Entry,
+        in_repo: bool,
+    ) -> bool {
+        let beyond_scan_depth =
+            !in_repo && is_beyond_scan_depth(self.settings.file_scan_depth, &entry.path);
         let scannable = state.scanning_enabled
             && (!entry.is_external
                 || self.settings.scan_symlinks == settings::ScanSymlinksSetting::Always)
-            && (!entry.is_ignored || entry.is_always_included);
+            && (!(entry.is_ignored || beyond_scan_depth) || entry.is_always_included);
 
         scannable
             || entry.path.file_name() == Some(DOT_GIT)
@@ -6377,6 +6497,10 @@ fn build_diff(
     }
 
     changes.into()
+}
+
+fn is_beyond_scan_depth(file_scan_depth: Option<u32>, path: &RelPath) -> bool {
+    file_scan_depth.is_some_and(|depth| path.components().count() >= depth as usize)
 }
 
 fn swap_to_front(child_paths: &mut Vec<PathBuf>, file: &str) {
@@ -6916,6 +7040,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
                 .canonical_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
+            is_unloaded: entry.kind == EntryKind::UnloadedDir,
         }
     }
 }
@@ -6927,7 +7052,11 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
         (root_char_bag, always_included, entry): (&CharBag, &PathMatcher, proto::Entry),
     ) -> Result<Self> {
         let kind = if entry.is_dir {
-            EntryKind::Dir
+            if entry.is_unloaded {
+                EntryKind::UnloadedDir
+            } else {
+                EntryKind::Dir
+            }
         } else {
             EntryKind::File
         };
@@ -7083,7 +7212,7 @@ impl fs::Watcher for NullWatcher {
     }
 }
 
-async fn decode_file_text(
+pub async fn decode_file_text(
     fs: &dyn Fs,
     abs_path: &Path,
 ) -> Result<(String, &'static Encoding, bool)> {
@@ -7133,7 +7262,7 @@ async fn decode_file_text(
     decode_byte_full(content, bom_encoding, byte_content)
 }
 
-fn decode_byte_header(prefix: &[u8]) -> (Option<&'static Encoding>, ByteContent) {
+pub fn decode_byte_header(prefix: &[u8]) -> (Option<&'static Encoding>, ByteContent) {
     if let Some((encoding, _bom_len)) = Encoding::for_bom(prefix) {
         return (Some(encoding), ByteContent::Unknown);
     }

@@ -19,6 +19,9 @@ workspace.workspace = true
 log.workspace = true
 text.workspace = true
 
+[dev-dependencies]
+proptest.workspace = true
+
 [features]
 dev-tools = []
 
