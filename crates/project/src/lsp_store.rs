@@ -544,7 +544,7 @@ impl LocalLspStore {
                 path: RelPath::empty(),
             };
             let augments_syntax_tokens = AllLanguageSettings::get(Some(settings_location), cx)
-                .language(Some(settings_location), Some(&language_name), cx)
+                .language(Some(settings_location), Some(&language_name), None, cx)
                 .semantic_tokens
                 .use_tree_sitter();
             cx.spawn(async move |cx| {

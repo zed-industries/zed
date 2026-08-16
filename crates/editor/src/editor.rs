@@ -181,9 +181,9 @@ use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, LanguageAwareStyling, LanguageName, LanguageRegistry, LanguageScope,
-    LocalFile, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal, TextObject,
-    TransactionId, TreeSitterOptions, WordsQuery,
+    IndentOverride, IndentSize, Language, LanguageAwareStyling, LanguageName, LanguageRegistry,
+    LanguageScope, LocalFile, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal,
+    TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
         WordsCompletionMode, all_language_settings,
@@ -6761,6 +6761,7 @@ impl Editor {
     ) {
         let settings = self.buffer.read(cx).language_settings(cx);
         let tab_size = settings.tab_size.get() as usize;
+        let non_zero_tab_size = settings.tab_size;
 
         self.manipulate_mutable_lines(window, cx, |lines| {
             // Allocates a reasonably sized scratch buffer once for the whole loop
@@ -6806,6 +6807,18 @@ impl Editor {
                 reindented_line.clear();
             }
         });
+
+        if let Some(buffer) = self.active_buffer(cx) {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_manual_indent_override(
+                    Some(IndentOverride {
+                        hard_tabs: false,
+                        tab_size: non_zero_tab_size,
+                    }),
+                    cx,
+                );
+            });
+        }
     }
 
     pub fn convert_indentation_to_tabs(
@@ -6816,6 +6829,7 @@ impl Editor {
     ) {
         let settings = self.buffer.read(cx).language_settings(cx);
         let tab_size = settings.tab_size.get() as usize;
+        let non_zero_tab_size = settings.tab_size;
 
         self.manipulate_mutable_lines(window, cx, |lines| {
             // Allocates a reasonably sized buffer once for the whole loop
@@ -6872,6 +6886,18 @@ impl Editor {
                 reindented_line.clear();
             }
         });
+
+        if let Some(buffer) = self.active_buffer(cx) {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_manual_indent_override(
+                    Some(IndentOverride {
+                        hard_tabs: true,
+                        tab_size: non_zero_tab_size,
+                    }),
+                    cx,
+                );
+            });
+        }
     }
 
     pub fn convert_to_upper_case(

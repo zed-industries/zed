@@ -135,6 +135,7 @@ pub struct Buffer {
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     modeline: Option<Arc<ModelineSettings>>,
     detected_indent: Option<Arc<DetectedIndentation>>,
+    manual_indent_override: Option<Arc<IndentOverride>>,
     _subscriptions: Vec<gpui::Subscription>,
     tree_sitter_data: Arc<TreeSitterData>,
     encoding: &'static Encoding,
@@ -193,6 +194,13 @@ pub struct BufferSnapshot {
     pub capability: Capability,
     modeline: Option<Arc<ModelineSettings>>,
     detected_indent: Option<Arc<DetectedIndentation>>,
+    manual_indent_override: Option<Arc<IndentOverride>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IndentOverride {
+    pub hard_tabs: bool,
+    pub tab_size: NonZeroU32,
 }
 
 /// The kind and amount of indentation in a particular line. For now,
@@ -292,6 +300,11 @@ pub enum Operation {
         /// The line ending type.
         line_ending: LineEnding,
         /// The buffer's lamport timestamp.
+        lamport_timestamp: clock::Lamport,
+    },
+
+    UpdateIndentOverride {
+        indent_override: Option<IndentOverride>,
         lamport_timestamp: clock::Lamport,
     },
 }
@@ -1200,6 +1213,7 @@ impl Buffer {
             change_bits: Default::default(),
             modeline: None,
             detected_indent: None,
+            manual_indent_override: None,
             _subscriptions: Vec::new(),
             encoding: encoding_rs::UTF_8,
             has_bom: false,
@@ -1214,6 +1228,7 @@ impl Buffer {
         language_registry: Option<Arc<LanguageRegistry>>,
         modeline: Option<Arc<ModelineSettings>>,
         detected_indent: Option<Arc<DetectedIndentation>>,
+        manual_indent_override: Option<Arc<IndentOverride>>,
         cx: &mut App,
     ) -> impl Future<Output = BufferSnapshot> + use<> {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
@@ -1240,6 +1255,7 @@ impl Buffer {
                 capability: Capability::ReadOnly,
                 modeline,
                 detected_indent,
+                manual_indent_override,
             }
         }
     }
@@ -1268,6 +1284,7 @@ impl Buffer {
             capability: Capability::ReadOnly,
             modeline: None,
             detected_indent: None,
+            manual_indent_override: None,
         }
     }
 
@@ -1300,6 +1317,7 @@ impl Buffer {
             capability: Capability::ReadOnly,
             modeline: None,
             detected_indent: None,
+            manual_indent_override: None,
         }
     }
 
@@ -1332,6 +1350,7 @@ impl Buffer {
             capability: self.capability,
             modeline: self.modeline.clone(),
             detected_indent: self.detected_indent.clone(),
+            manual_indent_override: self.manual_indent_override.clone(),
         }
     }
 
@@ -1554,6 +1573,15 @@ impl Buffer {
         self.reparse(cx, may_block);
         let has_fresh_language =
             self.language.is_some() && old_language.is_none_or(|old| old == *PLAIN_TEXT);
+
+        if self.detected_indent.is_some() {
+            return;
+        }
+        if !LanguageSettings::for_buffer(self, cx).detect_indentation {
+            return;
+        }
+        self.detect_indentation();
+
         cx.emit(BufferEvent::LanguageChanged(has_fresh_language));
     }
 
@@ -1567,6 +1595,17 @@ impl Buffer {
 
     pub fn language_registry(&self) -> Option<Arc<LanguageRegistry>> {
         self.syntax_map.lock().language_registry()
+    }
+
+    pub fn detect_indentation(&mut self) {
+        let snapshot = self.snapshot();
+        let end_row = snapshot.max_point().row.min(2000);
+        let detected = crate::detect_indentation(
+            snapshot
+                .line_indents_in_row_range(0..end_row)
+                .map(|(_, line_indent)| line_indent),
+        );
+        self.detected_indent = detected.map(Arc::new);
     }
 
     /// Assign the line ending type to the buffer.
@@ -1612,6 +1651,30 @@ impl Buffer {
     /// Returns the [`DetectedIndentation`]
     pub fn detected_indent(&self) -> Option<&Arc<DetectedIndentation>> {
         self.detected_indent.as_ref()
+    }
+
+    pub fn manual_indent_override(&self) -> Option<&Arc<IndentOverride>> {
+        self.manual_indent_override.as_ref()
+    }
+
+    pub fn set_manual_indent_override(
+        &mut self,
+        indent_override: Option<IndentOverride>,
+        cx: &mut Context<Self>,
+    ) {
+        if indent_override == self.manual_indent_override.as_deref().copied() {
+            return;
+        }
+        self.manual_indent_override = indent_override.map(Arc::new);
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.send_operation(
+            Operation::UpdateIndentOverride {
+                indent_override,
+                lamport_timestamp,
+            },
+            true,
+            cx,
+        );
     }
 
     /// Assign the buffer a new [`Capability`].
@@ -3175,7 +3238,9 @@ impl Buffer {
             Operation::UpdateSelections { selections, .. } => selections
                 .iter()
                 .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
-            Operation::UpdateCompletionTriggers { .. } | Operation::UpdateLineEnding { .. } => true,
+            Operation::UpdateCompletionTriggers { .. }
+            | Operation::UpdateLineEnding { .. }
+            | Operation::UpdateIndentOverride { .. } => true,
         }
     }
 
@@ -3245,6 +3310,13 @@ impl Buffer {
                 lamport_timestamp,
             } => {
                 self.text.set_line_ending(line_ending);
+                self.text.lamport_clock.observe(lamport_timestamp);
+            }
+            Operation::UpdateIndentOverride {
+                indent_override,
+                lamport_timestamp,
+            } => {
+                self.manual_indent_override = indent_override.map(Arc::new);
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
@@ -4095,6 +4167,14 @@ impl BufferSnapshot {
     /// Returns the [`ModelineSettings`].
     pub fn modeline(&self) -> Option<&Arc<ModelineSettings>> {
         self.modeline.as_ref()
+    }
+
+    pub fn manual_indent_override(&self) -> Option<&Arc<IndentOverride>> {
+        self.manual_indent_override.as_ref()
+    }
+
+    pub fn detected_indent(&self) -> Option<&Arc<DetectedIndentation>> {
+        self.detected_indent.as_ref()
     }
 
     /// Returns the main [`Language`].
@@ -5714,6 +5794,7 @@ impl Clone for BufferSnapshot {
             capability: self.capability,
             modeline: self.modeline.clone(),
             detected_indent: self.detected_indent.clone(),
+            manual_indent_override: self.manual_indent_override.clone(),
         }
     }
 }
@@ -6012,6 +6093,9 @@ impl operation_queue::Operation for Operation {
                 lamport_timestamp, ..
             }
             | Operation::UpdateLineEnding {
+                lamport_timestamp, ..
+            }
+            | Operation::UpdateIndentOverride {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
         }

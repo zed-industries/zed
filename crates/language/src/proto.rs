@@ -7,7 +7,7 @@ use gpui::SharedString;
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;
 use serde_json::Value;
-use std::{ops::Range, str::FromStr, sync::Arc};
+use std::{num::NonZeroU32, ops::Range, str::FromStr, sync::Arc};
 use text::*;
 
 pub use proto::{BufferState, File, Operation};
@@ -100,6 +100,20 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
                 lamport_timestamp: lamport_timestamp.value,
                 line_ending: serialize_line_ending(*line_ending) as i32,
             }),
+
+            crate::Operation::UpdateIndentOverride {
+                indent_override,
+                lamport_timestamp,
+            } => proto::operation::Variant::UpdateIndentOverride(
+                proto::operation::UpdateIndentOverride {
+                    replica_id: lamport_timestamp.replica_id.as_u16() as u32,
+                    lamport_timestamp: lamport_timestamp.value,
+                    indent_override: indent_override.map(|id| proto::IndentOverride {
+                        hard_tabs: id.hard_tabs,
+                        tab_size: id.tab_size.get(),
+                    }),
+                },
+            ),
         }),
     }
 }
@@ -369,6 +383,19 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                     ),
                 }
             }
+            proto::operation::Variant::UpdateIndentOverride(message) => {
+                crate::Operation::UpdateIndentOverride {
+                    indent_override: message.indent_override.map(|id| crate::IndentOverride {
+                        hard_tabs: id.hard_tabs,
+                        // unwarp is ok here as u32 created from a NonZeroU32
+                        tab_size: NonZeroU32::new(id.tab_size).unwrap(),
+                    }),
+                    lamport_timestamp: clock::Lamport {
+                        replica_id: ReplicaId::new(message.replica_id as u16),
+                        value: message.lamport_timestamp,
+                    },
+                }
+            }
         },
     )
 }
@@ -528,6 +555,10 @@ pub fn lamport_timestamp_for_operation(operation: &proto::Operation) -> Option<c
             value = op.lamport_timestamp;
         }
         proto::operation::Variant::UpdateLineEnding(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+        proto::operation::Variant::UpdateIndentOverride(op) => {
             replica_id = op.replica_id;
             value = op.lamport_timestamp;
         }
