@@ -269,6 +269,7 @@ members = [
 default-members = ["crates/zed"]
 
 [workspace.package]
+version = "1.1.0-PROD"
 publish = false
 edition = "2024"
 
