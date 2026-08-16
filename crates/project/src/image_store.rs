@@ -910,12 +910,12 @@ impl LocalImageStore {
 
         let image_id = image.id;
         if let Some(entry_id) = file.entry_id {
-            match self.local_image_ids_by_entry_id.get(&entry_id) {
-                Some(_) => {
+            match self.local_image_ids_by_entry_id.entry(entry_id) {
+                hash_map::Entry::Occupied(_) => {
                     return None;
                 }
-                None => {
-                    self.local_image_ids_by_entry_id.insert(entry_id, image_id);
+                hash_map::Entry::Vacant(entry) => {
+                    entry.insert(image_id);
                 }
             }
         };

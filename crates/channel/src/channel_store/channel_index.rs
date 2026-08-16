@@ -1,6 +1,6 @@
 use crate::Channel;
 use client::ChannelId;
-use collections::BTreeMap;
+use collections::{BTreeMap, btree_map};
 use rpc::proto;
 use std::sync::Arc;
 
@@ -56,30 +56,30 @@ impl ChannelPathsInsertGuard<'_> {
             .iter()
             .map(|cid| ChannelId(*cid))
             .collect();
-        if let Some(existing_channel) = self.channels_by_id.get_mut(&ChannelId(channel_proto.id)) {
-            let existing_channel = Arc::make_mut(existing_channel);
+        match self.channels_by_id.entry(ChannelId(channel_proto.id)) {
+            btree_map::Entry::Occupied(mut entry) => {
+                let existing_channel = Arc::make_mut(entry.get_mut());
 
-            ret = existing_channel.visibility != channel_proto.visibility()
-                || existing_channel.name != channel_proto.name
-                || existing_channel.parent_path != parent_path
-                || existing_channel.channel_order != channel_proto.channel_order;
+                ret = existing_channel.visibility != channel_proto.visibility()
+                    || existing_channel.name != channel_proto.name
+                    || existing_channel.parent_path != parent_path
+                    || existing_channel.channel_order != channel_proto.channel_order;
 
-            existing_channel.visibility = channel_proto.visibility();
-            existing_channel.name = channel_proto.name.into();
-            existing_channel.parent_path = parent_path;
-            existing_channel.channel_order = channel_proto.channel_order;
-        } else {
-            self.channels_by_id.insert(
-                ChannelId(channel_proto.id),
-                Arc::new(Channel {
+                existing_channel.visibility = channel_proto.visibility();
+                existing_channel.name = channel_proto.name.into();
+                existing_channel.parent_path = parent_path;
+                existing_channel.channel_order = channel_proto.channel_order;
+            }
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Arc::new(Channel {
                     id: ChannelId(channel_proto.id),
                     visibility: channel_proto.visibility(),
                     name: channel_proto.name.into(),
                     parent_path,
                     channel_order: channel_proto.channel_order,
-                }),
-            );
-            self.insert_root(ChannelId(channel_proto.id));
+                }));
+                self.insert_root(ChannelId(channel_proto.id));
+            }
         }
         ret
     }

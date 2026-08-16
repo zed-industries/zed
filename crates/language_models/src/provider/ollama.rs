@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use collections::HashMap;
+use collections::{HashMap, hash_map};
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
@@ -1125,19 +1125,20 @@ fn merge_settings_into_models(
     context_window: Option<u64>,
 ) {
     for setting_model in available_models {
-        if let Some(model) = models.get_mut(&setting_model.name) {
-            if context_window.is_none() {
-                model.max_tokens = setting_model.max_tokens;
+        match models.entry(setting_model.name.clone()) {
+            hash_map::Entry::Occupied(mut entry) => {
+                let model = entry.get_mut();
+                if context_window.is_none() {
+                    model.max_tokens = setting_model.max_tokens;
+                }
+                model.display_name = setting_model.display_name.clone();
+                model.keep_alive = setting_model.keep_alive.clone();
+                model.supports_tools = setting_model.supports_tools;
+                model.supports_vision = setting_model.supports_images;
+                model.supports_thinking = setting_model.supports_thinking;
             }
-            model.display_name = setting_model.display_name.clone();
-            model.keep_alive = setting_model.keep_alive.clone();
-            model.supports_tools = setting_model.supports_tools;
-            model.supports_vision = setting_model.supports_images;
-            model.supports_thinking = setting_model.supports_thinking;
-        } else {
-            models.insert(
-                setting_model.name.clone(),
-                ollama::Model {
+            hash_map::Entry::Vacant(entry) => {
+                entry.insert(ollama::Model {
                     name: setting_model.name.clone(),
                     display_name: setting_model.display_name.clone(),
                     max_tokens: context_window.unwrap_or(setting_model.max_tokens),
@@ -1146,8 +1147,8 @@ fn merge_settings_into_models(
                     supports_vision: setting_model.supports_images,
                     supports_thinking: setting_model.supports_thinking,
                     disabled: None,
-                },
-            );
+                });
+            }
         }
     }
 }
