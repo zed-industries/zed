@@ -125,10 +125,26 @@ pub(crate) fn deserialize_terminal_panel(
                 )
                 .await;
                 if let Some((center_group, active_pane)) = center_pane {
-                    terminal_panel.update(cx, |terminal_panel, _| {
+                    terminal_panel.update_in(cx, |terminal_panel, window, cx| {
+                        let interim_items = terminal_panel
+                            .center
+                            .panes()
+                            .into_iter()
+                            .flat_map(|pane| {
+                                pane.read(cx)
+                                    .items()
+                                    .map(|item| item.boxed_clone())
+                                    .collect::<Vec<_>>()
+                            })
+                            .collect::<Vec<_>>();
                         terminal_panel.center = PaneGroup::with_root(center_group);
                         terminal_panel.active_pane =
                             active_pane.unwrap_or_else(|| terminal_panel.center.first_pane());
+                        for item in interim_items {
+                            terminal_panel.active_pane.update(cx, |pane, cx| {
+                                pane.add_item(item, false, false, None, window, cx);
+                            });
+                        }
                     })?;
                 }
             }

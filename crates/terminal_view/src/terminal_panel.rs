@@ -9,15 +9,11 @@ use crate::{
 use breadcrumbs::Breadcrumbs;
 use collections::HashMap;
 use db::kvp::KeyValueStore;
-use futures::{
-    FutureExt as _,
-    channel::oneshot,
-    future::{Shared, join_all},
-};
+use futures::{channel::oneshot, future::join_all};
 use gpui::{
-    Action, Anchor, App, AsyncApp, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, ParentElement, Pixels, Render, Styled, Task, TaskExt, WeakEntity,
-    Window, actions,
+    Action, Anchor, Animation, AnimationExt, App, AsyncApp, AsyncWindowContext, Context, Entity,
+    EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled, Task,
+    TaskExt, WeakEntity, Window, actions,
 };
 use itertools::Itertools;
 use project::{Fs, Project};
@@ -26,8 +22,8 @@ use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
-    ButtonLike, Clickable, ContextMenu, FluentBuilder, PopoverMenu, SplitButton, Toggleable,
-    Tooltip, prelude::*,
+    ButtonLike, Clickable, CommonAnimationExt, ContextMenu, FluentBuilder, PopoverMenu,
+    SplitButton, Toggleable, Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -86,8 +82,8 @@ pub struct TerminalPanel {
     workspace: WeakEntity<Workspace>,
     pending_serialization: Task<Option<()>>,
     pending_terminals_to_add: usize,
-    pending_restoration: Shared<Task<()>>,
-    _post_restoration: Task<()>,
+    restoring: bool,
+    _restoration: Task<()>,
     deferred_tasks: HashMap<TaskId, Task<()>>,
     assistant_enabled: bool,
     active: bool,
@@ -106,8 +102,8 @@ impl TerminalPanel {
             workspace: workspace.weak_handle(),
             pending_serialization: Task::ready(None),
             pending_terminals_to_add: 0,
-            pending_restoration: Task::ready(()).shared(),
-            _post_restoration: Task::ready(()),
+            restoring: false,
+            _restoration: Task::ready(()),
             deferred_tasks: HashMap::default(),
             assistant_enabled: false,
             active: false,
@@ -253,48 +249,41 @@ impl TerminalPanel {
             .ok();
 
         terminal_panel.update_in(&mut cx, |panel, window, cx| {
-            panel.pending_terminals_to_add += 1;
-            let restoration = cx
-                .spawn_in(window, {
-                    let workspace = workspace.clone();
-                    async move |terminal_panel, cx| {
-                        Self::restore_serialized_state(workspace, terminal_panel.clone(), cx)
-                            .await
-                            .log_err();
-                        terminal_panel
-                            .update(cx, |terminal_panel, _| {
-                                terminal_panel.pending_terminals_to_add =
-                                    terminal_panel.pending_terminals_to_add.saturating_sub(1);
-                            })
-                            .ok();
+            panel.restoring = true;
+            panel._restoration = cx.spawn_in(window, {
+                let workspace = workspace.clone();
+                async move |terminal_panel, cx| {
+                    Self::restore_serialized_state(workspace, terminal_panel.clone(), cx)
+                        .await
+                        .log_err();
+                    let default_shell_task = terminal_panel
+                        .update_in(cx, |terminal_panel, window, cx| {
+                            terminal_panel.restoring = false;
+                            terminal_panel.serialize(cx);
+                            cx.notify();
+                            if terminal_panel.active && terminal_panel.has_no_terminals(cx) {
+                                let working_directory = terminal_panel
+                                    .workspace
+                                    .update(cx, |workspace, cx| {
+                                        default_working_directory(workspace, cx)
+                                    })
+                                    .ok()
+                                    .flatten();
+                                Some(terminal_panel.add_terminal_shell(
+                                    working_directory,
+                                    RevealStrategy::Always,
+                                    window,
+                                    cx,
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                        .ok()
+                        .flatten();
+                    if let Some(task) = default_shell_task {
+                        task.await.log_err();
                     }
-                })
-                .shared();
-            panel.pending_restoration = restoration.clone();
-            panel._post_restoration = cx.spawn_in(window, async move |terminal_panel, cx| {
-                restoration.await;
-                let default_shell_task =
-                    terminal_panel.update_in(cx, |terminal_panel, window, cx| {
-                        if terminal_panel.active && terminal_panel.has_no_terminals(cx) {
-                            let working_directory = terminal_panel
-                                .workspace
-                                .update(cx, |workspace, cx| {
-                                    default_working_directory(workspace, cx)
-                                })
-                                .ok()
-                                .flatten();
-                            Some(terminal_panel.add_terminal_shell(
-                                working_directory,
-                                RevealStrategy::Always,
-                                window,
-                                cx,
-                            ))
-                        } else {
-                            None
-                        }
-                    });
-                if let Ok(Some(task)) = default_shell_task {
-                    task.await.log_err();
                 }
             });
         })?;
@@ -326,6 +315,7 @@ impl TerminalPanel {
                 .log_err()
                 .flatten()
         {
+            let started_at = std::time::Instant::now();
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     deserialize_terminal_panel(
@@ -339,6 +329,20 @@ impl TerminalPanel {
                     )
                 })?
                 .await?;
+            let restored_terminals = terminal_panel
+                .read_with(cx, |terminal_panel, cx| {
+                    terminal_panel
+                        .center
+                        .panes()
+                        .into_iter()
+                        .map(|pane| pane.read(cx).items_len())
+                        .sum::<usize>()
+                })
+                .unwrap_or(0);
+            log::info!(
+                "terminal panel: restored {restored_terminals} serialized terminal(s) in {:?}",
+                started_at.elapsed()
+            );
         }
 
         // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.
@@ -855,19 +859,16 @@ impl TerminalPanel {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
                 anyhow::bail!("terminal not yet supported for remote projects");
             }
-            terminal_panel
-                .read_with(cx, |terminal_panel, _| {
-                    terminal_panel.pending_restoration.clone()
-                })?
-                .await;
-            let pane = terminal_panel.update(cx, |terminal_panel, _| {
+            terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.pending_terminals_to_add += 1;
-                terminal_panel.active_pane.clone()
+                cx.notify();
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
                 .update(cx, |project, cx| project.create_terminal_task(task, cx))
                 .await?;
+            let pane = terminal_panel
+                .read_with(cx, |terminal_panel, _| terminal_panel.active_pane.clone())?;
             let result = workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = Box::new(cx.new(|cx| {
                     TerminalView::new(
@@ -900,6 +901,7 @@ impl TerminalPanel {
             terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.pending_terminals_to_add =
                     terminal_panel.pending_terminals_to_add.saturating_sub(1);
+                cx.notify();
                 terminal_panel.serialize(cx)
             })?;
             result
@@ -939,14 +941,9 @@ impl TerminalPanel {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
                 anyhow::bail!("terminal not yet supported for collaborative projects");
             }
-            terminal_panel
-                .read_with(cx, |terminal_panel, _| {
-                    terminal_panel.pending_restoration.clone()
-                })?
-                .await;
-            let pane = terminal_panel.update(cx, |terminal_panel, _| {
+            terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.pending_terminals_to_add += 1;
-                terminal_panel.active_pane.clone()
+                cx.notify();
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = if force_local {
@@ -959,6 +956,8 @@ impl TerminalPanel {
                     .await
             };
 
+            let pane = terminal_panel
+                .read_with(cx, |terminal_panel, _| terminal_panel.active_pane.clone())?;
             match terminal {
                 Ok(terminal) => {
                     let result = workspace.update_in(cx, |workspace, window, cx| {
@@ -993,11 +992,17 @@ impl TerminalPanel {
                     terminal_panel.update(cx, |terminal_panel, cx| {
                         terminal_panel.pending_terminals_to_add =
                             terminal_panel.pending_terminals_to_add.saturating_sub(1);
+                        cx.notify();
                         terminal_panel.serialize(cx)
                     })?;
                     result
                 }
                 Err(error) => {
+                    terminal_panel.update(cx, |terminal_panel, cx| {
+                        terminal_panel.pending_terminals_to_add =
+                            terminal_panel.pending_terminals_to_add.saturating_sub(1);
+                        cx.notify();
+                    })?;
                     pane.update_in(cx, |pane, window, cx| {
                         let focus = pane.has_focus(window, cx);
                         let failed_to_spawn = cx.new(|cx| FailedToSpawnTerminal {
@@ -1013,6 +1018,9 @@ impl TerminalPanel {
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
+        if self.restoring {
+            return;
+        }
         let Some(serialization_key) = self
             .workspace
             .read_with(cx, |workspace, _| {
@@ -1440,11 +1448,42 @@ impl Render for TerminalPanel {
                 (callbacks.wrap_div_with_search_actions)(div(), self.active_pane.clone())
             })
             .unwrap_or_else(div);
+        let no_items_in_panes = self
+            .center
+            .panes()
+            .into_iter()
+            .all(|pane| pane.read(cx).items_len() == 0);
+        let waiting_for_terminals = self.restoring || self.pending_terminals_to_add > 0;
+        let restoring_placeholder = (waiting_for_terminals && no_items_in_panes).then(|| {
+            let label = if self.restoring {
+                "Restoring terminals…"
+            } else {
+                "Starting terminal…"
+            };
+            h_flex()
+                .absolute()
+                .inset_0()
+                .justify_center()
+                .gap_2()
+                .child(
+                    Icon::new(IconName::ArrowCircle)
+                        .color(Color::Muted)
+                        .size(IconSize::Small)
+                        .with_rotate_animation(2),
+                )
+                .child(Label::new(label).color(Color::Muted))
+                .with_animation(
+                    "restoring-terminals-fade-in",
+                    Animation::new(Duration::from_millis(300)),
+                    |this, delta| this.opacity(delta),
+                )
+        });
         self.workspace
             .update(cx, |workspace, cx| {
                 registrar
                     .track_focus(&self.focus_handle)
                     .size_full()
+                    .relative()
                     .child(self.center.render(
                         workspace.zoomed_item(),
                         None,
@@ -1459,6 +1498,7 @@ impl Render for TerminalPanel {
                         window,
                         cx,
                     ))
+                    .children(restoring_placeholder)
             })
             .ok()
             .map(|div| {
@@ -1680,7 +1720,7 @@ impl Panel for TerminalPanel {
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         let old_active = self.active;
         self.active = active;
-        if !active || old_active == active || !self.has_no_terminals(cx) {
+        if !active || old_active == active || self.restoring || !self.has_no_terminals(cx) {
             return;
         }
         cx.defer_in(window, |this, window, cx| {
