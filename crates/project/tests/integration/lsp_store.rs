@@ -4,15 +4,19 @@ use std::{
     time::{Duration, Instant},
 };
 
+use collections::HashMap;
 use fs::FakeFs;
 use futures::StreamExt;
 use gpui::TestAppContext;
 use language::{CodeLabel, FakeLspAdapter, HighlightId, rust_lang};
-use lsp::Uri;
+use lsp::{LanguageServerName, Uri};
 use parking_lot::Mutex;
 use project::{
     Project,
-    lsp_store::{log_store::TestRpcRequestTracker, *},
+    lsp_store::{
+        log_store::{TestRpcLogHeaderState, TestRpcRequestTracker},
+        *,
+    },
 };
 use serde_json::json;
 use util::path;
@@ -96,6 +100,28 @@ async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut
         );
         assert!(!lsp_store.has_language_server_seed_for_worktree(invisible_worktree_id));
     });
+}
+
+#[test]
+fn test_rpc_log_grouping_separates_timed_messages() {
+    for (received, direction) in [(false, "Send"), (true, "Receive")] {
+        let mut header_state = TestRpcLogHeaderState::new();
+
+        assert_eq!(
+            header_state.header_for_message(received, None),
+            Some(format!("\n// {direction}:"))
+        );
+        assert_eq!(header_state.header_for_message(received, None), None);
+        assert_eq!(
+            header_state.header_for_message(received, Some(Duration::from_millis(53))),
+            Some(format!("\n// {direction} (took 53.0ms):"))
+        );
+        assert_eq!(
+            header_state.header_for_message(received, None),
+            Some(format!("\n// {direction}:"))
+        );
+        assert_eq!(header_state.header_for_message(received, None), None);
+    }
 }
 
 #[test]
@@ -386,5 +412,203 @@ async fn test_user_initialization_options_override_adapter_arrays(cx: &mut TestA
             "adapterOnly": [1, 2],
             "userOnly": ["user"],
         })),
+    );
+}
+
+#[gpui::test]
+async fn test_other_adapters_lsp_configuration_contributions_are_unioned(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let user_settings = serde_json::json!({
+        "lsp": {
+            "the-fake-language-server": {
+                "initialization_options": {
+                    "languages": ["user-lang"],
+                    "userOnly": true,
+                },
+            },
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            ".zed": {
+                "settings.json": user_settings.to_string(),
+            },
+            "main.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let main_server_name = LanguageServerName("the-fake-language-server".into());
+    for (language, server_name, plugin, lang, memory) in [
+        ("Vue", "vue-language-server", "vue-plugin", "vue", 4096),
+        (
+            "Astro",
+            "astro-language-server",
+            "astro-plugin",
+            "astro",
+            2048,
+        ),
+    ] {
+        let contribution = json!({
+            "tsserver": {
+                "globalPlugins": ["shared-plugin", plugin],
+                "maxMemory": memory,
+            },
+            "languages": [lang],
+        });
+        language_registry.register_fake_lsp_adapter(
+            language,
+            FakeLspAdapter {
+                name: server_name,
+                additional_initialization_options: HashMap::from_iter([(
+                    main_server_name.clone(),
+                    contribution.clone(),
+                )]),
+                additional_workspace_configuration: HashMap::from_iter([(
+                    main_server_name.clone(),
+                    contribution,
+                )]),
+                ..FakeLspAdapter::default()
+            },
+        );
+    }
+
+    let sent_initialization_options = Arc::new(Mutex::new(None));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-fake-language-server",
+            initialization_options: Some(json!({
+                "tsserver": {
+                    "globalPlugins": ["default-plugin"],
+                },
+                "languages": ["default-lang"],
+            })),
+            initializer: Some(Box::new({
+                let sent_initialization_options = sent_initialization_options.clone();
+                move |fake_server| {
+                    let sent_initialization_options = sent_initialization_options.clone();
+                    fake_server.set_request_handler::<lsp::request::Initialize, _, _>(
+                        move |params, _| {
+                            *sent_initialization_options.lock() = params.initialization_options;
+                            async move { Ok(lsp::InitializeResult::default()) }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let workspace_configuration = fake_server
+        .receive_notification::<lsp::notification::DidChangeConfiguration>()
+        .await
+        .settings;
+    cx.run_until_parked();
+
+    assert_eq!(
+        sent_initialization_options.lock().take(),
+        Some(json!({
+            "tsserver": {
+                "globalPlugins": ["default-plugin", "shared-plugin", "astro-plugin", "vue-plugin"],
+                "maxMemory": 4096,
+            },
+            "languages": ["user-lang"],
+            "userOnly": true,
+        })),
+    );
+    assert_eq!(
+        workspace_configuration,
+        json!({
+            "tsserver": {
+                "globalPlugins": ["shared-plugin", "astro-plugin", "vue-plugin"],
+                "maxMemory": 4096,
+            },
+            "languages": ["astro", "vue"],
+        }),
+    );
+}
+
+#[gpui::test]
+async fn test_initialization_options_contributions_without_own_options(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let contribution = json!({
+        "tsserver": {
+            "globalPlugins": ["vue-plugin"],
+        },
+    });
+    language_registry.register_fake_lsp_adapter(
+        "Vue",
+        FakeLspAdapter {
+            name: "vue-language-server",
+            additional_initialization_options: HashMap::from_iter([(
+                LanguageServerName("the-fake-language-server".into()),
+                contribution.clone(),
+            )]),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let sent_initialization_options = Arc::new(Mutex::new(None));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-fake-language-server",
+            initialization_options: None,
+            initializer: Some(Box::new({
+                let sent_initialization_options = sent_initialization_options.clone();
+                move |fake_server| {
+                    let sent_initialization_options = sent_initialization_options.clone();
+                    fake_server.set_request_handler::<lsp::request::Initialize, _, _>(
+                        move |params, _| {
+                            *sent_initialization_options.lock() =
+                                Some(params.initialization_options);
+                            async move { Ok(lsp::InitializeResult::default()) }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    fake_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        sent_initialization_options.lock().take(),
+        Some(Some(contribution)),
     );
 }

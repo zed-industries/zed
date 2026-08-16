@@ -221,7 +221,7 @@ fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
         Thinking::Enabled {
             budget_tokens: None,
         } => {}
-        Thinking::Adaptive { effort: _ } => {
+        Thinking::Adaptive { effort } => {
             fields.insert(
                 "thinking".to_string(),
                 Document::from(HashMap::from([
@@ -231,6 +231,13 @@ fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
                         Document::String("summarized".to_string()),
                     ),
                 ])),
+            );
+            fields.insert(
+                "output_config".to_string(),
+                Document::from(HashMap::from([(
+                    "effort".to_string(),
+                    Document::String(effort.as_str().to_string()),
+                )])),
             );
         }
         Thinking::Disabled => {
@@ -304,6 +311,20 @@ mod tests {
             },
             _ => None,
         }
+    }
+
+    #[test]
+    fn test_adaptive_thinking_serializes_effort_in_output_config() {
+        let fields = thinking_request_fields(&Thinking::Adaptive {
+            effort: BedrockAdaptiveThinkingEffort::XHigh,
+        });
+
+        let thinking = fields.get("thinking").expect("thinking field");
+        assert_eq!(string_field(thinking, "type"), Some("adaptive"));
+        assert_eq!(string_field(thinking, "display"), Some("summarized"));
+
+        let output_config = fields.get("output_config").expect("output_config field");
+        assert_eq!(string_field(output_config, "effort"), Some("xhigh"));
     }
 
     #[test]

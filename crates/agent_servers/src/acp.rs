@@ -669,9 +669,12 @@ const MINIMUM_SUPPORTED_VERSION: ProtocolVersion = ProtocolVersion::V1;
 /// dispatch queue via `dispatch_tx`, where they are handled by the
 /// `handle_*` functions on a GPUI context. The returned future drives the
 /// connection and completes when the transport closes; callers are expected
-/// to spawn it on a background executor and hold the task for the lifetime
-/// of the connection. The `connection_tx` oneshot receives the
-/// `ConnectionTo<Agent>` handle as soon as the builder runs its `main_fn`.
+/// to poll it in the background and hold the task for the lifetime of the
+/// connection. In unoptimized builds each inbound dispatch needs ~0.5 MiB
+/// of stack, so poll it on a thread with room to spare (macOS GCD workers'
+/// 512 KiB is not enough — see `AcpConnection::stdio`). The `connection_tx`
+/// oneshot receives the `ConnectionTo<Agent>` handle as soon as the builder
+/// runs its `main_fn`.
 fn connect_client_future(
     name: &'static str,
     transport: impl agent_client_protocol::ConnectTo<Client> + 'static,
@@ -925,17 +928,25 @@ impl AcpConnection {
         });
 
         // `connect_client_future` installs the production handler set and
-        // hands us back both the connection-future (to run on a background
-        // executor) and a oneshot receiver that produces the
-        // `ConnectionTo<Agent>` once the transport handshake is ready.
+        // hands us back both the connection-future and a oneshot receiver
+        // that produces the `ConnectionTo<Agent>` once the transport
+        // handshake is ready. The future must be polled on a dedicated
+        // thread rather than via `background_spawn`: in unoptimized builds
+        // its dispatch chain needs ~0.5 MiB of stack per inbound message,
+        // which overflows the fixed 512 KiB stacks of the GCD workers that
+        // poll background tasks on macOS, crashing dev builds as soon as an
+        // agent sends its first message. See `spawn_dedicated` for the
+        // stack guarantee that makes the dedicated thread sufficient.
         let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
         let connection_future =
             connect_client_future("zed", transport, dispatch_tx.clone(), connection_tx);
-        let io_task = cx.background_spawn(async move {
-            if let Err(err) = connection_future.await {
-                log::error!("ACP connection error: {err}");
-            }
-        });
+        let io_task = cx
+            .background_executor()
+            .spawn_dedicated(move |_executor| async move {
+                if let Err(err) = connection_future.await {
+                    log::error!("ACP connection error: {err}");
+                }
+            });
 
         let connection_rx = async move {
             connection_rx
@@ -2801,7 +2812,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn request_scoped_url_elicitation_completion_after_create_is_observed(
+    async fn request_scoped_url_elicitation_completion_before_consent_is_ignored(
         cx: &mut gpui::TestAppContext,
     ) {
         init_feature_flags_test(cx);
@@ -2835,19 +2846,18 @@ mod tests {
             cx.update(|cx| connection.authenticate(acp::AuthMethodId::new("login"), cx));
         cx.run_until_parked();
 
-        let response = response_rx
-            .recv()
-            .await
-            .expect("fake auth flow should receive elicitation response");
-        assert_eq!(
-            response.action,
-            acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new())
+        assert!(
+            matches!(
+                response_rx.try_recv(),
+                Err(async_channel::TryRecvError::Empty)
+            ),
+            "completion before consent must not answer the elicitation request"
         );
 
         let store = connection
             .request_elicitations()
             .expect("ACP connections expose request-scoped elicitations");
-        store.read_with(cx, |store, _| {
+        let entry_id = store.read_with(cx, |store, _| {
             let [elicitation] = store.elicitations() else {
                 panic!(
                     "expected one request-scoped elicitation, got {:?}",
@@ -2860,7 +2870,35 @@ mod tests {
             assert_eq!(scope.request_id, request_id);
             assert!(matches!(
                 elicitation.status,
-                acp_thread::ElicitationStatus::Completed
+                acp_thread::ElicitationStatus::Pending { .. }
+            ));
+            elicitation.id.clone()
+        });
+
+        store.update(cx, |store, cx| {
+            store.respond_to_elicitation(
+                &entry_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        let response = response_rx
+            .recv()
+            .await
+            .expect("fake auth flow should receive elicitation response");
+        assert_eq!(
+            response.action,
+            acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new())
+        );
+        store.read_with(cx, |store, _| {
+            let Some((_, elicitation)) = store.elicitation(&entry_id) else {
+                panic!("missing request-scoped elicitation");
+            };
+            assert!(matches!(
+                elicitation.status,
+                acp_thread::ElicitationStatus::Accepted
             ));
         });
 
