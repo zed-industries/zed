@@ -289,6 +289,7 @@ pub struct Dock {
     focus_handle: FocusHandle,
     focus_follows_mouse: FocusFollowsMouse,
     pub(crate) serialized_dock: Option<DockData>,
+    restoring_state: bool,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
     _subscriptions: [Subscription; 2],
@@ -437,6 +438,7 @@ impl Dock {
                 focus_follows_mouse: WorkspaceSettings::get_global(cx).focus_follows_mouse,
                 _subscriptions: [focus_subscription, zoom_subscription],
                 serialized_dock: None,
+                restoring_state: false,
                 zoom_layer_open: false,
                 modal_layer,
             }
@@ -552,6 +554,9 @@ impl Dock {
 
     pub fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
         if open != self.is_open {
+            if !self.restoring_state {
+                self.serialized_dock = None;
+            }
             self.is_open = open;
             if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(open, window, cx);
@@ -785,8 +790,10 @@ impl Dock {
         self.restore_state(window, cx);
 
         if panel.read(cx).starts_open(window, cx) {
+            self.restoring_state = true;
             self.activate_panel(index, window, cx);
             self.set_open(true, window, cx);
+            self.restoring_state = false;
         }
 
         cx.notify();
@@ -795,10 +802,14 @@ impl Dock {
 
     pub fn restore_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if let Some(serialized) = self.serialized_dock.clone() {
-            if let Some(active_panel) = serialized.active_panel.filter(|_| serialized.visible)
-                && let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx)
-            {
-                self.activate_panel(idx, window, cx);
+            self.restoring_state = true;
+            let mut waiting_for_active_panel = false;
+            if let Some(active_panel) = serialized.active_panel.filter(|_| serialized.visible) {
+                if let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx) {
+                    self.activate_panel(idx, window, cx);
+                } else {
+                    waiting_for_active_panel = true;
+                }
             }
 
             if serialized.zoom
@@ -807,6 +818,10 @@ impl Dock {
                 panel.set_zoomed(true, window, cx)
             }
             self.set_open(serialized.visible, window, cx);
+            self.restoring_state = false;
+            if !waiting_for_active_panel {
+                self.serialized_dock = None;
+            }
             return true;
         }
         false
@@ -857,6 +872,9 @@ impl Dock {
 
     pub fn activate_panel(&mut self, panel_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         if Some(panel_ix) != self.active_panel_index {
+            if !self.restoring_state {
+                self.serialized_dock = None;
+            }
             if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(false, window, cx);
             }
