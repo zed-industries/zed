@@ -23743,7 +23743,10 @@ name = "zed_daemon"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "breadcrumbs",
  "code_graph",
+ "diagnostics",
+ "editor",
  "futures 0.3.32",
  "git",
  "ignore",

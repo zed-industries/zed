@@ -670,6 +670,92 @@ pub fn default_registry() -> MethodRegistry {
         })
     });
 
+    registry.register("editor/snapshot", |params| {
+        let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        let line_count = text.lines().count().max(1);
+        let mut snapshot = editor::HeadlessEditorSnapshot::new(text, line_count);
+
+        if let Some(agent_id) = params.get("agent_id").and_then(|v| v.as_str()) {
+            snapshot.add_focus_region(editor::AgentFocusRegion {
+                agent_id: agent_id.to_string(),
+                start_row: 1,
+                start_col: 1,
+                end_row: line_count as u32,
+                end_col: 1,
+                label: Some("Active Agent View".to_string()),
+            });
+        }
+
+        serde_json::json!({
+            "status": "ok",
+            "line_count": snapshot.line_count,
+            "active_regions_count": snapshot.active_regions.len(),
+            "regions": snapshot.active_regions.iter().map(|r| {
+                serde_json::json!({
+                    "agent_id": r.agent_id,
+                    "start": [r.start_row, r.start_col],
+                    "end": [r.end_row, r.end_col],
+                    "label": r.label
+                })
+            }).collect::<Vec<_>>()
+        })
+    });
+
+    registry.register("diagnostics/filter", |params| {
+        let include_warnings = params.get("include_warnings").and_then(|v| v.as_bool()).unwrap_or(false);
+        let target_file = params.get("file").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
+
+        let filter = diagnostics::AgentDiagnosticFilter {
+            include_errors: true,
+            include_warnings,
+            target_file,
+        };
+
+        let report = diagnostics::DiagnosticConsensusReport::new(0, 0);
+
+        serde_json::json!({
+            "status": "ok",
+            "filter": {
+                "include_errors": filter.include_errors,
+                "include_warnings": filter.include_warnings,
+                "target_file": filter.target_file.map(|p| p.to_string_lossy().to_string())
+            },
+            "consensus": {
+                "total_errors": report.total_errors,
+                "total_warnings": report.total_warnings
+            }
+        })
+    });
+
+    registry.register("breadcrumbs/get", |params| {
+        let path_str = params.get("path").and_then(|v| v.as_str()).unwrap_or("src/lib.rs");
+        let parts: Vec<breadcrumbs::HeadlessBreadcrumbEntry> = path_str
+            .split(['/', '\\'])
+            .filter(|p| !p.is_empty())
+            .enumerate()
+            .map(|(idx, part)| breadcrumbs::HeadlessBreadcrumbEntry {
+                name: part.to_string(),
+                kind: if part.ends_with(".rs") { Some("file".to_string()) } else { Some("module".to_string()) },
+                is_active: idx == 0,
+            })
+            .collect();
+
+        let breadcrumbs_state = breadcrumbs::HeadlessBreadcrumbsState::new(parts);
+
+        serde_json::json!({
+            "status": "ok",
+            "path_hierarchy": breadcrumbs_state.path_string(),
+            "entries_count": breadcrumbs_state.entries.len(),
+            "entries": breadcrumbs_state.entries.iter().map(|e| {
+                serde_json::json!({
+                    "name": e.name,
+                    "kind": e.kind,
+                    "is_active": e.is_active
+                })
+            }).collect::<Vec<_>>()
+        })
+    });
+
     let store_create = buffer_store.clone();
     registry.register("buffer/create", move |params| {
         let initial_text = params

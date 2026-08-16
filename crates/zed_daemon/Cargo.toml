@@ -26,6 +26,9 @@ search = { path = "../search" }
 tasks_ui = { path = "../tasks_ui" }
 git = { path = "../git" }
 markdown_preview = { path = "../markdown_preview" }
+editor = { path = "../editor" }
+diagnostics = { path = "../diagnostics" }
+breadcrumbs = { path = "../breadcrumbs" }
 rope.workspace = true
 regex.workspace = true
 ignore.workspace = true
