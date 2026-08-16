@@ -260,23 +260,33 @@ impl XAiLanguageModel {
 }
 
 fn x_ai_reasoning_efforts(model: &x_ai::Model) -> &'static [open_ai::ReasoningEffort] {
-    if model.supports_reasoning_effort() {
-        &[
+    match model {
+        x_ai::Model::Grok43 => &[
             open_ai::ReasoningEffort::None,
             open_ai::ReasoningEffort::Low,
             open_ai::ReasoningEffort::Medium,
             open_ai::ReasoningEffort::High,
-        ]
-    } else {
-        &[]
+        ],
+        x_ai::Model::Grok45 => &[
+            open_ai::ReasoningEffort::Low,
+            open_ai::ReasoningEffort::Medium,
+            open_ai::ReasoningEffort::High,
+        ],
+        x_ai::Model::Grok46 => &[
+            open_ai::ReasoningEffort::Low,
+            open_ai::ReasoningEffort::Medium,
+            open_ai::ReasoningEffort::High,
+            open_ai::ReasoningEffort::XHigh,
+        ],
+        _ => &[],
     }
 }
 
 fn default_thinking_reasoning_effort(model: &x_ai::Model) -> Option<open_ai::ReasoningEffort> {
-    if model.supports_reasoning_effort() {
-        Some(open_ai::ReasoningEffort::Low)
-    } else {
-        None
+    match model {
+        x_ai::Model::Grok43 => Some(open_ai::ReasoningEffort::Low),
+        x_ai::Model::Grok45 | x_ai::Model::Grok46 => Some(open_ai::ReasoningEffort::High),
+        _ => None,
     }
 }
 
@@ -481,6 +491,91 @@ mod tests {
         assert_eq!(
             reasoning_effort_for_request(&request, &x_ai::Model::Grok43),
             Some(open_ai::ReasoningEffort::None)
+        );
+    }
+
+    #[test]
+    fn grok_45_supports_selectable_thinking_effort_levels() {
+        let effort_levels = supported_thinking_effort_levels(&x_ai::Model::Grok45);
+        let values = effort_levels
+            .iter()
+            .map(|level| level.value.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, ["low", "medium", "high"]);
+        assert_eq!(
+            effort_levels
+                .iter()
+                .find(|level| level.is_default)
+                .map(|level| level.value.as_ref()),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn grok_46_supports_selectable_thinking_effort_levels() {
+        let effort_levels = supported_thinking_effort_levels(&x_ai::Model::Grok46);
+        let values = effort_levels
+            .iter()
+            .map(|level| level.value.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, ["low", "medium", "high", "xhigh"]);
+        assert_eq!(
+            effort_levels
+                .iter()
+                .find(|level| level.is_default)
+                .map(|level| level.value.as_ref()),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn grok_45_request_uses_selected_reasoning_effort() {
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("medium".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            reasoning_effort_for_request(&request, &x_ai::Model::Grok45),
+            Some(open_ai::ReasoningEffort::Medium)
+        );
+    }
+
+    #[test]
+    fn grok_46_request_uses_xhigh_reasoning_effort() {
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("xhigh".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            reasoning_effort_for_request(&request, &x_ai::Model::Grok46),
+            Some(open_ai::ReasoningEffort::XHigh)
+        );
+        assert_eq!(
+            reasoning_effort_for_request(&request, &x_ai::Model::Grok45),
+            Some(open_ai::ReasoningEffort::High)
+        );
+    }
+
+    #[test]
+    fn grok_45_and_46_cannot_disable_reasoning() {
+        let request = LanguageModelRequest {
+            thinking_allowed: false,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            reasoning_effort_for_request(&request, &x_ai::Model::Grok45),
+            None
+        );
+        assert_eq!(
+            reasoning_effort_for_request(&request, &x_ai::Model::Grok46),
+            None
         );
     }
 }
