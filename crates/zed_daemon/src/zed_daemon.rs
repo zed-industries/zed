@@ -359,7 +359,7 @@ pub fn default_registry() -> MethodRegistry {
     });
 
     registry.register("project/get_outline", |params| {
-        let path = params
+        let path_str = params
             .get("path")
             .and_then(|v| v.as_str())
             .unwrap_or("");
@@ -368,23 +368,29 @@ pub fn default_registry() -> MethodRegistry {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        let sample_items = vec![
-            outline::HeadlessOutlineItem {
-                name: "main".to_string(),
-                kind: "function".to_string(),
-                start_row: 1,
-                end_row: 10,
-                depth: 0,
-            },
-            outline::HeadlessOutlineItem {
-                name: "default_registry".to_string(),
-                kind: "function".to_string(),
-                start_row: 12,
-                end_row: 80,
-                depth: 0,
-            },
-        ];
-        let tree = outline::HeadlessOutlineTree::new(sample_items);
+        let mut items = Vec::new();
+        if !path_str.is_empty() {
+            if let Ok(content) = std::fs::read_to_string(path_str) {
+                let mut row = 1;
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("pub fn ") || trimmed.starts_with("fn ") || trimmed.starts_with("pub struct ") || trimmed.starts_with("struct ") || trimmed.starts_with("pub enum ") || trimmed.starts_with("enum ") || trimmed.starts_with("impl ") {
+                        let kind = if trimmed.contains("fn ") { "function" } else if trimmed.contains("struct ") { "struct" } else if trimmed.contains("enum ") { "enum" } else { "impl" };
+                        let name = trimmed.split_whitespace().nth(1).unwrap_or(trimmed).trim_end_matches('{').trim_end_matches('(').to_string();
+                        items.push(outline::HeadlessOutlineItem {
+                            name,
+                            kind: kind.to_string(),
+                            start_row: row,
+                            end_row: row,
+                            depth: (line.len() - trimmed.len()) / 4,
+                        });
+                    }
+                    row += 1;
+                }
+            }
+        }
+
+        let tree = outline::HeadlessOutlineTree::new(items);
         let matched = if query.is_empty() {
             tree.items.iter().collect::<Vec<_>>()
         } else {
@@ -406,7 +412,7 @@ pub fn default_registry() -> MethodRegistry {
 
         serde_json::json!({
             "status": "ok",
-            "path": path,
+            "path": path_str,
             "outline": items_json,
             "total_symbols": items_json.len()
         })
@@ -471,6 +477,10 @@ pub fn default_registry() -> MethodRegistry {
             .get("is_regex")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let search_path = params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
 
         let query = search::HeadlessSearchQuery {
             pattern: query_str.to_string(),
@@ -479,19 +489,37 @@ pub fn default_registry() -> MethodRegistry {
             include_ignored: false,
         };
 
-        let matches = vec![
-            search::HeadlessSearchMatch {
-                path: "crates/zed_daemon/src/zed_daemon.rs".to_string(),
-                line_number: 1,
-                match_text: format!("Found match for: {}", query.pattern),
+        let mut matches = Vec::new();
+        if !query.pattern.is_empty() {
+            if let Ok(entries) = std::fs::read_dir(search_path) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_file() {
+                        if let Ok(content) = std::fs::read_to_string(&p) {
+                            let mut line_no = 1;
+                            for line in content.lines() {
+                                if line.contains(&query.pattern) {
+                                    matches.push(search::HeadlessSearchMatch {
+                                        path: p.to_string_lossy().to_string(),
+                                        line_number: line_no,
+                                        match_text: line.trim().to_string(),
+                                    });
+                                    if matches.len() >= 50 { break; }
+                                }
+                                line_no += 1;
+                            }
+                        }
+                    }
+                }
             }
-        ];
+        }
 
         serde_json::json!({
             "status": "ok",
             "query": query.pattern,
             "is_regex": query.is_regex,
-            "matches": matches
+            "matches": matches,
+            "total_matches": matches.len()
         })
     });
 
@@ -500,16 +528,34 @@ pub fn default_registry() -> MethodRegistry {
     registry.register("task/run", move |params| {
         let task_name = params.get("task_name").and_then(|v| v.as_str()).unwrap_or("build");
         let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("cargo");
+        let args_vec: Vec<String> = params
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_else(|| vec!["--version".to_string()]);
+
         let plan = tasks_ui::AgentTaskExecutionPlan {
             task_name: task_name.to_string(),
             command: command.to_string(),
-            args: vec!["build".to_string()],
+            args: args_vec.clone(),
             env: HashMap::default(),
             cwd: None,
         };
         tr.lock().unwrap().schedule_plan(plan.clone());
+
+        let cmd_status = std::process::Command::new(command)
+            .args(&args_vec)
+            .output();
+
+        let (success, out_str) = match cmd_status {
+            Ok(output) => (output.status.success(), String::from_utf8_lossy(&output.stdout).to_string()),
+            Err(e) => (false, format!("Failed to spawn process: {e}")),
+        };
+
         serde_json::json!({
-            "status": "scheduled",
+            "status": "executed",
+            "success": success,
+            "output": out_str.trim(),
             "plan": plan
         })
     });
@@ -517,12 +563,22 @@ pub fn default_registry() -> MethodRegistry {
     registry.register("git/commit", |params| {
         let message = params.get("message").and_then(|v| v.as_str()).unwrap_or("Headless commit");
         let builder = git::HeadlessCommitBuilder::new(message);
+        
+        let git_head = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "HEAD".to_string());
+
         let provenance = git::HeadlessGitProvenance {
             agent_id: "zed-agent-daemon".to_string(),
             session_id: uuid_v4_stub(),
-            parent_commit: "HEAD".to_string(),
+            parent_commit: git_head,
             modified_files: vec![],
-            timestamp: 0,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
         };
         serde_json::json!({
             "status": "committed",
