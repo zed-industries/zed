@@ -27,7 +27,7 @@ fn query_loading(criterion: &mut Criterion) {
     let root_path = queries.path().to_path_buf();
     let fs: Arc<dyn Fs> = Arc::new(RealFs::new(None, cx.executor()));
 
-    criterion.bench_function("load_plugin_queries/direct", |bencher| {
+    criterion.bench_function("load_plugin_queries", |bencher| {
         bencher.iter(|| {
             black_box(
                 cx.foreground_executor()
@@ -36,7 +36,7 @@ fn query_loading(criterion: &mut Criterion) {
         });
     });
 
-    criterion.bench_function("load_plugin_language/parallel", |bencher| {
+    criterion.bench_function("load_plugin_language", |bencher| {
         bencher.iter(|| {
             black_box(
                 cx.foreground_executor()
