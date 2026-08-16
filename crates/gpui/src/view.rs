@@ -807,4 +807,79 @@ mod tests {
             (2, 4, 2)
         );
     }
+
+    #[gpui::test]
+    fn node_engine_does_not_reinvalidate_previously_notified_views(cx: &mut TestAppContext) {
+        let left_render_count = Rc::new(Cell::new(0));
+        let middle_render_count = Rc::new(Cell::new(0));
+        let right_render_count = Rc::new(Cell::new(0));
+        let _node_engine_guard = DrawEngine::force_node_engine_for_test();
+        let window = cx.open_window(size(px(300.), px(100.)), |_, cx| NodeEngineRoot {
+            left: cx.new({
+                let left_render_count = left_render_count.clone();
+                |_| CountingLeaf {
+                    render_count: left_render_count,
+                    dependency: None,
+                    color: 0xff0000,
+                }
+            }),
+            middle: cx.new({
+                let middle_render_count = middle_render_count.clone();
+                |_| CountingLeaf {
+                    render_count: middle_render_count,
+                    dependency: None,
+                    color: 0x00ff00,
+                }
+            }),
+            right: cx.new({
+                let right_render_count = right_render_count.clone();
+                |_| CountingLeaf {
+                    render_count: right_render_count,
+                    dependency: None,
+                    color: 0x0000ff,
+                }
+            }),
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            (
+                left_render_count.get(),
+                middle_render_count.get(),
+                right_render_count.get(),
+            ),
+            (1, 1, 1)
+        );
+
+        window
+            .update(cx, |root, _, cx| {
+                root.left.update(cx, |_, cx| cx.notify());
+            })
+            .expect("test window should remain open");
+        cx.run_until_parked();
+        assert_eq!(
+            (
+                left_render_count.get(),
+                middle_render_count.get(),
+                right_render_count.get(),
+            ),
+            (2, 1, 1)
+        );
+
+        // A later frame triggered by a different view must not re-render views
+        // that were notified on earlier frames.
+        window
+            .update(cx, |root, _, cx| {
+                root.right.update(cx, |_, cx| cx.notify());
+            })
+            .expect("test window should remain open");
+        cx.run_until_parked();
+        assert_eq!(
+            (
+                left_render_count.get(),
+                middle_render_count.get(),
+                right_render_count.get(),
+            ),
+            (2, 1, 2)
+        );
+    }
 }
