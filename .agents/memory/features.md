@@ -2,4 +2,4 @@
 
 | Feature | Status | Entrypoint | Notes |
 |---|---|---|---|
-| UI Rounded Corners | In Discussion / Brainstorming | `crates/ui`, `crates/theme`, `crates/workspace` | Exploring rounded corners styling & architecture for Zed UI elements |
+| Floating Island Layout & Rounded Corners | Implemented | `crates/workspace/src/workspace.rs`, `crates/workspace/src/workspace_settings.rs` | Configurable floating island layout, rounded dock cards, rounded editor panes, pill tabs, and floating status bar |
