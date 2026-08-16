@@ -119,7 +119,7 @@ struct Args {
     #[arg(long, default_value = "127.0.0.1:9257")]
     daemon_listen_addr: String,
     /// Optional bearer authentication token for securing the daemon
-    #[arg(long, env = "ZED_DAEMON_TOKEN")]
+    #[arg(long)]
     daemon_auth_token: Option<String>,
     /// The username and WSL distribution to use when opening paths. If not specified,
     /// Zed will attempt to open the paths directly.
@@ -562,10 +562,13 @@ fn run() -> Result<()> {
             "🚀 Starting Zed JSON-RPC 2.0 Headless Daemon on {}",
             args.daemon_listen_addr
         );
+        let auth_token = args
+            .daemon_auth_token
+            .or_else(|| std::env::var("ZED_DAEMON_TOKEN").ok());
         let config = zed_daemon::DaemonConfig {
             listen_addr: args.daemon_listen_addr,
             max_connections: 64,
-            auth_token: args.daemon_auth_token,
+            auth_token,
         };
         let registry = zed_daemon::default_registry();
         let server = zed_daemon::DaemonServer::new(config, registry);

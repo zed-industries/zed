@@ -23755,7 +23755,6 @@ dependencies = [
  "log",
  "markdown_preview",
  "outline",
- "proptest",
  "regex",
  "rope",
  "search",
