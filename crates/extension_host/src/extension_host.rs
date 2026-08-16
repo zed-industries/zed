@@ -1977,8 +1977,8 @@ pub async fn load_plugin_language(fs: Arc<dyn Fs>, language_path: &Path) -> Resu
     };
     let (config, queries, context_provider) = futures::try_join!(
         config,
-        load_plugin_queries(fs, language_path).map(Ok),
-        context_provider.map(Ok)
+        async move { Ok(load_plugin_queries(fs, &language_path).await) },
+        async move { Ok(context_provider.await) }
     )?;
 
     Ok(LoadedLanguage {
