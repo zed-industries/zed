@@ -300,6 +300,9 @@ impl NodeEngine {
         let Some(node) = self.nodes.remove(node_id) else {
             return;
         };
+        // A removed occurrence's pixels must be repainted even though no node
+        // re-records them, so its last bounds join the damage union.
+        self.extend_damage(node.previous_bounds);
         for child_id in node.children {
             self.remove_subtree(child_id);
         }

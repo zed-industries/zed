@@ -2946,7 +2946,10 @@ impl Window {
                     self.mark_view_dirty(entity);
                 }
             }
-            DrawEngine::Node(node_engine) => node_engine.invalidate_entities(&views),
+            DrawEngine::Node(node_engine) => {
+                node_engine.invalidate_entities(&views);
+                views.clear();
+            }
         }
         self.invalidator.replace_views(views);
     }
