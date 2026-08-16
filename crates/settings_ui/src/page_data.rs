@@ -5037,9 +5037,141 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
+    fn island_layout_section() -> [SettingsPageItem; 6] {
+        [
+            SettingsPageItem::SectionHeader("Island Layout"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enable Island Layout",
+                description: "Render panels, editor panes, and status bar as floating cards with rounded corners.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("island_layout.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .island_layout
+                            .as_ref()?
+                            .enabled
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .workspace
+                            .island_layout
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Corner Radius",
+                description: "The corner radius in pixels for floating cards and panels.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("island_layout.corner_radius"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .island_layout
+                            .as_ref()?
+                            .corner_radius
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .workspace
+                            .island_layout
+                            .get_or_insert_default()
+                            .corner_radius = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Layout Gap",
+                description: "The gap spacing in pixels between floating cards and window borders.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("island_layout.gap"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .island_layout
+                            .as_ref()?
+                            .gap
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .workspace
+                            .island_layout
+                            .get_or_insert_default()
+                            .gap = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Card Borders",
+                description: "Show subtle border outlines around floating cards.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("island_layout.border"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .island_layout
+                            .as_ref()?
+                            .border
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .workspace
+                            .island_layout
+                            .get_or_insert_default()
+                            .border = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Pill Tabs",
+                description: "Render tabs as floating rounded pill chips.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("island_layout.pill_tabs"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .island_layout
+                            .as_ref()?
+                            .pill_tabs
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .workspace
+                            .island_layout
+                            .get_or_insert_default()
+                            .pill_tabs = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     SettingsPage {
         title: "Window & Layout",
         items: concat_sections![
+            island_layout_section(),
             status_bar_section(),
             title_bar_section(),
             tab_bar_section(),

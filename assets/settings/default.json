@@ -1344,6 +1344,19 @@
   "autosave": "off",
   // Maximum number of tabs per pane. Unset for unlimited.
   "max_tabs": null,
+  // Settings related to the floating island layout and rounded corners.
+  "island_layout": {
+    // Whether or not to enable the floating island card layout.
+    "enabled": false,
+    // The corner radius in pixels for floating cards and dock panels.
+    "corner_radius": 18.0,
+    // The gap spacing in pixels between floating cards, panes, and window borders.
+    "gap": 8.0,
+    // Whether or not to show subtle border outlines on floating cards.
+    "border": true,
+    // Whether or not to render editor tabs as floating rounded pill chips.
+    "pill_tabs": true
+  },
   // Settings related to the editor's tab bar.
   "tab_bar": {
     // Whether or not to show the tab bar in the editor
