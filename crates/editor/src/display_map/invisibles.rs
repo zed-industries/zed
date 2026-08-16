@@ -37,8 +37,7 @@ pub fn is_invisible(c: char) -> bool {
     } else if c >= '\u{7f}' {
         c <= '\u{9f}'
             || (c.is_whitespace() && c != IDEOGRAPHIC_SPACE)
-            || is_format_character(c)
-            || is_other_invisible_character(c)
+            || is_format_or_other_invisible_character(c)
     } else {
         false
     }
@@ -59,10 +58,10 @@ pub fn replacement(c: char) -> Option<char> {
     }
 }
 
-// Generated using: ucd-generate general-category --include Format --chars ucd-16.0.0
 #[inline(always)]
-fn is_format_character(c: char) -> bool {
+fn is_format_or_other_invisible_character(c: char) -> bool {
     match c {
+        // Generated using: ucd-generate general-category --include Format --chars ucd-16.0.0
         '\u{ad}'
         | '\u{600}'..='\u{605}'
         | '\u{61c}'
@@ -83,16 +82,9 @@ fn is_format_character(c: char) -> bool {
         | '\u{1bca0}'..='\u{1bca3}'
         | '\u{1d173}'..='\u{1d17a}'
         | '\u{e0001}'
-        | '\u{e0020}'..='\u{e007f}' => true,
-        _ => false,
-    }
-}
-
-// Hand-made based on https://invisible-characters.com, excluding Cf.
-#[inline(always)]
-fn is_other_invisible_character(c: char) -> bool {
-    match c {
-        '\u{034f}'
+        | '\u{e0020}'..='\u{e007f}'
+        // Hand-made based on https://invisible-characters.com, excluding Cf.
+        | '\u{034f}'
         | '\u{115f}'..='\u{1160}'
         | '\u{17b4}'..='\u{17b5}'
         | '\u{180b}'..='\u{180d}'
