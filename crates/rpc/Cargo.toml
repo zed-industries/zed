@@ -28,6 +28,7 @@ parking_lot.workspace = true
 proto.workspace = true
 rand.workspace = true
 rsa.workspace = true
+rkyv = { version = "0.8", features = ["std"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
