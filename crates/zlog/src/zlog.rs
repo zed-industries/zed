@@ -79,7 +79,7 @@ impl log::Log for Zlog {
                 (crate_name_scope, module_scope)
             }
             None => {
-                // TODO: when do we hit this
+                // Fallback for records with missing module and file metadata (e.g. synthetic or foreign FFI log records)
                 (private::scope_new(&[]), private::scope_new(&["*unknown*"]))
             }
         };
