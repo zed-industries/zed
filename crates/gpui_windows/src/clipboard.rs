@@ -28,6 +28,8 @@ static CLIPBOARD_HASH_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("GPUI internal text hash")));
 static CLIPBOARD_METADATA_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("GPUI internal metadata")));
+static CLIPBOARD_HTML_FORMAT: LazyLock<u32> =
+    LazyLock::new(|| register_clipboard_format(windows::core::w!("HTML Format")));
 static CLIPBOARD_SVG_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("image/svg+xml")));
 static CLIPBOARD_GIF_FORMAT: LazyLock<u32> =
@@ -181,6 +183,10 @@ fn write_string(item: &ClipboardString) -> Result<()> {
     let wide: Vec<u16> = item.text.encode_utf16().chain(Some(0)).collect_vec();
     set_clipboard_bytes(&wide, CF_UNICODETEXT.0 as u32)?;
 
+    if let Some(html) = item.html.as_ref() {
+        set_clipboard_bytes(&build_cf_html(html), *CLIPBOARD_HTML_FORMAT)?;
+    }
+
     if let Some(metadata) = item.metadata.as_ref() {
         let hash_bytes = ClipboardString::text_hash(&item.text).to_ne_bytes();
         set_clipboard_bytes(&hash_bytes, *CLIPBOARD_HASH_FORMAT)?;
@@ -189,6 +195,36 @@ fn write_string(item: &ClipboardString) -> Result<()> {
         set_clipboard_bytes(&wide, *CLIPBOARD_METADATA_FORMAT)?;
     }
     Ok(())
+}
+
+/// Builds a clipboard payload for the `HTML Format` clipboard format (CF_HTML).
+///
+/// The header uses fixed-width (10-digit) byte offsets into the payload, so
+/// rich text applications know where the fragment begins and ends. See
+/// https://learn.microsoft.com/en-us/windows/win32/dataxchg/html-clipboard-format
+fn build_cf_html(fragment: &str) -> Vec<u8> {
+    const VERSION_LINE: &str = "Version:0.9\r\n";
+    const OFFSET_LINE_LEN: usize = "StartHTML:0000000000\r\n".len();
+
+    let start_html = VERSION_LINE.len() + 4 * OFFSET_LINE_LEN + "\r\n".len();
+    let html_prefix = "<html>\r\n<body>\r\n<!--StartFragment-->";
+    let html_suffix = "<!--EndFragment-->\r\n</body>\r\n</html>\r\n";
+
+    let start_fragment = start_html + html_prefix.len();
+    let end_fragment = start_fragment + fragment.len();
+    let end_html = end_fragment + html_suffix.len();
+
+    let mut html = String::new();
+    html.push_str(VERSION_LINE);
+    html.push_str(&format!("StartHTML:{start_html:010}\r\n"));
+    html.push_str(&format!("EndHTML:{end_html:010}\r\n"));
+    html.push_str(&format!("StartFragment:{start_fragment:010}\r\n"));
+    html.push_str(&format!("EndFragment:{end_fragment:010}\r\n"));
+    html.push_str("\r\n");
+    html.push_str(html_prefix);
+    html.push_str(fragment);
+    html.push_str(html_suffix);
+    html.into_bytes()
 }
 
 fn write_image(item: &Image) -> Result<()> {
@@ -229,7 +265,11 @@ fn convert_to_png(bytes: &[u8], format: ImageFormat) -> Option<Vec<u8>> {
 fn read_string() -> Option<ClipboardEntry> {
     let text = get_clipboard_string(CF_UNICODETEXT.0 as u32)?;
     let metadata = read_clipboard_metadata(&text);
-    Some(ClipboardEntry::String(ClipboardString { text, metadata }))
+    Some(ClipboardEntry::String(ClipboardString {
+        text,
+        html: None,
+        metadata,
+    }))
 }
 
 fn read_clipboard_metadata(text: &str) -> Option<String> {
