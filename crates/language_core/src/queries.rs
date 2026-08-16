@@ -1,49 +1,34 @@
 use std::borrow::Cow;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumIter)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, strum::EnumIter, strum::EnumString, strum::IntoStaticStr,
+)]
 pub enum QueryFile {
+    #[strum(serialize = "highlights.scm")]
     Highlights,
+    #[strum(serialize = "brackets.scm")]
     Brackets,
+    #[strum(serialize = "outline.scm")]
     Outline,
+    #[strum(serialize = "indents.scm")]
     Indents,
+    #[strum(serialize = "injections.scm")]
     Injections,
+    #[strum(serialize = "overrides.scm")]
     Overrides,
+    #[strum(serialize = "redactions.scm")]
     Redactions,
+    #[strum(serialize = "runnables.scm")]
     Runnables,
+    #[strum(serialize = "debugger.scm")]
     Debugger,
+    #[strum(serialize = "textobjects.scm")]
     TextObjects,
 }
 
 impl QueryFile {
-    pub const fn file_name(self) -> &'static str {
-        match self {
-            Self::Highlights => "highlights.scm",
-            Self::Brackets => "brackets.scm",
-            Self::Outline => "outline.scm",
-            Self::Indents => "indents.scm",
-            Self::Injections => "injections.scm",
-            Self::Overrides => "overrides.scm",
-            Self::Redactions => "redactions.scm",
-            Self::Runnables => "runnables.scm",
-            Self::Debugger => "debugger.scm",
-            Self::TextObjects => "textobjects.scm",
-        }
-    }
-
-    pub fn from_file_name(file_name: &str) -> Option<Self> {
-        match file_name {
-            "highlights.scm" => Some(Self::Highlights),
-            "brackets.scm" => Some(Self::Brackets),
-            "outline.scm" => Some(Self::Outline),
-            "indents.scm" => Some(Self::Indents),
-            "injections.scm" => Some(Self::Injections),
-            "overrides.scm" => Some(Self::Overrides),
-            "redactions.scm" => Some(Self::Redactions),
-            "runnables.scm" => Some(Self::Runnables),
-            "debugger.scm" => Some(Self::Debugger),
-            "textobjects.scm" => Some(Self::TextObjects),
-            _ => None,
-        }
+    pub fn file_name(self) -> &'static str {
+        self.into()
     }
 }
 
@@ -112,7 +97,7 @@ mod tests {
     #[test]
     fn query_files_have_unique_names_and_fields() {
         let queries = LanguageQueries::from_files(QueryFile::iter().map(|query_file| {
-            QueryFileContents::new(query_file, Cow::Borrowed(query_file.file_name()))
+            QueryFileContents::new(query_file, Cow::Borrowed(query_file.into()))
         }));
 
         assert_eq!(queries.highlights.as_deref(), Some("highlights.scm"));
@@ -127,11 +112,12 @@ mod tests {
         assert_eq!(queries.text_objects.as_deref(), Some("textobjects.scm"));
 
         for query_file in QueryFile::iter() {
-            assert_eq!(
-                QueryFile::from_file_name(query_file.file_name()),
-                Some(query_file)
-            );
+            let file_name: &'static str = query_file.into();
+            assert_eq!(file_name.parse(), Ok(query_file));
         }
-        assert_eq!(QueryFile::from_file_name("highlights_extra.scm"), None);
+        assert_eq!(
+            "highlights_extra.scm".parse::<QueryFile>(),
+            Err(strum::ParseError::VariantNotFound)
+        );
     }
 }

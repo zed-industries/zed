@@ -87,7 +87,7 @@ pub fn get_file(path: &str) -> Option<rust_embed::EmbeddedFile> {
 pub fn load_queries(name: &str) -> LanguageQueries {
     LanguageQueries::from_files(GrammarDir::iter().filter_map(|path| {
         let file_name = path.strip_prefix(name)?.strip_prefix('/')?;
-        let query_file = QueryFile::from_file_name(file_name)?;
+        let query_file = file_name.parse::<QueryFile>().ok()?;
         let contents = match GrammarDir::get(path.as_ref())?.data {
             Cow::Borrowed(bytes) => Cow::Borrowed(std::str::from_utf8(bytes).ok()?),
             Cow::Owned(bytes) => Cow::Owned(String::from_utf8(bytes).ok()?),
