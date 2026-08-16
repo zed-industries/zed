@@ -81,7 +81,7 @@ impl ActionStatistics {
     pub fn update_running_action(&mut self, _action: &'static str, _started: Instant) {}
 
     #[cfg(feature = "profiler")]
-    pub fn save_action_timing(&mut self) {
+    pub fn save_action_timing(&mut self) -> Option<ActionTiming> {
         let now = Instant::now();
 
         let Some((action, started)) = self.running.take() else {
@@ -92,7 +92,13 @@ impl ActionStatistics {
             // concurrently that is no longer true. But that is fine, we do not
             // need to track action timings in tests.
             std::hint::cold_path();
-            return;
+            return None;
+        };
+
+        let timing = ActionTiming {
+            name: action,
+            start: started,
+            end: now,
         };
 
         let runtime = now.duration_since(started);
@@ -105,18 +111,10 @@ impl ActionStatistics {
                     .iter_mut()
                     .min_by_key(|action| runtime >= action.runtime())
             {
-                *to_replace = ActionTiming {
-                    name: action,
-                    start: started,
-                    end: now,
-                };
+                *to_replace = timing;
             } else {
                 self.longest_runtimes
-                    .push(ActionTiming {
-                        name: action,
-                        start: started,
-                        end: now,
-                    })
+                    .push(timing)
                     .expect("just checked it is not full");
             };
 
@@ -127,6 +125,7 @@ impl ActionStatistics {
                 .min()
                 .expect("never empty");
         }
+        Some(timing)
     }
     #[cfg(not(feature = "profiler"))]
     pub fn save_action_timing(&mut self) {}
@@ -193,8 +192,8 @@ pub(crate) fn update_running_action(action: &(dyn Action + 'static), cx: &mut cr
 
 #[doc(hidden)]
 #[cfg(feature = "profiler")]
-pub(crate) fn save_action_timing() {
-    ACTION_STATISTICS.lock().save_action_timing();
+pub(crate) fn save_action_timing() -> Option<ActionTiming> {
+    ACTION_STATISTICS.lock().save_action_timing()
 }
 
 #[doc(hidden)]

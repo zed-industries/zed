@@ -17,6 +17,8 @@ use std::{
 };
 
 mod actions;
+#[cfg(feature = "profiler")]
+pub mod journal;
 pub use actions::{ActionStatistics, ActionTiming, take_action_stats};
 
 use serde::{Deserialize, Serialize};
@@ -587,7 +589,7 @@ impl ThreadTimings {
     pub fn update_running_task(&mut self, _: SpawnTime, _: &'static std::panic::Location<'_>) {}
 
     #[cfg(feature = "profiler")]
-    pub fn save_task_timing(&mut self, ended: YieldTime) {
+    pub fn save_task_timing(&mut self, ended: YieldTime) -> TaskTiming {
         let ActiveTiming {
             location,
             start,
@@ -614,6 +616,7 @@ impl ThreadTimings {
             self.timings.push_back(timing);
             self.total_pushed += 1;
         }
+        timing
     }
     #[cfg(not(feature = "profiler"))]
     pub fn save_task_timing(&mut self, _: YieldTime) {}
@@ -670,6 +673,12 @@ pub fn update_running_task(spawned: SpawnTime, location: &'static std::panic::Lo
 #[doc(hidden)]
 pub fn save_task_timing() {
     let yielded_at = YieldTime(Instant::now());
+    #[cfg(feature = "profiler")]
+    {
+        let timing = THREAD_TIMINGS.with(|timings| timings.lock().save_task_timing(yielded_at));
+        journal::record_task_poll(timing);
+    }
+    #[cfg(not(feature = "profiler"))]
     THREAD_TIMINGS.with(|timings| {
         timings.lock().save_task_timing(yielded_at);
     });
@@ -919,6 +928,12 @@ impl WindowProfiler {
             return;
         };
 
+        journal::record_input(journal::InputTiming {
+            start: started_at,
+            end: Instant::now(),
+            caused_invalidation,
+        });
+
         if !caused_invalidation {
             return;
         }
@@ -942,7 +957,9 @@ impl WindowProfiler {
 
     /// Records the end of the current action handler.
     pub fn end_action_handler(&mut self) {
-        actions::save_action_timing();
+        if let Some(timing) = actions::save_action_timing() {
+            journal::record_action(timing);
+        }
     }
 
     /// Records the beginning of a window draw.
@@ -966,13 +983,15 @@ impl WindowProfiler {
         let draw_end = Instant::now();
         let draw_duration = draw_end.duration_since(draw_start);
         self.record_draw_duration(draw_duration);
-        record_frame_event(FrameEvent::Draw(FrameTiming {
+        let frame_timing = FrameTiming {
             window_id: self.window_id,
             dirty_at,
             invalidations,
             draw_start,
             draw_end,
-        }));
+        };
+        record_frame_event(FrameEvent::Draw(frame_timing));
+        journal::record_draw(frame_timing);
         draw_duration
     }
 
@@ -1035,11 +1054,13 @@ impl WindowProfiler {
                 .ok();
         }
 
-        record_frame_event(FrameEvent::Present(PresentTiming {
+        let present_timing = PresentTiming {
             window_id: self.window_id,
             presented_at,
             animation_interval,
-        }));
+        };
+        record_frame_event(FrameEvent::Present(present_timing));
+        journal::record_present(present_timing);
 
         self.last_present_at = Some(presented_at);
         self.animating_at_last_present = next_frame_scheduled && window_active;
