@@ -1,7 +1,7 @@
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
-    RELOAD_DEBOUNCE_DURATION, SchemaVersion,
+    RELOAD_DEBOUNCE_DURATION, SchemaVersion, load_plugin_queries,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::{BTreeMap, HashSet};
@@ -32,6 +32,26 @@ use util::{rel_path::rel_path_buf, test::TempTree};
 #[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
+}
+
+#[gpui::test]
+async fn test_load_plugin_queries(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        "/queries",
+        json!({
+            "highlights.scm": "highlight query",
+            "outline.scm": "outline query",
+            "highlights_extra.scm": "ignored query",
+            "locals.scm": "unrelated query",
+        }),
+    )
+    .await;
+
+    let queries = load_plugin_queries(fs, Path::new("/queries")).await;
+    assert_eq!(queries.highlights.as_deref(), Some("highlight query"));
+    assert_eq!(queries.outline.as_deref(), Some("outline query"));
+    assert!(queries.brackets.is_none());
 }
 
 fn remote_sync_entry(id: &str, manifest_body: &str) -> ExtensionIndexEntry {

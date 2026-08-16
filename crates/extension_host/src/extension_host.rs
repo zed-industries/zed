@@ -36,8 +36,8 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
-    QUERY_FILENAME_PREFIXES, Rope,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage, QueryFile,
+    QueryFileContents, Rope,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -50,6 +50,7 @@ use std::ops::RangeInclusive;
 use std::str::FromStr;
 use std::sync::LazyLock;
 use std::{
+    borrow::Cow,
     cmp::Ordering,
     path::{self, Path, PathBuf},
     sync::Arc,
@@ -1411,26 +1412,51 @@ impl ExtensionStore {
                 language.grammar.clone(),
                 language.matcher.clone(),
                 language.hidden,
-                Arc::new(move || {
-                    let config =
-                        LanguageConfig::load(language_path.join(LanguageConfig::FILE_NAME))?;
-                    let queries = load_plugin_queries(&language_path);
-                    let context_provider =
-                        std::fs::read_to_string(language_path.join(TaskTemplates::FILE_NAME))
-                            .ok()
-                            .and_then(|contents| {
-                                let definitions =
-                                    serde_json_lenient::from_str(&contents).log_err()?;
-                                Some(Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>)
-                            });
+                Arc::new({
+                    let fs = self.fs.clone();
+                    move || {
+                        let fs = fs.clone();
+                        let language_path = language_path.clone();
+                        async move {
+                            let config = {
+                                let fs = fs.clone();
+                                let config_path = language_path.join(LanguageConfig::FILE_NAME);
+                                async move {
+                                    let contents = fs.load(&config_path).await?;
+                                    toml::from_str::<LanguageConfig>(&contents)
+                                        .map_err(anyhow::Error::from)
+                                }
+                            };
+                            let context_provider = {
+                                let fs = fs.clone();
+                                let tasks_path = language_path.join(TaskTemplates::FILE_NAME);
+                                async move {
+                                    Ok(fs.load(&tasks_path).await.ok().and_then(|contents| {
+                                        serde_json_lenient::from_str(&contents).log_err().map(
+                                            |definitions| {
+                                                Arc::new(ContextProviderWithTasks::new(definitions))
+                                                    as Arc<_>
+                                            },
+                                        )
+                                    }))
+                                }
+                            };
+                            let (config, queries, context_provider) = futures::try_join!(
+                                config,
+                                async { Ok(load_plugin_queries(fs, &language_path).await) },
+                                context_provider,
+                            )?;
 
-                    Ok(LoadedLanguage {
-                        config,
-                        queries,
-                        context_provider,
-                        toolchain_provider: None,
-                        manifest_name: None,
-                    })
+                            Ok(LoadedLanguage {
+                                config,
+                                queries,
+                                context_provider,
+                                toolchain_provider: None,
+                                manifest_name: None,
+                            })
+                        }
+                        .boxed()
+                    }
                 }),
             );
         }
@@ -1965,31 +1991,19 @@ impl ExtensionStore {
     }
 }
 
-fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
-    let mut result = LanguageQueries::default();
-    if let Some(entries) = std::fs::read_dir(root_path).log_err() {
-        for entry in entries {
-            let Some(entry) = entry.log_err() else {
-                continue;
-            };
-            let path = entry.path();
-            if let Some(remainder) = path.strip_prefix(root_path).ok().and_then(|p| p.to_str()) {
-                if !remainder.ends_with(".scm") {
-                    continue;
-                }
-                for (name, query) in QUERY_FILENAME_PREFIXES {
-                    if remainder.starts_with(name) {
-                        if let Some(contents) = std::fs::read_to_string(&path).log_err() {
-                            match query(&mut result) {
-                                None => *query(&mut result) = Some(contents.into()),
-                                Some(r) => r.to_mut().push_str(contents.as_ref()),
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
+pub async fn load_plugin_queries(fs: Arc<dyn Fs>, root_path: &Path) -> LanguageQueries {
+    use strum::IntoEnumIterator;
+
+    let files = join_all(QueryFile::iter().map(|query_file| {
+        let fs = fs.clone();
+        let path = root_path.join(query_file.file_name());
+        async move {
+            fs.load(&path)
+                .await
+                .ok()
+                .map(|contents| QueryFileContents::new(query_file, Cow::Owned(contents)))
         }
-    }
-    result
+    }))
+    .await;
+    LanguageQueries::from_files(files.into_iter().flatten())
 }

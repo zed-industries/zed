@@ -6409,6 +6409,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "strum 0.27.2",
  "task",
  "telemetry",
  "tempfile",
@@ -8155,6 +8156,7 @@ dependencies = [
  "criterion",
  "language_core",
  "rust-embed",
+ "strum 0.27.2",
  "toml 0.8.23",
  "tree-sitter",
  "tree-sitter-bash",
@@ -9824,6 +9826,7 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "strum 0.27.2",
  "toml 0.8.23",
  "tree-sitter",
 ]
