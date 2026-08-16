@@ -54,6 +54,7 @@ web-sys = { version = "0.3", features = [
     "IdleDeadline",
     "IdleRequestOptions",
     "KeyboardEvent",
+    "Location",
     "MediaQueryList",
     "MediaQueryListEvent",
     "MouseEvent",

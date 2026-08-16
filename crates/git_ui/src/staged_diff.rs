@@ -712,7 +712,7 @@ impl Render for StagedDiffToolbar {
             .child(Divider::vertical())
             .child(
                 Button::new("unstage-all", "Unstage All")
-                    .width(rems_from_px(80.))
+                    .width(rems_from_px(80_f32))
                     .disabled(!button_states.unstage_all)
                     .tooltip(Tooltip::for_action_title_in(
                         "Unstage All Changes",

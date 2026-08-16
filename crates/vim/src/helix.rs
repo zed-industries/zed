@@ -42,6 +42,8 @@ actions!(
         HelixInsertEndOfLine,
         /// Goes to the location of the last modification.
         HelixGotoLastModification,
+        /// Goes to the line specified by the count.
+        HelixGotoLine,
         /// Select entire line or multiple lines, extending downwards.
         HelixSelectLine,
         /// Select all matches of a given pattern within the current selection.
@@ -76,6 +78,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_insert_end_of_line);
     Vim::action(editor, cx, Vim::helix_yank);
     Vim::action(editor, cx, Vim::helix_goto_last_modification);
+    Vim::action(editor, cx, Vim::helix_goto_line);
     Vim::action(editor, cx, Vim::helix_paste);
     Vim::action(editor, cx, Vim::helix_select_regex);
     Vim::action(editor, cx, Vim::helix_keep_newest_selection);
@@ -858,6 +861,17 @@ impl Vim {
         self.jump(".".into(), false, false, window, cx);
     }
 
+    pub fn helix_goto_line(
+        &mut self,
+        _: &HelixGotoLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(line_number) = Vim::take_count(cx) {
+            self.helix_move_cursor(Motion::StartOfDocument, Some(line_number), window, cx);
+        }
+    }
+
     pub fn helix_select_lines(
         &mut self,
         _: &HelixSelectLine,
@@ -960,7 +974,7 @@ impl Vim {
                     new_end -= ch.len_utf8();
                 }
 
-                let mut new_selection = selection.clone();
+                let mut new_selection = *selection;
                 new_selection.start = new_start;
                 new_selection.end = new_end;
                 trimmed.push(new_selection);
@@ -1882,7 +1896,7 @@ mod test {
 
     use super::{HELIX_JUMP_LABEL_LIMIT, HelixJumpToWord};
     use crate::{
-        HELIX_JUMP_OVERLAY_KEY, Vim, VimAddon,
+        HELIX_JUMP_OVERLAY_KEY, SwitchToHelixNormalMode, Vim, VimAddon,
         state::{Mode, Operator},
         test::VimTestContext,
     };
@@ -4432,6 +4446,97 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_helix_goto_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // <count G> lands at column 0 of the target line
+        cx.set_state(
+            indoc! {"
+            line one
+              line two
+            line ˇthree"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("2 shift-g");
+        cx.assert_state(
+            indoc! {"
+            line one
+            ˇ  line two
+            line three"},
+            Mode::HelixNormal,
+        );
+
+        // including when targeting the current line
+        cx.set_state(
+            indoc! {"
+            line one
+              line two
+            line ˇthree"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("3 shift-g");
+        cx.assert_state(
+            indoc! {"
+            line one
+              line two
+            ˇline three"},
+            Mode::HelixNormal,
+        );
+
+        // but not when count is missing entirely
+        cx.set_state(
+            indoc! {"
+            line one
+              line two
+            line ˇthree"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("shift-g");
+        cx.assert_state(
+            indoc! {"
+            line one
+              line two
+            line ˇthree"},
+            Mode::HelixNormal,
+        );
+
+        // bare shift-g does not exit select mode
+        cx.set_state(
+            indoc! {"
+            line one
+              line two
+            line ˇthree"},
+            Mode::HelixSelect,
+        );
+        cx.simulate_keystrokes("shift-g");
+        cx.assert_state(
+            indoc! {"
+            line one
+              line two
+            line ˇthree"},
+            Mode::HelixSelect,
+        );
+
+        // shift-g with count jumps without extending the selection, unlike <count>gg
+        cx.set_state(
+            indoc! {"
+            line one
+              line two
+            line «ˇthree»"},
+            Mode::HelixSelect,
+        );
+        cx.simulate_keystrokes("1 shift-g");
+        cx.assert_state(
+            indoc! {"
+            ˇline one
+              line two
+            line three"},
+            Mode::HelixSelect,
+        );
+    }
+
+    #[gpui::test]
     async fn test_helix_end_of_document(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
@@ -4670,5 +4775,25 @@ mod test {
         cx.assert_state("  «aaˇ»  \nbbb\nccc\n", Mode::HelixNormal);
         cx.simulate_keystrokes("x");
         cx.assert_state("«  aa  \nˇ»bbb\nccc\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_insert_line_with_multi_keybinding_to_helix_normal(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "j j",
+                SwitchToHelixNormalMode,
+                Some("vim_mode == insert"),
+            )]);
+        });
+
+        cx.set_state("hello worldˇ\n", Mode::Insert);
+        cx.simulate_keystrokes("j j");
+        cx.assert_state("hello worldˇ\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("o");
+        cx.assert_state("hello world\nˇ\n", Mode::Insert);
     }
 }

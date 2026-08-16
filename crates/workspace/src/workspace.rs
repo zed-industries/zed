@@ -33,8 +33,8 @@ pub use dock::Panel;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MoveProjectToNewWindow,
     MultiWorkspace, MultiWorkspaceEvent, NewThread, NextProject, NextThread, PreviousProject,
-    PreviousThread, ProjectGroup, ProjectGroupKey, SerializedProjectGroupState, Sidebar,
-    SidebarEvent, SidebarHandle, SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
+    PreviousThread, ProjectGroup, ProjectGroupKey, RemovalIntent, SerializedProjectGroupState,
+    Sidebar, SidebarEvent, SidebarHandle, SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
     sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
@@ -1665,7 +1665,9 @@ impl Workspace {
         }
 
         cx.on_focus_lost(window, |this, window, cx| {
-            let focus_handle = this.focus_handle(cx);
+            let focus_handle = window
+                .focus_lost_restore_target(cx)
+                .unwrap_or_else(|| this.fallback_focus_handle(window, cx));
             window.focus(&focus_handle, cx);
         })
         .detach();
@@ -4471,6 +4473,27 @@ impl Workspace {
         self.all_docks()
             .iter()
             .find_map(|dock| dock.read(cx).panel::<T>())
+    }
+
+    // If a dock panel is zoomed, focus it instead of the center pane.
+    // Otherwise, focusing the center pane triggers dismiss_zoomed_items_to_reveal
+    // which closes the zoomed dock.
+    pub fn fallback_focus_handle(&self, window: &Window, cx: &App) -> FocusHandle {
+        self.all_docks()
+            .into_iter()
+            .find_map(|dock| {
+                let dock = dock.read(cx);
+                if !dock.is_open() {
+                    return None;
+                }
+                let panel = dock.active_panel()?;
+                if panel.is_zoomed(window, cx) {
+                    Some(panel.activation_focus_handle(cx))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| self.active_pane.read(cx).focus_handle(cx))
     }
 
     fn dismiss_zoomed_items_to_reveal(
@@ -10739,7 +10762,7 @@ pub fn open_remote_project_with_new_connection(
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
     cx: &mut App,
-) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
+) -> Task<Result<(Option<Entity<Workspace>>, Vec<Option<Box<dyn ItemHandle>>>)>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
             deserialize_remote_project(remote_connection.connection_options(), paths.clone(), cx)
@@ -10758,7 +10781,7 @@ pub fn open_remote_project_with_new_connection(
             .await?
         {
             Some(result) => result,
-            None => return Ok(Vec::new()),
+            None => return Ok((None, Vec::new())),
         };
 
         let project = cx.update(|cx| {
@@ -10774,7 +10797,7 @@ pub fn open_remote_project_with_new_connection(
             )
         });
 
-        open_remote_project_inner(
+        let (workspace, items) = open_remote_project_inner(
             project,
             paths,
             workspace_id,
@@ -10785,7 +10808,8 @@ pub fn open_remote_project_with_new_connection(
             None,
             cx,
         )
-        .await
+        .await?;
+        Ok((Some(workspace), items))
     })
 }
 
@@ -10798,7 +10822,7 @@ pub fn open_remote_project_with_existing_connection(
     provisional_project_group_key: Option<ProjectGroupKey>,
     source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
-) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
+) -> Task<Result<(Entity<Workspace>, Vec<Option<Box<dyn ItemHandle>>>)>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
             deserialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
@@ -10828,7 +10852,7 @@ async fn open_remote_project_inner(
     provisional_project_group_key: Option<ProjectGroupKey>,
     source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
-) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
+) -> Result<(Entity<Workspace>, Vec<Option<Box<dyn ItemHandle>>>)> {
     let mut project_paths_to_open = vec![];
     let mut project_path_errors = vec![];
 
@@ -10927,7 +10951,10 @@ async fn open_remote_project_inner(
         }
     });
 
-    Ok(items.into_iter().map(|item| item?.ok()).collect())
+    Ok((
+        workspace,
+        items.into_iter().map(|item| item?.ok()).collect(),
+    ))
 }
 
 fn deserialize_remote_project(
@@ -12052,7 +12079,12 @@ mod tests {
         // Try to remove workspace B. It should prompt because of the dirty item.
         let remove_task = multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                mw.remove([workspace_b.clone()], |_, _, _| unreachable!(), window, cx)
+                mw.remove(
+                    [workspace_b.clone()],
+                    RemovalIntent::CloseProject,
+                    window,
+                    cx,
+                )
             })
             .unwrap();
         cx.run_until_parked();
@@ -12090,7 +12122,12 @@ mod tests {
             .update(cx, |mw, window, cx| {
                 // First switch back to A.
                 mw.activate(workspace_a.clone(), None, window, cx);
-                mw.remove([workspace_b.clone()], |_, _, _| unreachable!(), window, cx)
+                mw.remove(
+                    [workspace_b.clone()],
+                    RemovalIntent::CloseProject,
+                    window,
+                    cx,
+                )
             })
             .unwrap();
         cx.run_until_parked();
@@ -15253,6 +15290,98 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             let right_dock = workspace.right_dock();
             assert!(!right_dock.read(cx).is_open());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_zoomed_panel_stays_open_when_focus_is_lost(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            panel
+        });
+        cx.executor().run_until_parked();
+
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.executor().run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+
+        cx.update(|window, _| window.blur());
+        cx.executor().run_until_parked();
+        workspace.update(cx, |_, cx| cx.notify());
+        cx.executor().run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_focus_restores_to_panel_when_focused_child_is_removed(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel =
+                cx.new(|cx| TestPanel::new_with_activation_child(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            panel
+        });
+        cx.executor().run_until_parked();
+
+        workspace.update_in(cx, |_workspace, window, cx| {
+            assert!(
+                panel
+                    .read(cx)
+                    .activation_focus_handle
+                    .as_ref()
+                    .unwrap()
+                    .is_focused(window)
+            );
+        });
+
+        panel.update(cx, |panel, cx| {
+            panel.activation_focus_handle = None;
+            cx.notify();
+        });
+        cx.executor().run_until_parked();
+        workspace.update(cx, |_, cx| cx.notify());
+        cx.executor().run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+            assert!(
+                !workspace
+                    .active_pane()
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            );
         });
     }
 

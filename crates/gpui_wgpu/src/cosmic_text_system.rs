@@ -212,14 +212,7 @@ impl CosmicTextSystemState {
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         let db = self.font_system.db_mut();
         for bytes in fonts {
-            match bytes {
-                Cow::Borrowed(embedded_font) => {
-                    db.load_font_data(embedded_font.to_vec());
-                }
-                Cow::Owned(bytes) => {
-                    db.load_font_data(bytes);
-                }
-            }
+            db.load_font_source(cosmic_text::fontdb::Source::Binary(Arc::new(bytes)));
         }
         Ok(())
     }
@@ -929,12 +922,10 @@ fn pick_covering_slot(
     if covers(current_id, ch) {
         return current;
     }
-    for (ix, (fb_id, _)) in fallback_chain.iter().enumerate() {
-        if covers(*fb_id, ch) {
-            return Some(ix);
-        }
-    }
-    None
+
+    fallback_chain
+        .iter()
+        .position(|(fb_id, _)| covers(*fb_id, ch))
 }
 
 fn charmap_covers(loaded_fonts: &[LoadedFont], id: FontId, ch: char) -> bool {
