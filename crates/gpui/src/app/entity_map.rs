@@ -56,6 +56,7 @@ impl Display for EntityId {
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
     pub accessed_entities: RefCell<FxHashSet<EntityId>>,
+    accessed_entity_scopes: RefCell<Vec<FxHashSet<EntityId>>>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
@@ -72,6 +73,7 @@ impl EntityMap {
         Self {
             entities: SecondaryMap::new(),
             accessed_entities: RefCell::new(FxHashSet::default()),
+            accessed_entity_scopes: RefCell::new(Vec::new()),
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
@@ -121,8 +123,7 @@ impl EntityMap {
     where
         T: 'static,
     {
-        let mut accessed_entities = self.accessed_entities.get_mut();
-        accessed_entities.insert(slot.entity_id);
+        self.record_access(slot.entity_id);
 
         let handle = slot.0;
         self.entities.insert(handle.entity_id, Box::new(entity));
@@ -133,8 +134,7 @@ impl EntityMap {
     #[track_caller]
     pub fn lease<T>(&mut self, pointer: &Entity<T>) -> Lease<T> {
         self.assert_valid_context(pointer);
-        let mut accessed_entities = self.accessed_entities.get_mut();
-        accessed_entities.insert(pointer.entity_id);
+        self.record_access(pointer.entity_id);
 
         let entity = Some(
             self.entities
@@ -155,8 +155,7 @@ impl EntityMap {
 
     pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
         self.assert_valid_context(entity);
-        let mut accessed_entities = self.accessed_entities.borrow_mut();
-        accessed_entities.insert(entity.entity_id);
+        self.record_access(entity.entity_id);
 
         self.entities
             .get(entity.entity_id)
@@ -175,10 +174,41 @@ impl EntityMap {
         self.accessed_entities
             .get_mut()
             .extend(entities.iter().copied());
+        if let Some(scope) = self.accessed_entity_scopes.get_mut().last_mut() {
+            scope.extend(entities.iter().copied());
+        }
     }
 
     pub fn clear_accessed(&mut self) {
         self.accessed_entities.get_mut().clear();
+        debug_assert!(self.accessed_entity_scopes.get_mut().is_empty());
+    }
+
+    pub fn begin_access_scope(&mut self) {
+        self.accessed_entity_scopes
+            .get_mut()
+            .push(FxHashSet::default());
+    }
+
+    pub fn end_access_scope(&mut self) -> FxHashSet<EntityId> {
+        let scopes = self.accessed_entity_scopes.get_mut();
+        let completed_scope = scopes.pop();
+        debug_assert!(
+            completed_scope.is_some(),
+            "entity access scope stack underflow"
+        );
+        let completed_scope = completed_scope.unwrap_or_default();
+        if let Some(parent_scope) = scopes.last_mut() {
+            parent_scope.extend(completed_scope.iter().copied());
+        }
+        completed_scope
+    }
+
+    fn record_access(&self, entity_id: EntityId) {
+        self.accessed_entities.borrow_mut().insert(entity_id);
+        if let Some(scope) = self.accessed_entity_scopes.borrow_mut().last_mut() {
+            scope.insert(entity_id);
+        }
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
@@ -1274,5 +1304,25 @@ mod test {
 
         drop(pre_existing);
         drop(leaked);
+    }
+
+    #[test]
+    fn nested_access_scopes_attribute_repeated_reads_to_each_boundary() {
+        let mut entity_map = EntityMap::new();
+        let slot = entity_map.reserve::<TestEntity>();
+        let entity = entity_map.insert(slot, TestEntity { i: 1 });
+        entity_map.clear_accessed();
+
+        entity_map.begin_access_scope();
+        assert_eq!(entity_map.read(&entity).i, 1);
+        entity_map.begin_access_scope();
+        assert_eq!(entity_map.read(&entity).i, 1);
+        let inner_accesses = entity_map.end_access_scope();
+        let outer_accesses = entity_map.end_access_scope();
+
+        assert_eq!(inner_accesses.len(), 1);
+        assert!(inner_accesses.contains(&entity.entity_id()));
+        assert_eq!(outer_accesses.len(), 1);
+        assert!(outer_accesses.contains(&entity.entity_id()));
     }
 }
