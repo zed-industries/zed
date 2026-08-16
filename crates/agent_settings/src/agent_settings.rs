@@ -216,6 +216,7 @@ pub struct AgentSettings {
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
     pub commit_message_model: Option<LanguageModelSelection>,
+    pub commit_message_agent: Option<project::AgentId>,
     pub commit_message_include_project_rules: bool,
     pub commit_message_instructions: Option<String>,
     pub thread_summary_model: Option<LanguageModelSelection>,
@@ -777,6 +778,10 @@ impl Settings for AgentSettings {
                 .commit_message_include_project_rules
                 .unwrap(),
             commit_message_model: agent.commit_message_model,
+            commit_message_agent: agent
+                .commit_message_agent
+                .as_ref()
+                .map(|agent| project::AgentId(agent.clone().into())),
             commit_message_instructions: agent.commit_message_instructions,
             thread_summary_model: agent.thread_summary_model,
             compaction_model: agent.compaction_model,

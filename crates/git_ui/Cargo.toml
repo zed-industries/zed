@@ -17,7 +17,12 @@ test-support = ["multi_buffer/test-support", "remote_connection/test-support"]
 call = ["dep:call"]
 
 [dependencies]
+acp_thread.workspace = true
+agent.workspace = true
+agent-client-protocol.workspace = true
+agent_servers.workspace = true
 agent_settings.workspace = true
+agent_ui.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 async-channel.workspace = true

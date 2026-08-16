@@ -248,6 +248,9 @@ pub struct AgentSettingsContent {
     pub inline_assistant_use_streaming_tools: Option<bool>,
     /// Model to use for generating git commit messages. Defaults to default_model when not specified.
     pub commit_message_model: Option<LanguageModelSelection>,
+    /// External ACP agent to use for generating git commit messages. When set, commit message
+    /// generation uses this agent instead of an LLM.
+    pub commit_message_agent: Option<Arc<str>>,
     /// Whether to include project rules files (AGENTS.md, CLAUDE.md, .rules, etc.)
     /// in the prompt when generating git commit messages.
     ///
