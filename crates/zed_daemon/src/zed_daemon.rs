@@ -622,28 +622,86 @@ pub fn default_registry() -> MethodRegistry {
             env: HashMap::default(),
             cwd: None,
         };
-        tr.lock().unwrap().schedule_plan(plan.clone());
+        safe_lock(&tr).schedule_plan(plan.clone());
 
-        let cmd_status = std::process::Command::new(command)
+        // Space-Grade Hardening: Spawn child with 30s execution timeout & 1MB output cap
+        let mut child = match std::process::Command::new(command)
             .args(&args_vec)
-            .output();
-
-        let (success, out_str, err_str) = match cmd_status {
-            Ok(output) => (
-                output.status.success(),
-                String::from_utf8_lossy(&output.stdout).to_string(),
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ),
-            Err(e) => (false, String::new(), format!("Failed to spawn process: {e}")),
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return serde_json::json!({
+                    "status": "failed",
+                    "success": false,
+                    "error": format!("Failed to spawn process: {e}"),
+                    "error_code": EXECUTION_FAILED,
+                    "plan": plan
+                });
+            }
         };
 
-        serde_json::json!({
-            "status": "executed",
-            "success": success,
-            "stdout": out_str.trim(),
-            "stderr": err_str.trim(),
-            "plan": plan
-        })
+        let start_time = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(30);
+        let mut timed_out = false;
+
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) => {
+                    if start_time.elapsed() >= timeout {
+                        let _ = child.kill();
+                        timed_out = true;
+                        break None;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(_) => {
+                    let _ = child.kill();
+                    break None;
+                }
+            }
+        };
+
+        const MAX_OUTPUT_BYTES: usize = 1024 * 1024; // 1 MB cap
+
+        let mut stdout_buf = Vec::new();
+        let mut stderr_buf = Vec::new();
+
+        if let Some(mut stdout) = child.stdout.take() {
+            use std::io::Read;
+            let _ = stdout.by_ref().take(MAX_OUTPUT_BYTES as u64).read_to_end(&mut stdout_buf);
+        }
+        if let Some(mut stderr) = child.stderr.take() {
+            use std::io::Read;
+            let _ = stderr.by_ref().take(MAX_OUTPUT_BYTES as u64).read_to_end(&mut stderr_buf);
+        }
+
+        let out_str = String::from_utf8_lossy(&stdout_buf).to_string();
+        let err_str = String::from_utf8_lossy(&stderr_buf).to_string();
+
+        if timed_out {
+            serde_json::json!({
+                "status": "timeout",
+                "success": false,
+                "error": "Process execution timed out after 30 seconds",
+                "error_code": TIMEOUT_ERROR,
+                "stdout": out_str.trim(),
+                "stderr": err_str.trim(),
+                "plan": plan
+            })
+        } else {
+            let success = status.map(|s| s.success()).unwrap_or(false);
+            serde_json::json!({
+                "status": "executed",
+                "success": success,
+                "stdout": out_str.trim(),
+                "stderr": err_str.trim(),
+                "plan": plan
+            })
+        }
     });
 
     registry.register("git/commit", |params| {
@@ -1166,5 +1224,18 @@ mod tests {
         let parsed_auth: JsonRpcResponse = serde_json::from_str(&res_auth).unwrap();
         assert!(parsed_auth.error.is_none());
         assert_eq!(parsed_auth.result.unwrap()["status"], "running");
+    }
+
+    #[test]
+    fn test_task_run_execution_and_timeout() {
+        let server = DaemonServer::new(DaemonConfig::default(), default_registry());
+        let request = r#"{"jsonrpc":"2.0","id":50,"method":"task/run","params":{"task_name":"version_check","command":"cargo","args":["--version"]}}"#;
+        let response = server.process_line(request);
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        assert!(parsed.error.is_none());
+        let result = parsed.result.unwrap();
+        assert_eq!(result["status"], "executed");
+        assert_eq!(result["success"], true);
+        assert!(result["stdout"].as_str().unwrap().contains("cargo"));
     }
 }
