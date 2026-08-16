@@ -62,17 +62,17 @@ Menu rows follow the project panel's `sort_mode`, `hide_gitignore`, `hide_hidden
 
 ## Quick Reference
 
-| Task               | Keybinding                           |
-| ------------------ | ------------------------------------ |
-| Command Palette    | {#kb command_palette::Toggle}        |
-| Open file          | {#kb file_finder::Toggle}            |
-| Project search     | {#kb pane::DeploySearch}             |
-| Text search picker | {#kb project_search::OpenTextFinder} |
-| Go to definition   | {#kb editor::GoToDefinition}         |
-| Find references    | {#kb editor::FindAllReferences}      |
-| Symbol in file     | {#kb outline::Toggle}                |
-| Symbol in project  | {#kb project_symbols::Toggle}        |
-| Outline Panel      | {#kb outline_panel::ToggleFocus}     |
-| Tab Switcher       | {#kb tab_switcher::Toggle}           |
+| Task               | Keybinding                             |
+| ------------------ | -------------------------------------- |
+| Command Palette    | {#kb command_palette::Toggle}          |
+| Open file          | {#kb file_finder::Toggle}              |
+| Project search     | {#kb pane::DeploySearch}               |
+| Text search picker | {#kb project_search::OpenTextFinder}   |
+| Go to definition   | {#kb editor::GoToDefinition}           |
+| Find references    | {#kb editor::FindAllReferences}        |
+| Symbol in file     | {#kb outline::Toggle}                  |
+| Symbol in project  | {#kb project_symbols::Toggle}          |
+| Outline Panel      | {#kb outline_panel::ToggleFocus}       |
+| Tab Switcher       | {#kb tab_switcher::Toggle}             |
 | Breadcrumb menu    | {#kb editor::OpenBreadcrumbNavigation} |
-| Project Panel      | {#kb project_panel::ToggleFocus}     |
+| Project Panel      | {#kb project_panel::ToggleFocus}       |

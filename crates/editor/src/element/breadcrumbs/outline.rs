@@ -133,6 +133,8 @@ pub(super) fn render_outline_item_menu_row(
     match_positions: &[usize],
     is_current: bool,
     show_current_column: bool,
+    indent: usize,
+    context: Option<SharedString>,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::AnyElement {
@@ -152,6 +154,9 @@ pub(super) fn render_outline_item_menu_row(
 
     h_flex()
         .gap_1p5()
+        .when(indent > 0, |this| {
+            this.child(div().w(px(10.) * indent as f32).flex_none())
+        })
         .when(is_current, |this| {
             this.child(
                 Icon::new(IconName::Check)
@@ -170,5 +175,14 @@ pub(super) fn render_outline_item_menu_row(
                 .text_ellipsis_middle()
                 .child(StyledText::new(text).with_default_highlights(&text_style, highlights)),
         )
+        .when_some(context, |this, context| {
+            this.child(
+                div().flex_none().child(
+                    Label::new(context)
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                ),
+            )
+        })
         .into_any_element()
 }

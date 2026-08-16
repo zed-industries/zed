@@ -348,6 +348,14 @@ impl BreadcrumbNavigationMenu {
             .collect()
     }
 
+    /// What the delegate's `update_matches` calls. Unlike `clear_filter_for_test` this keeps
+    /// the ranked matches until `rerank_filter` consumes them, which is the path a user takes
+    /// when they backspace a query away.
+    #[cfg(test)]
+    pub fn set_filter_query_for_test(&mut self, query: &str, cx: &mut Context<Self>) {
+        self.set_filter_query(query.to_string(), cx);
+    }
+
     #[cfg(test)]
     pub fn clear_filter_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_filter(window, cx);
@@ -427,6 +435,9 @@ impl BreadcrumbNavigationMenu {
                     .initial_width(rems(available.clamp(10., 24.)))
             });
             this.picker = Some(picker);
+            // The real constructors reach this through the listing load; without it a menu
+            // built straight from items has no filter candidates and matches nothing.
+            this.rebuild_filter_candidates();
             this.publish_rows(cx);
         });
         menu
@@ -597,9 +608,55 @@ impl BreadcrumbNavigationMenu {
                     outline_index,
                     match_positions,
                     is_current,
+                    indent: 0,
+                    context: None,
                 });
             }
         }
+        // A filter reaches symbols at any depth, so each row needs to say where it sits:
+        // indent relative to the shallowest row, and name the parent for anything that is not
+        // part of the level being browsed.
+        if filter_active {
+            let depths: Vec<usize> = self
+                .all_symbol_items
+                .iter()
+                .map(|item| item.depth)
+                .collect();
+            let parents = outline_parents(&depths);
+            let shallowest = rows
+                .iter()
+                .filter_map(|row| match row {
+                    BreadcrumbMenuRow::Symbol { item, .. } => Some(item.depth),
+                    BreadcrumbMenuRow::Directory { .. } => None,
+                })
+                .min()
+                .unwrap_or(0);
+            for row in &mut rows {
+                if let BreadcrumbMenuRow::Symbol {
+                    item,
+                    outline_index,
+                    indent,
+                    context,
+                    ..
+                } = row
+                {
+                    *indent = item.depth.saturating_sub(shallowest);
+                    if !self.listed_symbol_indices.contains(outline_index) {
+                        *context = parents
+                            .get(*outline_index)
+                            .copied()
+                            .flatten()
+                            .and_then(|parent| self.all_symbol_items.get(parent))
+                            .map(|parent| {
+                                SharedString::from(flatten_text_for_single_line_display(
+                                    &parent.text,
+                                ))
+                            });
+                    }
+                }
+            }
+        }
+
         let show_current_column = rows.iter().any(|row| match row {
             BreadcrumbMenuRow::Symbol { is_current, .. } => *is_current,
             BreadcrumbMenuRow::Directory { .. } => false,
@@ -1140,10 +1197,29 @@ impl BreadcrumbNavigationMenu {
         if query.is_empty() {
             // `selected_index` changes what it addresses when the query clears, so carry the
             // selection over by identity.
-            let unranked_selection = self
+            let selected_candidate = self
                 .selected_index
                 .and_then(|position| self.ranked_matches.get(position))
                 .map(|match_| match_.candidate_id);
+            // For symbols the candidate is an outline index, which only addresses a row if the
+            // symbol belongs to the level being browsed; a match from elsewhere has no row.
+            let unranked_selection = match (&self.listing, selected_candidate) {
+                (BreadcrumbListing::Symbols { .. }, Some(outline_index)) => self
+                    .listed_symbol_indices
+                    .iter()
+                    .position(|listed| *listed == outline_index),
+                (_, candidate) => candidate,
+            };
+            // A match from another level has no row here. The old value addresses the ranked
+            // matches that are about to be dropped, so keeping it would silently highlight
+            // whichever sibling happens to sit at that index.
+            // A match from another level has no row here. The old value addresses the ranked
+            // matches that are about to be dropped, so keeping it would silently highlight
+            // whichever sibling happens to sit at that index.
+            if selected_candidate.is_some() && unranked_selection.is_none() {
+                self.selected_index = None;
+                self.pending_initial_selection = true;
+            }
             self.ranked_matches.clear();
             self.filter_match_truncated = false;
             self.filter_task = None;
@@ -1220,13 +1296,15 @@ impl BreadcrumbNavigationMenu {
                 .enumerate()
                 .map(|(index, entry)| StringMatchCandidate::new(index, entry.name.as_ref()))
                 .collect(),
+            // Every symbol in the buffer, keyed by outline index: filtering only the level
+            // being browsed reports "No matches" for a symbol that plainly exists, and the
+            // bar used to open a picker that searched the whole file.
             BreadcrumbListing::Symbols { .. } => self
-                .listed_symbol_indices
+                .all_symbol_items
                 .iter()
                 .enumerate()
-                .filter_map(|(position, &outline_index)| {
-                    let text = self.all_symbol_items.get(outline_index)?.text.as_ref();
-                    Some(StringMatchCandidate::new(position, text))
+                .map(|(outline_index, item)| {
+                    StringMatchCandidate::new(outline_index, item.text.as_ref())
                 })
                 .collect(),
         };
@@ -1736,8 +1814,7 @@ impl BreadcrumbNavigationMenu {
     fn symbol_row_data(&self, position: usize) -> Option<(OutlineItem<Anchor>, usize, Vec<usize>)> {
         if !self.filter_is_empty() {
             let match_ = self.ranked_matches.get(position)?;
-            let listed_position = match_.candidate_id;
-            let outline_index = *self.listed_symbol_indices.get(listed_position)?;
+            let outline_index = match_.candidate_id;
             let item = self.all_symbol_items.get(outline_index)?.clone();
             return Some((item, outline_index, match_.positions.clone()));
         }
@@ -1824,6 +1901,10 @@ pub(super) enum BreadcrumbMenuRow {
         outline_index: usize,
         match_positions: Vec<usize>,
         is_current: bool,
+        indent: usize,
+        /// The containing symbol, shown only when a match came from outside the level being
+        /// browsed - otherwise a query like "render" is a column of identical rows.
+        context: Option<SharedString>,
     },
 }
 
@@ -2023,6 +2104,8 @@ impl picker::PickerDelegate for BreadcrumbPickerDelegate {
                 item,
                 match_positions,
                 is_current,
+                indent,
+                context,
                 ..
             } => {
                 let full_name =
@@ -2032,6 +2115,8 @@ impl picker::PickerDelegate for BreadcrumbPickerDelegate {
                     match_positions,
                     *is_current,
                     self.show_current_column,
+                    *indent,
+                    context.clone(),
                     window,
                     cx,
                 );
@@ -2057,16 +2142,35 @@ impl picker::PickerDelegate for BreadcrumbPickerDelegate {
 
     fn render_footer(
         &self,
-        _window: &mut Window,
-        _cx: &mut Context<picker::Picker<Self>>,
+        window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
-        let note = self.truncation_note.clone()?;
+        // Nothing on screen otherwise says the arrow keys walk the tree, and stepping in and
+        // out is the whole point of the menu.
+        let focus = window.focused(cx)?;
+        let hint = |action: &dyn gpui::Action, label: &'static str| {
+            h_flex()
+                .gap_1()
+                .child(ui::KeyBinding::for_action_in(action, &focus, cx))
+                .child(Label::new(label).color(Color::Muted).size(LabelSize::Small))
+        };
+        let keys = h_flex()
+            .gap_2()
+            .child(hint(&menu::SelectParent, "Out"))
+            .child(hint(&menu::SelectChild, "In"))
+            .child(hint(&menu::Confirm, "Open"));
+
         Some(
-            Label::new(note)
-                .color(Color::Muted)
-                .size(LabelSize::Small)
-                .mx_2()
-                .mb_1()
+            v_flex()
+                .w_full()
+                .p_1p5()
+                .gap_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .when_some(self.truncation_note.clone(), |this, note| {
+                    this.child(Label::new(note).color(Color::Muted).size(LabelSize::Small))
+                })
+                .child(keys)
                 .into_any_element(),
         )
     }

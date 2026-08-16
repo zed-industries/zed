@@ -129,7 +129,8 @@ pub(super) fn directory_entry_icon_source(
 }
 
 /// Read from the settings store directly: project_panel depends on editor, so the reverse
-/// dependency would be a cycle.
+/// dependency would be a cycle. These govern the menu's rows, which are a directory listing;
+/// the bar's own icon and git colour follow the tab family instead.
 #[derive(Clone, Copy, PartialEq, Eq, settings::RegisterSetting)]
 pub(super) struct BreadcrumbListingSettings {
     pub(super) sort_mode: settings::ProjectPanelSortMode,

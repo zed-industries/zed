@@ -297,6 +297,10 @@ pub fn render_breadcrumb_text(
     }
 }
 
+/// Gated on the tab family rather than the panel family the menu rows use: the bar describes
+/// the file that is open, like a tab does, while the menu is a directory listing. Deliberate,
+/// because either family alone would change what one of the two surfaces shows by default.
+///
 /// Takes the status lazily: resolving one walks every repository, and the bar repaints on
 /// every cursor blink, so it must not run when the setting is off.
 pub(super) fn breadcrumb_file_git_status_color(
@@ -3493,6 +3497,113 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_select_parent_walks_out_of_a_directory_listing(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use gpui::KeyBinding;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "left",
+                SelectParent,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            )]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "outer": { "inner": { "file.rs": "fn main() {}" } } }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::new_test("outer/inner").into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        menu.update_in(cx, |menu, window, cx| {
+            window.focus(&menu.focus_handle(cx), cx);
+        });
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        // Walking out of a directory is a primary interaction and only the symbol arm was
+        // covered; the directory arm reaches a different branch of `select_parent`.
+        for expected in ["outer", ""] {
+            cx.simulate_keystrokes("left");
+            cx.run_until_parked();
+            menu.read_with(cx, |menu, _| match menu.listing() {
+                BreadcrumbListing::Directory { path, .. } => {
+                    assert_eq!(
+                        path.as_unix_str(),
+                        expected,
+                        "left should step to the parent"
+                    )
+                }
+                other => panic!("expected a directory listing, got {other:?}"),
+            });
+        }
+
+        // At the worktree root there is no parent, so it must stay put rather than dismiss.
+        cx.simulate_keystrokes("left");
+        cx.run_until_parked();
+        menu.read_with(cx, |menu, _| match menu.listing() {
+            BreadcrumbListing::Directory { path, .. } => {
+                assert_eq!(path.as_unix_str(), "", "left at the root is a no-op")
+            }
+            other => panic!("expected a directory listing, got {other:?}"),
+        });
+    }
+
+    #[gpui::test]
     async fn test_clicking_a_bar_segment_opens_that_segments_listing(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
         use crate::test::build_editor_with_project;
@@ -4927,6 +5038,238 @@ mod tests {
             entry_git_aware_label_color(untracked.git_summary, untracked.is_ignored, false),
             Color::Created,
         );
+    }
+
+    #[gpui::test]
+    async fn test_clearing_a_cross_level_symbol_match_does_not_select_an_unrelated_row(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use language::OutlineItem;
+        use multi_buffer::MultiBufferOffset;
+
+        init_test(cx, |_| {});
+
+        let buffer = cx.new(|cx| {
+            language::Buffer::local(
+                "struct Alpha;\nstruct Beta {\n  fn nested_needle() {}\n}\nstruct Gamma;\n",
+                cx,
+            )
+        });
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let snapshot = multi_buffer.read_with(cx, |mb, cx| mb.snapshot(cx));
+        let anchor_at = |offset: usize| {
+            snapshot.anchor_before(MultiBufferOffset(offset))
+                ..snapshot.anchor_before(MultiBufferOffset(offset + 1))
+        };
+        let item =
+            |depth: usize, text: &str, range: std::ops::Range<multi_buffer::Anchor>| OutlineItem {
+                depth,
+                range: range.clone(),
+                selection_range: range.clone(),
+                source_range_for_text: range,
+                text: text.into(),
+                highlight_ranges: vec![],
+                name_ranges: vec![],
+                body_range: None,
+                annotation_range: None,
+            };
+        let gamma_range = anchor_at(60);
+        let all_items = vec![
+            item(0, "Alpha", anchor_at(0)),
+            item(0, "Beta", anchor_at(14)),
+            item(1, "nested_needle", anchor_at(30)),
+            item(0, "Gamma", gamma_range.clone()),
+        ];
+        let buffer_id =
+            multi_buffer.read_with(cx, |mb, cx| mb.as_singleton().unwrap().read(cx).remote_id());
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        // Top level only; the cursor sits on Gamma, so that is the row the menu preselects.
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer.clone(), window, cx));
+            let menu = BreadcrumbNavigationMenu::new_with_symbols_for_test(
+                editor.downgrade(),
+                buffer_id,
+                all_items,
+                vec![0, 1, 3],
+                vec![gamma_range],
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        menu.update_in(cx, |menu, window, cx| {
+            window.focus(&menu.focus_handle(cx), cx);
+            menu.apply_initial_selection_for_test(cx);
+        });
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(menu.selected_index(), Some(2), "Gamma starts selected");
+        });
+
+        cx.simulate_input("needle");
+        cx.run_until_parked();
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(
+                menu.filtered_entry_names()
+                    .iter()
+                    .map(|name| name.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["nested_needle"],
+                "the only match lives below the browsed level"
+            );
+            assert_eq!(
+                menu.selected_index(),
+                Some(0),
+                "and it is the highlighted row"
+            );
+        });
+
+        // Clearing the query drops a match that has no row at this level. The leftover rank
+        // position must not be reused as a row index - that silently highlights a symbol the
+        // user never chose, and Enter would open it.
+        // Emptied through the delegate's own entry point, which keeps the ranked matches until
+        // the re-rank consumes them - that is the path a user takes backspacing a query away.
+        menu.update(cx, |menu, cx| menu.set_filter_query_for_test("", cx));
+        cx.run_until_parked();
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(menu.filter(), "", "the query is gone");
+            assert_eq!(
+                menu.selected_index(),
+                Some(2),
+                "selection falls back to the cursor's symbol, not rank position 0 (Alpha)"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_symbol_filter_reaches_symbols_below_the_browsed_level(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use language::OutlineItem;
+        use multi_buffer::MultiBufferOffset;
+
+        init_test(cx, |_| {});
+
+        let buffer = cx.new(|cx| {
+            language::Buffer::local(
+                "class Outer {\n  fn nested_needle() {}\n}\nclass Peer {}\n",
+                cx,
+            )
+        });
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let snapshot = multi_buffer.read_with(cx, |mb, cx| mb.snapshot(cx));
+        let anchor_at = |offset: usize| {
+            snapshot.anchor_before(MultiBufferOffset(offset))
+                ..snapshot.anchor_before(MultiBufferOffset(offset + 1))
+        };
+        let item =
+            |depth: usize, text: &str, range: std::ops::Range<multi_buffer::Anchor>| OutlineItem {
+                depth,
+                range: range.clone(),
+                selection_range: range.clone(),
+                source_range_for_text: range,
+                text: text.into(),
+                highlight_ranges: vec![],
+                name_ranges: vec![],
+                body_range: None,
+                annotation_range: None,
+            };
+        let all_items = vec![
+            item(0, "Outer", anchor_at(0)),
+            item(1, "nested_needle", anchor_at(20)),
+            item(0, "Peer", anchor_at(40)),
+        ];
+        let buffer_id =
+            multi_buffer.read_with(cx, |mb, cx| mb.as_singleton().unwrap().read(cx).remote_id());
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        // Browsing the top level only: `nested_needle` is not one of the listed rows.
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer.clone(), window, cx));
+            let menu = BreadcrumbNavigationMenu::new_with_symbols_for_test(
+                editor.downgrade(),
+                buffer_id,
+                all_items,
+                vec![0, 2],
+                Vec::new(),
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(
+                menu.entry_names()
+                    .iter()
+                    .map(|name| name.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["Outer", "Peer"],
+                "the browsed level lists only top-level symbols"
+            );
+        });
+
+        menu.update_in(cx, |menu, window, cx| {
+            window.focus(&menu.focus_handle(cx), cx);
+        });
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.simulate_input("needle");
+        cx.run_until_parked();
+
+        // Typing must reach a symbol nested below the browsed level, or the filter reports
+        // "No matches" for something that plainly exists.
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(
+                menu.filtered_entry_names()
+                    .iter()
+                    .map(|name| name.as_ref())
+                    .collect::<Vec<_>>(),
+                vec!["nested_needle"],
+            );
+        });
     }
 
     #[gpui::test]
