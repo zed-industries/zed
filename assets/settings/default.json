@@ -1837,6 +1837,8 @@
     "cursor_position_button": true,
     // Whether to show active line endings button in the status bar.
     "line_endings_button": false,
+    // Whether to show the indentation button in the status bar.
+    "indentation_button": true,
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
   },

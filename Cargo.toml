@@ -106,6 +106,7 @@ members = [
     "crates/http_proxy",
     "crates/icons",
     "crates/image_viewer",
+    "crates/indentation_selector",
     "crates/input_latency_ui",
     "crates/inspector_ui",
     "crates/install_cli",
@@ -366,6 +367,7 @@ http_client_tls = { path = "crates/http_client_tls" }
 http_proxy = { path = "crates/http_proxy" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
+indentation_selector = { path = "crates/indentation_selector" }
 edit_prediction_types = { path = "crates/edit_prediction_types" }
 edit_prediction_ui = { path = "crates/edit_prediction_ui" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }

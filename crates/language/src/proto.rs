@@ -108,9 +108,9 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
                 proto::operation::UpdateIndentOverride {
                     replica_id: lamport_timestamp.replica_id.as_u16() as u32,
                     lamport_timestamp: lamport_timestamp.value,
-                    indent_override: indent_override.map(|id| proto::IndentOverride {
-                        hard_tabs: id.hard_tabs,
-                        tab_size: id.tab_size.get(),
+                    indent_override: indent_override.map(|indent_override| proto::IndentOverride {
+                        hard_tabs: indent_override.hard_tabs,
+                        tab_size: indent_override.tab_size.get(),
                     }),
                 },
             ),
@@ -385,10 +385,11 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
             }
             proto::operation::Variant::UpdateIndentOverride(message) => {
                 crate::Operation::UpdateIndentOverride {
-                    indent_override: message.indent_override.map(|id| crate::IndentOverride {
-                        hard_tabs: id.hard_tabs,
-                        // unwarp is ok here as u32 created from a NonZeroU32
-                        tab_size: NonZeroU32::new(id.tab_size).unwrap(),
+                    indent_override: message.indent_override.map(|indent_override| {
+                        crate::IndentOverride {
+                            hard_tabs: indent_override.hard_tabs,
+                            tab_size: NonZeroU32::new(indent_override.tab_size).unwrap(),
+                        }
                     }),
                     lamport_timestamp: clock::Lamport {
                         replica_id: ReplicaId::new(message.replica_id as u16),

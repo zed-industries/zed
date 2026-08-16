@@ -151,7 +151,7 @@ impl LspAdapter for YamlLspAdapter {
 
         let tab_size = cx.update(|cx| {
             AllLanguageSettings::get(Some(location), cx)
-                .language(Some(location), Some(&"YAML".into()), None, cx)
+                .language(Some(location), Some(&"YAML".into()), cx)
                 .tab_size
         });
 

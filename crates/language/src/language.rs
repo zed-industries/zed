@@ -46,7 +46,7 @@ pub use language_core::{
     highlight_map::{HighlightId, HighlightMap},
 };
 
-pub use detect_indentation::*;
+pub use detect_indentation::{DetectedIndentation, detect_indentation};
 
 use futures::future::FutureExt as _;
 pub use language_core::{

@@ -180,10 +180,10 @@ use itertools::{Either, Itertools};
 use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
-    DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
-    IndentOverride, IndentSize, Language, LanguageAwareStyling, LanguageName, LanguageRegistry,
-    LanguageScope, LocalFile, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal,
-    TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview,
+    HighlightedText, IndentKind, IndentOverride, IndentSize, Language, LanguageAwareStyling,
+    LanguageName, LanguageRegistry, LanguageScope, LocalFile, OffsetRangeExt, OutlineItem, Point,
+    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
         WordsCompletionMode, all_language_settings,
@@ -6761,7 +6761,6 @@ impl Editor {
     ) {
         let settings = self.buffer.read(cx).language_settings(cx);
         let tab_size = settings.tab_size.get() as usize;
-        let non_zero_tab_size = settings.tab_size;
 
         self.manipulate_mutable_lines(window, cx, |lines| {
             // Allocates a reasonably sized scratch buffer once for the whole loop
@@ -6807,18 +6806,6 @@ impl Editor {
                 reindented_line.clear();
             }
         });
-
-        if let Some(buffer) = self.active_buffer(cx) {
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_manual_indent_override(
-                    Some(IndentOverride {
-                        hard_tabs: false,
-                        tab_size: non_zero_tab_size,
-                    }),
-                    cx,
-                );
-            });
-        }
     }
 
     pub fn convert_indentation_to_tabs(
@@ -6829,7 +6816,6 @@ impl Editor {
     ) {
         let settings = self.buffer.read(cx).language_settings(cx);
         let tab_size = settings.tab_size.get() as usize;
-        let non_zero_tab_size = settings.tab_size;
 
         self.manipulate_mutable_lines(window, cx, |lines| {
             // Allocates a reasonably sized buffer once for the whole loop
@@ -6886,18 +6872,99 @@ impl Editor {
                 reindented_line.clear();
             }
         });
+    }
 
-        if let Some(buffer) = self.active_buffer(cx) {
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_manual_indent_override(
-                    Some(IndentOverride {
-                        hard_tabs: true,
-                        tab_size: non_zero_tab_size,
-                    }),
-                    cx,
-                );
-            });
+    pub fn change_indentation(
+        &mut self,
+        hard_tabs: bool,
+        tab_size: NonZeroU32,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(buffer) = self.active_buffer(cx) else {
+            return;
+        };
+
+        let snapshot = buffer.read(cx).snapshot();
+        let settings = LanguageSettings::for_buffer(buffer.read(cx), cx);
+        let (current_hard_tabs, detected_tab_size) =
+            if let Some(indent_override) = buffer.read(cx).indent_override() {
+                (indent_override.hard_tabs, Some(indent_override.tab_size))
+            } else {
+                language::detect_indentation(
+                    snapshot
+                        .line_indents_in_row_range(0..2000)
+                        .map(|(_, line_indent)| line_indent),
+                )
+                .map_or((settings.hard_tabs, None), |detected| {
+                    (detected.hard_tabs, detected.tab_size)
+                })
+            };
+
+        let mut current_tab_size = detected_tab_size.unwrap_or(settings.tab_size);
+
+        if detected_tab_size.is_none() && !current_hard_tabs {
+            let min_indent = (0..=snapshot.max_point().row)
+                .filter_map(|row| {
+                    let indent = snapshot.line_indent_for_row(row);
+                    if indent.is_line_blank() || indent.tabs > 0 {
+                        None
+                    } else {
+                        Some(indent.spaces)
+                    }
+                })
+                .filter(|&spaces| spaces > 0)
+                .min();
+            if let Some(min_indent) = min_indent {
+                current_tab_size = NonZeroU32::new(min_indent).unwrap_or(current_tab_size);
+            }
         }
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_indent_override(
+                Some(IndentOverride {
+                    hard_tabs,
+                    tab_size,
+                }),
+                cx,
+            );
+        });
+
+        if current_hard_tabs == hard_tabs && current_tab_size == tab_size {
+            return;
+        }
+
+        buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot();
+            let mut edits = Vec::new();
+            for row in 0..=snapshot.max_point().row {
+                let indent = snapshot.line_indent_for_row(row);
+                if indent.is_line_blank() {
+                    continue;
+                }
+
+                let level = indent.len(current_tab_size.get()) / current_tab_size.get();
+                let new_indent = if hard_tabs {
+                    "\t".repeat(level as usize)
+                } else {
+                    " ".repeat(level as usize * tab_size.get() as usize)
+                };
+
+                let whitespace_end = Point::new(row, indent.raw_len());
+                let old_indent = snapshot
+                    .text_for_range(Point::new(row, 0)..whitespace_end)
+                    .collect::<String>();
+                if old_indent == new_indent {
+                    continue;
+                }
+
+                edits.push((Point::new(row, 0)..whitespace_end, new_indent));
+            }
+
+            if !edits.is_empty() {
+                buffer.edit(edits, None, cx);
+            }
+        });
     }
 
     pub fn convert_to_upper_case(
@@ -9737,6 +9804,10 @@ impl Editor {
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 self.update_edit_prediction_settings(cx);
+                cx.notify();
+            }
+            multi_buffer::Event::IndentOverrideChanged(_) => {
+                self.active_indent_guides_state.dirty = true;
                 cx.notify();
             }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),

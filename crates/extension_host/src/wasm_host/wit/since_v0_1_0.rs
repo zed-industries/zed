@@ -448,7 +448,6 @@ impl ExtensionImports for WasmState {
                         let settings = AllLanguageSettings::get(location, cx).language(
                             location,
                             key.as_ref(),
-                            None,
                             cx,
                         );
                         Ok(serde_json::to_string(&settings::LanguageSettings {

@@ -23,7 +23,6 @@ pub fn detect_indentation(
         if indent.is_line_blank() {
             continue;
         }
-        // Ignore mixed indentation lines for now, same as before.
         if indent.tabs > 0 && indent.spaces > 0 {
             continue;
         }

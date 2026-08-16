@@ -1,8 +1,8 @@
 //! Provides `language`-related settings.
 
 use crate::{
-    Buffer, BufferSnapshot, DetectedIndentation, File, IndentOverride, Language, LanguageName,
-    LanguageServerName, ModelineSettings,
+    Buffer, BufferSnapshot, File, IndentOverride, Language, LanguageName, LanguageServerName,
+    ModelineSettings,
 };
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
@@ -312,12 +312,15 @@ impl LanguageSettings {
         let mut settings = AllLanguageSettings::get(location, cx).language(
             location,
             language.map(|l| l.name()).as_ref(),
-            buffer.detected_indent().map(|indent| indent.as_ref()),
             cx,
         );
 
         if let Some(modeline) = buffer.modeline() {
             merge_with_modeline(settings.to_mut(), modeline);
+        }
+
+        if let Some(indent_override) = buffer.indent_override() {
+            merge_with_indent_override(settings.to_mut(), indent_override);
         }
 
         settings
@@ -329,7 +332,7 @@ impl LanguageSettings {
         cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
         let Some(buffer) = buffer else {
-            return AllLanguageSettings::get(None, cx).language(None, override_language, None, cx);
+            return AllLanguageSettings::get(None, cx).language(None, override_language, cx);
         };
         let location = buffer.file().map(|f| SettingsLocation {
             worktree_id: f.worktree_id(cx),
@@ -337,27 +340,17 @@ impl LanguageSettings {
         });
         let all = AllLanguageSettings::get(location, cx);
         let mut settings = if override_language.is_none() {
-            all.language(
-                location,
-                buffer.language().map(|l| l.name()).as_ref(),
-                buffer.detected_indent().map(|indent| indent.as_ref()),
-                cx,
-            )
+            all.language(location, buffer.language().map(|l| l.name()).as_ref(), cx)
         } else {
-            all.language(
-                location,
-                override_language,
-                buffer.detected_indent().map(|indent| indent.as_ref()),
-                cx,
-            )
+            all.language(location, override_language, cx)
         };
 
         if let Some(modeline) = buffer.modeline() {
             merge_with_modeline(settings.to_mut(), modeline);
         }
 
-        if let Some(manual) = buffer.manual_indent_override() {
-            merge_with_manual_override(settings.to_mut(), manual);
+        if let Some(indent_override) = buffer.indent_override() {
+            merge_with_indent_override(settings.to_mut(), indent_override);
         }
 
         settings
@@ -605,7 +598,6 @@ impl AllLanguageSettings {
         &'a self,
         location: Option<SettingsLocation<'a>>,
         language_name: Option<&LanguageName>,
-        detected_indentation: Option<&DetectedIndentation>,
         cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
         let mut settings = Cow::Borrowed(
@@ -613,10 +605,6 @@ impl AllLanguageSettings {
                 .and_then(|name| self.languages.get(name))
                 .unwrap_or(&self.defaults),
         );
-
-        if let Some(detected_indentation) = detected_indentation {
-            merge_with_detected_indentation(settings.to_mut(), detected_indentation);
-        }
 
         let editorconfig_properties = location.and_then(|location| {
             cx.global::<SettingsStore>()
@@ -639,7 +627,7 @@ impl AllLanguageSettings {
 
     /// Returns whether edit predictions are enabled for the given language and path.
     pub fn show_edit_predictions(&self, language: Option<&Arc<Language>>, cx: &App) -> bool {
-        self.language(None, language.map(|l| l.name()).as_ref(), None, cx)
+        self.language(None, language.map(|l| l.name()).as_ref(), cx)
             .show_edit_predictions
     }
 
@@ -649,19 +637,9 @@ impl AllLanguageSettings {
     }
 }
 
-fn merge_with_detected_indentation(
-    settings: &mut LanguageSettings,
-    detected: &DetectedIndentation,
-) {
-    settings.hard_tabs = detected.hard_tabs;
-    if let Some(tab_size) = detected.tab_size {
-        settings.tab_size = tab_size;
-    }
-}
-
-fn merge_with_manual_override(settings: &mut LanguageSettings, manual: &IndentOverride) {
-    settings.hard_tabs = manual.hard_tabs;
-    settings.tab_size = manual.tab_size;
+fn merge_with_indent_override(settings: &mut LanguageSettings, indent_override: &IndentOverride) {
+    settings.hard_tabs = indent_override.hard_tabs;
+    settings.tab_size = indent_override.tab_size;
 }
 
 fn merge_with_modeline(settings: &mut LanguageSettings, modeline: &ModelineSettings) {

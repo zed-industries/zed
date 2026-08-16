@@ -117,6 +117,7 @@ pub enum Event {
     },
     Reloaded,
     LanguageChanged(BufferId, bool),
+    IndentOverrideChanged(BufferId),
     Reparsed(BufferId),
     Saved,
     FileHandleChanged,
@@ -1965,6 +1966,10 @@ impl MultiBuffer {
                 self.capability = buffer.read(cx).capability();
                 return;
             }
+            &BufferEvent::Operation {
+                operation: language::Operation::UpdateIndentOverride { .. },
+                ..
+            } => Event::IndentOverrideChanged(buffer_id),
             BufferEvent::Operation { .. } | BufferEvent::ReloadNeeded => return,
         });
     }

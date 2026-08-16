@@ -1823,12 +1823,7 @@ fn apply_initial_line_ending(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
         path: file.path().as_ref(),
     });
     let language = buffer.language().map(|l| l.name());
-    let settings = AllLanguageSettings::get(location, cx).language(
-        location,
-        language.as_ref(),
-        buffer.detected_indent().map(|indent| indent.as_ref()),
-        cx,
-    );
+    let settings = AllLanguageSettings::get(location, cx).language(location, language.as_ref(), cx);
     let desired = match settings.line_ending {
         LineEndingSetting::Detect => return,
         LineEndingSetting::PreferLf | LineEndingSetting::EnforceLf => LineEnding::Unix,
