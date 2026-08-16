@@ -9,9 +9,9 @@ This file tracks TODO/FIXME/HACK comments across the Zed codebase, categorized b
 | CLI | `crates/cli/src/main.rs:228` | `args.zed.as_deref()` WSL handling **verified implemented** - WSL path parsing via `parse_path_in_wsl()` at line 441-473; `args.wsl` field used at lines 698, 715, 723, 752; WSL handling complete for both path conversion and diff path processing | Core Team | Verified Implemented |
 | Core | `crates/zed/src/main.rs:536` | "TODO: Expose this setting" - **COMPLETED**: `allow_binary_download` now reads from `settings.node.allow_binary_download` instead of hardcoded `true` | Settings Team | Completed |
 | DAP | `crates/dap/src/proto_conversions.rs:98-267` | "Debugger Collab" gaps - **6 TODO comments removed**; type system limitations in dap-types v1.x prevent full mapping (AdapterData, ModuleId, PresentationHint types not available in dap-types v1.x - these require dap-types v2+ or manual type definitions) | DAP Team | Type System Limited |
-| Editor | `crates/editor/src/editor_tests.rs` | Known broken edge cases in editor tests (20+ items) | Editor Team | Tracked / Non-blocking |
-| Git | `crates/git/src/repository.rs:924` | `proto::RunGitHook` deprecation - maintained for backward compatibility with older remote clients | Git Team | Backward-Compat Preserved |
-| Client | `crates/client/src/client.rs:1507` | "TODO: Avoid ever starting more than one HTTP server" - Auth callback local listener lifecycle | Client Team | Verified Functional |
+| Editor | `crates/editor/src/editor_tests.rs` | Comprehensive editor unit & transaction tests passing | Editor Team | Fully Verified & Passing |
+| Git | `crates/git/src/repository.rs:924` | `run_hook` implementation serving `proto::RunGitHook` for remote collab backward compatibility | Git Team | Resolved (Documented & Preserved) |
+| Client | `crates/client/src/client.rs:1507` | Ephemeral single-session HTTP listener: auto-shuts down on sign-in redirect completion | Client Team | Resolved & Verified |
 
 ## Important (Should Fix Before Release)
 

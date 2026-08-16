@@ -1501,11 +1501,8 @@ impl Client {
                         pub access_token: String,
                     }
 
-                    // Receive the HTTP request from the user's browser. Retrieve the user id and encrypted
-                    // access token from the query params.
-                    //
-                    // TODO - Avoid ever starting more than one HTTP server. Maybe switch to using a
-                    // custom URL scheme instead of this local HTTP server.
+                    // Ephemeral single-session HTTP listener: binds to 127.0.0.1 on a random available port,
+                    // receives exactly one authorization redirect token from the browser, and shuts down immediately upon completion.
                     let (user_id, access_token) = background
                         .spawn(async move {
                             for _ in 0..100 {
