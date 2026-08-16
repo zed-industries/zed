@@ -31,6 +31,7 @@ mod inspector;
 mod interactive;
 mod key_dispatch;
 mod keymap;
+mod node_engine;
 mod path_builder;
 mod platform;
 pub mod prelude;
@@ -58,6 +59,7 @@ pub mod test;
 mod text_system;
 mod util;
 mod view;
+mod view_node;
 mod window;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -136,6 +138,7 @@ pub use inspector::*;
 pub use interactive::*;
 use key_dispatch::*;
 pub use keymap::*;
+pub(crate) use node_engine::*;
 pub use path_builder::*;
 pub use platform::*;
 pub use profiler::*;
@@ -157,6 +160,7 @@ pub use test::*;
 pub use text_system::*;
 pub use util::{FutureExt, Timeout};
 pub use view::*;
+pub(crate) use view_node::*;
 pub use window::*;
 
 pub use pollster::block_on;

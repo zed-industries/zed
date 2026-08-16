@@ -1096,6 +1096,16 @@ impl App {
         (result, entities_accessed_in_callback)
     }
 
+    pub(crate) fn collect_accessed_entities<R>(
+        &mut self,
+        callback: impl FnOnce(&mut App) -> R,
+    ) -> (R, FxHashSet<EntityId>) {
+        self.entities.begin_access_scope();
+        let result = callback(self);
+        let accessed_entities = self.entities.end_access_scope();
+        (result, accessed_entities)
+    }
+
     pub(crate) fn record_entities_accessed(
         &mut self,
         window_handle: AnyWindowHandle,

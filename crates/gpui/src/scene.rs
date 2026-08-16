@@ -148,6 +148,33 @@ impl Scene {
         }
     }
 
+    pub(crate) fn recording(&self, range: Range<usize>) -> Scene {
+        let mut recording = Scene::default();
+        recording.replay(range, self);
+        recording
+    }
+
+    pub(crate) fn replay_recording(&mut self, recording: &Scene) {
+        self.replay(0..recording.len(), recording);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn snapshot_for_test(&self) -> String {
+        format!(
+            "{:?}",
+            (
+                &self.shadows,
+                &self.quads,
+                &self.paths,
+                &self.underlines,
+                &self.monochrome_sprites,
+                &self.subpixel_sprites,
+                &self.polychrome_sprites,
+                &self.surfaces,
+            )
+        )
+    }
+
     pub fn finish(&mut self) {
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);

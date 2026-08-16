@@ -1,7 +1,8 @@
 use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, Element, ElementId,
-    Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, PaintIndex,
-    Pixels, PrepaintStateIndex, Render, RenderOnce, Style, StyleRefinement, TextStyle, WeakEntity,
+    Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
+    NodeRenderDecision, PaintIndex, Pixels, PrepaintStateIndex, Render, RenderOnce, Style,
+    StyleRefinement, TextStyle, ViewNodeCacheKey, ViewNodeId, ViewNodeRecording, WeakEntity,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
@@ -85,6 +86,10 @@ impl Eq for AnyView {}
 impl View for AnyView {
     fn entity_id(&self) -> Option<EntityId> {
         Some(self.entity.entity_id())
+    }
+
+    fn retained_view(&self) -> Option<AnyView> {
+        Some(self.clone())
     }
 
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
@@ -190,6 +195,11 @@ pub trait View: 'static + Sized {
     /// fine — the id is scoped by the parent path.
     fn entity_id(&self) -> Option<EntityId>;
 
+    #[doc(hidden)]
+    fn retained_view(&self) -> Option<AnyView> {
+        None
+    }
+
     /// Render this view into an element tree, consuming `self`.
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
 }
@@ -210,6 +220,10 @@ impl<T: RenderOnce> View for T {
 impl<T: Render> View for Entity<T> {
     fn entity_id(&self) -> Option<EntityId> {
         Some(Entity::entity_id(self))
+    }
+
+    fn retained_view(&self) -> Option<AnyView> {
+        Some(self.clone().into())
     }
 
     #[inline]
@@ -295,9 +309,29 @@ struct ViewElementCacheKey {
     text_style: TextStyle,
 }
 
+#[doc(hidden)]
+pub struct ViewElementPrepaintState {
+    element: Option<AnyElement>,
+    node: Option<ViewNodePrepaintState>,
+}
+
+enum ViewNodePrepaintState {
+    Graft {
+        node_id: ViewNodeId,
+        recording: std::rc::Rc<ViewNodeRecording>,
+        prepaint_range: Range<PrepaintStateIndex>,
+    },
+    Render {
+        node_id: ViewNodeId,
+        cache_key: ViewNodeCacheKey,
+        prepaint_range: Range<PrepaintStateIndex>,
+        accessed_entities: FxHashSet<EntityId>,
+    },
+}
+
 impl<V: View> Element for ViewElement<V> {
     type RequestLayoutState = Option<AnyElement>;
-    type PrepaintState = Option<AnyElement>;
+    type PrepaintState = ViewElementPrepaintState;
 
     fn id(&self) -> Option<ElementId> {
         self.entity_id.map(ElementId::View)
@@ -367,17 +401,84 @@ impl<V: View> Element for ViewElement<V> {
         element: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<AnyElement> {
+    ) -> ViewElementPrepaintState {
+        if self.cached_style.is_some()
+            && window.node_engine_enabled()
+            && let Some(entity_id) = self.entity_id
+            && let Some(global_id) = global_id
+            && let Some(view) = self.view.as_ref().and_then(View::retained_view)
+        {
+            let content_mask = window.content_mask();
+            let text_style = window.text_style();
+            let cache_key = ViewNodeCacheKey {
+                bounds,
+                content_mask,
+                text_style,
+            };
+            if let Some(decision) =
+                window.begin_view_node(global_id.clone(), view, cache_key.clone())
+            {
+                window.set_view_id(entity_id);
+                return window.with_rendered_view(entity_id, |window| match decision {
+                    NodeRenderDecision::Graft {
+                        node_id,
+                        recording,
+                        accessed_entities,
+                    } => {
+                        let prepaint_range = window.graft_view_node_prepaint(&recording);
+                        cx.entities.extend_accessed(&accessed_entities);
+                        window.finish_view_node_prepaint(node_id, false);
+                        ViewElementPrepaintState {
+                            element: None,
+                            node: Some(ViewNodePrepaintState::Graft {
+                                node_id,
+                                recording,
+                                prepaint_range,
+                            }),
+                        }
+                    }
+                    NodeRenderDecision::Render { node_id } => {
+                        let refreshing = mem::replace(&mut window.refreshing, true);
+                        let prepaint_start = window.prepaint_index();
+                        let (element, accessed_entities) = cx.collect_accessed_entities(|cx| {
+                            let Some(view) = self.view.take() else {
+                                return None;
+                            };
+                            let mut element = view.render(window, cx).into_any_element();
+                            element.layout_as_root(bounds.size.into(), window, cx);
+                            element.prepaint_at(bounds.origin, window, cx);
+                            Some(element)
+                        });
+                        let prepaint_range = prepaint_start..window.prepaint_index();
+                        window.refreshing = refreshing;
+                        window.finish_view_node_prepaint(node_id, true);
+                        ViewElementPrepaintState {
+                            element: element,
+                            node: Some(ViewNodePrepaintState::Render {
+                                node_id,
+                                cache_key,
+                                prepaint_range,
+                                accessed_entities,
+                            }),
+                        }
+                    }
+                });
+            }
+        }
+
         if let Some(entity_id) = self.entity_id {
             // Stateful path.
             window.set_view_id(entity_id);
             window.with_rendered_view(entity_id, |window| {
                 if let Some(mut element) = element.take() {
                     element.prepaint(window, cx);
-                    return Some(element);
+                    return ViewElementPrepaintState {
+                        element: Some(element),
+                        node: None,
+                    };
                 }
 
-                window.with_element_state::<ViewElementState, _>(
+                let element = window.with_element_state::<ViewElementState, _>(
                     global_id.unwrap(),
                     |element_state, window| {
                         let content_mask = window.content_mask();
@@ -431,7 +532,11 @@ impl<V: View> Element for ViewElement<V> {
                             },
                         )
                     },
-                )
+                );
+                ViewElementPrepaintState {
+                    element,
+                    node: None,
+                }
             })
         } else {
             // Stateless path: just prepaint the element.
@@ -441,7 +546,10 @@ impl<V: View> Element for ViewElement<V> {
                     element.as_mut().unwrap().prepaint(window, cx);
                 },
             );
-            Some(element.take().unwrap())
+            ViewElementPrepaintState {
+                element: element.take(),
+                node: None,
+            }
         }
     }
 
@@ -455,6 +563,55 @@ impl<V: View> Element for ViewElement<V> {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if let Some(node) = element.node.take() {
+            if let Some(entity_id) = self.entity_id {
+                window.with_rendered_view(entity_id, |window| match node {
+                    ViewNodePrepaintState::Graft {
+                        node_id,
+                        recording,
+                        prepaint_range,
+                    } => {
+                        let paint_range = window.graft_view_node_paint(&recording);
+                        window.store_grafted_view_node(
+                            node_id,
+                            ViewNodeRecording {
+                                scene: recording.scene.clone(),
+                                hitboxes: recording.hitboxes.clone(),
+                                tooltip_requests: recording.tooltip_requests.clone(),
+                                cursor_styles: recording.cursor_styles.clone(),
+                                prepaint_range,
+                                paint_range,
+                            },
+                        );
+                    }
+                    ViewNodePrepaintState::Render {
+                        node_id,
+                        cache_key,
+                        prepaint_range,
+                        accessed_entities,
+                    } => {
+                        let paint_start = window.paint_index();
+                        if let Some(element) = element.element.as_mut() {
+                            let refreshing = mem::replace(&mut window.refreshing, true);
+                            element.paint(window, cx);
+                            window.refreshing = refreshing;
+                        }
+                        let paint_range = paint_start..window.paint_index();
+                        let recording =
+                            window.capture_view_node_recording(prepaint_range, paint_range);
+                        window.store_rendered_view_node(
+                            node_id,
+                            cache_key,
+                            recording,
+                            accessed_entities,
+                        );
+                    }
+                });
+            }
+            return;
+        }
+
+        let element = &mut element.element;
         if let Some(entity_id) = self.entity_id {
             // Stateful path.
             window.with_rendered_view(entity_id, |window| {
@@ -503,5 +660,151 @@ pub struct EmptyView;
 impl Render for EmptyView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Empty
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        Context, DrawEngine, Entity, Render, StyleRefinement, TestAppContext, Window, div,
+        prelude::*, px, rgb, size,
+    };
+    use std::{cell::Cell, rc::Rc};
+
+    struct Dependency;
+
+    struct CountingLeaf {
+        render_count: Rc<Cell<usize>>,
+        dependency: Option<Entity<Dependency>>,
+        color: u32,
+    }
+
+    impl Render for CountingLeaf {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.render_count.set(self.render_count.get() + 1);
+            if let Some(dependency) = &self.dependency {
+                dependency.read(cx);
+            }
+            div().size_full().bg(rgb(self.color))
+        }
+    }
+
+    struct NodeEngineRoot {
+        left: Entity<CountingLeaf>,
+        middle: Entity<CountingLeaf>,
+        right: Entity<CountingLeaf>,
+    }
+
+    impl Render for NodeEngineRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let leaf_style = || StyleRefinement::default().w(px(100.)).h(px(100.));
+            div()
+                .flex()
+                .flex_row()
+                .size_full()
+                .child(self.left.clone().cached(leaf_style()))
+                .child(self.middle.clone().cached(leaf_style()))
+                .child(self.right.clone().cached(leaf_style()))
+        }
+    }
+
+    #[gpui::test]
+    fn node_engine_grafts_clean_siblings_and_cold_rebuilds_the_same_scene(cx: &mut TestAppContext) {
+        let left_render_count = Rc::new(Cell::new(0));
+        let middle_render_count = Rc::new(Cell::new(0));
+        let right_render_count = Rc::new(Cell::new(0));
+        let dependency = cx.new(|_| Dependency);
+        let _node_engine_guard = DrawEngine::force_node_engine_for_test();
+        let window = cx.open_window(size(px(300.), px(100.)), |_, cx| NodeEngineRoot {
+            left: cx.new({
+                let left_render_count = left_render_count.clone();
+                |_| CountingLeaf {
+                    render_count: left_render_count,
+                    dependency: None,
+                    color: 0xff0000,
+                }
+            }),
+            middle: cx.new({
+                let middle_render_count = middle_render_count.clone();
+                let dependency = dependency.clone();
+                |_| CountingLeaf {
+                    render_count: middle_render_count,
+                    dependency: Some(dependency),
+                    color: 0x00ff00,
+                }
+            }),
+            right: cx.new({
+                let right_render_count = right_render_count.clone();
+                |_| CountingLeaf {
+                    render_count: right_render_count,
+                    dependency: None,
+                    color: 0x0000ff,
+                }
+            }),
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            (
+                left_render_count.get(),
+                middle_render_count.get(),
+                right_render_count.get(),
+            ),
+            (1, 1, 1)
+        );
+
+        window
+            .update(cx, |root, _, cx| {
+                root.middle.update(cx, |_, cx| cx.notify());
+            })
+            .expect("test window should remain open");
+        cx.run_until_parked();
+        assert_eq!(
+            (
+                left_render_count.get(),
+                middle_render_count.get(),
+                right_render_count.get(),
+            ),
+            (1, 2, 1)
+        );
+
+        dependency.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(
+            (
+                left_render_count.get(),
+                middle_render_count.get(),
+                right_render_count.get(),
+            ),
+            (1, 3, 1)
+        );
+
+        let retained_scene = window
+            .update(cx, |_, window, _| {
+                window.rendered_frame.scene.snapshot_for_test()
+            })
+            .expect("test window should remain open");
+        window
+            .update(cx, |_, window, _| {
+                window.clear_view_nodes_for_test();
+                window.refresh();
+            })
+            .expect("test window should remain open");
+        cx.run_until_parked();
+        let cold_scene = window
+            .update(cx, |_, window, _| {
+                window.rendered_frame.scene.snapshot_for_test()
+            })
+            .expect("test window should remain open");
+
+        assert_eq!(retained_scene, cold_scene);
+        assert_eq!(
+            (
+                left_render_count.get(),
+                middle_render_count.get(),
+                right_render_count.get(),
+            ),
+            (2, 4, 2)
+        );
     }
 }

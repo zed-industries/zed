@@ -6,21 +6,21 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, DrawEngine, Edges, Effect,
+    Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
+    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, NodeRenderDecision,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, ViewNodeCacheKey, ViewNodeId, ViewNodeRecording, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -1114,6 +1114,7 @@ enum InputModality {
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
+    pub(crate) draw_engine: DrawEngine,
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
@@ -1801,6 +1802,7 @@ impl Window {
         Ok(Window {
             handle,
             invalidator,
+            draw_engine: DrawEngine::from_environment(),
             removed: false,
             platform_window,
             display_id,
@@ -2833,7 +2835,9 @@ impl Window {
             }
         }
         if !cx.mode.skip_drawing() {
+            self.begin_node_engine_frame();
             self.draw_roots(cx);
+            self.finish_node_engine_frame();
         }
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
@@ -2936,10 +2940,37 @@ impl Window {
 
     fn invalidate_entities(&mut self) {
         let mut views = self.invalidator.take_views();
-        for entity in views.drain() {
-            self.mark_view_dirty(entity);
+        match &mut self.draw_engine {
+            DrawEngine::Legacy => {
+                for entity in views.drain() {
+                    self.mark_view_dirty(entity);
+                }
+            }
+            DrawEngine::Node(node_engine) => node_engine.invalidate_entities(&views),
         }
         self.invalidator.replace_views(views);
+    }
+
+    fn begin_node_engine_frame(&mut self) {
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        let inspector_active = self.inspector.is_some();
+        #[cfg(not(any(feature = "inspector", debug_assertions)))]
+        let inspector_active = false;
+        let full_damage = self.refreshing
+            || !self.rendered_frame.deferred_draws.is_empty()
+            || self.prompt.is_some()
+            || self.a11y.is_active()
+            || inspector_active;
+        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
+            node_engine.begin_frame(full_damage);
+        }
+    }
+
+    fn finish_node_engine_frame(&mut self) {
+        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
+            let damage_bounds = node_engine.finish_frame();
+            log::info!("GPUI node engine damage: {damage_bounds:?}");
+        }
     }
 
     #[profiling::function]
@@ -3280,6 +3311,179 @@ impl Window {
         sorted_indices
     }
 
+    pub(crate) fn node_engine_enabled(&self) -> bool {
+        matches!(self.draw_engine, DrawEngine::Node(_))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_view_nodes_for_test(&mut self) {
+        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
+            node_engine.clear();
+        }
+    }
+
+    pub(crate) fn begin_view_node(
+        &mut self,
+        occurrence: GlobalElementId,
+        view: AnyView,
+        cache_key: ViewNodeCacheKey,
+    ) -> Option<NodeRenderDecision> {
+        let DrawEngine::Node(node_engine) = &mut self.draw_engine else {
+            return None;
+        };
+        Some(node_engine.begin_occurrence(occurrence, view, cache_key))
+    }
+
+    pub(crate) fn finish_view_node_prepaint(&mut self, node_id: ViewNodeId, rendered: bool) {
+        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
+            node_engine.finish_prepaint(node_id, rendered);
+        }
+    }
+
+    pub(crate) fn store_rendered_view_node(
+        &mut self,
+        node_id: ViewNodeId,
+        cache_key: ViewNodeCacheKey,
+        recording: ViewNodeRecording,
+        accessed_entities: FxHashSet<EntityId>,
+    ) {
+        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
+            node_engine.store_render(node_id, cache_key, recording, accessed_entities);
+        }
+    }
+
+    pub(crate) fn store_grafted_view_node(
+        &mut self,
+        node_id: ViewNodeId,
+        recording: ViewNodeRecording,
+    ) {
+        if let DrawEngine::Node(node_engine) = &mut self.draw_engine {
+            node_engine.store_graft(node_id, recording);
+        }
+    }
+
+    pub(crate) fn capture_view_node_recording(
+        &self,
+        prepaint_range: Range<PrepaintStateIndex>,
+        paint_range: Range<PaintIndex>,
+    ) -> ViewNodeRecording {
+        let scene = self
+            .next_frame
+            .scene
+            .recording(paint_range.start.scene_index..paint_range.end.scene_index);
+        ViewNodeRecording {
+            scene: Rc::new(scene),
+            hitboxes: self.next_frame.hitboxes
+                [prepaint_range.start.hitboxes_index..prepaint_range.end.hitboxes_index]
+                .to_vec()
+                .into(),
+            tooltip_requests: self.next_frame.tooltip_requests
+                [prepaint_range.start.tooltips_index..prepaint_range.end.tooltips_index]
+                .to_vec()
+                .into(),
+            cursor_styles: self.next_frame.cursor_styles
+                [paint_range.start.cursor_styles_index..paint_range.end.cursor_styles_index]
+                .to_vec()
+                .into(),
+            prepaint_range,
+            paint_range,
+        }
+    }
+
+    pub(crate) fn graft_view_node_prepaint(
+        &mut self,
+        recording: &ViewNodeRecording,
+    ) -> Range<PrepaintStateIndex> {
+        let start = self.prepaint_index();
+        self.next_frame
+            .hitboxes
+            .extend(recording.hitboxes.iter().cloned());
+        self.next_frame
+            .tooltip_requests
+            .extend(recording.tooltip_requests.iter().cloned());
+        let range = &recording.prepaint_range;
+        self.next_frame.accessed_element_states.extend(
+            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .map(|(id, type_id)| (id.clone(), *type_id)),
+        );
+        self.text_system.reuse_layouts(
+            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
+        );
+
+        let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
+            range.start.dispatch_tree_index..range.end.dispatch_tree_index,
+            &mut self.rendered_frame.dispatch_tree,
+            self.focus,
+        );
+        if reused_subtree.contains_focus() {
+            self.next_frame.focus = self.focus;
+        }
+
+        self.next_frame.deferred_draws.extend(
+            self.rendered_frame.deferred_draws
+                [range.start.deferred_draws_index..range.end.deferred_draws_index]
+                .iter()
+                .map(|deferred_draw| DeferredDraw {
+                    current_view: deferred_draw.current_view,
+                    parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
+                    element_id_stack: deferred_draw.element_id_stack.clone(),
+                    text_style_stack: deferred_draw.text_style_stack.clone(),
+                    content_mask: deferred_draw.content_mask,
+                    rem_size: deferred_draw.rem_size,
+                    priority: deferred_draw.priority,
+                    element: None,
+                    absolute_offset: deferred_draw.absolute_offset,
+                    prepaint_range: deferred_draw.prepaint_range.clone(),
+                    paint_range: deferred_draw.paint_range.clone(),
+                }),
+        );
+        start..self.prepaint_index()
+    }
+
+    pub(crate) fn graft_view_node_paint(
+        &mut self,
+        recording: &ViewNodeRecording,
+    ) -> Range<PaintIndex> {
+        let start = self.paint_index();
+        self.next_frame
+            .cursor_styles
+            .extend(recording.cursor_styles.iter().cloned());
+
+        // TODO(node-engine): These lanes contain move-only values whose IDs are
+        // refreshed during replay. Keep using prior-frame ranges until recordings
+        // own stable listener handles and text leases.
+        let range = &recording.paint_range;
+        self.next_frame.input_handlers.extend(
+            self.rendered_frame.input_handlers
+                [range.start.input_handlers_index..range.end.input_handlers_index]
+                .iter_mut()
+                .map(|handler| handler.take()),
+        );
+        self.next_frame.mouse_listeners.extend(
+            self.rendered_frame.mouse_listeners
+                [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
+                .iter_mut()
+                .map(|listener| listener.take()),
+        );
+        self.next_frame.accessed_element_states.extend(
+            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .map(|(id, type_id)| (id.clone(), *type_id)),
+        );
+        self.next_frame.tab_stops.replay(
+            &self.rendered_frame.tab_stops.insertion_history
+                [range.start.tab_handle_index..range.end.tab_handle_index],
+        );
+        self.text_system.reuse_layouts(
+            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
+        );
+        self.next_frame.scene.replay_recording(&recording.scene);
+        start..self.paint_index()
+    }
+
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
         PrepaintStateIndex {
             hitboxes_index: self.next_frame.hitboxes.len(),
@@ -3309,8 +3513,9 @@ impl Window {
                 .iter()
                 .map(|(id, type_id)| (id.clone(), *type_id)),
         );
-        self.text_system
-            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+        self.text_system.reuse_layouts(
+            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
+        );
 
         let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,

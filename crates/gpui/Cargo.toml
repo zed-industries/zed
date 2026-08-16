@@ -183,6 +183,10 @@ name = "move_entity_between_windows"
 path = "examples/move_entity_between_windows.rs"
 
 [[example]]
+name = "node_engine_siblings"
+path = "examples/node_engine_siblings.rs"
+
+[[example]]
 name = "image"
 path = "examples/image/image.rs"
 
