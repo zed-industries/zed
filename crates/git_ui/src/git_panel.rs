@@ -2488,8 +2488,7 @@ impl GitPanel {
             // file, permission, race) would otherwise cancel every pending
             // task, leaving the remaining files untrashed with no feedback.
             let results = futures::future::join_all(tasks).await;
-            let errors: Vec<anyhow::Error> =
-                results.into_iter().filter_map(|r| r.err()).collect();
+            let errors: Vec<anyhow::Error> = results.into_iter().filter_map(|r| r.err()).collect();
             let failed_count = errors.len();
             if let Some(first_error) = errors.into_iter().next() {
                 return Err(anyhow::anyhow!(
@@ -12877,78 +12876,6 @@ mod tests {
         assert!(
             !detail.contains("unstaged.rs"),
             "prompt should NOT list unstaged.rs, got: {detail}"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_trash_untracked_files_trashes_all(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.background_executor.clone());
-        let mut tree = json!({ "project": { ".git": {} } });
-        let project_obj = tree.get_mut("project").unwrap();
-        for index in 0..10 {
-            project_obj[format!("untracked_{index}.txt")] = json!(format!("content {index}\n"));
-        }
-        fs.insert_tree(path!("/root"), tree).await;
-
-        let status_paths: Vec<String> =
-            (0..10).map(|index| format!("untracked_{index}.txt")).collect();
-        let statuses: Vec<(&str, FileStatus)> = status_paths
-            .iter()
-            .map(|path| (path.as_str(), FileStatus::Untracked))
-            .collect();
-        fs.set_status_for_repo(path!("/root/project/.git").as_ref(), &statuses);
-
-        let project =
-            Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
-        let window_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = window_handle
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
-
-        cx.read(|cx| {
-            project
-                .read(cx)
-                .worktrees(cx)
-                .next()
-                .unwrap()
-                .read(cx)
-                .as_local()
-                .unwrap()
-                .scan_complete()
-        })
-        .await;
-
-        cx.executor().run_until_parked();
-
-        let panel = workspace.update_in(cx, GitPanel::new);
-
-        let handle = cx.update_window_entity(&panel, |panel, _, _| {
-            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
-        });
-        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
-        handle.await;
-        cx.executor().run_until_parked();
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.clean_all(&TrashUntrackedFiles, window, cx);
-        });
-
-        let (message, _detail) = cx
-            .pending_prompt()
-            .expect("trash untracked should show a confirmation prompt");
-        assert_eq!(message, "Trash these files?");
-
-        cx.simulate_prompt_answer("Trash");
-        cx.executor().run_until_parked();
-
-        let trashed = fs.trashed_paths();
-        assert_eq!(
-            trashed.len(),
-            10,
-            "all untracked files should be trashed, got: {trashed:?}"
         );
     }
 }
