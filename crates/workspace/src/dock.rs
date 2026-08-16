@@ -8,10 +8,10 @@ use client::proto;
 use db::kvp::KeyValueStore;
 
 use gpui::{
-    Action, Anchor, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
+    Action, Anchor, AnyView, App, Axis, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
-    Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
-    px,
+    Render, SharedString, Stateful, StyleRefinement, Styled, Subscription, WeakEntity, Window,
+    deferred, div, px,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, TerminalDockPosition};
@@ -1127,13 +1127,11 @@ impl Dock {
             .flatten()
             .and_then(|json| serde_json::from_str::<PanelSizeState>(&json).log_err())
     }
-}
-
-impl Render for Dock {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_panel(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let dispatch_context = Self::dispatch_context();
         if let Some(entry) = self.visible_entry() {
             let position = self.position;
+            let island_layout = WorkspaceSettings::get_global(cx).island_layout;
             let create_resize_handle = || {
                 let handle = div()
                     .id("resize-handle")
@@ -1200,7 +1198,6 @@ impl Render for Dock {
                 .focus_follows_mouse(self.focus_follows_mouse, cx)
                 .flex()
                 .bg(cx.theme().colors().panel_background)
-                .border_color(cx.theme().colors().border)
                 .overflow_hidden()
                 .map(|this| match self.position().axis() {
                     // Width and height are always set on the workspace wrapper in
@@ -1208,10 +1205,22 @@ impl Render for Dock {
                     Axis::Horizontal => this.w_full().h_full().flex_row(),
                     Axis::Vertical => this.h_full().w_full().flex_col(),
                 })
-                .map(|this| match self.position() {
-                    DockPosition::Left => this.border_r_1(),
-                    DockPosition::Right => this.border_l_1(),
-                    DockPosition::Bottom => this.border_t_1(),
+                .map(|this| {
+                    if island_layout.enabled {
+                        this.rounded(px(island_layout.corner_radius))
+                            .shadow_sm()
+                            .when(island_layout.border, |this| {
+                                this.border_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                            })
+                    } else {
+                        this.border_color(cx.theme().colors().border)
+                            .map(|this| match self.position() {
+                                DockPosition::Left => this.border_r_1(),
+                                DockPosition::Right => this.border_l_1(),
+                                DockPosition::Bottom => this.border_t_1(),
+                            })
+                    }
                 })
                 .child(
                     div()
@@ -1235,6 +1244,12 @@ impl Render for Dock {
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
         }
+    }
+}
+
+impl Render for Dock {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.render_panel(window, cx)
     }
 }
 
@@ -1619,5 +1634,254 @@ pub mod test {
         fn focus_handle(&self, _cx: &App) -> FocusHandle {
             self.focus_handle.clone()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Workspace;
+    use crate::dock::test::TestPanel;
+    use fs::FakeFs;
+    use gpui::{AbsoluteLength, CornersRefinement, EdgesRefinement, TestAppContext, UpdateGlobal, px};
+    use project::Project;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.set_global(db::AppDatabase::test_new());
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_dock_render_default_flat_styling(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let _left_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.left_dock().update(cx, |left_dock, cx| {
+                left_dock.activate_panel(0, window, cx);
+                left_dock.set_open(true, window, cx);
+            });
+            panel
+        });
+
+        let mut div = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.left_dock().update(cx, |dock, cx| {
+                dock.render_panel(window, cx)
+            })
+        });
+
+        let style = div.style();
+        assert_eq!(
+            style.border_widths,
+            EdgesRefinement {
+                top: None,
+                right: Some(AbsoluteLength::Pixels(px(1.))),
+                bottom: None,
+                left: None,
+            }
+        );
+        assert_eq!(style.corner_radii, CornersRefinement::default());
+        assert!(style.box_shadow.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_dock_render_island_layout_card_styling(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.island_layout = Some(settings::IslandLayoutSettings {
+                        enabled: Some(true),
+                        corner_radius: Some(18.0),
+                        gap: Some(6.0),
+                        border: Some(true),
+                        pill_tabs: Some(true),
+                    });
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let _left_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.left_dock().update(cx, |left_dock, cx| {
+                left_dock.activate_panel(0, window, cx);
+                left_dock.set_open(true, window, cx);
+            });
+            panel
+        });
+
+        let (mut div, border_variant) = workspace.update_in(cx, |workspace, window, cx| {
+            let border_variant = cx.theme().colors().border_variant;
+            let div = workspace.left_dock().update(cx, |dock, cx| {
+                dock.render_panel(window, cx)
+            });
+            (div, border_variant)
+        });
+
+        let style = div.style();
+        assert_eq!(
+            style.border_widths,
+            EdgesRefinement {
+                top: Some(AbsoluteLength::Pixels(px(1.))),
+                right: Some(AbsoluteLength::Pixels(px(1.))),
+                bottom: Some(AbsoluteLength::Pixels(px(1.))),
+                left: Some(AbsoluteLength::Pixels(px(1.))),
+            }
+        );
+        assert_eq!(style.border_color, Some(border_variant));
+        assert_eq!(
+            style.corner_radii,
+            CornersRefinement {
+                top_left: Some(AbsoluteLength::Pixels(px(18.))),
+                top_right: Some(AbsoluteLength::Pixels(px(18.))),
+                bottom_right: Some(AbsoluteLength::Pixels(px(18.))),
+                bottom_left: Some(AbsoluteLength::Pixels(px(18.))),
+            }
+        );
+        assert!(style.box_shadow.is_some());
+    }
+
+    #[gpui::test]
+    async fn test_dock_render_island_layout_without_border(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.island_layout = Some(settings::IslandLayoutSettings {
+                        enabled: Some(true),
+                        corner_radius: Some(12.0),
+                        gap: Some(6.0),
+                        border: Some(false),
+                        pill_tabs: Some(true),
+                    });
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let _bottom_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.bottom_dock().update(cx, |bottom_dock, cx| {
+                bottom_dock.activate_panel(0, window, cx);
+                bottom_dock.set_open(true, window, cx);
+            });
+            panel
+        });
+
+        let mut div = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.render_panel(window, cx)
+            })
+        });
+
+        let style = div.style();
+        assert_eq!(
+            style.border_widths,
+            EdgesRefinement {
+                top: None,
+                right: None,
+                bottom: None,
+                left: None,
+            }
+        );
+        assert_eq!(
+            style.corner_radii,
+            CornersRefinement {
+                top_left: Some(AbsoluteLength::Pixels(px(12.))),
+                top_right: Some(AbsoluteLength::Pixels(px(12.))),
+                bottom_right: Some(AbsoluteLength::Pixels(px(12.))),
+                bottom_left: Some(AbsoluteLength::Pixels(px(12.))),
+            }
+        );
+        assert!(style.box_shadow.is_some());
+    }
+
+    #[gpui::test]
+    async fn test_dock_render_default_right_and_bottom(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Right dock
+        let _right_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.right_dock().update(cx, |right_dock, cx| {
+                right_dock.activate_panel(0, window, cx);
+                right_dock.set_open(true, window, cx);
+            });
+            panel
+        });
+
+        let mut right_div = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.right_dock().update(cx, |dock, cx| {
+                dock.render_panel(window, cx)
+            })
+        });
+
+        let right_style = right_div.style();
+        assert_eq!(
+            right_style.border_widths,
+            EdgesRefinement {
+                top: None,
+                right: None,
+                bottom: None,
+                left: Some(AbsoluteLength::Pixels(px(1.))),
+            }
+        );
+
+        // Bottom dock
+        let _bottom_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 101, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.bottom_dock().update(cx, |bottom_dock, cx| {
+                bottom_dock.activate_panel(0, window, cx);
+                bottom_dock.set_open(true, window, cx);
+            });
+            panel
+        });
+
+        let mut bottom_div = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.render_panel(window, cx)
+            })
+        });
+
+        let bottom_style = bottom_div.style();
+        assert_eq!(
+            bottom_style.border_widths,
+            EdgesRefinement {
+                top: Some(AbsoluteLength::Pixels(px(1.))),
+                right: None,
+                bottom: None,
+                left: None,
+            }
+        );
     }
 }
