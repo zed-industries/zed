@@ -11824,8 +11824,8 @@ impl LspStore {
 
             let stopped_servers = local
                 .language_server_ids
-                .iter()
-                .map(|(seed, _)| (seed.name.clone(), seed.worktree_id))
+                .keys()
+                .map(|seed| (seed.name.clone(), seed.worktree_id))
                 .collect::<Vec<_>>();
             for (name, worktree_id) in stopped_servers {
                 local
@@ -13663,9 +13663,9 @@ fn subscribe_to_binary_statuses(
 ) -> Task<()> {
     let mut server_statuses = languages.language_server_binary_statuses();
     cx.spawn(async move |lsp_store, cx| {
-        while let Some(mut binary_status_update) = server_statuses.next().await {
+        while let Some(binary_status_update) = server_statuses.next().await {
             if lsp_store
-                .update(cx, |lsp_store, cx| {
+                .update(cx, |_, cx| {
                     let mut message = None;
                     let binary_status = match binary_status_update.binary_status {
                         BinaryStatus::None => proto::ServerBinaryStatus::None,
