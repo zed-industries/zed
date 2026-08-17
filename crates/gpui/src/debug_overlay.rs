@@ -1,15 +1,6 @@
 //! A developer overlay that paints frame-time statistics directly into the
-//! scene, bypassing layout, text, and view invalidation entirely.
-//!
-//! The overlay is drawn as raw quads appended to the scene after the element
-//! tree has painted, using a tiny built-in bitmap font. Because it never
-//! notifies views or schedules frames, it cannot create frame demand: it only
-//! annotates frames that were already going to be drawn, and it displays the
-//! timing of the previous completed frame.
-//!
-//! Draw durations are recorded even while the overlay is hidden, so toggling
-//! it on can display the previous frame's time immediately instead of showing
-//! a placeholder until another frame happens to be drawn.
+//! scene, bypassing layout, text, and view invalidation entirely (to avoid
+//! infinitely triggering new frames).
 
 use crate::{
     BorderStyle, Bounds, ContentMask, Corners, Edges, Hsla, Pixels, Quad, ScaledPixels, Scene,
@@ -17,27 +8,22 @@ use crate::{
 };
 use std::{collections::VecDeque, time::Duration};
 
-/// Which frame-time statistics the debug overlay displays.
+#[allow(missing_docs)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum DebugFrameOverlayMode {
-    /// The overlay is not shown.
     #[default]
     Hidden,
-    /// Show only the last frame's draw time.
-    FrameTime,
-    /// Show the last frame's draw time, the 1%, 10%, and absolute worst draw
-    /// times over the recent sample window, and the total number of frames
-    /// drawn since the window was created.
-    Detailed,
+    Minimal,
+    Full,
 }
 
 impl DebugFrameOverlayMode {
     /// Returns the next mode in the Hidden → FrameTime → Detailed cycle.
     pub fn next(self) -> Self {
         match self {
-            Self::Hidden => Self::FrameTime,
-            Self::FrameTime => Self::Detailed,
-            Self::Detailed => Self::Hidden,
+            Self::Hidden => Self::Minimal,
+            Self::Minimal => Self::Full,
+            Self::Full => Self::Hidden,
         }
     }
 }
@@ -106,11 +92,6 @@ impl DebugFrameOverlay {
         self.draw_durations.push_back(draw_duration);
     }
 
-    /// Paints the overlay into the top-right corner of the scene.
-    ///
-    /// This appends quads after all element painting, so it must be called
-    /// after the element tree has painted into the scene and before the scene
-    /// is finished.
     pub(crate) fn paint(&self, scene: &mut Scene, viewport_size: Size<Pixels>, scale_factor: f32) {
         if !self.is_enabled() {
             return;
@@ -183,8 +164,8 @@ impl DebugFrameOverlay {
         let current = self.draw_durations.back().copied();
         match self.mode {
             DebugFrameOverlayMode::Hidden => Vec::new(),
-            DebugFrameOverlayMode::FrameTime => vec![format_ms(current)],
-            DebugFrameOverlayMode::Detailed => {
+            DebugFrameOverlayMode::Minimal => vec![format_ms(current)],
+            DebugFrameOverlayMode::Full => {
                 let mut sorted: Vec<Duration> = self.draw_durations.iter().copied().collect();
                 sorted.sort_unstable();
                 let percentile = |numerator: usize| {
@@ -343,7 +324,7 @@ mod tests {
     #[test]
     fn all_rendered_characters_have_glyphs() {
         let mut overlay = DebugFrameOverlay::new();
-        overlay.set_mode(DebugFrameOverlayMode::Detailed);
+        overlay.set_mode(DebugFrameOverlayMode::Full);
 
         let mut lines = Vec::new();
         for duration in [
@@ -362,7 +343,7 @@ mod tests {
 
         // An enabled overlay with no samples yet renders placeholders.
         let mut empty = DebugFrameOverlay::new();
-        empty.set_mode(DebugFrameOverlayMode::Detailed);
+        empty.set_mode(DebugFrameOverlayMode::Full);
         lines.extend(empty.lines());
 
         for line in lines {
@@ -378,7 +359,7 @@ mod tests {
     #[test]
     fn percentile_lows_are_reported_as_times() {
         let mut overlay = DebugFrameOverlay::new();
-        overlay.set_mode(DebugFrameOverlayMode::Detailed);
+        overlay.set_mode(DebugFrameOverlayMode::Full);
         for milliseconds in 1..=100 {
             overlay.record_frame(Duration::from_millis(milliseconds));
         }
@@ -393,7 +374,7 @@ mod tests {
     #[test]
     fn reset_clears_durations_but_keeps_frame_count() {
         let mut overlay = DebugFrameOverlay::new();
-        overlay.set_mode(DebugFrameOverlayMode::Detailed);
+        overlay.set_mode(DebugFrameOverlayMode::Full);
         for _ in 0..10 {
             overlay.record_frame(Duration::from_millis(10));
         }
@@ -414,21 +395,21 @@ mod tests {
         for _ in 0..3 {
             overlay.record_frame(Duration::from_millis(10));
         }
-        overlay.set_mode(DebugFrameOverlayMode::FrameTime);
+        overlay.set_mode(DebugFrameOverlayMode::Minimal);
         assert_eq!(overlay.lines(), vec![" 10.0 MS".to_string()]);
-        overlay.set_mode(DebugFrameOverlayMode::Detailed);
+        overlay.set_mode(DebugFrameOverlayMode::Full);
         overlay.record_frame(Duration::from_millis(10));
         assert_eq!(overlay.lines()[4], "FRAMES     4");
         overlay.set_mode(DebugFrameOverlayMode::Hidden);
         overlay.record_frame(Duration::from_millis(10));
-        overlay.set_mode(DebugFrameOverlayMode::Detailed);
+        overlay.set_mode(DebugFrameOverlayMode::Full);
         assert_eq!(overlay.lines()[4], "FRAMES     5");
     }
 
     #[test]
     fn frame_count_is_right_aligned_and_saturates() {
         let mut overlay = DebugFrameOverlay::new();
-        overlay.set_mode(DebugFrameOverlayMode::Detailed);
+        overlay.set_mode(DebugFrameOverlayMode::Full);
         overlay.record_frame(Duration::from_millis(10));
         assert_eq!(overlay.lines()[4], "FRAMES     1");
         overlay.total_frame_count = 99_999;
@@ -441,7 +422,7 @@ mod tests {
     fn toggling_on_shows_previous_frame_immediately() {
         let mut overlay = DebugFrameOverlay::new();
         overlay.record_frame(Duration::from_millis(10));
-        overlay.set_mode(DebugFrameOverlayMode::FrameTime);
+        overlay.set_mode(DebugFrameOverlayMode::Minimal);
         assert_eq!(overlay.lines(), vec![" 10.0 MS".to_string()]);
     }
 }
