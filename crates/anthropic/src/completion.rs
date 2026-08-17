@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
+use futures::stream::BoxStream;
 use futures::{Stream, StreamExt};
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -59,6 +60,62 @@ pub fn provider_compaction_encrypted_content(
         ));
     }
     Ok(Some(state.payload().into()))
+}
+
+/// Collects one paused compaction stream into replacement context and usage.
+///
+/// # Errors
+///
+/// Returns an error when the stream fails, ends without finalized replacement
+/// context, or reports that the provider abandoned compaction.
+pub async fn collect_compaction_result(
+    mut stream: BoxStream<
+        'static,
+        Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+    >,
+    provider_name: LanguageModelProviderName,
+) -> Result<(CompactedContext, TokenUsage), LanguageModelCompletionError> {
+    let mut context = None;
+    let mut usage = TokenUsage::default();
+    while let Some(event) = stream.next().await {
+        match event? {
+            LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+                compacted_context,
+            )) => {
+                context = Some(compacted_context);
+            }
+            LanguageModelCompletionEvent::Compaction(CompactionUpdate::Failed) => {
+                return Err(LanguageModelCompletionError::Other(anyhow!(
+                    "{provider_name} abandoned compaction without producing replacement context"
+                )));
+            }
+            LanguageModelCompletionEvent::UsageUpdate(updated_usage) => {
+                usage = updated_usage;
+            }
+            LanguageModelCompletionEvent::Stop(_) => {
+                return context.map(|context| (context, usage)).ok_or(
+                    LanguageModelCompletionError::StreamEndedUnexpectedly {
+                        provider: provider_name,
+                    },
+                );
+            }
+            LanguageModelCompletionEvent::Queued { .. }
+            | LanguageModelCompletionEvent::Started
+            | LanguageModelCompletionEvent::Text(_)
+            | LanguageModelCompletionEvent::Thinking { .. }
+            | LanguageModelCompletionEvent::RedactedThinking { .. }
+            | LanguageModelCompletionEvent::ToolUse(_)
+            | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
+            | LanguageModelCompletionEvent::StartMessage { .. }
+            | LanguageModelCompletionEvent::ReasoningDetails(_)
+            | LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started)
+            | LanguageModelCompletionEvent::Compaction(CompactionUpdate::SummaryDelta(_)) => {}
+        }
+    }
+
+    Err(LanguageModelCompletionError::StreamEndedUnexpectedly {
+        provider: provider_name,
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -415,56 +472,9 @@ pub fn into_anthropic(
             edits: vec![ContextManagementEdit::Compact {
                 trigger: Some(CompactionTrigger::InputTokens { value }),
                 pause_after_compaction: None,
-                instructions: None,
             }],
         }),
     })
-}
-
-/// Summarization prompt for compact-on-demand requests. Replaces the default
-/// prompt to add the documented mitigation for the model occasionally calling
-/// a tool instead of writing a summary; the rest follows the default prompt's
-/// shape.
-///
-/// <https://platform.claude.com/docs/en/build-with-claude/compaction#custom-summarization-instructions>
-pub const COMPACTION_INSTRUCTIONS: &str = "Summarize the transcript inside <summary></summary> \
-     tags. Include relevant information in the summary for continuing the task in the next \
-     context window. Do not call any tools while writing this summary; respond with text only.";
-
-/// Converts a request into Anthropic's nearest equivalent of compact-on-demand:
-/// the lowest trigger the API accepts plus `pause_after_compaction`, so the
-/// API emits a compaction block and stops instead of generating a response.
-///
-/// The API still refuses to compact input below
-/// [`crate::MIN_COMPACTION_TRIGGER_TOKENS`]; callers observe that as a
-/// completed stream without a compaction block.
-pub fn into_anthropic_compaction(
-    request: LanguageModelRequest,
-    model: String,
-    default_temperature: f32,
-    max_output_tokens: u64,
-    cache_mode: AnthropicPromptCacheMode,
-    compaction_state_owner: &LanguageModelProviderId,
-) -> Result<crate::Request> {
-    let mut request = into_anthropic(
-        request,
-        model,
-        default_temperature,
-        max_output_tokens,
-        AnthropicModelMode::Default,
-        cache_mode,
-        compaction_state_owner,
-    )?;
-    request.context_management = Some(ContextManagement {
-        edits: vec![ContextManagementEdit::Compact {
-            trigger: Some(CompactionTrigger::InputTokens {
-                value: crate::MIN_COMPACTION_TRIGGER_TOKENS,
-            }),
-            pause_after_compaction: Some(true),
-            instructions: Some(COMPACTION_INSTRUCTIONS.to_string()),
-        }],
-    });
-    Ok(request)
 }
 
 pub struct AnthropicEventMapper {
@@ -780,10 +790,56 @@ fn convert_usage(usage: &Usage) -> TokenUsage {
 mod tests {
     use super::*;
     use crate::{AnthropicModelMode, UsageIteration, UsageIterationType};
+    use futures::executor::block_on;
     use language_model_core::{
-        ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, LanguageModelImage,
-        LanguageModelRequestMessage, MessageContent,
+        ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, LanguageModelCompletionEvent,
+        LanguageModelImage, LanguageModelRequestMessage, MessageContent, TokenUsage,
     };
+
+    #[test]
+    fn test_collect_compaction_result_returns_context_and_usage() {
+        let context = CompactedContext::Summary {
+            content: "Summary of the conversation.".into(),
+            provider_state: None,
+        };
+        let usage = TokenUsage {
+            input_tokens: 60_000,
+            output_tokens: 1_000,
+            ..Default::default()
+        };
+        let stream = futures::stream::iter([
+            Ok(LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Started,
+            )),
+            Ok(LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Finished(context.clone()),
+            )),
+            Ok(LanguageModelCompletionEvent::UsageUpdate(usage)),
+            Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)),
+        ])
+        .boxed();
+
+        let result = block_on(collect_compaction_result(stream, ANTHROPIC_PROVIDER_NAME)).unwrap();
+
+        assert_eq!(result, (context, usage));
+    }
+
+    #[test]
+    fn test_collect_compaction_result_rejects_abandoned_compaction() {
+        let stream = futures::stream::iter([Ok(LanguageModelCompletionEvent::Compaction(
+            CompactionUpdate::Failed,
+        ))])
+        .boxed();
+
+        let error =
+            block_on(collect_compaction_result(stream, ANTHROPIC_PROVIDER_NAME)).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("abandoned compaction without producing replacement context")
+        );
+    }
 
     #[test]
     fn test_caching_uses_top_level_auto_and_long_lived_prefix() {
@@ -1280,41 +1336,18 @@ mod tests {
     }
 
     #[test]
-    fn test_into_anthropic_compaction_pauses_at_the_trigger_floor() {
-        let request = LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("Hello".to_string())],
-                cache: false,
-                reasoning_details: None,
-            }],
-            // Any configured automatic trigger is superseded: this request's
-            // whole purpose is to compact now.
-            compact_at_tokens: Some(800_000),
-            ..Default::default()
-        };
-
-        let anthropic_request = into_anthropic_compaction(
-            request,
-            "claude-sonnet-4-5".to_string(),
-            1.0,
-            4096,
-            AnthropicPromptCacheMode::Disabled,
-            &ANTHROPIC_PROVIDER_ID,
-        )
-        .unwrap();
+    fn test_compact_request_pauses_at_minimum_trigger() {
+        let request =
+            request_with_assistant_content(vec![MessageContent::Text("Response".to_string())])
+                .into_compact_request();
 
         assert_eq!(
-            serde_json::to_value(&anthropic_request.context_management).unwrap(),
+            serde_json::to_value(&request.context_management).unwrap(),
             serde_json::json!({
                 "edits": [{
                     "type": "compact_20260112",
-                    "trigger": {
-                        "type": "input_tokens",
-                        "value": crate::MIN_COMPACTION_TRIGGER_TOKENS,
-                    },
-                    "pause_after_compaction": true,
-                    "instructions": COMPACTION_INSTRUCTIONS,
+                    "trigger": { "type": "input_tokens", "value": 50_000 },
+                    "pause_after_compaction": true
                 }]
             })
         );

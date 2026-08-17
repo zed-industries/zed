@@ -46,11 +46,7 @@ pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
 /// <https://platform.claude.com/docs/en/build-with-claude/compaction>
 pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
 
-/// The lowest compaction `trigger` value the API accepts; smaller values are
-/// rejected. Anthropic offers no compact-on-demand operation, so a request
-/// that wants compaction now sets its trigger to this floor (see
-/// [`crate::into_anthropic_compaction`]); the API then compacts as soon as
-/// the request's input tokens allow.
+/// The smallest input-token trigger Anthropic accepts for compaction.
 pub const MIN_COMPACTION_TRIGGER_TOKENS: u64 = 50_000;
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -194,6 +190,7 @@ impl Model {
                 | "claude-opus-4-8"
                 | "claude-opus-4-7"
                 | "claude-opus-4-6"
+                | "claude-sonnet-5"
                 | "claude-sonnet-4-6"
         );
 
@@ -862,14 +859,9 @@ pub enum ContextManagementEdit {
     Compact {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         trigger: Option<CompactionTrigger>,
-        /// Stop after emitting the compaction block instead of continuing
-        /// the response, turning a completion request into compact-on-demand.
+        /// Stops after emitting the compaction block instead of continuing the response.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pause_after_compaction: Option<bool>,
-        /// Custom summarization prompt. Replaces the default prompt entirely
-        /// when present.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        instructions: Option<String>,
     },
 }
 
@@ -915,6 +907,26 @@ pub struct Request {
     pub top_k: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
+}
+
+impl Request {
+    /// Configures this request to stop after native compaction.
+    ///
+    /// Tools are removed because Anthropic's internal summarizer may otherwise
+    /// invoke one instead of producing replacement context.
+    pub fn into_compact_request(mut self) -> Self {
+        self.tools.clear();
+        self.tool_choice = None;
+        self.context_management = Some(ContextManagement {
+            edits: vec![ContextManagementEdit::Compact {
+                trigger: Some(CompactionTrigger::InputTokens {
+                    value: MIN_COMPACTION_TRIGGER_TOKENS,
+                }),
+                pause_after_compaction: Some(true),
+            }],
+        });
+        self
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

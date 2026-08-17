@@ -19,13 +19,13 @@ use http_client::{
     AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
 };
 use language_model::{
-    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, CompactionResult, CompactionUpdate,
-    DisabledReason, GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
-    OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, RateLimiter, TokenUsage, X_AI_PROVIDER_ID,
-    X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, CompactionResult, DisabledReason,
+    GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, OPEN_AI_PROVIDER_ID,
+    OPEN_AI_PROVIDER_NAME, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
+    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 
 use schemars::JsonSchema;
@@ -40,7 +40,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 use anthropic::completion::{
-    AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic, into_anthropic_compaction,
+    AnthropicEventMapper, AnthropicPromptCacheMode, collect_compaction_result, into_anthropic,
 };
 use google_ai::completion::{GoogleEventMapper, into_google};
 use open_ai::completion::{
@@ -236,6 +236,73 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
     }
 }
 
+impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
+    fn compact_anthropic(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        let thread_id = request.thread_id.clone();
+        let prompt_id = request.prompt_id.clone();
+        let app_version = self.app_version.clone();
+        let mut request = match into_anthropic(
+            request,
+            self.model.id.to_string(),
+            1.0,
+            self.model.max_output_tokens as u64,
+            AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
+        ) {
+            Ok(request) => request.into_compact_request(),
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        if !self.model.supports_fast_mode {
+            request.speed = None;
+        }
+
+        let http_client = self.http_client.clone();
+        let token_provider = self.token_provider.clone();
+        let auth_context = token_provider.auth_context(cx);
+        let future = self.request_limiter.run(async move {
+            let PerformLlmCompletionResponse {
+                response,
+                includes_status_messages,
+            } = Self::perform_llm_completion(
+                &http_client,
+                &*token_provider,
+                auth_context,
+                app_version,
+                CompletionBody {
+                    thread_id,
+                    prompt_id,
+                    provider: cloud_llm_client::LanguageModelProvider::Anthropic,
+                    model: request.model.clone(),
+                    provider_request: serde_json::to_value(&request).map_err(|error| {
+                        LanguageModelCompletionError::SerializeRequest {
+                            provider: ANTHROPIC_PROVIDER_NAME,
+                            error,
+                        }
+                    })?,
+                },
+            )
+            .await?;
+
+            let mut mapper =
+                AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+            let stream = map_cloud_completion_events(
+                Box::pin(response_lines(response, includes_status_messages)),
+                &ANTHROPIC_PROVIDER_NAME,
+                move |event| mapper.map_event(event),
+            );
+            let (context, usage) =
+                collect_compaction_result(stream, ANTHROPIC_PROVIDER_NAME).await?;
+            Ok(CompactionResult { context, usage })
+        });
+        future.boxed()
+    }
+}
+
 fn needs_llm_token_refresh(response: &Response<AsyncBody>) -> bool {
     response
         .headers()
@@ -414,106 +481,6 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
         });
         future.boxed()
     }
-
-    /// Explicit compaction for Anthropic, which has no compact-on-demand
-    /// operation: a normal completion request carries the lowest trigger the
-    /// API accepts plus `pause_after_compaction`, so the response is just a
-    /// compaction block (see [`into_anthropic_compaction`]). Fails when the
-    /// provider does not compact — a summarization gone wrong, or input
-    /// below the trigger floor.
-    fn compact_anthropic(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
-        let thread_id = request.thread_id.clone();
-        let prompt_id = request.prompt_id.clone();
-        let app_version = self.app_version.clone();
-        let provider_name = provider_name(&self.model.provider);
-        // Cloud proxies to Anthropic's own infrastructure, so compaction
-        // state is owned by (and interchangeable with) Anthropic proper, not
-        // by the cloud transport.
-        let request = match into_anthropic_compaction(
-            request,
-            self.model.id.to_string(),
-            1.0,
-            self.model.max_output_tokens as u64,
-            AnthropicPromptCacheMode::Automatic,
-            &ANTHROPIC_PROVIDER_ID,
-        ) {
-            Ok(request) => request,
-            Err(error) => return async move { Err(error.into()) }.boxed(),
-        };
-        let http_client = self.http_client.clone();
-        let token_provider = self.token_provider.clone();
-        let auth_context = token_provider.auth_context(cx);
-        let future = self.request_limiter.run(async move {
-            let PerformLlmCompletionResponse {
-                response,
-                includes_status_messages,
-            } = Self::perform_llm_completion(
-                &http_client,
-                &*token_provider,
-                auth_context,
-                app_version,
-                CompletionBody {
-                    thread_id,
-                    prompt_id,
-                    provider: cloud_llm_client::LanguageModelProvider::Anthropic,
-                    model: request.model.clone(),
-                    provider_request: serde_json::to_value(&request).map_err(|error| {
-                        LanguageModelCompletionError::SerializeRequest {
-                            provider: provider_name.clone(),
-                            error,
-                        }
-                    })?,
-                },
-            )
-            .await?;
-
-            let mut mapper =
-                AnthropicEventMapper::new(provider_name.clone(), ANTHROPIC_PROVIDER_ID);
-            let events = map_cloud_completion_events(
-                Box::pin(response_lines(response, includes_status_messages)),
-                &provider_name,
-                move |event| mapper.map_event(event),
-            );
-            let mut events = std::pin::pin!(events);
-            // The final usage arrives after the compaction block closes, so
-            // hold the finished context and keep consuming to the end of the
-            // stream.
-            let mut usage = TokenUsage::default();
-            let mut context = None;
-            while let Some(event) = events.next().await {
-                match event? {
-                    LanguageModelCompletionEvent::UsageUpdate(updated_usage) => {
-                        usage = updated_usage;
-                    }
-                    LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
-                        finished_context,
-                    )) => {
-                        context = Some(finished_context);
-                    }
-                    LanguageModelCompletionEvent::Compaction(CompactionUpdate::Failed) => {
-                        return Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
-                            "the provider abandoned compaction without producing a summary"
-                        )));
-                    }
-                    _ => {}
-                }
-            }
-
-            let Some(context) = context else {
-                return Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
-                    "the provider did not compact; conversations below {} input tokens \
-                     cannot be compacted",
-                    anthropic::MIN_COMPACTION_TRIGGER_TOKENS
-                )));
-            };
-            Ok(CompactionResult { context, usage })
-        });
-        future.boxed()
-    }
 }
 
 impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<TP> {
@@ -616,6 +583,12 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             cloud_llm_client::LanguageModelProvider::OpenAi
                 | cloud_llm_client::LanguageModelProvider::Anthropic
         ) && self.model.supports_server_side_compaction
+    }
+
+    fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
+        (self.model.provider == cloud_llm_client::LanguageModelProvider::Anthropic
+            && self.supports_explicit_compaction())
+        .then_some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
     }
 
     fn compact(
@@ -1373,6 +1346,145 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn cloud_anthropic_explicit_compaction_uses_paused_completion(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let captured_request = Arc::new(Mutex::new(None));
+        let captured_request_for_handler = captured_request.clone();
+        let http_client = FakeHttpClient::create(move |request| {
+            let captured_request = captured_request_for_handler.clone();
+            async move {
+                let uri = request.uri().to_string();
+                let mut body = request.into_body();
+                let mut body_text = String::new();
+                body.read_to_string(&mut body_text).await?;
+                *captured_request.lock().unwrap() = Some((uri, body_text));
+
+                let response_lines = [
+                    json!({
+                        "event": {
+                            "type": "message_start",
+                            "message": {
+                                "id": "msg_compact",
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [],
+                                "model": "claude-opus-4-6",
+                                "stop_reason": null,
+                                "stop_sequence": null,
+                                "usage": {
+                                    "input_tokens": 60_000,
+                                    "output_tokens": 1
+                                }
+                            }
+                        }
+                    }),
+                    json!({
+                        "event": {
+                            "type": "content_block_start",
+                            "index": 0,
+                            "content_block": {
+                                "type": "compaction",
+                                "content": null,
+                                "encrypted_content": null
+                            }
+                        }
+                    }),
+                    json!({
+                        "event": {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {
+                                "type": "compaction_delta",
+                                "content": "Summary of the conversation.",
+                                "encrypted_content": "opaque-state"
+                            }
+                        }
+                    }),
+                    json!({
+                        "event": {
+                            "type": "content_block_stop",
+                            "index": 0
+                        }
+                    }),
+                    json!({
+                        "event": {
+                            "type": "message_delta",
+                            "delta": {
+                                "stop_reason": "end_turn",
+                                "stop_sequence": null
+                            },
+                            "usage": {
+                                "output_tokens": 1_000
+                            }
+                        }
+                    }),
+                    json!({"event": {"type": "message_stop"}}),
+                ]
+                .into_iter()
+                .map(|line| line["event"].to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(format!("{response_lines}\n")))?)
+            }
+        });
+        let model = cloud_anthropic_test_model(http_client);
+
+        let result = model
+            .compact(compact_test_request(), &cx.to_async())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.usage,
+            language_model::TokenUsage {
+                input_tokens: 60_000,
+                output_tokens: 1_000,
+                ..Default::default()
+            }
+        );
+        let language_model::CompactedContext::Summary {
+            content,
+            provider_state,
+        } = result.context
+        else {
+            panic!("expected summary compaction");
+        };
+        assert_eq!(content.as_ref(), "Summary of the conversation.");
+        assert_eq!(
+            anthropic::completion::provider_compaction_encrypted_content(
+                &provider_state.expect("expected opaque provider state"),
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .unwrap()
+            .as_deref(),
+            Some("opaque-state")
+        );
+
+        let (uri, body) = captured_request.lock().unwrap().take().unwrap();
+        assert_eq!(uri, "http://test.example/completions?");
+        let body = serde_json::from_str::<serde_json::Value>(&body).unwrap();
+        assert_eq!(body["provider"], "anthropic");
+        assert_eq!(
+            body["provider_request"]["context_management"],
+            json!({
+                "edits": [{
+                    "type": "compact_20260112",
+                    "trigger": {
+                        "type": "input_tokens",
+                        "value": anthropic::MIN_COMPACTION_TRIGGER_TOKENS
+                    },
+                    "pause_after_compaction": true
+                }]
+            })
+        );
+        assert!(body["provider_request"]["tools"].is_null());
+    }
+
+    #[gpui::test]
     async fn cloud_explicit_compaction_rejects_output_without_compaction_item(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -1587,6 +1699,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cloud_anthropic_supports_explicit_compaction_after_minimum_input() {
+        let model = cloud_anthropic_test_model(FakeHttpClient::with_404_response());
+
+        assert!(model.supports_explicit_compaction());
+        assert_eq!(
+            model.minimum_explicit_compaction_input_tokens(),
+            Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
+        );
+    }
+
     fn compact_test_request() -> LanguageModelRequest {
         LanguageModelRequest {
             thread_id: Some("thread-123".to_string()),
@@ -1598,6 +1721,38 @@ mod tests {
             }],
             speed: Some(Speed::Fast),
             ..Default::default()
+        }
+    }
+
+    fn cloud_anthropic_test_model(
+        http_client: Arc<HttpClientWithUrl>,
+    ) -> CloudLanguageModel<TestTokenProvider> {
+        CloudLanguageModel {
+            id: LanguageModelId::from("claude-opus-4-6".to_string()),
+            model: Arc::new(cloud_llm_client::LanguageModel {
+                provider: cloud_llm_client::LanguageModelProvider::Anthropic,
+                id: cloud_llm_client::LanguageModelId(Arc::from("claude-opus-4-6")),
+                display_name: "Claude Opus 4.6".to_string(),
+                is_latest: true,
+                max_token_count: 1_000_000,
+                max_token_count_in_max_mode: None,
+                max_output_tokens: 128_000,
+                supports_tools: true,
+                supports_images: true,
+                supports_thinking: true,
+                supports_disabling_thinking: true,
+                supports_fast_mode: true,
+                supports_server_side_compaction: true,
+                supported_effort_levels: Vec::new(),
+                supports_streaming_tools: true,
+                supports_parallel_tool_calls: false,
+                is_disabled: false,
+                disabled_reason: None,
+            }),
+            token_provider: Arc::new(TestTokenProvider),
+            http_client,
+            app_version: None,
+            request_limiter: RateLimiter::new(4),
         }
     }
 
