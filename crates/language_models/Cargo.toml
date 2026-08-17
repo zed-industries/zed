@@ -28,7 +28,6 @@ cloud_api_types.workspace = true
 collections.workspace = true
 component.workspace = true
 convert_case.workspace = true
-copilot.workspace = true
 copilot_chat.workspace = true
 copilot_ui.workspace = true
 credentials_provider.workspace = true
@@ -60,6 +59,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+sha2.workspace = true
 strum.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true

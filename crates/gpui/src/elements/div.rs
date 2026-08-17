@@ -15,16 +15,16 @@
 //! and Tailwind-like styling that you can use to build your own custom elements. Div is
 //! constructed by combining these two systems into an all-in-one element.
 
-use crate::PinchEvent;
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
     Display, Element, ElementId, Entity, EntityId, ExternalDragPayload, ExternalDragPayloadSource,
     FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId,
     IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent,
     LayoutId, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
-    MouseMoveEvent, MousePressureEvent, MouseUpEvent, Overflow, ParentElement, Pixels, Point,
-    Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
-    Visibility, Window, WindowControlArea, point, px, size,
+    MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
+    PinchEvent, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
+    size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -644,6 +644,7 @@ impl Interactivity {
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
+    /// Transitions caused by layout changes under a stationary mouse also invoke the callback.
     /// The imperative API equivalent to [`StatefulInteractiveElement::on_hover`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -1255,6 +1256,18 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the author-provided identifier exposed to accessibility clients.
+    ///
+    /// Unlike the GPUI element ID, this value is visible outside the process.
+    /// Keep it stable and unique within its accessibility tree.
+    /// AccessKit maps it to platform identifiers where supported, including
+    /// UIA `AutomationId` on Windows, `AXIdentifier` on macOS, and AT-SPI
+    /// `AccessibleId` on Linux stacks whose deployed adapter exposes it.
+    fn accessibility_id(mut self, id: impl Into<SharedString>) -> Self {
+        self.interactivity().aria.author_id = Some(id.into());
+        self
+    }
+
     /// Set the accessible label for this element.
     fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.interactivity().aria.label = Some(label.into());
@@ -1463,6 +1476,14 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Restrict scrolling of this element to the axis of the input gesture.
+    ///
+    /// See [`Style::restrict_scroll_to_axis`](crate::Style::restrict_scroll_to_axis) for details.
+    fn restrict_scroll_to_axis(mut self) -> Self {
+        self.interactivity().base_style.restrict_scroll_to_axis = Some(true);
+        self
+    }
+
     /// Track the scroll state of this element with the given handle.
     fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
         self.interactivity().tracked_scroll_handle = Some(scroll_handle.clone());
@@ -1567,6 +1588,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
+    /// Transitions caused by layout changes under a stationary mouse also invoke the callback.
     /// The fluent API equivalent to [`Interactivity::on_hover`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -1974,6 +1996,7 @@ impl IntoElement for Div {
 
 #[derive(Default)]
 pub(crate) struct AriaProperties {
+    pub(crate) author_id: Option<SharedString>,
     pub(crate) label: Option<SharedString>,
     pub(crate) description: Option<SharedString>,
     pub(crate) keyshortcuts: Option<SharedString>,
@@ -2015,6 +2038,7 @@ pub struct Interactivity {
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    pub(crate) ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
     pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
     /// by focus, active, etc.
@@ -2136,7 +2160,9 @@ impl Interactivity {
                 }
 
                 if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
-                    self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
+                    let scroll_handle_state = scroll_handle.0.borrow();
+                    self.scroll_offset = Some(scroll_handle_state.offset.clone());
+                    self.ongoing_scroll = Some(scroll_handle_state.ongoing_scroll.clone());
                 } else if (self.base_style.overflow.x == Some(Overflow::Scroll)
                     || self.base_style.overflow.y == Some(Overflow::Scroll))
                     && let Some(element_state) = element_state.as_mut()
@@ -2145,6 +2171,12 @@ impl Interactivity {
                         element_state
                             .scroll_offset
                             .get_or_insert_with(Rc::default)
+                            .clone(),
+                    );
+                    self.ongoing_scroll = Some(
+                        element_state
+                            .ongoing_scroll
+                            .get_or_insert_with(|| Rc::new(RefCell::new(OngoingScroll::default())))
                             .clone(),
                     );
                 }
@@ -2979,14 +3011,25 @@ impl Interactivity {
                     .get_or_insert_with(Default::default)
                     .clone();
                 let hover_listener = Rc::new(hover_listener);
+                let hover_listener_state = was_hovered.clone();
                 let update_hover = move |is_hovered: bool, window: &mut Window, cx: &mut App| {
-                    let mut was_hovered = was_hovered.borrow_mut();
+                    let mut was_hovered = hover_listener_state.borrow_mut();
                     if is_hovered != *was_hovered {
                         *was_hovered = is_hovered;
                         drop(was_hovered);
                         hover_listener(&is_hovered, window, cx);
                     }
                 };
+
+                if has_mouse_down.borrow().is_none() {
+                    let is_hovered = !cx.has_active_drag() && hitbox.is_hovered(window);
+                    if is_hovered != *was_hovered.borrow() {
+                        let update_hover = update_hover.clone();
+                        window.defer(cx, move |window, cx| {
+                            update_hover(is_hovered, window, cx);
+                        });
+                    }
+                }
 
                 window.on_mouse_event({
                     let update_hover = update_hover.clone();
@@ -3150,6 +3193,7 @@ impl Interactivity {
         _cx: &mut App,
     ) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
+            let ongoing_scroll = self.ongoing_scroll.clone();
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
@@ -3160,24 +3204,35 @@ impl Interactivity {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
-                    let delta = event.delta.pixel_delta(line_height);
+                    let mut delta = event.delta.pixel_delta(line_height);
 
-                    let mut delta_x = Pixels::ZERO;
-                    if overflow.x == Overflow::Scroll {
-                        if !delta.x.is_zero() {
-                            delta_x = delta.x;
-                        } else if !restrict_scroll_to_axis && overflow.y != Overflow::Scroll {
-                            delta_x = delta.y;
-                        }
+                    if restrict_scroll_to_axis
+                        && event.delta.precise()
+                        && let Some(ongoing_scroll) = &ongoing_scroll
+                    {
+                        ongoing_scroll
+                            .borrow_mut()
+                            .filter(&mut delta, event.touch_phase);
                     }
-                    let mut delta_y = Pixels::ZERO;
-                    if overflow.y == Overflow::Scroll {
-                        if !delta.y.is_zero() {
-                            delta_y = delta.y;
-                        } else if !restrict_scroll_to_axis && overflow.x != Overflow::Scroll {
-                            delta_y = delta.x;
+
+                    let mut delta_x = match overflow.x {
+                        Overflow::Scroll if !delta.x.is_zero() => delta.x,
+                        Overflow::Scroll
+                            if !restrict_scroll_to_axis && overflow.y != Overflow::Scroll =>
+                        {
+                            delta.y
                         }
-                    }
+                        _ => Pixels::ZERO,
+                    };
+                    let mut delta_y = match overflow.y {
+                        Overflow::Scroll if !delta.y.is_zero() => delta.y,
+                        Overflow::Scroll
+                            if !restrict_scroll_to_axis && overflow.x != Overflow::Scroll =>
+                        {
+                            delta.x
+                        }
+                        _ => Pixels::ZERO,
+                    };
                     if !allow_concurrent_scroll && !delta_x.is_zero() && !delta_y.is_zero() {
                         if delta_x.abs() > delta_y.abs() {
                             delta_y = Pixels::ZERO;
@@ -3335,6 +3390,9 @@ impl Interactivity {
     }
 
     pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        if let Some(id) = &self.aria.author_id {
+            node.set_author_id(id.to_string());
+        }
         if let Some(label) = &self.aria.label {
             node.set_label(label.to_string());
         }
@@ -3425,6 +3483,7 @@ pub struct InteractiveElementState {
     /// blur). `None` means no activation key is pending.
     pub(crate) pending_keyboard_down: Option<Rc<RefCell<Option<u64>>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
 }
 
@@ -3960,6 +4019,7 @@ impl ScrollAnchor {
 #[derive(Default, Debug)]
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
+    ongoing_scroll: Rc<RefCell<OngoingScroll>>,
     bounds: Bounds<Pixels>,
     max_offset: Point<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
@@ -4283,6 +4343,123 @@ mod tests {
         assert_eq!(render_count.get(), initial_render_count + 2);
         assert_eq!(anonymous_paint_count.get(), 1);
         assert_eq!(stateful_width.get(), px(10.));
+    }
+
+    struct HoverListenerLayoutTestView {
+        target_left: Pixels,
+        hover_transitions: Rc<RefCell<Vec<bool>>>,
+    }
+
+    impl Render for HoverListenerLayoutTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let hover_transitions = self.hover_transitions.clone();
+            div().relative().size_full().child(
+                div()
+                    .id("hover-target")
+                    .absolute()
+                    .left(self.target_left)
+                    .top_0()
+                    .size(px(20.))
+                    .on_click(|_, _, _| {})
+                    .on_hover(move |is_hovered, _, _| {
+                        hover_transitions.borrow_mut().push(*is_hovered);
+                    }),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn hover_listeners_update_when_layout_changes_under_stationary_mouse(cx: &mut TestAppContext) {
+        let hover_transitions = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let hover_transitions = hover_transitions.clone();
+            move |_, _| HoverListenerLayoutTestView {
+                target_left: px(40.),
+                hover_transitions,
+            }
+        });
+        let any_window = AnyWindowHandle::from(window);
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(point(px(10.), px(10.)), cx);
+        })
+        .unwrap();
+        assert!(hover_transitions.borrow().is_empty());
+
+        window
+            .update(cx, |view, _, cx| {
+                view.target_left = px(0.);
+                cx.notify();
+            })
+            .unwrap();
+        cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true]);
+
+        window
+            .update(cx, |view, _, cx| {
+                view.target_left = px(40.);
+                cx.notify();
+            })
+            .unwrap();
+        cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true, false]);
+    }
+
+    #[gpui::test]
+    fn hover_listeners_remain_hovered_during_stationary_mouse_press(cx: &mut TestAppContext) {
+        let hover_transitions = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let hover_transitions = hover_transitions.clone();
+            move |_, _| HoverListenerLayoutTestView {
+                target_left: px(0.),
+                hover_transitions,
+            }
+        });
+        let any_window = AnyWindowHandle::from(window);
+        let mouse_position = point(px(10.), px(10.));
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(mouse_position, cx);
+        })
+        .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true]);
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.dispatch_event(
+                MouseDownEvent {
+                    position: mouse_position,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true]);
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.dispatch_event(
+                MouseUpEvent {
+                    position: mouse_position,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert_eq!(*hover_transitions.borrow(), [true]);
     }
 
     struct TestTooltipView;
@@ -4673,8 +4850,21 @@ mod tests {
     }
 
     #[test]
+    fn test_accessibility_id_builder_writes_author_id() {
+        let mut element = div()
+            .id("buffer-font-size")
+            .accessibility_id("settings.buffer-font-size");
+        let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
+
+        element.interactivity().write_a11y_info(&mut node);
+
+        assert_eq!(node.author_id(), Some("settings.buffer-font-size"));
+    }
+
+    #[test]
     fn test_write_a11y_info_string_and_numeric_properties() {
         let mut interactivity = Interactivity::default();
+        interactivity.aria.author_id = Some("settings.buffer-font-size".into());
         interactivity.aria.label = Some("Buffer Font Size".into());
         interactivity.aria.value = Some("15".into());
         interactivity.aria.placeholder = Some("Search".into());
@@ -4686,6 +4876,7 @@ mod tests {
         let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
         interactivity.write_a11y_info(&mut node);
 
+        assert_eq!(node.author_id(), Some("settings.buffer-font-size"));
         assert_eq!(node.label(), Some("Buffer Font Size"));
         assert_eq!(node.value(), Some("15"));
         assert_eq!(node.placeholder(), Some("Search"));
@@ -4963,5 +5154,44 @@ mod tests {
             .unwrap();
 
         assert_eq!(focused, Some(item_b.id));
+    }
+
+    struct ContentSizedGrid;
+
+    impl Render for ContentSizedGrid {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let widths = [px(100.), px(200.), px(50.)];
+            div().size_full().child(
+                div()
+                    .w_full()
+                    .grid()
+                    .grid_cols_max_content(widths.len() as u16)
+                    .children(widths.into_iter().enumerate().map(|(index, width)| {
+                        div()
+                            .debug_selector(move || format!("cell-{index}"))
+                            .w(width)
+                            .h(px(10.))
+                    })),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn grid_cols_max_content_sizes_columns_to_their_content(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| ContentSizedGrid);
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+
+        let mut bounds = |selector: &'static str| {
+            cx.update_window(window.into(), |_, window, _| {
+                window.rendered_frame.debug_bounds.get(selector).copied()
+            })
+            .unwrap()
+            .unwrap_or_else(|| panic!("{selector} was not rendered"))
+        };
+
+        assert_eq!(bounds("cell-0").origin.x, px(0.));
+        assert_eq!(bounds("cell-1").origin.x, px(100.));
+        assert_eq!(bounds("cell-2").origin.x, px(300.));
     }
 }
