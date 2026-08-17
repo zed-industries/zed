@@ -27071,12 +27071,9 @@ async fn test_merge_base_diff_hunks_are_read_only(cx: &mut TestAppContext) {
         .unwrap();
     assert_eq!(
         index_contents,
-        [(
-            ::git::repository::repo_path("file.rs"),
-            "head\n".to_string(),
-        )]
-        .into_iter()
-        .collect::<HashMap<_, _>>()
+        [(::git::repository::repo_path("file.rs"), b"head\n".to_vec(),)]
+            .into_iter()
+            .collect::<HashMap<_, _>>()
     );
 }
 

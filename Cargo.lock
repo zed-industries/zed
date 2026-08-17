@@ -9760,6 +9760,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chardetng",
  "clock",
  "collections",
  "criterion",
@@ -22852,7 +22853,6 @@ dependencies = [
  "anyhow",
  "async-channel 2.5.0",
  "async-lock",
- "chardetng",
  "clock",
  "collections",
  "encoding_rs",

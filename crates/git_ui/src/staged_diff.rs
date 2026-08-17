@@ -976,7 +976,7 @@ mod tests {
             repo.load_index_text(RepoPath::from_rel_path(rel_path("src/main.rs")))
                 .await
                 .unwrap(),
-            committed_contents
+            committed_contents.as_bytes()
         );
 
         fs.unpause_events_and_flush();
