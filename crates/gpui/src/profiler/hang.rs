@@ -11,10 +11,10 @@
 use std::time::Duration;
 
 use scheduler::Instant;
+use serde::Serialize;
 
-use super::journal::{
-    ForegroundEvent, ForegroundEventCollector, FrameSnapshot, IntervalSealer,
-};
+use super::SerializedLocation;
+use super::journal::{ForegroundEvent, ForegroundEventCollector, FrameSnapshot, IntervalSealer};
 
 /// Detects foreground hangs by polling the journal.
 ///
@@ -60,6 +60,171 @@ impl HangDetector {
             .into_iter()
             .filter_map(|snapshot| HangIncident::detect(snapshot, self.threshold))
             .collect()
+    }
+}
+
+/// A [`HangIncident`] in a telemetry-friendly form: timestamps in
+/// microseconds since app startup, locations as plain data, contributor
+/// count capped by the converter.
+#[derive(Debug, Clone, Serialize)]
+pub struct SerializedHangIncident {
+    /// When the interval started, in microseconds since app startup.
+    pub start: u64,
+    /// Length of the interval in microseconds.
+    pub duration_us: u64,
+    /// Why the interval sealed: `"draw"` or `"timeout"`.
+    pub reason: &'static str,
+    /// Fraction of the interval the foreground spent working, `0.0..=1.0`.
+    pub busy_fraction: f64,
+    /// Total events recorded in the interval (before the contributor cap).
+    pub event_count: usize,
+    /// Count of task polls below the journal's floor.
+    pub small_poll_count: u64,
+    /// Total duration of task polls below the journal's floor, in microseconds.
+    pub small_poll_total_us: u64,
+    /// Events lost to caps or ring overwrites.
+    pub dropped_events: u64,
+    /// Contributors at or above the hang threshold, longest first, capped.
+    pub contributors: Vec<SerializedHangContributor>,
+    /// Contributors elided by the cap.
+    pub contributors_elided: usize,
+}
+
+/// One hang contributor in serialized form.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SerializedHangContributor {
+    /// A foreground task poll.
+    TaskPoll {
+        /// Where the task was spawned.
+        location: SerializedLocation,
+        /// When the poll started, in microseconds since app startup.
+        start: u64,
+        /// How long the poll blocked the foreground, in microseconds.
+        duration_us: u64,
+    },
+    /// An action handler.
+    Action {
+        /// The action's name.
+        name: &'static str,
+        /// When the handler started, in microseconds since app startup.
+        start: u64,
+        /// How long the handler ran, in microseconds.
+        duration_us: u64,
+    },
+    /// A platform input dispatch.
+    Input {
+        /// When the dispatch started, in microseconds since app startup.
+        start: u64,
+        /// How long the dispatch ran, in microseconds.
+        duration_us: u64,
+        /// Whether handling the input invalidated a window.
+        caused_invalidation: bool,
+    },
+    /// A window draw.
+    Draw {
+        /// The window that was drawn.
+        window_id: u64,
+        /// When the draw started, in microseconds since app startup.
+        start: u64,
+        /// How long the draw took, in microseconds.
+        duration_us: u64,
+        /// Time from the frame's first invalidation to the end of its draw.
+        dirty_to_draw_us: Option<u64>,
+        /// Invalidations coalesced into the frame.
+        invalidations: u64,
+    },
+    /// A frame presentation (zero duration; present only when a present
+    /// itself is somehow a contributor).
+    Present {
+        /// The window whose frame was presented.
+        window_id: u64,
+        /// When the frame was presented, in microseconds since app startup.
+        start: u64,
+    },
+}
+
+impl SerializedHangIncident {
+    /// Converts an incident, keeping at most `max_contributors` contributors.
+    pub fn convert(startup: Instant, incident: &HangIncident, max_contributors: usize) -> Self {
+        let since_startup =
+            |instant: Instant| instant.saturating_duration_since(startup).as_micros() as u64;
+        let snapshot = &incident.snapshot;
+        Self {
+            start: since_startup(snapshot.interval_start),
+            duration_us: snapshot
+                .interval_end
+                .duration_since(snapshot.interval_start)
+                .as_micros() as u64,
+            reason: match snapshot.reason {
+                super::journal::SealReason::Draw => "draw",
+                super::journal::SealReason::Timeout => "timeout",
+            },
+            busy_fraction: snapshot.busy_fraction(),
+            event_count: snapshot.events.len(),
+            small_poll_count: snapshot.small_polls.count,
+            small_poll_total_us: snapshot.small_polls.total.as_micros() as u64,
+            dropped_events: snapshot.dropped_events,
+            contributors: incident
+                .contributors
+                .iter()
+                .take(max_contributors)
+                .map(|event| SerializedHangContributor::convert(startup, event))
+                .collect(),
+            contributors_elided: incident.contributors.len().saturating_sub(max_contributors),
+        }
+    }
+}
+
+impl SerializedHangContributor {
+    fn convert(startup: Instant, event: &ForegroundEvent) -> Self {
+        let since_startup =
+            |instant: Instant| instant.saturating_duration_since(startup).as_micros() as u64;
+        let duration_us = event.duration().as_micros() as u64;
+        match event {
+            ForegroundEvent::TaskPoll(timing) => Self::TaskPoll {
+                location: timing.location.into(),
+                start: since_startup(timing.start),
+                duration_us,
+            },
+            ForegroundEvent::Action(timing) => Self::Action {
+                name: timing.name,
+                start: since_startup(timing.start),
+                duration_us,
+            },
+            ForegroundEvent::Input(timing) => Self::Input {
+                start: since_startup(timing.start),
+                duration_us,
+                caused_invalidation: timing.caused_invalidation,
+            },
+            ForegroundEvent::Draw(timing) => Self::Draw {
+                window_id: timing.window_id.as_u64(),
+                start: since_startup(timing.draw_start),
+                duration_us,
+                dirty_to_draw_us: timing
+                    .dirty_to_draw_duration()
+                    .map(|duration| duration.as_micros() as u64),
+                invalidations: timing.invalidations,
+            },
+            ForegroundEvent::Present(timing) => Self::Present {
+                window_id: timing.window_id.as_u64(),
+                start: since_startup(timing.presented_at),
+            },
+            ForegroundEvent::SmallPolls(flush) => {
+                // The sealer folds these out of snapshot events; a contributor
+                // can therefore never be one, but serialize defensively as an
+                // unnamed poll spanning the flush rather than panicking.
+                Self::TaskPoll {
+                    location: SerializedLocation {
+                        file: "<small poll summary>".into(),
+                        line: 0,
+                        column: 0,
+                    },
+                    start: since_startup(flush.since),
+                    duration_us,
+                }
+            }
+        }
     }
 }
 

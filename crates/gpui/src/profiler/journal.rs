@@ -182,6 +182,50 @@ pub struct FrameSnapshot {
     pub dropped_events: u64,
 }
 
+impl FrameSnapshot {
+    /// Total foreground time occupied within the interval: the union of the
+    /// recorded events' spans (clamped to the interval, so nested work like an
+    /// action inside an input dispatch is not double counted) plus the folded
+    /// small polls. Small-poll flush spans may straddle a seal, so this is a
+    /// close approximation rather than exact at interval edges.
+    pub fn occupancy(&self) -> Duration {
+        let mut spans: Vec<(Instant, Instant)> = self
+            .events
+            .iter()
+            .map(|event| {
+                let start = event.start_time().max(self.interval_start);
+                let end = event.end_time().min(self.interval_end).max(start);
+                (start, end)
+            })
+            .collect();
+        spans.sort_by_key(|(start, _)| *start);
+
+        let mut occupied = Duration::ZERO;
+        let mut merged_until: Option<Instant> = None;
+        for (start, end) in spans {
+            let start = match merged_until {
+                Some(merged_until) => start.max(merged_until),
+                None => start,
+            };
+            occupied += end.duration_since(start);
+            merged_until = Some(match merged_until {
+                Some(merged_until) => merged_until.max(end),
+                None => end,
+            });
+        }
+        occupied + self.small_polls.total
+    }
+
+    /// The fraction of the interval the foreground spent working, in `0.0..=1.0`.
+    pub fn busy_fraction(&self) -> f64 {
+        let interval = self.interval_end.duration_since(self.interval_start);
+        if interval.is_zero() {
+            return 1.0;
+        }
+        (self.occupancy().div_duration_f64(interval)).min(1.0)
+    }
+}
+
 struct ForegroundJournal {
     small_polls: PollSummary,
     flushed_at: Instant,
