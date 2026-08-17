@@ -8,50 +8,51 @@ use text::{BufferSnapshot, Point};
 
 /// Number of lines above and below the source line hashed into
 /// [`ContentMarker::context_hash`].
-const CONTEXT_WINDOW: u32 = 2;
-pub const SYNTACTIC_LOCATION_VERSION: u32 = 1;
+const CONTEXT_ROW_RADIUS: u32 = 2;
+pub const SYNTACTIC_LOCATION_FORMAT_VERSION: u32 = 1;
 
-/// A durable, serializable description of a source location, re-resolved
-/// against a buffer's outline at open/reload time.
+/// An in-memory description of a source location, re-resolved against a buffer's
+/// outline at open/reload time.
 ///
 /// Unlike [`text::Anchor`], this does not track edits in a live buffer; it is
 /// re-resolved from scratch. While a buffer is open the live anchor is the
 /// source of truth, and this description is only consulted when restoring a
 /// location in a freshly opened buffer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SyntacticLocation {
+struct SyntacticLocation {
     /// `None` when there is no enclosing symbol — either the language has no
     /// parser/outline (e.g. plaintext), or the position sits between symbols.
-    pub symbol: Option<SymbolRef>,
-    pub content_marker: ContentMarker,
-    /// Last known absolute row; the final fallback when nothing else matches.
-    pub last_known_row: u32,
+    symbol: Option<SymbolRef>,
+    content_marker: ContentMarker,
+    /// The final fallback when nothing else matches.
+    fallback_row: u32,
 }
 
 /// Identifies the symbol a source location is bound to, plus where inside it
 /// the location sits.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SymbolRef {
+struct SymbolRef {
     /// Outline path of the enclosing symbol, innermost last.
-    pub symbol_path: Vec<SharedString>,
+    symbol_path: Vec<SharedString>,
     /// The nth occurrence (0-based) of an identical `symbol_path` in the file,
     /// used to disambiguate paths that collapse to the same text.
-    pub symbol_ordinal: u32,
+    symbol_ordinal: u32,
     /// Line offset from the symbol's start row to the source row.
-    pub line_offset_in_symbol: u32,
+    line_offset_in_symbol: u32,
 }
 
 /// A fingerprint of the source line and its surroundings, used to find the
 /// exact line when the symbol-relative offset drifts.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ContentMarker {
+struct ContentMarker {
     /// Trimmed, whitespace-normalized text of the source line. The primary
     /// matcher when snapping the offset to the exact line.
-    pub line_text: SharedString,
-    /// Hash of a normalized window of surrounding lines (±[`CONTEXT_WINDOW`]).
+    line_text: SharedString,
+    /// Hash of a normalized window of surrounding lines
+    /// (±[`CONTEXT_ROW_RADIUS`]).
     /// A tiebreaker only, consulted when `line_text` is ambiguous within the
     /// search window.
-    pub context_hash: u64,
+    context_hash: u64,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -61,8 +62,8 @@ pub struct SerializedSyntacticLocation {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SerializedSourceLocation {
-    pub row: u32,
+pub struct DurableSourceLocation {
+    pub fallback_row: u32,
     pub syntactic_location: Option<SerializedSyntacticLocation>,
 }
 
@@ -76,15 +77,15 @@ pub struct SerializedSourceLocation {
 /// This type does not retain pending locations or subscribe to buffer events.
 /// Consumers are responsible for preserving prior complete metadata and
 /// retrying deferred work when syntax becomes ready.
-pub struct SourceLocationResolver {
+pub(crate) struct SourceLocationResolver {
     snapshot: language::BufferSnapshot,
-    index: SyntacticLocationIndex,
+    index: SourceLocationIndex,
     syntax_state: SourceLocationSyntaxState,
 }
 
 /// Availability of symbol information in a resolver's captured snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SourceLocationSyntaxState {
+pub(crate) enum SourceLocationSyntaxState {
     /// No parser-backed syntax is available. Content markers remain usable, but
     /// symbol references cannot be computed or resolved.
     Unavailable,
@@ -99,7 +100,7 @@ pub enum SourceLocationSyntaxState {
 /// Invalid serialized data is returned as an error by
 /// [`SourceLocationResolver::resolve`] instead of using one of these variants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SourceLocationResolution {
+pub(crate) enum SourceLocationResolution {
     /// The location resolved to a concrete row.
     Resolved {
         /// The resolved zero-based row.
@@ -119,17 +120,17 @@ pub enum SourceLocationResolution {
 
 /// The result of serializing a live anchor.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SourceLocationSerialization {
+pub(crate) enum SourceLocationSerialization {
     /// The serialized location has the highest fidelity available for the
     /// buffer's settled syntax state.
-    Complete(SerializedSourceLocation),
+    Complete(DurableSourceLocation),
     /// Parsing is in progress, so the serialized location contains a current
     /// row and content marker but deliberately omits symbol information.
     ///
     /// Consumers with previously complete metadata should preserve that
     /// metadata and update its fallback row instead of replacing it with this
     /// provisional value.
-    Provisional(SerializedSourceLocation),
+    Provisional(DurableSourceLocation),
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -157,7 +158,7 @@ impl SerializedSyntacticLocation {
         Ok(())
     }
 
-    pub(crate) fn to_syntactic_location(&self, last_known_row: u32) -> Result<SyntacticLocation> {
+    fn to_syntactic_location(&self, fallback_row: u32) -> Result<SyntacticLocation> {
         self.validate()?;
 
         Ok(SyntacticLocation {
@@ -175,7 +176,7 @@ impl SerializedSyntacticLocation {
                 line_text: self.content_marker.line_text.clone().into(),
                 context_hash: self.content_marker.context_hash,
             },
-            last_known_row,
+            fallback_row,
         })
     }
 }
@@ -218,7 +219,7 @@ impl SourceLocationResolver {
         };
 
         Self {
-            index: SyntacticLocationIndex::new(&snapshot),
+            index: SourceLocationIndex::new(&snapshot),
             snapshot,
             syntax_state,
         }
@@ -235,7 +236,7 @@ impl SourceLocationResolver {
     /// while syntax is unavailable or parsing. Symbol-less content markers can
     /// resolve without parser-backed syntax. Invalid serialized data is
     /// returned as an error.
-    pub fn resolve(&self, location: &SerializedSourceLocation) -> Result<SourceLocationResolution> {
+    pub fn resolve(&self, location: &DurableSourceLocation) -> Result<SourceLocationResolution> {
         if let Some(syntactic_location) = &location.syntactic_location {
             syntactic_location.validate()?;
         }
@@ -252,20 +253,21 @@ impl SourceLocationResolver {
             });
         if should_defer {
             return Ok(SourceLocationResolution::Deferred {
-                provisional_row: location.row.min(self.snapshot.max_point().row),
+                provisional_row: location.fallback_row.min(self.snapshot.max_point().row),
             });
         }
 
         let resolved = match location.syntactic_location.as_ref() {
             Some(syntactic_location) => {
-                let syntactic_location = syntactic_location.to_syntactic_location(location.row)?;
+                let syntactic_location =
+                    syntactic_location.to_syntactic_location(location.fallback_row)?;
                 resolve_syntactic_location(&self.snapshot, &self.index, &syntactic_location)
             }
-            None => row_fallback(&self.snapshot, location.row),
+            None => resolve_from_fallback_row(&self.snapshot, location.fallback_row),
         };
 
         Ok(resolved
-            .map(source_location_resolution)
+            .map(SourceLocationResolution::from)
             .unwrap_or(SourceLocationResolution::Unresolvable))
     }
 
@@ -273,9 +275,9 @@ impl SourceLocationResolver {
     ///
     /// This operation does not depend on syntax and therefore never returns
     /// [`SourceLocationResolution::Deferred`].
-    pub fn resolve_row(&self, row: u32) -> SourceLocationResolution {
-        row_fallback(&self.snapshot, row)
-            .map(source_location_resolution)
+    pub fn resolve_fallback_row(&self, fallback_row: u32) -> SourceLocationResolution {
+        resolve_from_fallback_row(&self.snapshot, fallback_row)
+            .map(SourceLocationResolution::from)
             .unwrap_or(SourceLocationResolution::Unresolvable)
     }
 
@@ -299,8 +301,8 @@ impl SourceLocationResolver {
         let row = self.row_for_anchor(anchor)?;
         let serialization = if self.syntax_state == SourceLocationSyntaxState::Parsing {
             let content_marker = compute_content_marker(&self.snapshot, row);
-            SourceLocationSerialization::Provisional(SerializedSourceLocation {
-                row,
+            SourceLocationSerialization::Provisional(DurableSourceLocation {
+                fallback_row: row,
                 syntactic_location: Some(SerializedSyntacticLocation {
                     symbol: None,
                     content_marker: SerializedContentMarker {
@@ -311,9 +313,9 @@ impl SourceLocationResolver {
             })
         } else {
             let syntactic_location =
-                compute_syntactic_location_with_index(&self.snapshot, &self.index, anchor);
-            SourceLocationSerialization::Complete(SerializedSourceLocation {
-                row,
+                syntactic_location_for_anchor(&self.snapshot, &self.index, anchor);
+            SourceLocationSerialization::Complete(DurableSourceLocation {
+                fallback_row: row,
                 syntactic_location: Some((&syntactic_location).into()),
             })
         };
@@ -321,10 +323,12 @@ impl SourceLocationResolver {
     }
 }
 
-fn source_location_resolution(resolved: ResolvedSourceLocation) -> SourceLocationResolution {
-    SourceLocationResolution::Resolved {
-        row: resolved.row,
-        kind: resolved.resolution,
+impl From<ResolvedSourceLocation> for SourceLocationResolution {
+    fn from(resolved: ResolvedSourceLocation) -> Self {
+        SourceLocationResolution::Resolved {
+            row: resolved.row,
+            kind: resolved.kind,
+        }
     }
 }
 
@@ -358,13 +362,13 @@ fn compute_syntactic_location(
     snapshot: &language::BufferSnapshot,
     anchor: text::Anchor,
 ) -> SyntacticLocation {
-    let index = SyntacticLocationIndex::new(snapshot);
-    compute_syntactic_location_with_index(snapshot, &index, anchor)
+    let index = SourceLocationIndex::new(snapshot);
+    syntactic_location_for_anchor(snapshot, &index, anchor)
 }
 
-pub(crate) fn compute_syntactic_location_with_index(
+fn syntactic_location_for_anchor(
     snapshot: &language::BufferSnapshot,
-    index: &SyntacticLocationIndex,
+    index: &SourceLocationIndex,
     anchor: text::Anchor,
 ) -> SyntacticLocation {
     let row = anchor.summary::<Point>(snapshot).row;
@@ -375,11 +379,11 @@ pub(crate) fn compute_syntactic_location_with_index(
     SyntacticLocation {
         symbol,
         content_marker,
-        last_known_row: row,
+        fallback_row: row,
     }
 }
 
-pub(crate) struct SyntacticLocationIndex {
+struct SourceLocationIndex {
     symbols: Vec<IndexedSymbol>,
     rows_by_line_text: OnceCell<HashMap<SharedString, Vec<u32>>>,
 }
@@ -390,8 +394,8 @@ struct IndexedSymbol {
     range: Range<Point>,
 }
 
-impl SyntacticLocationIndex {
-    pub(crate) fn new(snapshot: &language::BufferSnapshot) -> Self {
+impl SourceLocationIndex {
+    fn new(snapshot: &language::BufferSnapshot) -> Self {
         let outline = snapshot.outline(None);
         let mut path_stack = Vec::new();
         let mut next_ordinal_by_path = HashMap::<Vec<SharedString>, u32>::new();
@@ -450,7 +454,7 @@ impl SyntacticLocationIndex {
 
 fn compute_symbol_ref(
     snapshot: &language::BufferSnapshot,
-    index: &SyntacticLocationIndex,
+    index: &SourceLocationIndex,
     row: u32,
 ) -> Option<SymbolRef> {
     let containing = snapshot.symbols_containing(syntax_lookup_point(snapshot, row), None);
@@ -499,14 +503,14 @@ fn compute_content_marker(snapshot: &BufferSnapshot, row: u32) -> ContentMarker 
 
     let mut hasher = Fnv1a::new();
     let max_row = snapshot.max_point().row;
-    let start = row.saturating_sub(CONTEXT_WINDOW);
-    let end = (row + CONTEXT_WINDOW).min(max_row);
+    let start = row.saturating_sub(CONTEXT_ROW_RADIUS);
+    let end = (row + CONTEXT_ROW_RADIUS).min(max_row);
     // Hash the target row's offset within the window, not just the window's
     // lines: near buffer boundaries the window is clamped, so two different
     // rows (e.g. the first and last line of a three-line file with identical
     // neighbors) can otherwise produce identical windows. The hash is
     // persisted, so changing any of its inputs requires bumping
-    // [`SYNTACTIC_LOCATION_VERSION`].
+    // [`SYNTACTIC_LOCATION_FORMAT_VERSION`].
     hasher.update(&(row - start).to_le_bytes());
     for context_row in start..=end {
         let context_line = normalize_line(&line_text(snapshot, context_row));
@@ -523,12 +527,12 @@ fn compute_content_marker(snapshot: &BufferSnapshot, row: u32) -> ContentMarker 
 
 /// How a durable source location was resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SourceLocationResolutionKind {
+pub(crate) enum SourceLocationResolutionKind {
     /// Resolution stayed at the expected offset in the preferred symbol.
-    ExactSymbol,
+    ExactSymbolOffset,
     /// Content within a matching symbol selected a different row or symbol
     /// occurrence than the stored offset.
-    SymbolContent,
+    ContentWithinSymbol,
     /// Content outside the stored symbol, or without a symbol reference,
     /// selected the row.
     ContentOnly,
@@ -537,23 +541,23 @@ pub enum SourceLocationResolutionKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ResolvedSourceLocation {
-    pub(crate) row: u32,
-    pub(crate) resolution: SourceLocationResolutionKind,
+struct ResolvedSourceLocation {
+    row: u32,
+    kind: SourceLocationResolutionKind,
 }
 
-pub(crate) fn resolve_syntactic_location(
+fn resolve_syntactic_location(
     snapshot: &language::BufferSnapshot,
-    index: &SyntacticLocationIndex,
+    index: &SourceLocationIndex,
     location: &SyntacticLocation,
 ) -> Option<ResolvedSourceLocation> {
     if let Some(symbol) = location.symbol.as_ref()
-        && let Some(resolved) = resolve_exact_symbol(
+        && let Some(resolved) = resolve_with_symbol(
             snapshot,
             index,
             symbol,
             &location.content_marker,
-            location.last_known_row,
+            location.fallback_row,
         )
     {
         return Some(resolved);
@@ -563,30 +567,33 @@ pub(crate) fn resolve_syntactic_location(
         snapshot,
         index,
         &location.content_marker,
-        location.last_known_row,
+        location.fallback_row,
     ) {
         return Some(ResolvedSourceLocation {
             row,
-            resolution: SourceLocationResolutionKind::ContentOnly,
+            kind: SourceLocationResolutionKind::ContentOnly,
         });
     }
 
-    row_fallback(snapshot, location.last_known_row)
+    resolve_from_fallback_row(snapshot, location.fallback_row)
 }
 
-pub(crate) fn row_fallback(snapshot: &BufferSnapshot, row: u32) -> Option<ResolvedSourceLocation> {
-    (row <= snapshot.max_point().row).then_some(ResolvedSourceLocation {
-        row,
-        resolution: SourceLocationResolutionKind::RowFallback,
+fn resolve_from_fallback_row(
+    snapshot: &BufferSnapshot,
+    fallback_row: u32,
+) -> Option<ResolvedSourceLocation> {
+    (fallback_row <= snapshot.max_point().row).then_some(ResolvedSourceLocation {
+        row: fallback_row,
+        kind: SourceLocationResolutionKind::RowFallback,
     })
 }
 
-fn resolve_exact_symbol(
+fn resolve_with_symbol(
     snapshot: &language::BufferSnapshot,
-    index: &SyntacticLocationIndex,
+    index: &SourceLocationIndex,
     symbol: &SymbolRef,
     content_marker: &ContentMarker,
-    last_known_row: u32,
+    fallback_row: u32,
 ) -> Option<ResolvedSourceLocation> {
     let matching_symbols = index
         .symbols
@@ -622,7 +629,7 @@ fn resolve_exact_symbol(
             .collect()
     };
 
-    if let Some(resolved) = closest_context_match(&candidates) {
+    if let Some(resolved) = best_context_match(&candidates) {
         return Some(resolved);
     }
 
@@ -636,21 +643,21 @@ fn resolve_exact_symbol(
     // is no longer inside any symbol with the stored path, so before guessing a
     // row positionally, check whether the exact line (confirmed by context
     // hash) moved elsewhere in the file, e.g. into another symbol.
-    if let Some(row) = resolve_content_only(snapshot, index, content_marker, last_known_row) {
+    if let Some(row) = resolve_content_only(snapshot, index, content_marker, fallback_row) {
         return Some(ResolvedSourceLocation {
             row,
-            resolution: SourceLocationResolutionKind::ContentOnly,
+            kind: SourceLocationResolutionKind::ContentOnly,
         });
     }
 
     Some(ResolvedSourceLocation {
         row: expected_row_in_range(&preferred_symbol.range, symbol.line_offset_in_symbol),
-        resolution: SourceLocationResolutionKind::ExactSymbol,
+        kind: SourceLocationResolutionKind::ExactSymbolOffset,
     })
 }
 
 /// The line matches for one occurrence of the stored symbol path, used to
-/// rank resolution candidates in [`resolve_exact_symbol`].
+/// rank resolution candidates in [`resolve_with_symbol`].
 struct SymbolCandidate {
     /// The stored symbol-relative offset projected onto this occurrence.
     expected_row: u32,
@@ -662,7 +669,7 @@ struct SymbolCandidate {
 /// Picks the line match whose surrounding context hash still matches,
 /// preferring the symbol occurrence with the stored ordinal, then the row
 /// closest to the symbol-relative offset.
-fn closest_context_match(candidates: &[SymbolCandidate]) -> Option<ResolvedSourceLocation> {
+fn best_context_match(candidates: &[SymbolCandidate]) -> Option<ResolvedSourceLocation> {
     struct RankedMatch {
         row: u32,
         is_preferred: bool,
@@ -685,10 +692,10 @@ fn closest_context_match(candidates: &[SymbolCandidate]) -> Option<ResolvedSourc
         .min_by_key(|ranked| (!ranked.is_preferred, ranked.distance_from_expected))
         .map(|ranked| ResolvedSourceLocation {
             row: ranked.row,
-            resolution: if ranked.is_preferred && ranked.distance_from_expected == 0 {
-                SourceLocationResolutionKind::ExactSymbol
+            kind: if ranked.is_preferred && ranked.distance_from_expected == 0 {
+                SourceLocationResolutionKind::ExactSymbolOffset
             } else {
-                SourceLocationResolutionKind::SymbolContent
+                SourceLocationResolutionKind::ContentWithinSymbol
             },
         })
 }
@@ -706,19 +713,19 @@ fn closest_line_match_in_preferred_symbol(
         .min_by_key(|content_match| content_match.row.abs_diff(preferred.expected_row))?;
     Some(ResolvedSourceLocation {
         row: content_match.row,
-        resolution: if content_match.row == preferred.expected_row {
-            SourceLocationResolutionKind::ExactSymbol
+        kind: if content_match.row == preferred.expected_row {
+            SourceLocationResolutionKind::ExactSymbolOffset
         } else {
-            SourceLocationResolutionKind::SymbolContent
+            SourceLocationResolutionKind::ContentWithinSymbol
         },
     })
 }
 
 fn resolve_content_only(
     snapshot: &language::BufferSnapshot,
-    index: &SyntacticLocationIndex,
+    index: &SourceLocationIndex,
     content_marker: &ContentMarker,
-    last_known_row: u32,
+    fallback_row: u32,
 ) -> Option<u32> {
     if content_marker.line_text.is_empty() {
         return None;
@@ -731,7 +738,7 @@ fn resolve_content_only(
         .filter(|row| {
             compute_content_marker(snapshot, *row).context_hash == content_marker.context_hash
         })
-        .min_by_key(|row| row.abs_diff(last_known_row));
+        .min_by_key(|row| row.abs_diff(fallback_row));
 
     context_match.or_else(|| match matching_rows {
         [row] => Some(*row),
@@ -860,19 +867,19 @@ mod tests {
         });
         cx.update(|cx| {
             let snapshot = buffer.read(cx).snapshot();
-            let index = SyntacticLocationIndex::new(&snapshot);
+            let index = SourceLocationIndex::new(&snapshot);
             resolve_syntactic_location(&snapshot, &index, location)
                 .expect("expected the source location to resolve")
         })
     }
 
     fn serialized_location(
-        row: u32,
+        fallback_row: u32,
         symbol: Option<SerializedSymbolRef>,
         line_text: &str,
-    ) -> SerializedSourceLocation {
-        SerializedSourceLocation {
-            row,
+    ) -> DurableSourceLocation {
+        DurableSourceLocation {
+            fallback_row,
             syntactic_location: Some(SerializedSyntacticLocation {
                 symbol,
                 content_marker: SerializedContentMarker {
@@ -904,7 +911,7 @@ mod tests {
             };
 
             assert_eq!(resolver.syntax_state(), SourceLocationSyntaxState::Ready);
-            assert_eq!(serialized.row, 1);
+            assert_eq!(serialized.fallback_row, 1);
             assert_eq!(
                 serialized
                     .syntactic_location
@@ -942,7 +949,7 @@ mod tests {
                 panic!("parsing syntax should produce a provisional source location");
             };
 
-            assert_eq!(serialized.row, 1);
+            assert_eq!(serialized.fallback_row, 1);
             let syntactic_location = serialized
                 .syntactic_location
                 .expect("provisional content marker");
@@ -955,8 +962,8 @@ mod tests {
     fn test_source_location_resolver_resolves_with_ready_syntax(cx: &mut TestAppContext) {
         let original =
             syntactic_location_at_row("fn bookmarked() {\n    target();\n}\n", 1, true, cx);
-        let location = SerializedSourceLocation {
-            row: original.last_known_row,
+        let location = DurableSourceLocation {
+            fallback_row: original.fallback_row,
             syntactic_location: Some((&original).into()),
         };
         let buffer = cx.new(|cx| {
@@ -973,7 +980,7 @@ mod tests {
                 resolver.resolve(&location).expect("valid location"),
                 SourceLocationResolution::Resolved {
                     row: 3,
-                    kind: SourceLocationResolutionKind::ExactSymbol,
+                    kind: SourceLocationResolutionKind::ExactSymbolOffset,
                 }
             );
         });
@@ -1063,8 +1070,8 @@ mod tests {
     #[gpui::test]
     fn test_source_location_resolver_resolves_plaintext_content(cx: &mut TestAppContext) {
         let original = syntactic_location_at_row("before\ntarget\nafter\n", 1, false, cx);
-        let location = SerializedSourceLocation {
-            row: original.last_known_row,
+        let location = DurableSourceLocation {
+            fallback_row: original.fallback_row,
             syntactic_location: Some((&original).into()),
         };
         let buffer = cx.new(|cx| {
@@ -1097,14 +1104,14 @@ mod tests {
         cx.update(|cx| {
             let resolver = SourceLocationResolver::for_buffer(buffer.read(cx));
             assert_eq!(
-                resolver.resolve_row(1),
+                resolver.resolve_fallback_row(1),
                 SourceLocationResolution::Resolved {
                     row: 1,
                     kind: SourceLocationResolutionKind::RowFallback,
                 }
             );
             assert_eq!(
-                resolver.resolve_row(3),
+                resolver.resolve_fallback_row(3),
                 SourceLocationResolution::Unresolvable
             );
 
@@ -1139,7 +1146,7 @@ mod tests {
             })
         );
         assert_eq!(location.content_marker.line_text, "dbg!(value);");
-        assert_eq!(location.last_known_row, 2);
+        assert_eq!(location.fallback_row, 2);
     }
 
     #[gpui::test]
@@ -1220,7 +1227,7 @@ mod tests {
 
         assert_eq!(location.symbol, None);
         assert_eq!(location.content_marker.line_text, "bookmarked text");
-        assert_eq!(location.last_known_row, 1);
+        assert_eq!(location.fallback_row, 1);
     }
 
     #[gpui::test]
@@ -1310,7 +1317,7 @@ mod tests {
             resolved,
             ResolvedSourceLocation {
                 row: 3,
-                resolution: SourceLocationResolutionKind::ExactSymbol,
+                kind: SourceLocationResolutionKind::ExactSymbolOffset,
             }
         );
     }
@@ -1335,7 +1342,7 @@ mod tests {
             resolved,
             ResolvedSourceLocation {
                 row: 3,
-                resolution: SourceLocationResolutionKind::SymbolContent,
+                kind: SourceLocationResolutionKind::ContentWithinSymbol,
             }
         );
     }
@@ -1356,7 +1363,7 @@ mod tests {
             resolved,
             ResolvedSourceLocation {
                 row: 1,
-                resolution: SourceLocationResolutionKind::ContentOnly,
+                kind: SourceLocationResolutionKind::ContentOnly,
             }
         );
     }
@@ -1383,7 +1390,7 @@ mod tests {
             resolved,
             ResolvedSourceLocation {
                 row: 9,
-                resolution: SourceLocationResolutionKind::SymbolContent,
+                kind: SourceLocationResolutionKind::ContentWithinSymbol,
             }
         );
     }
@@ -1408,7 +1415,7 @@ mod tests {
             resolved,
             ResolvedSourceLocation {
                 row: 7,
-                resolution: SourceLocationResolutionKind::ContentOnly,
+                kind: SourceLocationResolutionKind::ContentOnly,
             }
         );
     }
@@ -1433,7 +1440,7 @@ mod tests {
             resolved,
             ResolvedSourceLocation {
                 row: 2,
-                resolution: SourceLocationResolutionKind::ExactSymbol,
+                kind: SourceLocationResolutionKind::ExactSymbolOffset,
             }
         );
     }
@@ -1457,7 +1464,7 @@ mod tests {
             resolved,
             ResolvedSourceLocation {
                 row: 5,
-                resolution: SourceLocationResolutionKind::SymbolContent,
+                kind: SourceLocationResolutionKind::ContentWithinSymbol,
             }
         );
     }
@@ -1478,7 +1485,7 @@ mod tests {
             resolved,
             ResolvedSourceLocation {
                 row: 3,
-                resolution: SourceLocationResolutionKind::ContentOnly,
+                kind: SourceLocationResolutionKind::ContentOnly,
             }
         );
     }
@@ -1503,7 +1510,7 @@ mod tests {
             resolved,
             ResolvedSourceLocation {
                 row: 3,
-                resolution: SourceLocationResolutionKind::ContentOnly,
+                kind: SourceLocationResolutionKind::ContentOnly,
             }
         );
     }
@@ -1523,16 +1530,16 @@ mod tests {
             resolved,
             ResolvedSourceLocation {
                 row: 1,
-                resolution: SourceLocationResolutionKind::RowFallback,
+                kind: SourceLocationResolutionKind::RowFallback,
             }
         );
     }
 
     #[gpui::test]
-    fn test_resolves_symbol_when_last_known_row_is_out_of_range(cx: &mut TestAppContext) {
+    fn test_resolves_symbol_when_fallback_row_is_out_of_range(cx: &mut TestAppContext) {
         let mut location =
             syntactic_location_at_row("fn bookmarked() {\n    target();\n}\n", 1, true, cx);
-        location.last_known_row = 100;
+        location.fallback_row = 100;
 
         let resolved = resolve_location(
             "fn bookmarked() {\n    target();\n}\n",
@@ -1542,10 +1549,7 @@ mod tests {
         );
 
         assert_eq!(resolved.row, 1);
-        assert_ne!(
-            resolved.resolution,
-            SourceLocationResolutionKind::RowFallback
-        );
+        assert_ne!(resolved.kind, SourceLocationResolutionKind::RowFallback);
     }
 
     #[gpui::test]
@@ -1564,7 +1568,7 @@ mod tests {
             resolved,
             ResolvedSourceLocation {
                 row: 1,
-                resolution: SourceLocationResolutionKind::RowFallback,
+                kind: SourceLocationResolutionKind::RowFallback,
             }
         );
     }
@@ -1578,7 +1582,7 @@ mod tests {
         );
         let serialized = SerializedSyntacticLocation::from(&location);
         let restored = serialized
-            .to_syntactic_location(location.last_known_row)
+            .to_syntactic_location(location.fallback_row)
             .expect("valid serialized syntactic location");
 
         assert_eq!(restored, location);
