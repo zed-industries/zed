@@ -50,6 +50,7 @@ pub fn encode_text(text: String, encoding: &'static Encoding, has_bom: bool) -> 
         return text.into_bytes();
     }
 
+    // encoding_rs follows the WHATWG standard and encodes UTF-16 labels as UTF-8.
     if encoding == UTF_16BE {
         let mut bytes = Vec::with_capacity(text.len() * 2 + 2);
         if has_bom {
