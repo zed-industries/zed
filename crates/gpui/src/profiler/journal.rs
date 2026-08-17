@@ -189,12 +189,20 @@ impl FrameSnapshot {
     /// small polls. Small-poll flush spans may straddle a seal, so this is a
     /// close approximation rather than exact at interval edges.
     pub fn occupancy(&self) -> Duration {
+        self.occupancy_within(self.interval_start, self.interval_end)
+    }
+
+    /// Like [`Self::occupancy`], but measured against an arbitrary window
+    /// (e.g. a reporting window anchored at a frame's first invalidation).
+    /// Event spans are clamped to the window; the small-poll summary is added
+    /// wholesale since folded polls carry no individual timestamps.
+    pub fn occupancy_within(&self, window_start: Instant, window_end: Instant) -> Duration {
         let mut spans: Vec<(Instant, Instant)> = self
             .events
             .iter()
             .map(|event| {
-                let start = event.start_time().max(self.interval_start);
-                let end = event.end_time().min(self.interval_end).max(start);
+                let start = event.start_time().max(window_start);
+                let end = event.end_time().min(window_end).max(start);
                 (start, end)
             })
             .collect();

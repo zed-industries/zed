@@ -68,26 +68,29 @@ impl HangDetector {
 /// locations as plain data, contributor count capped by the converter.
 #[derive(Debug, Clone, Serialize)]
 pub struct SerializedHangIncident {
-    /// When the interval started, in milliseconds since app startup.
+    /// When the incident's active window started, in milliseconds since app
+    /// startup: the sealing frame's first invalidation, or the earliest
+    /// contributor's start when nothing was pending a repaint. Foreground
+    /// idle time between the previous frame and the cause is excluded.
     pub start_ms: f64,
-    /// Length of the interval (the time between the two frames bracketing the
-    /// hang, or up to the seal timeout when nothing drew) in milliseconds.
-    /// This is context, not the hang's length; see `stall_ms` for that.
-    pub interval_ms: f64,
-    /// The longest single block of foreground work in the interval, in
-    /// milliseconds: the best estimate of the freeze a user perceived. Always
-    /// the duration of the first contributor.
+    /// Length of the active window in milliseconds: from the cause to the
+    /// seal. Exceeds `stall_ms` when several stalls piled up on one frame.
+    pub active_ms: f64,
+    /// The longest single block of foreground work, in milliseconds: the
+    /// best estimate of the freeze a user perceived. Always the duration of
+    /// the first contributor.
     pub stall_ms: f64,
-    /// For draw-sealed intervals, how long the frame that closed the interval
-    /// had been dirty before reaching the screen, in milliseconds: how long a
-    /// needed repaint kept the user waiting.
+    /// For draw-sealed incidents, how long the frame that closed the
+    /// incident had been dirty before reaching the screen, in milliseconds:
+    /// how long a needed repaint kept the user waiting.
     pub dirty_to_draw_ms: Option<f64>,
-    /// What closed the interval: `"draw"` (a frame was produced) or
+    /// What closed the incident: `"draw"` (a frame was produced) or
     /// `"timeout"` (nothing drew for the seal timeout). This labels the
-    /// interval's boundary, not the hang's cause — the cause is the first
-    /// contributor.
+    /// boundary, not the hang's cause — the cause is the first contributor.
     pub sealed_by: &'static str,
-    /// Fraction of the interval the foreground spent working, `0.0..=1.0`.
+    /// Fraction of the active window the foreground spent working,
+    /// `0.0..=1.0`. Low values with a high `dirty_to_draw_ms` indicate
+    /// throttling or scheduling delay rather than application work.
     pub busy_fraction: f64,
     /// Total events recorded in the interval (before the contributor cap).
     pub event_count: usize,
@@ -170,13 +173,19 @@ impl SerializedHangIncident {
         let since_startup =
             |instant: Instant| as_millis(instant.saturating_duration_since(startup));
         let snapshot = &incident.snapshot;
+        let (active_start, active_end) = incident.active_window();
+        let active = active_end.duration_since(active_start);
+        let busy_fraction = if active.is_zero() {
+            1.0
+        } else {
+            snapshot
+                .occupancy_within(active_start, active_end)
+                .div_duration_f64(active)
+                .min(1.0)
+        };
         Self {
-            start_ms: since_startup(snapshot.interval_start),
-            interval_ms: as_millis(
-                snapshot
-                    .interval_end
-                    .duration_since(snapshot.interval_start),
-            ),
+            start_ms: since_startup(active_start),
+            active_ms: as_millis(active),
             stall_ms: incident
                 .contributors
                 .first()
@@ -192,7 +201,7 @@ impl SerializedHangIncident {
                 super::journal::SealReason::Draw => "draw",
                 super::journal::SealReason::Timeout => "timeout",
             },
-            busy_fraction: (snapshot.busy_fraction() * 1000.0).round() / 1000.0,
+            busy_fraction: (busy_fraction * 1000.0).round() / 1000.0,
             event_count: snapshot.events.len(),
             small_poll_count: snapshot.small_polls.count,
             small_poll_total_ms: as_millis(snapshot.small_polls.total),
@@ -259,6 +268,31 @@ impl SerializedHangContributor {
 }
 
 impl HangIncident {
+    /// The incident's reporting window: from its earliest cause — the
+    /// sealing frame's first invalidation, or the earliest contributor's
+    /// start when no repaint was pending — to the seal. This trims
+    /// foreground-idle time between the previous frame and the cause, and
+    /// may begin before the underlying snapshot when a contributor was
+    /// already running at the previous seal.
+    pub fn active_window(&self) -> (Instant, Instant) {
+        let snapshot = &self.snapshot;
+        let dirty_at = match snapshot.events.last() {
+            Some(ForegroundEvent::Draw(timing)) => timing.dirty_at,
+            _ => None,
+        };
+        let earliest_contributor = self
+            .contributors
+            .iter()
+            .map(|event| event.start_time())
+            .min();
+        let start = [dirty_at, earliest_contributor]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(snapshot.interval_start);
+        (start, snapshot.interval_end)
+    }
+
     /// Returns an incident when the snapshot contains at least one event
     /// that blocked the foreground for `threshold` or longer.
     pub fn detect(snapshot: FrameSnapshot, threshold: Duration) -> Option<Self> {
