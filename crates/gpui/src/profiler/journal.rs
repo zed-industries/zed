@@ -472,9 +472,7 @@ impl IntervalSealer {
 
             if is_draw {
                 snapshots.push(self.seal(SealReason::Draw, end));
-            } else if can_seal_timeout
-                && end.duration_since(self.interval_start) >= SEAL_TIMEOUT
-            {
+            } else if can_seal_timeout && end.duration_since(self.interval_start) >= SEAL_TIMEOUT {
                 snapshots.push(self.seal(SealReason::Timeout, end));
             }
         }

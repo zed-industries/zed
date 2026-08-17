@@ -445,7 +445,11 @@ mod tests {
                 }
                 1 => {
                     controls.input.set(Some(duration));
-                    cx.simulate_mouse_down(point(px(5.), px(5.)), MouseButton::Left, Modifiers::none());
+                    cx.simulate_mouse_down(
+                        point(px(5.), px(5.)),
+                        MouseButton::Left,
+                        Modifiers::none(),
+                    );
                     HangKind::Input
                 }
                 2 => {
@@ -502,7 +506,11 @@ mod tests {
     /// at least as long as the injected sleep (sleeps never wake early).
     /// Extra observed contributors are allowed: other threads journaling
     /// concurrently is not a detection failure.
-    fn assert_all_matched(kind: HangKind, mut expected: Vec<Duration>, mut observed: Vec<Duration>) {
+    fn assert_all_matched(
+        kind: HangKind,
+        mut expected: Vec<Duration>,
+        mut observed: Vec<Duration>,
+    ) {
         expected.sort_unstable_by(|a, b| b.cmp(a));
         observed.sort_unstable_by(|a, b| b.cmp(a));
         let mut observed = observed.into_iter();
