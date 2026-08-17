@@ -242,6 +242,7 @@ pub struct SettingsContent {
     pub node: Option<NodeBinarySettings>,
 
     pub proxy: Option<String>,
+    pub no_proxy: Option<String>,
 
     /// Whether to reduce non-essential motion in the UI, such as loading
     /// spinners and pulsating labels, by rendering them in a static state.
