@@ -1429,7 +1429,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 Button::new("configure-worktree-tasks", "Automate Setup")
                     .key_binding(
                         KeyBinding::for_action_in(&OpenWorktreeSetupTasks, &focus_handle, cx)
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                            .map(|kb| kb.size(rems_from_px(12_f32))),
                     )
                     .on_click(|_, window, cx| {
                         window.dispatch_action(OpenWorktreeSetupTasks.boxed_clone(), cx)
@@ -1443,7 +1443,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                         Button::new("create-worktree", "Create")
                             .key_binding(
                                 KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                    .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(menu::Confirm.boxed_clone(), cx)
@@ -1474,7 +1474,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                                                 &focus_handle,
                                                 cx,
                                             )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                            .map(|kb| kb.size(rems_from_px(12_f32))),
                                         )
                                         .on_click(|_, window, cx| {
                                             window.dispatch_action(DeleteWorktree.boxed_clone(), cx)
@@ -1491,7 +1491,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                                                 &focus_handle,
                                                 cx,
                                             )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                            .map(|kb| kb.size(rems_from_px(12_f32))),
                                         )
                                         .on_click(|_, window, cx| {
                                             window.dispatch_action(
@@ -1510,7 +1510,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                                                 &focus_handle,
                                                 cx,
                                             )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                            .map(|kb| kb.size(rems_from_px(12_f32))),
                                         )
                                         .on_click(|_, window, cx| {
                                             window.dispatch_action(menu::Confirm.boxed_clone(), cx)

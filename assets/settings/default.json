@@ -1191,6 +1191,7 @@
           "delete_path": true,
           "diagnostics": true,
           "apply_code_action": true,
+          "ask_user": true,
           "edit_file": true,
           "write_file": true,
           "fetch": true,
@@ -1217,6 +1218,7 @@
         "tools": {
           "create_thread": true,
           "diagnostics": true,
+          "ask_user": true,
           "fetch": true,
           "list_agents_and_models": true,
           "list_directory": true,
@@ -1646,6 +1648,14 @@
   // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
+  // Maximum directory depth to eagerly index outside of git repositories;
+  // contents of directories at this depth or deeper are indexed on demand.
+  // Repositories rooted shallower than this depth are always indexed fully.
+  // In projects that are not rooted at a git repository, repositories directly
+  // inside a root folder activate their git features immediately; deeper ones
+  // activate on first use.
+  // `0` means no limit and activates all git repositories immediately.
+  "file_scan_depth": 5,
   // When to scan content of linked directories.
   // May take 2 values:
   //  1. Only scan symlinked directories when they've been expanded in the workspace:
@@ -1868,6 +1878,10 @@
     "shell": "system",
     // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
     "dock": "bottom",
+    // Whether the terminal panel should open on startup.
+    //
+    // Default: false
+    "starts_open": false,
     // Whether the terminal panel should use flexible (proportional) sizing.
     //
     // Default: true
