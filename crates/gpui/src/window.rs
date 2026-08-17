@@ -1,3 +1,5 @@
+#[cfg(feature = "profiler")]
+use crate::DebugFrameOverlayMode;
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
 #[cfg(feature = "profiler")]
@@ -5,15 +7,15 @@ use crate::profiler;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
-    Capslock, Context, Corners, CursorHideMode, CursorStyle, DebugFrameOverlayMode, Decorations,
-    DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
-    Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
-    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
+    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
@@ -1185,6 +1187,7 @@ pub struct Window {
     captured_hitbox: Option<HitboxId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
+    #[cfg(feature = "profiler")]
     debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay,
     pub(crate) a11y: A11y,
 }
@@ -1865,6 +1868,7 @@ impl Window {
             captured_hitbox: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
+            #[cfg(feature = "profiler")]
             debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay::new(),
             a11y: A11y::new(
                 a11y_active_flag,
@@ -2818,14 +2822,8 @@ impl Window {
         // timestamp can't leak across enable/disable of runtime tracing.
         #[cfg(feature = "profiler")]
         let frame_dirty = self.invalidator.take_frame_dirty();
-        // The draw duration is always measured: the debug overlay keeps a
-        // rolling sample even while hidden so it can show a frame time as soon
-        // as it is toggled on, and the cost of one timestamp pair per frame is
-        // negligible.
         #[cfg(feature = "profiler")]
         self.window_profiler.begin_draw();
-        #[cfg(not(feature = "profiler"))]
-        let draw_started_at = Instant::now();
 
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
@@ -2856,10 +2854,16 @@ impl Window {
         }
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
-            let viewport_size = self.viewport_size;
-            let scale_factor = self.scale_factor();
-            self.debug_frame_overlay
-                .paint(&mut self.next_frame.scene, viewport_size, scale_factor);
+            #[cfg(feature = "profiler")]
+            {
+                let viewport_size = self.viewport_size;
+                let scale_factor = self.scale_factor();
+                self.debug_frame_overlay.paint(
+                    &mut self.next_frame.scene,
+                    viewport_size,
+                    scale_factor,
+                );
+            }
         }
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
@@ -2940,12 +2944,12 @@ impl Window {
         self.needs_present.set(true);
 
         #[cfg(feature = "profiler")]
-        let draw_duration = self
-            .window_profiler
-            .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
-        #[cfg(not(feature = "profiler"))]
-        let draw_duration = draw_started_at.elapsed();
-        self.debug_frame_overlay.record_frame(draw_duration);
+        {
+            let draw_duration = self
+                .window_profiler
+                .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
+            self.debug_frame_overlay.record_frame(draw_duration);
+        }
 
         // Exit the scope to obtain the arena-clear token this draw owes; the
         // scope's teardown itself happens in `ElementArenaScope::drop`.
@@ -3011,11 +3015,13 @@ impl Window {
     }
 
     /// Returns the current mode of the debug frame overlay.
+    #[cfg(feature = "profiler")]
     pub fn debug_frame_overlay_mode(&self) -> DebugFrameOverlayMode {
         self.debug_frame_overlay.mode()
     }
 
     /// Sets the mode of the debug frame overlay and schedules a redraw.
+    #[cfg(feature = "profiler")]
     pub fn set_debug_frame_overlay_mode(&mut self, mode: DebugFrameOverlayMode) {
         self.debug_frame_overlay.set_mode(mode);
         self.refresh();
@@ -3023,12 +3029,14 @@ impl Window {
 
     /// Advances the debug frame overlay through its hidden, frame-time-only,
     /// and detailed modes.
+    #[cfg(feature = "profiler")]
     pub fn cycle_debug_frame_overlay_mode(&mut self) {
         self.set_debug_frame_overlay_mode(self.debug_frame_overlay.mode().next());
     }
 
     /// Clears the debug frame overlay's frame-time statistics, except for the
     /// total frame count, and schedules a redraw.
+    #[cfg(feature = "profiler")]
     pub fn reset_debug_frame_overlay_stats(&mut self) {
         self.debug_frame_overlay.reset_stats();
         self.refresh();
