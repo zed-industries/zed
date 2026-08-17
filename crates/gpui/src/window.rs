@@ -2818,12 +2818,13 @@ impl Window {
         // timestamp can't leak across enable/disable of runtime tracing.
         #[cfg(feature = "profiler")]
         let frame_dirty = self.invalidator.take_frame_dirty();
-        #[cfg(feature = "profiler")]
-        self.window_profiler.begin_draw();
         // The draw duration is always measured: the debug overlay keeps a
         // rolling sample even while hidden so it can show a frame time as soon
         // as it is toggled on, and the cost of one timestamp pair per frame is
         // negligible.
+        #[cfg(feature = "profiler")]
+        self.window_profiler.begin_draw();
+        #[cfg(not(feature = "profiler"))]
         let draw_started_at = Instant::now();
 
         // Set up the per-App arena for element allocation during this draw.
@@ -2938,11 +2939,13 @@ impl Window {
         }
         self.needs_present.set(true);
 
-        self.debug_frame_overlay
-            .record_frame(draw_started_at.elapsed());
         #[cfg(feature = "profiler")]
-        self.window_profiler
+        let draw_duration = self
+            .window_profiler
             .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
+        #[cfg(not(feature = "profiler"))]
+        let draw_duration = draw_started_at.elapsed();
+        self.debug_frame_overlay.record_frame(draw_duration);
 
         // Exit the scope to obtain the arena-clear token this draw owes; the
         // scope's teardown itself happens in `ElementArenaScope::drop`.
