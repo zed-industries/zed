@@ -2,6 +2,7 @@ use std::{cell::OnceCell, collections::HashMap, ops::Range};
 
 use anyhow::Result;
 use gpui::SharedString;
+use language::{Buffer, PLAIN_TEXT, ParseStatus};
 use serde::{Deserialize, Serialize};
 use text::{BufferSnapshot, Point};
 
@@ -63,6 +64,72 @@ pub struct SerializedSyntacticLocation {
 pub struct SerializedSourceLocation {
     pub row: u32,
     pub syntactic_location: Option<SerializedSyntacticLocation>,
+}
+
+/// Resolves and serializes durable source locations against one coherent buffer
+/// snapshot.
+///
+/// The resolver captures the buffer's text, syntax state, and syntactic index
+/// when it is created. Callers should reuse it for a batch of locations, then
+/// create a new resolver after the buffer changes or finishes parsing.
+///
+/// This type does not retain pending locations or subscribe to buffer events.
+/// Consumers are responsible for preserving prior complete metadata and
+/// retrying deferred work when syntax becomes ready.
+pub struct SourceLocationResolver {
+    snapshot: language::BufferSnapshot,
+    index: SyntacticLocationIndex,
+    syntax_state: SourceLocationSyntaxState,
+}
+
+/// Availability of symbol information in a resolver's captured snapshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceLocationSyntaxState {
+    /// No parser-backed syntax is available. Content markers remain usable, but
+    /// symbol references cannot be computed or resolved.
+    Unavailable,
+    /// A parser is running and its symbol information may be incomplete.
+    Parsing,
+    /// Parser-backed symbol information is ready.
+    Ready,
+}
+
+/// The result of resolving a valid serialized source location.
+///
+/// Invalid serialized data is returned as an error by
+/// [`SourceLocationResolver::resolve`] instead of using one of these variants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceLocationResolution {
+    /// The location resolved to a concrete row.
+    Resolved {
+        /// The resolved zero-based row.
+        row: u32,
+        /// The strategy that produced the row.
+        kind: SourceLocationResolutionKind,
+    },
+    /// Symbol-dependent resolution must wait for parser-backed syntax.
+    Deferred {
+        /// A clamped row that can be used until resolution is retried.
+        provisional_row: u32,
+    },
+    /// The location was valid but neither its durable metadata nor fallback row
+    /// could be resolved in this snapshot.
+    Unresolvable,
+}
+
+/// The result of serializing a live anchor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SourceLocationSerialization {
+    /// The serialized location has the highest fidelity available for the
+    /// buffer's settled syntax state.
+    Complete(SerializedSourceLocation),
+    /// Parsing is in progress, so the serialized location contains a current
+    /// row and content marker but deliberately omits symbol information.
+    ///
+    /// Consumers with previously complete metadata should preserve that
+    /// metadata and update its fallback row instead of replacing it with this
+    /// provisional value.
+    Provisional(SerializedSourceLocation),
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -130,6 +197,134 @@ impl From<&SyntacticLocation> for SerializedSyntacticLocation {
                 context_hash: location.content_marker.context_hash,
             },
         }
+    }
+}
+
+impl SourceLocationResolver {
+    /// Captures a buffer snapshot and builds the index shared by subsequent
+    /// serialization and resolution operations.
+    pub fn for_buffer(buffer: &Buffer) -> Self {
+        let snapshot = buffer.snapshot();
+        let mut parse_status = buffer.parse_status();
+        let syntax_state = if *parse_status.borrow() == ParseStatus::Parsing {
+            SourceLocationSyntaxState::Parsing
+        } else if snapshot
+            .language()
+            .is_none_or(|language| language == &*PLAIN_TEXT)
+        {
+            SourceLocationSyntaxState::Unavailable
+        } else {
+            SourceLocationSyntaxState::Ready
+        };
+
+        Self {
+            index: SyntacticLocationIndex::new(&snapshot),
+            snapshot,
+            syntax_state,
+        }
+    }
+
+    /// Returns the syntax availability captured when this resolver was created.
+    pub fn syntax_state(&self) -> SourceLocationSyntaxState {
+        self.syntax_state
+    }
+
+    /// Resolves a serialized source location against the captured snapshot.
+    ///
+    /// Symbol-bearing locations return [`SourceLocationResolution::Deferred`]
+    /// while syntax is unavailable or parsing. Symbol-less content markers can
+    /// resolve without parser-backed syntax. Invalid serialized data is
+    /// returned as an error.
+    pub fn resolve(&self, location: &SerializedSourceLocation) -> Result<SourceLocationResolution> {
+        if let Some(syntactic_location) = &location.syntactic_location {
+            syntactic_location.validate()?;
+        }
+
+        let should_defer = location
+            .syntactic_location
+            .as_ref()
+            .is_some_and(|syntactic_location| {
+                syntactic_location.symbol.is_some()
+                    && matches!(
+                        self.syntax_state,
+                        SourceLocationSyntaxState::Parsing | SourceLocationSyntaxState::Unavailable
+                    )
+            });
+        if should_defer {
+            return Ok(SourceLocationResolution::Deferred {
+                provisional_row: location.row.min(self.snapshot.max_point().row),
+            });
+        }
+
+        let resolved = match location.syntactic_location.as_ref() {
+            Some(syntactic_location) => {
+                let syntactic_location = syntactic_location.to_syntactic_location(location.row)?;
+                resolve_syntactic_location(&self.snapshot, &self.index, &syntactic_location)
+            }
+            None => row_fallback(&self.snapshot, location.row),
+        };
+
+        Ok(resolved
+            .map(source_location_resolution)
+            .unwrap_or(SourceLocationResolution::Unresolvable))
+    }
+
+    /// Resolves only a fallback row.
+    ///
+    /// This operation does not depend on syntax and therefore never returns
+    /// [`SourceLocationResolution::Deferred`].
+    pub fn resolve_row(&self, row: u32) -> SourceLocationResolution {
+        row_fallback(&self.snapshot, row)
+            .map(source_location_resolution)
+            .unwrap_or(SourceLocationResolution::Unresolvable)
+    }
+
+    /// Returns the current row for an anchor resolvable in the captured
+    /// snapshot.
+    pub fn row_for_anchor(&self, anchor: text::Anchor) -> Option<u32> {
+        self.snapshot
+            .can_resolve(&anchor)
+            .then(|| self.snapshot.summary_for_anchor::<Point>(&anchor).row)
+    }
+
+    /// Serializes an anchor resolvable in the captured snapshot.
+    ///
+    /// While parsing, this returns
+    /// [`SourceLocationSerialization::Provisional`] with symbol information
+    /// omitted. Once parsing settles, it returns
+    /// [`SourceLocationSerialization::Complete`]. Syntax-unavailable buffers
+    /// produce complete content-only locations because no parser-backed symbol
+    /// information is expected for that snapshot.
+    pub fn serialize_anchor(&self, anchor: text::Anchor) -> Option<SourceLocationSerialization> {
+        let row = self.row_for_anchor(anchor)?;
+        let serialization = if self.syntax_state == SourceLocationSyntaxState::Parsing {
+            let content_marker = compute_content_marker(&self.snapshot, row);
+            SourceLocationSerialization::Provisional(SerializedSourceLocation {
+                row,
+                syntactic_location: Some(SerializedSyntacticLocation {
+                    symbol: None,
+                    content_marker: SerializedContentMarker {
+                        line_text: content_marker.line_text.to_string(),
+                        context_hash: content_marker.context_hash,
+                    },
+                }),
+            })
+        } else {
+            let syntactic_location =
+                compute_syntactic_location_with_index(&self.snapshot, &self.index, anchor);
+            SourceLocationSerialization::Complete(SerializedSourceLocation {
+                row,
+                syntactic_location: Some((&syntactic_location).into()),
+            })
+        };
+        Some(serialization)
+    }
+}
+
+fn source_location_resolution(resolved: ResolvedSourceLocation) -> SourceLocationResolution {
+    SourceLocationResolution::Resolved {
+        row: resolved.row,
+        kind: resolved.resolution,
     }
 }
 
@@ -326,11 +521,18 @@ fn compute_content_marker(snapshot: &BufferSnapshot, row: u32) -> ContentMarker 
     }
 }
 
+/// How a durable source location was resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SourceLocationResolutionKind {
+pub enum SourceLocationResolutionKind {
+    /// Resolution stayed at the expected offset in the preferred symbol.
     ExactSymbol,
+    /// Content within a matching symbol selected a different row or symbol
+    /// occurrence than the stored offset.
     SymbolContent,
+    /// Content outside the stored symbol, or without a symbol reference,
+    /// selected the row.
     ContentOnly,
+    /// Only the stored absolute row could be used.
     RowFallback,
 }
 
@@ -662,6 +864,261 @@ mod tests {
             resolve_syntactic_location(&snapshot, &index, location)
                 .expect("expected the source location to resolve")
         })
+    }
+
+    fn serialized_location(
+        row: u32,
+        symbol: Option<SerializedSymbolRef>,
+        line_text: &str,
+    ) -> SerializedSourceLocation {
+        SerializedSourceLocation {
+            row,
+            syntactic_location: Some(SerializedSyntacticLocation {
+                symbol,
+                content_marker: SerializedContentMarker {
+                    line_text: line_text.to_string(),
+                    context_hash: 0,
+                },
+            }),
+        }
+    }
+
+    #[gpui::test]
+    fn test_source_location_resolver_serializes_anchor(cx: &mut TestAppContext) {
+        let buffer = cx.new(|cx| {
+            Buffer::local("fn bookmarked() {\n    target();\n}\n", cx)
+                .with_language(rust_lang(), cx)
+        });
+        let other_buffer = cx.new(|cx| Buffer::local("other\n", cx));
+
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            let snapshot = buffer.snapshot();
+            let anchor = snapshot.anchor_after(Point::new(1, 0));
+            let resolver = SourceLocationResolver::for_buffer(buffer);
+            let serialized = resolver
+                .serialize_anchor(anchor)
+                .expect("resolvable anchor");
+            let SourceLocationSerialization::Complete(serialized) = serialized else {
+                panic!("ready syntax should produce a complete source location");
+            };
+
+            assert_eq!(resolver.syntax_state(), SourceLocationSyntaxState::Ready);
+            assert_eq!(serialized.row, 1);
+            assert_eq!(
+                serialized
+                    .syntactic_location
+                    .and_then(|location| location.symbol)
+                    .expect("symbol")
+                    .symbol_path,
+                vec!["fn bookmarked".to_string()]
+            );
+
+            let other_anchor = other_buffer.read(cx).snapshot().anchor_after(Point::zero());
+            assert_eq!(resolver.serialize_anchor(other_anchor), None);
+        });
+    }
+
+    #[gpui::test]
+    fn test_source_location_resolver_marks_serialization_provisional_while_parsing(
+        cx: &mut TestAppContext,
+    ) {
+        let buffer = cx.new(|cx| Buffer::local("fn bookmarked() {\n    target();\n}\n", cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_sync_parse_timeout(None);
+            buffer.set_language(Some(rust_lang()), cx);
+        });
+
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            assert!(buffer.is_parsing());
+            let snapshot = buffer.snapshot();
+            let anchor = snapshot.anchor_after(Point::new(1, 0));
+            let resolver = SourceLocationResolver::for_buffer(buffer);
+            let serialized = resolver
+                .serialize_anchor(anchor)
+                .expect("resolvable anchor");
+            let SourceLocationSerialization::Provisional(serialized) = serialized else {
+                panic!("parsing syntax should produce a provisional source location");
+            };
+
+            assert_eq!(serialized.row, 1);
+            let syntactic_location = serialized
+                .syntactic_location
+                .expect("provisional content marker");
+            assert_eq!(syntactic_location.symbol, None);
+            assert_eq!(syntactic_location.content_marker.line_text, "target();");
+        });
+    }
+
+    #[gpui::test]
+    fn test_source_location_resolver_resolves_with_ready_syntax(cx: &mut TestAppContext) {
+        let original =
+            syntactic_location_at_row("fn bookmarked() {\n    target();\n}\n", 1, true, cx);
+        let location = SerializedSourceLocation {
+            row: original.last_known_row,
+            syntactic_location: Some((&original).into()),
+        };
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                "fn unrelated() {}\n\nfn bookmarked() {\n    target();\n}\n",
+                cx,
+            )
+            .with_language(rust_lang(), cx)
+        });
+
+        cx.update(|cx| {
+            let resolver = SourceLocationResolver::for_buffer(buffer.read(cx));
+            assert_eq!(
+                resolver.resolve(&location).expect("valid location"),
+                SourceLocationResolution::Resolved {
+                    row: 3,
+                    kind: SourceLocationResolutionKind::ExactSymbol,
+                }
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_source_location_resolver_defers_symbol_while_syntax_is_unavailable(
+        cx: &mut TestAppContext,
+    ) {
+        let location = serialized_location(
+            10,
+            Some(SerializedSymbolRef {
+                symbol_path: vec!["fn bookmarked".to_string()],
+                symbol_ordinal: 0,
+                line_offset_in_symbol: 1,
+            }),
+            "target();",
+        );
+        let buffer = cx.new(|cx| Buffer::local("one\ntwo\n", cx));
+
+        cx.update(|cx| {
+            let resolver = SourceLocationResolver::for_buffer(buffer.read(cx));
+            assert_eq!(
+                resolver.syntax_state(),
+                SourceLocationSyntaxState::Unavailable
+            );
+            assert_eq!(
+                resolver.resolve(&location).expect("valid location"),
+                SourceLocationResolution::Deferred { provisional_row: 2 }
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_source_location_resolver_defers_symbol_while_parsing(cx: &mut TestAppContext) {
+        let location = serialized_location(
+            1,
+            Some(SerializedSymbolRef {
+                symbol_path: vec!["fn bookmarked".to_string()],
+                symbol_ordinal: 0,
+                line_offset_in_symbol: 1,
+            }),
+            "target();",
+        );
+        let buffer = cx.new(|cx| Buffer::local("fn bookmarked() {\n    target();\n}\n", cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_sync_parse_timeout(None);
+            buffer.set_language(Some(rust_lang()), cx);
+        });
+
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            assert!(buffer.is_parsing());
+            let resolver = SourceLocationResolver::for_buffer(buffer);
+            assert_eq!(resolver.syntax_state(), SourceLocationSyntaxState::Parsing);
+            assert_eq!(
+                resolver.resolve(&location).expect("valid location"),
+                SourceLocationResolution::Deferred { provisional_row: 1 }
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_source_location_resolver_resolves_content_while_parsing(cx: &mut TestAppContext) {
+        let location = serialized_location(0, None, "target();");
+        let buffer = cx.new(|cx| Buffer::local("before\ntarget();\nafter\n", cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_sync_parse_timeout(None);
+            buffer.set_language(Some(rust_lang()), cx);
+        });
+
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            assert!(buffer.is_parsing());
+            let resolver = SourceLocationResolver::for_buffer(buffer);
+            assert_eq!(resolver.syntax_state(), SourceLocationSyntaxState::Parsing);
+            assert_eq!(
+                resolver.resolve(&location).expect("valid location"),
+                SourceLocationResolution::Resolved {
+                    row: 1,
+                    kind: SourceLocationResolutionKind::ContentOnly,
+                }
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_source_location_resolver_resolves_plaintext_content(cx: &mut TestAppContext) {
+        let original = syntactic_location_at_row("before\ntarget\nafter\n", 1, false, cx);
+        let location = SerializedSourceLocation {
+            row: original.last_known_row,
+            syntactic_location: Some((&original).into()),
+        };
+        let buffer = cx.new(|cx| {
+            Buffer::local("inserted\nbefore\ntarget\nafter\n", cx)
+                .with_language(PLAIN_TEXT.clone(), cx)
+        });
+
+        cx.update(|cx| {
+            let resolver = SourceLocationResolver::for_buffer(buffer.read(cx));
+            assert_eq!(
+                resolver.syntax_state(),
+                SourceLocationSyntaxState::Unavailable
+            );
+            assert_eq!(
+                resolver.resolve(&location).expect("valid location"),
+                SourceLocationResolution::Resolved {
+                    row: 2,
+                    kind: SourceLocationResolutionKind::ContentOnly,
+                }
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_source_location_resolver_handles_row_only_and_invalid_locations(
+        cx: &mut TestAppContext,
+    ) {
+        let buffer = cx.new(|cx| Buffer::local("one\ntwo\n", cx));
+
+        cx.update(|cx| {
+            let resolver = SourceLocationResolver::for_buffer(buffer.read(cx));
+            assert_eq!(
+                resolver.resolve_row(1),
+                SourceLocationResolution::Resolved {
+                    row: 1,
+                    kind: SourceLocationResolutionKind::RowFallback,
+                }
+            );
+            assert_eq!(
+                resolver.resolve_row(3),
+                SourceLocationResolution::Unresolvable
+            );
+
+            let invalid = serialized_location(
+                0,
+                Some(SerializedSymbolRef {
+                    symbol_path: Vec::new(),
+                    symbol_ordinal: 0,
+                    line_offset_in_symbol: 0,
+                }),
+                "one",
+            );
+            assert!(resolver.resolve(&invalid).is_err());
+        });
     }
 
     #[gpui::test]
