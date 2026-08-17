@@ -1864,7 +1864,7 @@ impl LocalWorktree {
                     LineEnding::Windows => text_string.replace('\n', "\r\n"),
                 };
 
-                let bytes = encode_text(&normalized_text, encoding, has_bom);
+                let bytes = encode_text(normalized_text, encoding, has_bom);
                 fs.write(&abs_path, &bytes).await
             }
         });

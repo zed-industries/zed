@@ -11577,7 +11577,7 @@ async fn test_restaging_hunk_after_optimistic_unstage(cx: &mut gpui::TestAppCont
 
     cx.run_until_parked();
     assert_eq!(
-        repo.load_index_bytes(RepoPath::from_rel_path(rel_path("file.txt")))
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap(),
         file_contents.as_bytes(),
@@ -11602,7 +11602,7 @@ async fn test_restaging_hunk_after_optimistic_unstage(cx: &mut gpui::TestAppCont
         );
     });
     assert_eq!(
-        repo.load_index_bytes(RepoPath::from_rel_path(rel_path("file.txt")))
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap(),
         file_contents.as_bytes()
@@ -11668,7 +11668,7 @@ async fn test_staging_non_utf8_hunk_preserves_index_encoding(cx: &mut gpui::Test
     cx.run_until_parked();
 
     assert_eq!(
-        repo.load_index_bytes(RepoPath::from_rel_path(rel_path("file.txt")))
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap(),
         file_bytes
@@ -11768,7 +11768,7 @@ async fn test_staging_random_hunks(
         .unwrap();
     cx.executor().run_until_parked();
     assert_eq!(
-        repo.load_index_bytes(RepoPath::from_rel_path(rel_path("file.txt")))
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap(),
         index_text.as_bytes()
@@ -11830,7 +11830,7 @@ async fn test_staging_random_hunks(
         "index text:\n{}",
         String::from_utf8_lossy(
             &repo
-                .load_index_bytes(RepoPath::from_rel_path(rel_path("file.txt")))
+                .load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
                 .await
                 .unwrap()
         )
@@ -12262,7 +12262,7 @@ async fn test_staging_random_hunks_with_edits(
     let old_uncommitted_state = capture_diff_state(&uncommitted_diff, cx);
 
     let disk_index_text = String::from_utf8(
-        repo.load_index_bytes(RepoPath::from_rel_path(rel_path("file.txt")))
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap(),
     )

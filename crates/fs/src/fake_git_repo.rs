@@ -185,7 +185,7 @@ impl GitRepository for FakeGitRepository {
         async { Ok(git::repository::CommitDiff { files: Vec::new() }) }.boxed()
     }
 
-    fn set_index_bytes(
+    fn set_index_text(
         &self,
         path: RepoPath,
         content: Option<Vec<u8>>,

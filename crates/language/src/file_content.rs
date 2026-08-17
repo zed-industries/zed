@@ -45,7 +45,11 @@ pub fn decode_text(bytes: Vec<u8>) -> Result<DecodedText> {
     })
 }
 
-pub fn encode_text(text: &str, encoding: &'static Encoding, has_bom: bool) -> Vec<u8> {
+pub fn encode_text(text: String, encoding: &'static Encoding, has_bom: bool) -> Vec<u8> {
+    if encoding == UTF_8 && !has_bom {
+        return text.into_bytes();
+    }
+
     if encoding == UTF_16BE {
         let mut bytes = Vec::with_capacity(text.len() * 2 + 2);
         if has_bom {
@@ -64,7 +68,7 @@ pub fn encode_text(text: &str, encoding: &'static Encoding, has_bom: bool) -> Ve
         return bytes;
     }
 
-    let (encoded, _, _) = encoding.encode(text);
+    let (encoded, _, _) = encoding.encode(&text);
     if has_bom && encoding == UTF_8 {
         let mut bytes = Vec::with_capacity(encoded.len() + 3);
         bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
@@ -279,7 +283,7 @@ mod tests {
         assert_eq!(decoded.encoding, encoding_rs::WINDOWS_1251);
         assert!(!decoded.has_bom);
         assert_eq!(
-            encode_text(&decoded.text, decoded.encoding, decoded.has_bom),
+            encode_text(decoded.text, decoded.encoding, decoded.has_bom),
             bytes.as_ref()
         );
     }
@@ -288,14 +292,14 @@ mod tests {
     fn preserves_unicode_boms() {
         let expected = "Hello, мир\n";
         for encoding in [UTF_8, UTF_16LE, UTF_16BE] {
-            let bytes = encode_text(expected, encoding, true);
+            let bytes = encode_text(expected.to_owned(), encoding, true);
             let decoded = decode_text(bytes.clone()).unwrap();
 
             assert_eq!(decoded.text, expected);
             assert_eq!(decoded.encoding, encoding);
             assert!(decoded.has_bom);
             assert_eq!(
-                encode_text(&decoded.text, decoded.encoding, decoded.has_bom),
+                encode_text(decoded.text, decoded.encoding, decoded.has_bom),
                 bytes
             );
         }

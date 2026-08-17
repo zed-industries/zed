@@ -973,7 +973,7 @@ mod tests {
             );
         });
         assert_eq!(
-            repo.load_index_bytes(RepoPath::from_rel_path(rel_path("src/main.rs")))
+            repo.load_index_text(RepoPath::from_rel_path(rel_path("src/main.rs")))
                 .await
                 .unwrap(),
             committed_contents.as_bytes()

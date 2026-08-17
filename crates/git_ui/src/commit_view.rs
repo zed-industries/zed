@@ -6,7 +6,7 @@ use editor::{
     SplittableEditor, hover_markdown_style, multibuffer_context_lines,
 };
 use futures_lite::future::yield_now;
-use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
+use git::repository::{CommitDetails, RepoPath};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
@@ -24,7 +24,10 @@ use language::{
 };
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::PathKey;
-use project::{Project, ProjectPath, WorktreeId, git_store::Repository};
+use project::{
+    Project, ProjectPath, WorktreeId,
+    git_store::{CommitDiff, Repository},
+};
 use settings::{DiffViewStyle, Settings};
 use std::{
     any::{Any, TypeId},
@@ -322,11 +325,7 @@ impl CommitView {
                 let raw_new_text = file.new_text.unwrap_or_default();
                 let raw_old_text = file.old_text;
 
-                let is_binary = file.is_binary
-                    || is_binary_content(raw_new_text.as_bytes())
-                    || raw_old_text
-                        .as_ref()
-                        .is_some_and(|text| is_binary_content(text.as_bytes()));
+                let is_binary = file.is_binary;
 
                 let new_text = if is_binary {
                     "(binary file not shown)".to_string()
