@@ -11,7 +11,6 @@ use web_time::Instant;
 #[cfg(feature = "multithreaded")]
 const MIN_BACKGROUND_THREADS: usize = 2;
 
-
 fn shared_memory_supported() -> bool {
     let global = js_sys::global();
     let has_shared_array_buffer =
