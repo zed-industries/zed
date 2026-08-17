@@ -46,6 +46,10 @@ actions!(
         NextProject,
         /// Activates the previous project in the sidebar.
         PreviousProject,
+        /// Moves the active project up in the sidebar.
+        MoveProjectUp,
+        /// Moves the active project down in the sidebar.
+        MoveProjectDown,
         /// Activates the next thread in sidebar order.
         NextThread,
         /// Activates the previous thread in sidebar order.
@@ -2107,6 +2111,18 @@ impl Render for MultiWorkspace {
                             if let Some(sidebar) = &this.sidebar {
                                 sidebar.cycle_project(false, window, cx);
                             }
+                        }),
+                    )
+                    .on_action(
+                        cx.listener(|this: &mut Self, _: &MoveProjectUp, _window, cx| {
+                            let key = this.project_group_key_for_workspace(this.workspace(), cx);
+                            this.move_project_group_up(&key, cx);
+                        }),
+                    )
+                    .on_action(
+                        cx.listener(|this: &mut Self, _: &MoveProjectDown, _window, cx| {
+                            let key = this.project_group_key_for_workspace(this.workspace(), cx);
+                            this.move_project_group_down(&key, cx);
                         }),
                     )
                     .on_action(cx.listener(|this: &mut Self, _: &NextThread, window, cx| {

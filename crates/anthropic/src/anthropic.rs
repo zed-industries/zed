@@ -46,6 +46,9 @@ pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
 /// <https://platform.claude.com/docs/en/build-with-claude/compaction>
 pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
 
+/// The smallest input-token trigger Anthropic accepts for compaction.
+pub const MIN_COMPACTION_TRIGGER_TOKENS: u64 = 50_000;
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum AnthropicModelMode {
@@ -187,6 +190,7 @@ impl Model {
                 | "claude-opus-4-8"
                 | "claude-opus-4-7"
                 | "claude-opus-4-6"
+                | "claude-sonnet-5"
                 | "claude-sonnet-4-6"
         );
 
@@ -855,6 +859,9 @@ pub enum ContextManagementEdit {
     Compact {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         trigger: Option<CompactionTrigger>,
+        /// Stops after emitting the compaction block instead of continuing the response.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pause_after_compaction: Option<bool>,
     },
 }
 
@@ -902,6 +909,44 @@ pub struct Request {
     pub top_p: Option<f32>,
 }
 
+impl Request {
+    /// Configures this request to stop after native compaction.
+    ///
+    /// Tool definitions remain in the request so the trigger observes the same
+    /// context and prompt-cache prefix as normal generation. Tool choice is
+    /// disabled because explicit compaction must only produce replacement
+    /// context.
+    ///
+    /// Claude 4.6 and later reject requests ending in an assistant message as
+    /// unsupported prefill, so completed conversations receive a final user
+    /// turn that requests compaction.
+    pub fn into_compact_request(mut self) -> Self {
+        self.tool_choice = (!self.tools.is_empty()).then_some(ToolChoice::None);
+        if self
+            .messages
+            .last()
+            .is_some_and(|message| message.role == Role::Assistant)
+        {
+            self.messages.push(Message {
+                role: Role::User,
+                content: vec![RequestContent::Text {
+                    text: "Compact the conversation so far.".to_string(),
+                    cache_control: None,
+                }],
+            });
+        }
+        self.context_management = Some(ContextManagement {
+            edits: vec![ContextManagementEdit::Compact {
+                trigger: Some(CompactionTrigger::InputTokens {
+                    value: MIN_COMPACTION_TRIGGER_TOKENS,
+                }),
+                pause_after_compaction: Some(true),
+            }],
+        });
+        self
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Speed {
@@ -932,14 +977,15 @@ pub struct Usage {
     pub cache_creation_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_read_input_tokens: Option<u64>,
-    /// Only populated when a new compaction is triggered during the request.
+    /// Per-sampling token counts returned when the compaction beta is enabled.
+    ///
     /// The top-level token fields exclude compaction iterations, so total
     /// billable usage is the sum across all iterations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iterations: Option<Vec<UsageIteration>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UsageIteration {
     #[serde(rename = "type")]
     pub iteration_type: UsageIterationType,
