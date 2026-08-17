@@ -998,6 +998,39 @@ pub trait PlatformHeadlessRenderer {
 #[doc(hidden)]
 pub type RunnableVariant = Runnable<RunnableMeta>;
 
+/// Process-global dedicated worker threads, keyed by name, backing the
+/// default [`PlatformDispatcher::dispatch_on_worker`] implementation.
+mod named_worker_threads {
+    use super::RunnableVariant;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock, mpsc};
+
+    static WORKERS: OnceLock<Mutex<HashMap<&'static str, mpsc::Sender<RunnableVariant>>>> =
+        OnceLock::new();
+
+    pub(super) fn dispatch(name: &'static str, runnable: RunnableVariant) {
+        let workers = WORKERS.get_or_init(Mutex::default);
+        let mut workers = workers
+            .lock()
+            .expect("named worker registry lock should not be poisoned");
+        let sender = workers.entry(name).or_insert_with(|| {
+            let (sender, receiver) = mpsc::channel::<RunnableVariant>();
+            std::thread::Builder::new()
+                .name(format!("worker-{name}"))
+                .spawn(move || {
+                    while let Ok(runnable) = receiver.recv() {
+                        runnable.run();
+                    }
+                })
+                .expect("failed to spawn named worker thread");
+            sender
+        });
+        if sender.send(runnable).is_err() {
+            log::error!("named worker thread {name:?} exited; dropping a scheduled task");
+        }
+    }
+}
+
 #[doc(hidden)]
 pub type TimerResolutionGuard = gpui_util::Deferred<Box<dyn FnOnce() + Send>>;
 
@@ -1030,6 +1063,16 @@ pub trait PlatformDispatcher: Send + Sync {
     }
 
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
+
+    /// Runs `runnable` on the dedicated worker thread named `name`, creating
+    /// that thread on first use. Tasks scheduled under one name run on that
+    /// one thread, in FIFO order, and never on the background pool.
+    ///
+    /// The default implementation spawns ordinary OS threads; dispatchers on
+    /// platforms without `std::thread` support override it.
+    fn dispatch_on_worker(&self, name: &'static str, runnable: RunnableVariant) {
+        named_worker_threads::dispatch(name, runnable);
+    }
 
     fn now(&self) -> Instant {
         Instant::now()

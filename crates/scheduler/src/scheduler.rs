@@ -112,6 +112,24 @@ pub trait Scheduler: Send + Sync {
         self.schedule_background_with_priority(runnable, Priority::default());
     }
 
+    /// Schedule a task on the dedicated worker thread named `name`, creating
+    /// that thread on first use.
+    ///
+    /// Every task scheduled under one name runs on the same thread, one at a
+    /// time in FIFO order, and that thread is never used for
+    /// [`Self::schedule_background`] work — so state the tasks keep in
+    /// thread-locals is coherent across tasks and names.
+    ///
+    /// The default implementation schedules onto the background pool, which
+    /// loses the same-thread and one-at-a-time guarantees; schedulers whose
+    /// callers rely on them override it. `TestScheduler` keeps the default:
+    /// its single-threaded loop satisfies both guarantees trivially while
+    /// preserving determinism.
+    fn schedule_worker(&self, name: &'static str, runnable: Runnable<RunnableMeta>) {
+        let _ = name;
+        self.schedule_background(runnable);
+    }
+
     #[track_caller]
     fn timer(&self, timeout: Duration) -> Timer;
     fn clock(&self) -> Arc<dyn Clock>;

@@ -114,6 +114,24 @@ impl BackgroundExecutor {
         self.spawn_with_priority(Priority::default(), future.boxed())
     }
 
+    /// Enqueues the given future to run to completion on the dedicated worker
+    /// thread named `name`, creating that thread on first use.
+    ///
+    /// All futures spawned under one name run on the same thread, one at a
+    /// time in FIFO order, and never on the [`Self::spawn`] pool — so state
+    /// they keep in thread-locals is coherent across tasks sharing a name.
+    #[track_caller]
+    pub fn worker_spawn<R>(
+        &self,
+        name: &'static str,
+        future: impl Future<Output = R> + Send + 'static,
+    ) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.inner.worker_spawn(name, future.boxed())
+    }
+
     /// Enqueues the given future to be run to completion on a background thread with the given priority.
     ///
     /// When `Priority::RealtimeAudio` is used, the task runs on a dedicated thread with

@@ -246,6 +246,36 @@ impl BackgroundExecutor {
         Task(TaskState::Spawned(task))
     }
 
+    /// Spawns a future on the dedicated worker thread named `name`.
+    ///
+    /// See [`Scheduler::schedule_worker`]: all futures spawned under one name
+    /// run on the same thread, one at a time, and never on the background
+    /// pool — so thread-local state is coherent across them.
+    #[track_caller]
+    pub fn worker_spawn<F>(&self, name: &'static str, future: F) -> Task<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        let scheduler = Arc::downgrade(&self.scheduler);
+        let location = Location::caller();
+        let (runnable, task) = async_task::Builder::new()
+            .metadata(RunnableMeta {
+                location,
+                spawned: crate::SpawnTime(Instant::now()),
+            })
+            .spawn(
+                move |_| future,
+                move |runnable| {
+                    if let Some(scheduler) = scheduler.upgrade() {
+                        scheduler.schedule_worker(name, runnable);
+                    }
+                },
+            );
+        runnable.schedule();
+        Task(TaskState::Spawned(task))
+    }
+
     /// Spawns a future on a dedicated realtime thread for audio processing.
     #[track_caller]
     pub fn spawn_realtime<F>(&self, future: F) -> Task<F::Output>
