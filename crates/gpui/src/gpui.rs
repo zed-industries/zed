@@ -230,42 +230,6 @@ pub trait AppContext {
         T: 'static;
 
     /// Spawn a future on a background thread
-    ///
-    /// ## Soundness
-    ///
-    /// When compiling for native platforms, this function is sound.
-    ///
-    /// When compiling for web, care must be taken with this function not to
-    /// include a type that contains a dynamically-linked function pointer. This
-    /// will **compile but will cause undefined behaviour**. In other words, on
-    /// the web, this function is intentionally unsound.
-    ///
-    /// While the semantics of the wasm VM are fully-defined in this scenario,
-    /// the Rust abstract machine is clear that this is UB, and as such it
-    /// should be treated as seriously as any other.
-    ///
-    /// Dynamically-linked function pointers are unsound because of how GPUI
-    /// manages "threads" on the web. Each thread is a web worker, which loads
-    /// the same Wasm module as the main worker, and shares memory via
-    /// `SharedArrayBuffer`. Sharing data, as well as *static* function pointers
-    /// is sound.
-    ///
-    /// However, different workers do *not* share function tables, meaning that
-    /// a function pointer to a dynamically-linked function is not guaranteed to
-    /// be be valid on a different worker (and, in practice, almost always is
-    /// not).
-    ///
-    /// The reason for allowing the unsoundness is pragmatic. Closing this
-    /// soundness issue would require is not possible in Rust without
-    /// - a custom auto trait `WorkerSend`, which captures this invariant
-    /// - disallowing using this function with any opaque types (closures,
-    ///   futures, `dyn Trait`, etc.). In practice, this would make the function unusable
-    /// - marking a usually-totally-safe function `unsafe`, which creates lots of
-    ///   noise in `unsafe` usage, desensitizing GPUI app authors to it.
-    ///
-    /// Leaving it as-is was seen as the lesser of three evils. We recommend
-    /// using our `dylint` setup, which will warn if you are using this API
-    /// unsoundly. todo! implement
     fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static;
