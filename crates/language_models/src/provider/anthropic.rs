@@ -502,8 +502,8 @@ mod tests {
                             "stop_reason": null,
                             "stop_sequence": null,
                             "usage": {
-                                "input_tokens": 60_000,
-                                "output_tokens": 1
+                                "input_tokens": 0,
+                                "output_tokens": 0
                             }
                         }
                     }),
@@ -532,11 +532,17 @@ mod tests {
                     json!({
                         "type": "message_delta",
                         "delta": {
-                            "stop_reason": "end_turn",
+                            "stop_reason": "compaction",
                             "stop_sequence": null
                         },
                         "usage": {
-                            "output_tokens": 1_000
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "iterations": [{
+                                "type": "compaction",
+                                "input_tokens": 60_000,
+                                "output_tokens": 1_000
+                            }]
                         }
                     }),
                     json!({"type": "message_stop"}),

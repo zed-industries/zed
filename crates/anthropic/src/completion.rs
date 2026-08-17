@@ -714,6 +714,7 @@ impl AnthropicEventMapper {
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
                         "refusal" => StopReason::Refusal,
+                        "compaction" => StopReason::EndTurn,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
                             StopReason::EndTurn
@@ -775,9 +776,32 @@ fn update_usage(usage: &mut Usage, new: &Usage) {
     if let Some(cache_read_input_tokens) = new.cache_read_input_tokens {
         usage.cache_read_input_tokens = Some(cache_read_input_tokens);
     }
+    if let Some(iterations) = &new.iterations {
+        usage.iterations = Some(iterations.clone());
+    }
 }
 
 fn convert_usage(usage: &Usage) -> TokenUsage {
+    if let Some(iterations) = usage.iterations.as_deref() {
+        return iterations
+            .iter()
+            .fold(TokenUsage::default(), |mut total, iteration| {
+                total.input_tokens = total
+                    .input_tokens
+                    .saturating_add(iteration.input_tokens.unwrap_or(0));
+                total.output_tokens = total
+                    .output_tokens
+                    .saturating_add(iteration.output_tokens.unwrap_or(0));
+                total.cache_creation_input_tokens = total
+                    .cache_creation_input_tokens
+                    .saturating_add(iteration.cache_creation_input_tokens.unwrap_or(0));
+                total.cache_read_input_tokens = total
+                    .cache_read_input_tokens
+                    .saturating_add(iteration.cache_read_input_tokens.unwrap_or(0));
+                total
+            });
+    }
+
     TokenUsage {
         input_tokens: usage.input_tokens.unwrap_or(0),
         output_tokens: usage.output_tokens.unwrap_or(0),
@@ -1655,7 +1679,7 @@ mod tests {
     }
 
     #[test]
-    fn test_usage_iterations_parsed_from_message_delta() {
+    fn test_usage_iterations_aggregated_from_message_delta() {
         let event: Event = serde_json::from_value(serde_json::json!({
             "type": "message_delta",
             "delta": { "stop_reason": "end_turn", "stop_sequence": null },
@@ -1690,5 +1714,13 @@ mod tests {
                 ..
             }
         ));
+        assert_eq!(
+            convert_usage(&usage),
+            TokenUsage {
+                input_tokens: 180_100,
+                output_tokens: 1_239,
+                ..Default::default()
+            }
+        );
     }
 }

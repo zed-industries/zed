@@ -959,14 +959,15 @@ pub struct Usage {
     pub cache_creation_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_read_input_tokens: Option<u64>,
-    /// Only populated when a new compaction is triggered during the request.
+    /// Per-sampling token counts returned when the compaction beta is enabled.
+    ///
     /// The top-level token fields exclude compaction iterations, so total
     /// billable usage is the sum across all iterations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iterations: Option<Vec<UsageIteration>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UsageIteration {
     #[serde(rename = "type")]
     pub iteration_type: UsageIterationType,
