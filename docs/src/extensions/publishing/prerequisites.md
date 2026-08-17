@@ -11,6 +11,7 @@ Note that maintainters will raise non-compliance during the publishing process. 
 
 ## General Requirements
 
+- Your extension must have been tested locally at the submodule commit you are submitting it at.
 - Publish functionality that is not already available in the extension marketplace.
   - If you face issues with an existing extension, first try contributing to the existing extension. See [the section below](#requirements-post-publishing) for more details on this reqirement.
 - Use an appropriate ID for the extension. The ID must be
