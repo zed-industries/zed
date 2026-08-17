@@ -9,6 +9,10 @@ use text::{BufferSnapshot, Point};
 /// Number of lines above and below the source line hashed into
 /// [`ContentMarker::context_hash`].
 const CONTEXT_ROW_RADIUS: u32 = 2;
+/// Format version for [`SerializedSyntacticLocation`].
+///
+/// This must be incremented when its fields or the inputs to
+/// [`SerializedContentMarker::context_hash`] change.
 pub const SYNTACTIC_LOCATION_FORMAT_VERSION: u32 = 1;
 
 /// An in-memory description of a source location, re-resolved against a buffer's
@@ -55,15 +59,27 @@ struct ContentMarker {
     context_hash: u64,
 }
 
+/// Persistable syntactic and textual metadata used to relocate a source
+/// location.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SerializedSyntacticLocation {
+    /// The enclosing symbol, or `None` when no parser-backed symbol is
+    /// available.
     pub symbol: Option<SerializedSymbolRef>,
+    /// A textual fingerprint used to recover the source row.
     pub content_marker: SerializedContentMarker,
 }
 
+/// A source location that can be re-resolved after its buffer is reopened.
+///
+/// Consumers choose how to persist this storage-agnostic envelope. The
+/// syntactic payload's format is versioned by
+/// [`SYNTACTIC_LOCATION_FORMAT_VERSION`].
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DurableSourceLocation {
+    /// The last known row, used when stronger metadata cannot resolve.
     pub fallback_row: u32,
+    /// Optional metadata for relocating the source row after edits.
     pub syntactic_location: Option<SerializedSyntacticLocation>,
 }
 
@@ -133,20 +149,28 @@ pub(crate) enum SourceLocationSerialization {
     Provisional(DurableSourceLocation),
 }
 
+/// Persistable identity and relative position of an enclosing symbol.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SerializedSymbolRef {
+    /// Outline path of the enclosing symbol, innermost last.
     pub symbol_path: Vec<String>,
+    /// The zero-based occurrence of an identical symbol path in the file.
     pub symbol_ordinal: u32,
+    /// The source row's offset from the symbol's start row.
     pub line_offset_in_symbol: u32,
 }
 
+/// Persistable fingerprint of a source line and its surroundings.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SerializedContentMarker {
+    /// Trimmed line text with internal whitespace collapsed.
     pub line_text: String,
+    /// Stable hash of the normalized context window around the source row.
     pub context_hash: u64,
 }
 
 impl SerializedSyntacticLocation {
+    /// Validates invariants required by the resolver.
     pub fn validate(&self) -> Result<()> {
         if self
             .symbol
@@ -504,7 +528,7 @@ fn compute_content_marker(snapshot: &BufferSnapshot, row: u32) -> ContentMarker 
     let mut hasher = Fnv1a::new();
     let max_row = snapshot.max_point().row;
     let start = row.saturating_sub(CONTEXT_ROW_RADIUS);
-    let end = (row + CONTEXT_ROW_RADIUS).min(max_row);
+    let end = row.saturating_add(CONTEXT_ROW_RADIUS).min(max_row);
     // Hash the target row's offset within the window, not just the window's
     // lines: near buffer boundaries the window is clamped, so two different
     // rows (e.g. the first and last line of a three-line file with identical
