@@ -7,7 +7,7 @@ description: "Review the requirements for publishing an extension to the Zed Ext
 
 Before submitting your extension for publishing, make sure it meets the following requirements.
 
-Note that maintainters will raise non-compliance during the publishing process. Should you chose to not follow these requirements, publishing will be delayed or may outright be rejected.
+Note that maintainers will raise non-compliance during the publishing process. Should you chose to not follow these requirements, publishing will be delayed or may outright be rejected.
 
 ## General Requirements
 
