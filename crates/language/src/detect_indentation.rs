@@ -17,7 +17,7 @@ pub fn detect_indentation(
     let mut lines_with_leading_tab = 0;
     let mut lines_with_leading_space = 0;
     let mut delta_histogram = HashMap::<u32, usize>::new();
-    let mut previous_indent: Option<u32> = None;
+    let mut previous_indent = 0;
 
     for indent in indents.take(TEST_LINES) {
         if indent.is_line_blank() {
@@ -30,20 +30,22 @@ pub fn detect_indentation(
             lines_with_leading_tab += 1;
             continue;
         }
-        if indent.spaces > 0 {
-            lines_with_leading_space += 1;
-            if let Some(prev) = previous_indent {
-                let delta = indent.spaces.abs_diff(prev);
-                if delta > 0 {
-                    let count = delta_histogram.entry(delta).or_default();
-                    *count += 1;
-                    if *count >= MAX_DELTA_SAMPLES {
-                        break;
-                    }
-                }
-            }
-            previous_indent = Some(indent.spaces);
+        if indent.spaces == 0 {
+            previous_indent = 0;
+            continue;
         }
+
+        lines_with_leading_space += 1;
+
+        if indent.spaces > previous_indent {
+            let delta = indent.spaces - previous_indent;
+            let count = delta_histogram.entry(delta).or_default();
+            *count += 1;
+            if *count >= MAX_DELTA_SAMPLES {
+                break;
+            }
+        }
+        previous_indent = indent.spaces;
     }
 
     if lines_with_leading_tab == 0 && lines_with_leading_space == 0 {
@@ -130,6 +132,27 @@ fn main() {
   if x > 5 {
     println!("hello");
   }
+}
+"#;
+
+    assert_eq!(
+        detect_indentation(source.lines().map(LineIndent::from)),
+        Some(DetectedIndentation {
+            hard_tabs: false,
+            tab_size: NonZeroU32::new(2),
+        })
+    );
+}
+
+#[test]
+fn test_detect_single_level_two_space_indentation() {
+    let source = r#"
+fn fib(n: i32) -> i32 {
+  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn main() {
+  println!("{}", fib(10));
 }
 "#;
 

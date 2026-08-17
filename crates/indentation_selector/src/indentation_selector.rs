@@ -185,6 +185,11 @@ impl IndentationSelectorDelegate {
         editor.update(cx, |editor, cx| {
             editor.change_indentation(hard_tabs, tab_size, window, cx);
         });
+        let buffer = self.buffer.clone();
+        let project = self.project.clone();
+        cx.defer(move |cx| {
+            project.update(cx, |project, cx| project.save_buffer(buffer, cx).detach());
+        });
     }
 
     fn dispatch_convert(
