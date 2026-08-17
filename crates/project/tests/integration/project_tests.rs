@@ -9268,9 +9268,9 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
                     new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
                         |_, _| async move {
                             Ok(Some(lsp::Hover {
-                                contents: lsp::HoverContents::Scalar(
-                                    lsp::MarkedString::String("TypeScriptServer hover".to_string()),
-                                ),
+                                contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
+                                    "TypeScriptServer hover".to_string(),
+                                )),
                                 range: None,
                             }))
                         },
