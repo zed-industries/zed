@@ -1,3 +1,5 @@
+#[cfg(feature = "profiler")]
+use crate::DebugFrameOverlayMode;
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
 #[cfg(feature = "profiler")]
@@ -1185,6 +1187,8 @@ pub struct Window {
     captured_hitbox: Option<HitboxId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
+    #[cfg(feature = "profiler")]
+    debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay,
     pub(crate) a11y: A11y,
 }
 
@@ -1864,6 +1868,8 @@ impl Window {
             captured_hitbox: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
+            #[cfg(feature = "profiler")]
+            debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay::new(),
             a11y: A11y::new(
                 a11y_active_flag,
                 accessibility_force_disabled,
@@ -2857,6 +2863,16 @@ impl Window {
         }
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
+            #[cfg(feature = "profiler")]
+            {
+                let viewport_size = self.viewport_size;
+                let scale_factor = self.scale_factor();
+                self.debug_frame_overlay.paint(
+                    &mut self.next_frame.scene,
+                    viewport_size,
+                    scale_factor,
+                );
+            }
         }
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
@@ -2937,8 +2953,12 @@ impl Window {
         self.needs_present.set(true);
 
         #[cfg(feature = "profiler")]
-        self.window_profiler
-            .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
+        {
+            let draw_duration = self
+                .window_profiler
+                .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
+            self.debug_frame_overlay.record_frame(draw_duration);
+        }
 
         // Exit the scope to obtain the arena-clear token this draw owes; the
         // scope's teardown itself happens in `ElementArenaScope::drop`.
@@ -3001,6 +3021,34 @@ impl Window {
     #[cfg(feature = "profiler")]
     pub fn frame_duration_snapshot(&self) -> profiler::FrameDurationSnapshot {
         self.window_profiler.frame_duration_snapshot()
+    }
+
+    /// Returns the current mode of the debug frame overlay.
+    #[cfg(feature = "profiler")]
+    pub fn debug_frame_overlay_mode(&self) -> DebugFrameOverlayMode {
+        self.debug_frame_overlay.mode()
+    }
+
+    /// Sets the mode of the debug frame overlay and schedules a redraw.
+    #[cfg(feature = "profiler")]
+    pub fn set_debug_frame_overlay_mode(&mut self, mode: DebugFrameOverlayMode) {
+        self.debug_frame_overlay.set_mode(mode);
+        self.refresh();
+    }
+
+    /// Advances the debug frame overlay through its hidden, frame-time-only,
+    /// and detailed modes.
+    #[cfg(feature = "profiler")]
+    pub fn cycle_debug_frame_overlay_mode(&mut self) {
+        self.set_debug_frame_overlay_mode(self.debug_frame_overlay.mode().next());
+    }
+
+    /// Clears the debug frame overlay's frame-time statistics, except for the
+    /// total frame count, and schedules a redraw.
+    #[cfg(feature = "profiler")]
+    pub fn reset_debug_frame_overlay_stats(&mut self) {
+        self.debug_frame_overlay.reset_stats();
+        self.refresh();
     }
 
     fn draw_roots(&mut self, cx: &mut App) {
