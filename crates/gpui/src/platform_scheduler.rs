@@ -223,15 +223,10 @@ mod tests {
         let background =
             BackgroundExecutor::new(Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher))));
 
-        let first = background.worker_spawn("worker-test-a", async {
-            std::thread::current().id()
-        });
-        let second = background.worker_spawn("worker-test-a", async {
-            std::thread::current().id()
-        });
-        let other = background.worker_spawn("worker-test-b", async {
-            std::thread::current().id()
-        });
+        let first = background.worker_spawn("worker-test-a", async { std::thread::current().id() });
+        let second =
+            background.worker_spawn("worker-test-a", async { std::thread::current().id() });
+        let other = background.worker_spawn("worker-test-b", async { std::thread::current().id() });
 
         let first = futures::executor::block_on(first);
         let second = futures::executor::block_on(second);
