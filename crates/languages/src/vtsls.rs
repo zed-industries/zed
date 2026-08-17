@@ -436,7 +436,7 @@ mod tests {
             expected
         );
 
-        // Check if ' used in normal English language (isn't, possesive 's, etc) are not converted into `
+        // Check if ' used in normal English language (isn't, possessive 's, etc) are not converted into `
         let message = "Element implicitly has an 'any' type because expression of type '\"a\" | \"c\"' can't be used to index type '{ a: number; b: string; }'. Property 'c' does not exist on type '{ a: number; b: string; }'.";
 
         let expected = "Element implicitly has an `any` type because expression of type \n```typescript\n\"a\" | \"c\"\n```\n can't be used to index type \n```typescript\n{ a: number; b: string; }\n```\n. Property `c` does not exist on type \n```typescript\n{ a: number; b: string; }\n```\n.";
