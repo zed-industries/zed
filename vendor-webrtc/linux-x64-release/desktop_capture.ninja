@@ -1,0 +1,140 @@
+defines = -DUSE_UDEV -DUSE_AURA=1 -DUSE_GLIB=1 -DUSE_OZONE=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D_FORTIFY_SOURCE=2 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE -D_GNU_SOURCE -DCR_CLANG_REVISION=\"llvmorg-21-init-9266-g09006611-1\" -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE -D_GLIBCXX_ASSERTIONS=1 -DCR_SYSROOT_KEY=20250129T203412Z-1 -DNDEBUG -DNVALGRIND -DDYNAMIC_ANNOTATIONS_ENABLED=0 -DWEBRTC_ENABLE_PROTOBUF=0 -DWEBRTC_STRICT_FIELD_TRIALS=0 -DWEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE -DRTC_USE_LIBAOM_AV1_ENCODER -DRTC_ENABLE_VP9 -DRTC_ENABLE_H265 -DRTC_DAV1D_IN_INTERNAL_DECODER_FACTORY -DWEBRTC_HAVE_SCTP -DWEBRTC_USE_H264 -DWEBRTC_LIBRARY_IMPL -DPROTOBUF_ENABLE_DEBUG_LOGGING_MAY_LEAK_PII=0 -DWEBRTC_ENABLE_AVX2 -DWEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS=0 -DWEBRTC_POSIX -DWEBRTC_LINUX -DWEBRTC_ALLOW_DEPRECATED_NAMESPACES -DABSL_ALLOCATOR_NOTHROW=1 -DWEBRTC_USE_X11 -DWEBRTC_USE_PIPEWIRE -DWEBRTC_USE_GIO -DCHROMIUM -DLIBYUV_DISABLE_NEON -DLIBYUV_DISABLE_SVE -DLIBYUV_DISABLE_SME -DLIBYUV_DISABLE_LSX -DLIBYUV_DISABLE_LASX
+include_dirs = -I.. -Igen -I../third_party/abseil-cpp -I../third_party/libyuv/include -I../third_party/perfetto/include -Igen/third_party/perfetto/build_config -Igen/third_party/perfetto
+cflags = -Wall -Wextra -Wimplicit-fallthrough -Wextra-semi -Wunreachable-code-aggressive -Wthread-safety -Wgnu -Wno-gnu-anonymous-struct -Wno-gnu-conditional-omitted-operand -Wno-gnu-include-next -Wno-gnu-label-as-value -Wno-gnu-redeclared-enum -Wno-gnu-statement-expression -Wno-gnu-zero-variadic-macro-arguments -Wno-zero-length-array -Wno-missing-field-initializers -Wno-unused-parameter -Wno-psabi -Wloop-analysis -Wno-unneeded-internal-declaration -Wno-cast-function-type -Wno-thread-safety-reference-return -Wno-nontrivial-memcall -Wshadow -fno-delete-null-pointer-checks -fno-strict-overflow -fno-ident -fno-strict-aliasing -fstack-protector -funwind-tables -fPIC -pthread -fcolor-diagnostics -fmerge-all-constants -fno-sized-deallocation -fcrash-diagnostics-dir=../tools/clang/crashreports -mllvm -instcombine-lower-dbg-declare=0 -mllvm -split-threshold-for-reg-with-hint=0 -ffp-contract=off -fextend-variable-liveness=none -m64 -msse3 -Wno-builtin-macro-redefined -D__DATE__= -D__TIME__= -D__TIMESTAMP__= -ffile-compilation-dir=. -no-canonical-prefixes -ftrivial-auto-var-init=pattern -O2 -fdata-sections -ffunction-sections -fno-unique-section-names -fno-math-errno -fno-omit-frame-pointer -g0 -fvisibility=hidden -Wheader-hygiene -Wstring-conversion -Wtautological-overlap-compare -Wexit-time-destructors -Wglobal-constructors -Wno-shadow -Wctad-maybe-unsupported -Wc++11-narrowing -Wundef -Wunused-lambda-capture -isystem../build/linux/debian_bullseye_amd64-sysroot/usr/include/glib-2.0 -isystem../build/linux/debian_bullseye_amd64-sysroot/usr/lib/x86_64-linux-gnu/glib-2.0/include -isystem../build/linux/debian_bullseye_amd64-sysroot/usr/include/libmount -isystem../build/linux/debian_bullseye_amd64-sysroot/usr/include/blkid -isystem../build/linux/debian_bullseye_amd64-sysroot/usr/include/gio-unix-2.0 -D_REENTRANT -isystem../build/linux/debian_bullseye_amd64-sysroot/usr/include/pipewire-0.3 -isystem../build/linux/debian_bullseye_amd64-sysroot/usr/include/spa-0.2 -isystem../build/linux/debian_bullseye_amd64-sysroot/usr/include/libdrm
+cflags_cc = -Wno-invalid-offsetof -Wenum-compare-conditional -Wno-nullability-completeness -std=c++20 -Wno-trigraphs -gsimple-template-names -fno-exceptions --sysroot=../build/linux/debian_bullseye_amd64-sysroot -fvisibility-inlines-hidden -Wnon-virtual-dtor -Woverloaded-virtual
+label_name = desktop_capture
+target_out_dir = obj/modules/desktop_capture
+target_output_name = libdesktop_capture
+
+build phony/modules/desktop_capture/desktop_capture.inputdeps: phony phony/modules/portal/pipewire_stubs__stubs_gen phony/third_party/perfetto/gn/gen_buildflags phony/third_party/perfetto/protos/perfetto/common/cpp_gen phony/third_party/perfetto/protos/perfetto/common/zero_gen phony/third_party/perfetto/protos/perfetto/config/cpp_gen phony/third_party/perfetto/protos/perfetto/config/zero_gen phony/third_party/perfetto/protos/perfetto/config/android/cpp_gen phony/third_party/perfetto/protos/perfetto/config/android/zero_gen phony/third_party/perfetto/protos/perfetto/config/ftrace/cpp_gen phony/third_party/perfetto/protos/perfetto/config/ftrace/zero_gen phony/third_party/perfetto/protos/perfetto/config/gpu/cpp_gen phony/third_party/perfetto/protos/perfetto/config/gpu/zero_gen phony/third_party/perfetto/protos/perfetto/config/inode_file/cpp_gen phony/third_party/perfetto/protos/perfetto/config/inode_file/zero_gen phony/third_party/perfetto/protos/perfetto/config/interceptors/cpp_gen phony/third_party/perfetto/protos/perfetto/config/interceptors/zero_gen phony/third_party/perfetto/protos/perfetto/config/power/cpp_gen phony/third_party/perfetto/protos/perfetto/config/power/zero_gen phony/third_party/perfetto/protos/perfetto/config/process_stats/cpp_gen phony/third_party/perfetto/protos/perfetto/config/process_stats/zero_gen phony/third_party/perfetto/protos/perfetto/config/profiling/cpp_gen phony/third_party/perfetto/protos/perfetto/config/profiling/zero_gen phony/third_party/perfetto/protos/perfetto/config/statsd/cpp_gen phony/third_party/perfetto/protos/perfetto/config/statsd/zero_gen phony/third_party/perfetto/protos/perfetto/config/sys_stats/cpp_gen phony/third_party/perfetto/protos/perfetto/config/sys_stats/zero_gen phony/third_party/perfetto/protos/perfetto/config/system_info/cpp_gen phony/third_party/perfetto/protos/perfetto/config/system_info/zero_gen phony/third_party/perfetto/protos/perfetto/config/track_event/cpp_gen phony/third_party/perfetto/protos/perfetto/config/track_event/zero_gen phony/third_party/perfetto/protos/perfetto/trace/minimal_zero_gen phony/third_party/perfetto/protos/perfetto/trace/non_minimal_zero_gen phony/third_party/perfetto/protos/perfetto/trace/android/winscope_common_zero_gen phony/third_party/perfetto/protos/perfetto/trace/android/winscope_regular_zero_gen phony/third_party/perfetto/protos/perfetto/trace/android/zero_gen phony/third_party/perfetto/protos/perfetto/trace/chrome/zero_gen phony/third_party/perfetto/protos/perfetto/trace/etw/zero_gen phony/third_party/perfetto/protos/perfetto/trace/filesystem/zero_gen phony/third_party/perfetto/protos/perfetto/trace/ftrace/zero_gen phony/third_party/perfetto/protos/perfetto/trace/gpu/zero_gen phony/third_party/perfetto/protos/perfetto/trace/interned_data/zero_gen phony/third_party/perfetto/protos/perfetto/trace/perfetto/zero_gen phony/third_party/perfetto/protos/perfetto/trace/power/zero_gen phony/third_party/perfetto/protos/perfetto/trace/profiling/zero_gen phony/third_party/perfetto/protos/perfetto/trace/ps/zero_gen phony/third_party/perfetto/protos/perfetto/trace/statsd/zero_gen phony/third_party/perfetto/protos/perfetto/trace/sys_stats/zero_gen phony/third_party/perfetto/protos/perfetto/trace/system_info/zero_gen phony/third_party/perfetto/protos/perfetto/trace/track_event/cpp_gen phony/third_party/perfetto/protos/perfetto/trace/track_event/zero_gen phony/third_party/perfetto/protos/perfetto/trace/translation/zero_gen
+build obj/modules/desktop_capture/desktop_capture/blank_detector_desktop_capturer_wrapper.o: cxx ../modules/desktop_capture/blank_detector_desktop_capturer_wrapper.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = blank_detector_desktop_capturer_wrapper.cc
+  source_name_part = blank_detector_desktop_capturer_wrapper
+build obj/modules/desktop_capture/desktop_capture/cropped_desktop_frame.o: cxx ../modules/desktop_capture/cropped_desktop_frame.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = cropped_desktop_frame.cc
+  source_name_part = cropped_desktop_frame
+build obj/modules/desktop_capture/desktop_capture/cropping_window_capturer.o: cxx ../modules/desktop_capture/cropping_window_capturer.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = cropping_window_capturer.cc
+  source_name_part = cropping_window_capturer
+build obj/modules/desktop_capture/desktop_capture/desktop_and_cursor_composer.o: cxx ../modules/desktop_capture/desktop_and_cursor_composer.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = desktop_and_cursor_composer.cc
+  source_name_part = desktop_and_cursor_composer
+build obj/modules/desktop_capture/desktop_capture/desktop_capture_metrics_helper.o: cxx ../modules/desktop_capture/desktop_capture_metrics_helper.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = desktop_capture_metrics_helper.cc
+  source_name_part = desktop_capture_metrics_helper
+build obj/modules/desktop_capture/desktop_capture/desktop_capture_options.o: cxx ../modules/desktop_capture/desktop_capture_options.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = desktop_capture_options.cc
+  source_name_part = desktop_capture_options
+build obj/modules/desktop_capture/desktop_capture/desktop_capturer.o: cxx ../modules/desktop_capture/desktop_capturer.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = desktop_capturer.cc
+  source_name_part = desktop_capturer
+build obj/modules/desktop_capture/desktop_capture/desktop_capturer_differ_wrapper.o: cxx ../modules/desktop_capture/desktop_capturer_differ_wrapper.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = desktop_capturer_differ_wrapper.cc
+  source_name_part = desktop_capturer_differ_wrapper
+build obj/modules/desktop_capture/desktop_capture/desktop_capturer_wrapper.o: cxx ../modules/desktop_capture/desktop_capturer_wrapper.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = desktop_capturer_wrapper.cc
+  source_name_part = desktop_capturer_wrapper
+build obj/modules/desktop_capture/desktop_capture/desktop_frame_generator.o: cxx ../modules/desktop_capture/desktop_frame_generator.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = desktop_frame_generator.cc
+  source_name_part = desktop_frame_generator
+build obj/modules/desktop_capture/desktop_capture/desktop_frame_rotation.o: cxx ../modules/desktop_capture/desktop_frame_rotation.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = desktop_frame_rotation.cc
+  source_name_part = desktop_frame_rotation
+build obj/modules/desktop_capture/desktop_capture/differ_block.o: cxx ../modules/desktop_capture/differ_block.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = differ_block.cc
+  source_name_part = differ_block
+build obj/modules/desktop_capture/desktop_capture/fake_desktop_capturer.o: cxx ../modules/desktop_capture/fake_desktop_capturer.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = fake_desktop_capturer.cc
+  source_name_part = fake_desktop_capturer
+build obj/modules/desktop_capture/desktop_capture/fallback_desktop_capturer_wrapper.o: cxx ../modules/desktop_capture/fallback_desktop_capturer_wrapper.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = fallback_desktop_capturer_wrapper.cc
+  source_name_part = fallback_desktop_capturer_wrapper
+build obj/modules/desktop_capture/desktop_capture/full_screen_application_handler.o: cxx ../modules/desktop_capture/full_screen_application_handler.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = full_screen_application_handler.cc
+  source_name_part = full_screen_application_handler
+build obj/modules/desktop_capture/desktop_capture/full_screen_window_detector.o: cxx ../modules/desktop_capture/full_screen_window_detector.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = full_screen_window_detector.cc
+  source_name_part = full_screen_window_detector
+build obj/modules/desktop_capture/desktop_capture/mouse_cursor.o: cxx ../modules/desktop_capture/mouse_cursor.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = mouse_cursor.cc
+  source_name_part = mouse_cursor
+build obj/modules/desktop_capture/desktop_capture/resolution_tracker.o: cxx ../modules/desktop_capture/resolution_tracker.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = resolution_tracker.cc
+  source_name_part = resolution_tracker
+build obj/modules/desktop_capture/desktop_capture/rgba_color.o: cxx ../modules/desktop_capture/rgba_color.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = rgba_color.cc
+  source_name_part = rgba_color
+build obj/modules/desktop_capture/desktop_capture/screen_capturer_helper.o: cxx ../modules/desktop_capture/screen_capturer_helper.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = screen_capturer_helper.cc
+  source_name_part = screen_capturer_helper
+build obj/modules/desktop_capture/desktop_capture/window_finder.o: cxx ../modules/desktop_capture/window_finder.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = window_finder.cc
+  source_name_part = window_finder
+build obj/modules/desktop_capture/desktop_capture/mouse_cursor_monitor_linux.o: cxx ../modules/desktop_capture/mouse_cursor_monitor_linux.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = mouse_cursor_monitor_linux.cc
+  source_name_part = mouse_cursor_monitor_linux
+build obj/modules/desktop_capture/desktop_capture/screen_capturer_linux.o: cxx ../modules/desktop_capture/screen_capturer_linux.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = screen_capturer_linux.cc
+  source_name_part = screen_capturer_linux
+build obj/modules/desktop_capture/desktop_capture/window_capturer_linux.o: cxx ../modules/desktop_capture/window_capturer_linux.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = window_capturer_linux.cc
+  source_name_part = window_capturer_linux
+build obj/modules/desktop_capture/desktop_capture/mouse_cursor_monitor_x11.o: cxx ../modules/desktop_capture/linux/x11/mouse_cursor_monitor_x11.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = mouse_cursor_monitor_x11.cc
+  source_name_part = mouse_cursor_monitor_x11
+build obj/modules/desktop_capture/desktop_capture/screen_capturer_x11.o: cxx ../modules/desktop_capture/linux/x11/screen_capturer_x11.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = screen_capturer_x11.cc
+  source_name_part = screen_capturer_x11
+build obj/modules/desktop_capture/desktop_capture/shared_x_display.o: cxx ../modules/desktop_capture/linux/x11/shared_x_display.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = shared_x_display.cc
+  source_name_part = shared_x_display
+build obj/modules/desktop_capture/desktop_capture/window_capturer_x11.o: cxx ../modules/desktop_capture/linux/x11/window_capturer_x11.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = window_capturer_x11.cc
+  source_name_part = window_capturer_x11
+build obj/modules/desktop_capture/desktop_capture/window_finder_x11.o: cxx ../modules/desktop_capture/linux/x11/window_finder_x11.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = window_finder_x11.cc
+  source_name_part = window_finder_x11
+build obj/modules/desktop_capture/desktop_capture/window_list_utils.o: cxx ../modules/desktop_capture/linux/x11/window_list_utils.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = window_list_utils.cc
+  source_name_part = window_list_utils
+build obj/modules/desktop_capture/desktop_capture/x_atom_cache.o: cxx ../modules/desktop_capture/linux/x11/x_atom_cache.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = x_atom_cache.cc
+  source_name_part = x_atom_cache
+build obj/modules/desktop_capture/desktop_capture/x_error_trap.o: cxx ../modules/desktop_capture/linux/x11/x_error_trap.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = x_error_trap.cc
+  source_name_part = x_error_trap
+build obj/modules/desktop_capture/desktop_capture/x_server_pixel_buffer.o: cxx ../modules/desktop_capture/linux/x11/x_server_pixel_buffer.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = x_server_pixel_buffer.cc
+  source_name_part = x_server_pixel_buffer
+build obj/modules/desktop_capture/desktop_capture/x_window_property.o: cxx ../modules/desktop_capture/linux/x11/x_window_property.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = x_window_property.cc
+  source_name_part = x_window_property
+build obj/modules/desktop_capture/desktop_capture/base_capturer_pipewire.o: cxx ../modules/desktop_capture/linux/wayland/base_capturer_pipewire.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = base_capturer_pipewire.cc
+  source_name_part = base_capturer_pipewire
+build obj/modules/desktop_capture/desktop_capture/egl_dmabuf.o: cxx ../modules/desktop_capture/linux/wayland/egl_dmabuf.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = egl_dmabuf.cc
+  source_name_part = egl_dmabuf
+build obj/modules/desktop_capture/desktop_capture/mouse_cursor_monitor_pipewire.o: cxx ../modules/desktop_capture/linux/wayland/mouse_cursor_monitor_pipewire.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = mouse_cursor_monitor_pipewire.cc
+  source_name_part = mouse_cursor_monitor_pipewire
+build obj/modules/desktop_capture/desktop_capture/restore_token_manager.o: cxx ../modules/desktop_capture/linux/wayland/restore_token_manager.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = restore_token_manager.cc
+  source_name_part = restore_token_manager
+build obj/modules/desktop_capture/desktop_capture/screen_capture_portal_interface.o: cxx ../modules/desktop_capture/linux/wayland/screen_capture_portal_interface.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = screen_capture_portal_interface.cc
+  source_name_part = screen_capture_portal_interface
+build obj/modules/desktop_capture/desktop_capture/screencast_portal.o: cxx ../modules/desktop_capture/linux/wayland/screencast_portal.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = screencast_portal.cc
+  source_name_part = screencast_portal
+build obj/modules/desktop_capture/desktop_capture/screencast_stream_utils.o: cxx ../modules/desktop_capture/linux/wayland/screencast_stream_utils.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = screencast_stream_utils.cc
+  source_name_part = screencast_stream_utils
+build obj/modules/desktop_capture/desktop_capture/shared_screencast_stream.o: cxx ../modules/desktop_capture/linux/wayland/shared_screencast_stream.cc || phony/modules/desktop_capture/desktop_capture.inputdeps
+  source_file_part = shared_screencast_stream.cc
+  source_name_part = shared_screencast_stream
+
+build obj/modules/desktop_capture/libdesktop_capture.a: alink obj/modules/desktop_capture/desktop_capture/blank_detector_desktop_capturer_wrapper.o obj/modules/desktop_capture/desktop_capture/cropped_desktop_frame.o obj/modules/desktop_capture/desktop_capture/cropping_window_capturer.o obj/modules/desktop_capture/desktop_capture/desktop_and_cursor_composer.o obj/modules/desktop_capture/desktop_capture/desktop_capture_metrics_helper.o obj/modules/desktop_capture/desktop_capture/desktop_capture_options.o obj/modules/desktop_capture/desktop_capture/desktop_capturer.o obj/modules/desktop_capture/desktop_capture/desktop_capturer_differ_wrapper.o obj/modules/desktop_capture/desktop_capture/desktop_capturer_wrapper.o obj/modules/desktop_capture/desktop_capture/desktop_frame_generator.o obj/modules/desktop_capture/desktop_capture/desktop_frame_rotation.o obj/modules/desktop_capture/desktop_capture/differ_block.o obj/modules/desktop_capture/desktop_capture/fake_desktop_capturer.o obj/modules/desktop_capture/desktop_capture/fallback_desktop_capturer_wrapper.o obj/modules/desktop_capture/desktop_capture/full_screen_application_handler.o obj/modules/desktop_capture/desktop_capture/full_screen_window_detector.o obj/modules/desktop_capture/desktop_capture/mouse_cursor.o obj/modules/desktop_capture/desktop_capture/resolution_tracker.o obj/modules/desktop_capture/desktop_capture/rgba_color.o obj/modules/desktop_capture/desktop_capture/screen_capturer_helper.o obj/modules/desktop_capture/desktop_capture/window_finder.o obj/modules/desktop_capture/desktop_capture/mouse_cursor_monitor_linux.o obj/modules/desktop_capture/desktop_capture/screen_capturer_linux.o obj/modules/desktop_capture/desktop_capture/window_capturer_linux.o obj/modules/desktop_capture/desktop_capture/mouse_cursor_monitor_x11.o obj/modules/desktop_capture/desktop_capture/screen_capturer_x11.o obj/modules/desktop_capture/desktop_capture/shared_x_display.o obj/modules/desktop_capture/desktop_capture/window_capturer_x11.o obj/modules/desktop_capture/desktop_capture/window_finder_x11.o obj/modules/desktop_capture/desktop_capture/window_list_utils.o obj/modules/desktop_capture/desktop_capture/x_atom_cache.o obj/modules/desktop_capture/desktop_capture/x_error_trap.o obj/modules/desktop_capture/desktop_capture/x_server_pixel_buffer.o obj/modules/desktop_capture/desktop_capture/x_window_property.o obj/modules/desktop_capture/desktop_capture/base_capturer_pipewire.o obj/modules/desktop_capture/desktop_capture/egl_dmabuf.o obj/modules/desktop_capture/desktop_capture/mouse_cursor_monitor_pipewire.o obj/modules/desktop_capture/desktop_capture/restore_token_manager.o obj/modules/desktop_capture/desktop_capture/screen_capture_portal_interface.o obj/modules/desktop_capture/desktop_capture/screencast_portal.o obj/modules/desktop_capture/desktop_capture/screencast_stream_utils.o obj/modules/desktop_capture/desktop_capture/shared_screencast_stream.o | ../third_party/llvm-build/Release+Asserts/lib/clang/21/lib/x86_64-unknown-linux-gnu/libclang_rt.builtins.a || phony/third_party/abseil-cpp/absl/strings/strings phony/third_party/abseil-cpp/absl/strings/string_view obj/modules/desktop_capture/libprimitives.a phony/api/function_view phony/api/sequence_checker obj/rtc_base/libchecks.a obj/rtc_base/libevent_tracer.a obj/rtc_base/liblogging.a obj/rtc_base/librandom.a obj/rtc_base/libstringutils.a obj/rtc_base/libtimeutils.a phony/rtc_base/synchronization/mutex obj/system_wrappers/libsystem_wrappers.a obj/system_wrappers/libmetrics.a phony/third_party/libyuv/libyuv obj/modules/desktop_capture/libdesktop_capture_differ_sse2.a obj/modules/portal/libportal.a phony/third_party/abseil-cpp/absl/base/base phony/third_party/abseil-cpp/absl/base/log_severity phony/third_party/abseil-cpp/absl/base/raw_logging_internal phony/third_party/abseil-cpp/absl/base/spinlock_wait phony/third_party/abseil-cpp/absl/base/throw_delegate phony/third_party/abseil-cpp/absl/strings/charset phony/third_party/abseil-cpp/absl/strings/internal phony/third_party/abseil-cpp/absl/base/endian phony/third_party/abseil-cpp/absl/numeric/bits phony/third_party/abseil-cpp/absl/numeric/int128 obj/third_party/libyuv/libyuv_internal.a obj/third_party/libjpeg_turbo/libjpeg.a obj/third_party/libjpeg_turbo/libjpeg12.a obj/third_party/libjpeg_turbo/libjpeg16.a obj/third_party/libjpeg_turbo/libsimd.a obj/third_party/libjpeg_turbo/libsimd_asm.a obj/rtc_base/synchronization/libsequence_checker_internal.a obj/rtc_base/synchronization/libyield.a obj/rtc_base/libplatform_thread_types.a phony/rtc_base/safe_minmax phony/api/array_view obj/api/task_queue/libtask_queue.a obj/api/units/libtime_delta.a phony/rtc_base/units/unit_base phony/rtc_base/divide_round phony/rtc_base/safe_conversions obj/api/units/libtimestamp.a obj/rtc_base/libplatform_thread.a obj/rtc_base/librtc_event.a obj/rtc_base/synchronization/libyield_policy.a phony/third_party/perfetto/include/perfetto/tracing/tracing obj/third_party/perfetto/protos/perfetto/common/libcpp.a phony/third_party/perfetto/src/protozero/protozero phony/third_party/perfetto/src/base/base phony/third_party/perfetto/src/base/perfetto_base_default_platform obj/third_party/perfetto/protos/perfetto/common/libzero.a obj/third_party/perfetto/protos/perfetto/config/libcpp.a obj/third_party/perfetto/protos/perfetto/config/android/libcpp.a obj/third_party/perfetto/protos/perfetto/config/ftrace/libcpp.a obj/third_party/perfetto/protos/perfetto/config/gpu/libcpp.a obj/third_party/perfetto/protos/perfetto/config/inode_file/libcpp.a obj/third_party/perfetto/protos/perfetto/config/interceptors/libcpp.a obj/third_party/perfetto/protos/perfetto/config/power/libcpp.a obj/third_party/perfetto/protos/perfetto/config/process_stats/libcpp.a obj/third_party/perfetto/protos/perfetto/config/profiling/libcpp.a obj/third_party/perfetto/protos/perfetto/config/statsd/libcpp.a obj/third_party/perfetto/protos/perfetto/config/sys_stats/libcpp.a obj/third_party/perfetto/protos/perfetto/config/system_info/libcpp.a obj/third_party/perfetto/protos/perfetto/config/track_event/libcpp.a obj/third_party/perfetto/protos/perfetto/trace/libminimal_zero.a obj/third_party/perfetto/protos/perfetto/config/libzero.a obj/third_party/perfetto/protos/perfetto/config/android/libzero.a obj/third_party/perfetto/protos/perfetto/config/ftrace/libzero.a obj/third_party/perfetto/protos/perfetto/config/gpu/libzero.a obj/third_party/perfetto/protos/perfetto/config/inode_file/libzero.a obj/third_party/perfetto/protos/perfetto/config/interceptors/libzero.a obj/third_party/perfetto/protos/perfetto/config/power/libzero.a obj/third_party/perfetto/protos/perfetto/config/process_stats/libzero.a obj/third_party/perfetto/protos/perfetto/config/profiling/libzero.a obj/third_party/perfetto/protos/perfetto/config/statsd/libzero.a obj/third_party/perfetto/protos/perfetto/config/sys_stats/libzero.a obj/third_party/perfetto/protos/perfetto/config/system_info/libzero.a obj/third_party/perfetto/protos/perfetto/config/track_event/libzero.a obj/third_party/perfetto/protos/perfetto/trace/libnon_minimal_zero.a obj/third_party/perfetto/protos/perfetto/trace/android/libzero.a obj/third_party/perfetto/protos/perfetto/trace/android/libwinscope_regular_zero.a obj/third_party/perfetto/protos/perfetto/trace/android/libwinscope_common_zero.a obj/third_party/perfetto/protos/perfetto/trace/chrome/libzero.a obj/third_party/perfetto/protos/perfetto/trace/etw/libzero.a obj/third_party/perfetto/protos/perfetto/trace/filesystem/libzero.a obj/third_party/perfetto/protos/perfetto/trace/ftrace/libzero.a obj/third_party/perfetto/protos/perfetto/trace/gpu/libzero.a obj/third_party/perfetto/protos/perfetto/trace/interned_data/libzero.a obj/third_party/perfetto/protos/perfetto/trace/profiling/libzero.a obj/third_party/perfetto/protos/perfetto/trace/track_event/libzero.a obj/third_party/perfetto/protos/perfetto/trace/perfetto/libzero.a obj/third_party/perfetto/protos/perfetto/trace/power/libzero.a obj/third_party/perfetto/protos/perfetto/trace/ps/libzero.a obj/third_party/perfetto/protos/perfetto/trace/statsd/libzero.a obj/third_party/perfetto/protos/perfetto/trace/sys_stats/libzero.a obj/third_party/perfetto/protos/perfetto/trace/system_info/libzero.a obj/third_party/perfetto/protos/perfetto/trace/translation/libzero.a obj/third_party/perfetto/protos/perfetto/trace/track_event/libcpp.a obj/rtc_base/librtc_numerics.a phony/rtc_base/mod_ops phony/modules/portal/pipewire_stubs
+  arflags = -T -S
+  output_extension = .a
+  output_dir = obj/modules/desktop_capture

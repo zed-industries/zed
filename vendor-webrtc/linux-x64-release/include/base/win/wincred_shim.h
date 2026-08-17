@@ -1,0 +1,18 @@
+// Copyright 2024 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#ifndef BASE_WIN_WINCRED_SHIM_H_
+#define BASE_WIN_WINCRED_SHIM_H_
+
+// Any Chromium headers which want to `#include <wincred.h>` should instead
+// #include this header.
+
+#include <wincred.h>
+
+// <wincred.h> defines macros mapping various common function names to have a
+// `W` suffix. Undefine as necessary. If you need to call one of the relevant
+// system APIs, use the full name (with trailing `W`) directly.
+#undef CredProtect
+
+#endif  // BASE_WIN_WINCRED_SHIM_H_

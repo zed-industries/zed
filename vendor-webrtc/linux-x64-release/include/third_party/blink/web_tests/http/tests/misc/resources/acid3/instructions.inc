@@ -1,0 +1,1 @@
+To pass the test,<span></span> a browser must use its default settings, the animation has to be smooth, the score has to end on 100/100, and the final page has to look exactly, pixel for pixel, like <a href="resources/acid3/reference.html">this reference rendering</a>.

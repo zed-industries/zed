@@ -22,6 +22,13 @@ rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 [env]
 MACOSX_DEPLOYMENT_TARGET = "10.15.7"
+# webrtc-sys's build.rs downloads a prebuilt libwebrtc archive from GitHub
+# Releases at build time, which cargo vendor cannot cover. For fully offline
+# builds on x86_64 Linux, uncomment the line below to use the copy vendored
+# under vendor-webrtc/linux-x64-release/ instead. Left commented out because
+# it is specific to the linux-x64-release target: building for a different
+# OS/arch with this set would link the wrong binary.
+# LK_CUSTOM_WEBRTC = { value = "vendor-webrtc/linux-x64-release", relative = true }
 
 # Offline builds: use the vendored dependencies in vendor/ instead of the network.
 # Populated via: cargo vendor --versioned-dirs vendor

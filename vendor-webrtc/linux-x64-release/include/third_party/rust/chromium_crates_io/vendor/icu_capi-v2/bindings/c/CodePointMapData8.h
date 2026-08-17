@@ -1,0 +1,95 @@
+#ifndef CodePointMapData8_H
+#define CodePointMapData8_H
+
+#include <stdio.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include "diplomat_runtime.h"
+
+#include "CodePointRangeIterator.d.h"
+#include "CodePointSetData.d.h"
+#include "DataError.d.h"
+#include "DataProvider.d.h"
+#include "GeneralCategoryGroup.d.h"
+
+#include "CodePointMapData8.d.h"
+
+
+
+
+
+
+uint8_t icu4x_CodePointMapData8_get_mv1(const CodePointMapData8* self, char32_t cp);
+
+CodePointRangeIterator* icu4x_CodePointMapData8_iter_ranges_for_value_mv1(const CodePointMapData8* self, uint8_t value);
+
+CodePointRangeIterator* icu4x_CodePointMapData8_iter_ranges_for_value_complemented_mv1(const CodePointMapData8* self, uint8_t value);
+
+CodePointRangeIterator* icu4x_CodePointMapData8_iter_ranges_for_group_mv1(const CodePointMapData8* self, GeneralCategoryGroup group);
+
+CodePointSetData* icu4x_CodePointMapData8_get_set_for_value_mv1(const CodePointMapData8* self, uint8_t value);
+
+CodePointMapData8* icu4x_CodePointMapData8_create_general_category_mv1(void);
+
+typedef struct icu4x_CodePointMapData8_create_general_category_with_provider_mv1_result {union {CodePointMapData8* ok; DataError err;}; bool is_ok;} icu4x_CodePointMapData8_create_general_category_with_provider_mv1_result;
+icu4x_CodePointMapData8_create_general_category_with_provider_mv1_result icu4x_CodePointMapData8_create_general_category_with_provider_mv1(const DataProvider* provider);
+
+CodePointMapData8* icu4x_CodePointMapData8_create_bidi_class_mv1(void);
+
+typedef struct icu4x_CodePointMapData8_create_bidi_class_with_provider_mv1_result {union {CodePointMapData8* ok; DataError err;}; bool is_ok;} icu4x_CodePointMapData8_create_bidi_class_with_provider_mv1_result;
+icu4x_CodePointMapData8_create_bidi_class_with_provider_mv1_result icu4x_CodePointMapData8_create_bidi_class_with_provider_mv1(const DataProvider* provider);
+
+CodePointMapData8* icu4x_CodePointMapData8_create_east_asian_width_mv1(void);
+
+typedef struct icu4x_CodePointMapData8_create_east_asian_width_with_provider_mv1_result {union {CodePointMapData8* ok; DataError err;}; bool is_ok;} icu4x_CodePointMapData8_create_east_asian_width_with_provider_mv1_result;
+icu4x_CodePointMapData8_create_east_asian_width_with_provider_mv1_result icu4x_CodePointMapData8_create_east_asian_width_with_provider_mv1(const DataProvider* provider);
+
+CodePointMapData8* icu4x_CodePointMapData8_create_hangul_syllable_type_mv1(void);
+
+typedef struct icu4x_CodePointMapData8_create_hangul_syllable_type_with_provider_mv1_result {union {CodePointMapData8* ok; DataError err;}; bool is_ok;} icu4x_CodePointMapData8_create_hangul_syllable_type_with_provider_mv1_result;
+icu4x_CodePointMapData8_create_hangul_syllable_type_with_provider_mv1_result icu4x_CodePointMapData8_create_hangul_syllable_type_with_provider_mv1(const DataProvider* provider);
+
+CodePointMapData8* icu4x_CodePointMapData8_create_indic_syllabic_category_mv1(void);
+
+typedef struct icu4x_CodePointMapData8_create_indic_syllabic_category_with_provider_mv1_result {union {CodePointMapData8* ok; DataError err;}; bool is_ok;} icu4x_CodePointMapData8_create_indic_syllabic_category_with_provider_mv1_result;
+icu4x_CodePointMapData8_create_indic_syllabic_category_with_provider_mv1_result icu4x_CodePointMapData8_create_indic_syllabic_category_with_provider_mv1(const DataProvider* provider);
+
+CodePointMapData8* icu4x_CodePointMapData8_create_line_break_mv1(void);
+
+typedef struct icu4x_CodePointMapData8_create_line_break_with_provider_mv1_result {union {CodePointMapData8* ok; DataError err;}; bool is_ok;} icu4x_CodePointMapData8_create_line_break_with_provider_mv1_result;
+icu4x_CodePointMapData8_create_line_break_with_provider_mv1_result icu4x_CodePointMapData8_create_line_break_with_provider_mv1(const DataProvider* provider);
+
+CodePointMapData8* icu4x_CodePointMapData8_create_grapheme_cluster_break_mv1(void);
+
+typedef struct icu4x_CodePointMapData8_create_grapheme_cluster_break_with_provider_mv1_result {union {CodePointMapData8* ok; DataError err;}; bool is_ok;} icu4x_CodePointMapData8_create_grapheme_cluster_break_with_provider_mv1_result;
+icu4x_CodePointMapData8_create_grapheme_cluster_break_with_provider_mv1_result icu4x_CodePointMapData8_create_grapheme_cluster_break_with_provider_mv1(const DataProvider* provider);
+
+CodePointMapData8* icu4x_CodePointMapData8_create_word_break_mv1(void);
+
+typedef struct icu4x_CodePointMapData8_create_word_break_with_provider_mv1_result {union {CodePointMapData8* ok; DataError err;}; bool is_ok;} icu4x_CodePointMapData8_create_word_break_with_provider_mv1_result;
+icu4x_CodePointMapData8_create_word_break_with_provider_mv1_result icu4x_CodePointMapData8_create_word_break_with_provider_mv1(const DataProvider* provider);
+
+CodePointMapData8* icu4x_CodePointMapData8_create_sentence_break_mv1(void);
+
+typedef struct icu4x_CodePointMapData8_create_sentence_break_with_provider_mv1_result {union {CodePointMapData8* ok; DataError err;}; bool is_ok;} icu4x_CodePointMapData8_create_sentence_break_with_provider_mv1_result;
+icu4x_CodePointMapData8_create_sentence_break_with_provider_mv1_result icu4x_CodePointMapData8_create_sentence_break_with_provider_mv1(const DataProvider* provider);
+
+CodePointMapData8* icu4x_CodePointMapData8_create_joining_type_mv1(void);
+
+typedef struct icu4x_CodePointMapData8_create_joining_type_with_provider_mv1_result {union {CodePointMapData8* ok; DataError err;}; bool is_ok;} icu4x_CodePointMapData8_create_joining_type_with_provider_mv1_result;
+icu4x_CodePointMapData8_create_joining_type_with_provider_mv1_result icu4x_CodePointMapData8_create_joining_type_with_provider_mv1(const DataProvider* provider);
+
+CodePointMapData8* icu4x_CodePointMapData8_create_canonical_combining_class_mv1(void);
+
+typedef struct icu4x_CodePointMapData8_create_canonical_combining_class_with_provider_mv1_result {union {CodePointMapData8* ok; DataError err;}; bool is_ok;} icu4x_CodePointMapData8_create_canonical_combining_class_with_provider_mv1_result;
+icu4x_CodePointMapData8_create_canonical_combining_class_with_provider_mv1_result icu4x_CodePointMapData8_create_canonical_combining_class_with_provider_mv1(const DataProvider* provider);
+
+
+void icu4x_CodePointMapData8_destroy_mv1(CodePointMapData8* self);
+
+
+
+
+
+#endif // CodePointMapData8_H

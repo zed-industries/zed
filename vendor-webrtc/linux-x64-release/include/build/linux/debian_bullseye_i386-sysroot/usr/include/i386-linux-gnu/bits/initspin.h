@@ -1,0 +1,1 @@
+/* No thread support. */
