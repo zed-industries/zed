@@ -26,6 +26,7 @@ pub struct HangDetector {
     collector: ForegroundEventCollector,
     sealer: IntervalSealer,
     threshold: Duration,
+    first_frame_at: Option<Instant>,
 }
 
 /// One sealed interval that contained at least one hang.
@@ -47,13 +48,27 @@ impl HangDetector {
             collector: ForegroundEventCollector::new(),
             sealer: IntervalSealer::new(Instant::now()),
             threshold,
+            first_frame_at: None,
         }
+    }
+
+    /// When the first window draw observed by this detector finished, marking
+    /// the end of the pre-first-frame startup phase. `None` until a draw has
+    /// been observed.
+    pub fn first_frame_at(&self) -> Option<Instant> {
+        self.first_frame_at
     }
 
     /// Drains newly recorded events and returns the incidents sealed since
     /// the previous poll.
     pub fn poll(&mut self) -> Vec<HangIncident> {
         let drained = self.collector.collect_unseen();
+        if self.first_frame_at.is_none() {
+            self.first_frame_at = drained.events.iter().find_map(|event| match event {
+                ForegroundEvent::Draw(timing) => Some(timing.draw_end),
+                _ => None,
+            });
+        }
         self.sealer.note_lost(drained.lost);
         self.sealer
             .push_events(drained.events)
@@ -63,19 +78,15 @@ impl HangDetector {
     }
 }
 
-/// Incidents whose active window begins within this duration of app startup
-/// are tagged with the `"startup"` phase.
-pub const STARTUP_PHASE_CUTOFF: Duration = Duration::from_secs(10);
-
 /// A [`HangIncident`] in a telemetry-friendly form: timestamps and durations
 /// in fractional milliseconds since app startup (microsecond precision),
 /// locations as plain data, contributor count capped by the converter.
 #[derive(Debug, Clone, Serialize)]
 pub struct SerializedHangIncident {
-    /// `"startup"` when the active window began within
-    /// [`STARTUP_PHASE_CUTOFF`] of app startup, otherwise `"steady"`.
-    /// Separates initialization hangs from steady-state hangs without
-    /// suppressing either.
+    /// `"startup"` when the active window began before the first observed
+    /// window frame finished drawing (see [`HangDetector::first_frame_at`]),
+    /// otherwise `"steady"`. Separates pre-first-paint hangs from hangs of a
+    /// visible app without suppressing either.
     pub phase: &'static str,
     /// When the incident's active window started, in milliseconds since app
     /// startup: the sealing frame's first invalidation, or the earliest
@@ -178,7 +189,16 @@ fn as_millis(duration: Duration) -> f64 {
 
 impl SerializedHangIncident {
     /// Converts an incident, keeping at most `max_contributors` contributors.
-    pub fn convert(startup: Instant, incident: &HangIncident, max_contributors: usize) -> Self {
+    /// `first_frame_at` is the end of the first observed window draw
+    /// (typically [`HangDetector::first_frame_at`]); incidents whose active
+    /// window begins before it (or before any frame exists) are tagged with
+    /// the `"startup"` phase.
+    pub fn convert(
+        startup: Instant,
+        incident: &HangIncident,
+        max_contributors: usize,
+        first_frame_at: Option<Instant>,
+    ) -> Self {
         let since_startup =
             |instant: Instant| as_millis(instant.saturating_duration_since(startup));
         let snapshot = &incident.snapshot;
@@ -193,10 +213,9 @@ impl SerializedHangIncident {
                 .min(1.0)
         };
         Self {
-            phase: if active_start.saturating_duration_since(startup) < STARTUP_PHASE_CUTOFF {
-                "startup"
-            } else {
-                "steady"
+            phase: match first_frame_at {
+                Some(first_frame_at) if active_start >= first_frame_at => "steady",
+                _ => "startup",
             },
             start_ms: since_startup(active_start),
             active_ms: as_millis(active),

@@ -112,12 +112,15 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
                 let action_stats = profiler::take_action_stats();
 
                 {
+                    let incidents = incident_detector.poll();
+                    let first_frame_at = incident_detector.first_frame_at();
                     let mut telemetry = telemetry.lock();
-                    for incident in incident_detector.poll() {
+                    for incident in &incidents {
                         telemetry.add(SerializedHangIncident::convert(
                             startup,
-                            &incident,
+                            incident,
                             MAX_SERIALIZED_CONTRIBUTORS,
+                            first_frame_at,
                         ));
                     }
                     telemetry.send_periodically();
