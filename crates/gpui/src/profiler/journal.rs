@@ -450,6 +450,13 @@ impl IntervalSealer {
 
             let end = event.end_time();
             let is_draw = matches!(event, ForegroundEvent::Draw(_));
+            // A summary flush must never trigger a timeout seal: the writer
+            // force-flushes one just ahead of every draw with the draw's own
+            // end timestamp, and sealing on it would orphan that draw into a
+            // zero-length interval instead of the interval it ends. It is
+            // also the only event kind that can complete while a draw is in
+            // progress, so suppressing it can't miss a real boundary.
+            let can_seal_timeout = !matches!(event, ForegroundEvent::SmallPolls(_));
             match event {
                 ForegroundEvent::SmallPolls(flush) => self.small_polls.add(flush.summary),
                 event => self.push_event(event),
@@ -457,7 +464,9 @@ impl IntervalSealer {
 
             if is_draw {
                 snapshots.push(self.seal(SealReason::Draw, end));
-            } else if end.duration_since(self.interval_start) >= SEAL_TIMEOUT {
+            } else if can_seal_timeout
+                && end.duration_since(self.interval_start) >= SEAL_TIMEOUT
+            {
                 snapshots.push(self.seal(SealReason::Timeout, end));
             }
         }

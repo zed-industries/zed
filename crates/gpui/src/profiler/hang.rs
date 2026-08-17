@@ -63,15 +63,15 @@ impl HangDetector {
     }
 }
 
-/// A [`HangIncident`] in a telemetry-friendly form: timestamps in
-/// microseconds since app startup, locations as plain data, contributor
-/// count capped by the converter.
+/// A [`HangIncident`] in a telemetry-friendly form: timestamps and durations
+/// in fractional milliseconds since app startup (microsecond precision),
+/// locations as plain data, contributor count capped by the converter.
 #[derive(Debug, Clone, Serialize)]
 pub struct SerializedHangIncident {
-    /// When the interval started, in microseconds since app startup.
-    pub start: u64,
-    /// Length of the interval in microseconds.
-    pub duration_us: u64,
+    /// When the interval started, in milliseconds since app startup.
+    pub start_ms: f64,
+    /// Length of the interval in milliseconds.
+    pub duration_ms: f64,
     /// Why the interval sealed: `"draw"` or `"timeout"`.
     pub reason: &'static str,
     /// Fraction of the interval the foreground spent working, `0.0..=1.0`.
@@ -80,8 +80,8 @@ pub struct SerializedHangIncident {
     pub event_count: usize,
     /// Count of task polls below the journal's floor.
     pub small_poll_count: u64,
-    /// Total duration of task polls below the journal's floor, in microseconds.
-    pub small_poll_total_us: u64,
+    /// Total duration of task polls below the journal's floor, in milliseconds.
+    pub small_poll_total_ms: f64,
     /// Events lost to caps or ring overwrites.
     pub dropped_events: u64,
     /// Contributors at or above the hang threshold, longest first, capped.
@@ -98,26 +98,26 @@ pub enum SerializedHangContributor {
     TaskPoll {
         /// Where the task was spawned.
         location: SerializedLocation,
-        /// When the poll started, in microseconds since app startup.
-        start: u64,
-        /// How long the poll blocked the foreground, in microseconds.
-        duration_us: u64,
+        /// When the poll started, in milliseconds since app startup.
+        start_ms: f64,
+        /// How long the poll blocked the foreground, in milliseconds.
+        duration_ms: f64,
     },
     /// An action handler.
     Action {
         /// The action's name.
         name: &'static str,
-        /// When the handler started, in microseconds since app startup.
-        start: u64,
-        /// How long the handler ran, in microseconds.
-        duration_us: u64,
+        /// When the handler started, in milliseconds since app startup.
+        start_ms: f64,
+        /// How long the handler ran, in milliseconds.
+        duration_ms: f64,
     },
     /// A platform input dispatch.
     Input {
-        /// When the dispatch started, in microseconds since app startup.
-        start: u64,
-        /// How long the dispatch ran, in microseconds.
-        duration_us: u64,
+        /// When the dispatch started, in milliseconds since app startup.
+        start_ms: f64,
+        /// How long the dispatch ran, in milliseconds.
+        duration_ms: f64,
         /// Whether handling the input invalidated a window.
         caused_invalidation: bool,
     },
@@ -125,12 +125,13 @@ pub enum SerializedHangContributor {
     Draw {
         /// The window that was drawn.
         window_id: u64,
-        /// When the draw started, in microseconds since app startup.
-        start: u64,
-        /// How long the draw took, in microseconds.
-        duration_us: u64,
-        /// Time from the frame's first invalidation to the end of its draw.
-        dirty_to_draw_us: Option<u64>,
+        /// When the draw started, in milliseconds since app startup.
+        start_ms: f64,
+        /// How long the draw took, in milliseconds.
+        duration_ms: f64,
+        /// Time from the frame's first invalidation to the end of its draw,
+        /// in milliseconds.
+        dirty_to_draw_ms: Option<f64>,
         /// Invalidations coalesced into the frame.
         invalidations: u64,
     },
@@ -139,31 +140,38 @@ pub enum SerializedHangContributor {
     Present {
         /// The window whose frame was presented.
         window_id: u64,
-        /// When the frame was presented, in microseconds since app startup.
-        start: u64,
+        /// When the frame was presented, in milliseconds since app startup.
+        start_ms: f64,
     },
+}
+
+/// Milliseconds with microsecond precision: keeps `dbg!`/JSON output short
+/// (`115.954` rather than `115.95400000000001` or `115954`).
+fn as_millis(duration: Duration) -> f64 {
+    duration.as_micros() as f64 / 1000.0
 }
 
 impl SerializedHangIncident {
     /// Converts an incident, keeping at most `max_contributors` contributors.
     pub fn convert(startup: Instant, incident: &HangIncident, max_contributors: usize) -> Self {
         let since_startup =
-            |instant: Instant| instant.saturating_duration_since(startup).as_micros() as u64;
+            |instant: Instant| as_millis(instant.saturating_duration_since(startup));
         let snapshot = &incident.snapshot;
         Self {
-            start: since_startup(snapshot.interval_start),
-            duration_us: snapshot
-                .interval_end
-                .duration_since(snapshot.interval_start)
-                .as_micros() as u64,
+            start_ms: since_startup(snapshot.interval_start),
+            duration_ms: as_millis(
+                snapshot
+                    .interval_end
+                    .duration_since(snapshot.interval_start),
+            ),
             reason: match snapshot.reason {
                 super::journal::SealReason::Draw => "draw",
                 super::journal::SealReason::Timeout => "timeout",
             },
-            busy_fraction: snapshot.busy_fraction(),
+            busy_fraction: (snapshot.busy_fraction() * 1000.0).round() / 1000.0,
             event_count: snapshot.events.len(),
             small_poll_count: snapshot.small_polls.count,
-            small_poll_total_us: snapshot.small_polls.total.as_micros() as u64,
+            small_poll_total_ms: as_millis(snapshot.small_polls.total),
             dropped_events: snapshot.dropped_events,
             contributors: incident
                 .contributors
@@ -179,36 +187,34 @@ impl SerializedHangIncident {
 impl SerializedHangContributor {
     fn convert(startup: Instant, event: &ForegroundEvent) -> Self {
         let since_startup =
-            |instant: Instant| instant.saturating_duration_since(startup).as_micros() as u64;
-        let duration_us = event.duration().as_micros() as u64;
+            |instant: Instant| as_millis(instant.saturating_duration_since(startup));
+        let duration_ms = as_millis(event.duration());
         match event {
             ForegroundEvent::TaskPoll(timing) => Self::TaskPoll {
                 location: timing.location.into(),
-                start: since_startup(timing.start),
-                duration_us,
+                start_ms: since_startup(timing.start),
+                duration_ms,
             },
             ForegroundEvent::Action(timing) => Self::Action {
                 name: timing.name,
-                start: since_startup(timing.start),
-                duration_us,
+                start_ms: since_startup(timing.start),
+                duration_ms,
             },
             ForegroundEvent::Input(timing) => Self::Input {
-                start: since_startup(timing.start),
-                duration_us,
+                start_ms: since_startup(timing.start),
+                duration_ms,
                 caused_invalidation: timing.caused_invalidation,
             },
             ForegroundEvent::Draw(timing) => Self::Draw {
                 window_id: timing.window_id.as_u64(),
-                start: since_startup(timing.draw_start),
-                duration_us,
-                dirty_to_draw_us: timing
-                    .dirty_to_draw_duration()
-                    .map(|duration| duration.as_micros() as u64),
+                start_ms: since_startup(timing.draw_start),
+                duration_ms,
+                dirty_to_draw_ms: timing.dirty_to_draw_duration().map(as_millis),
                 invalidations: timing.invalidations,
             },
             ForegroundEvent::Present(timing) => Self::Present {
                 window_id: timing.window_id.as_u64(),
-                start: since_startup(timing.presented_at),
+                start_ms: since_startup(timing.presented_at),
             },
             ForegroundEvent::SmallPolls(flush) => {
                 // The sealer folds these out of snapshot events; a contributor
@@ -220,8 +226,8 @@ impl SerializedHangContributor {
                         line: 0,
                         column: 0,
                     },
-                    start: since_startup(flush.since),
-                    duration_us,
+                    start_ms: since_startup(flush.since),
+                    duration_ms,
                 }
             }
         }
