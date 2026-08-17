@@ -15,7 +15,7 @@ use crate::{
     PlatformTextSystem, Render, Reservation, Task, TestPlatform, ThreadedDispatcher, VisualContext,
     Window, WindowBounds, WindowHandle, WindowOptions,
     app::GpuiBorrow,
-    profiler::{self, FrameTiming, FrameTimingCollector},
+    profiler::{self, FrameEvent, FrameTimingCollector},
 };
 
 /// Returns a benchmark platform backed by this thread's shared dispatcher.
@@ -93,25 +93,37 @@ impl BenchReport {
         }
     }
 
-    fn record_frame_timings<'i>(&self, timings: impl IntoIterator<Item = &'i FrameTiming>) {
+    fn record_frame_timings<'i>(&self, events: impl IntoIterator<Item = &'i FrameEvent>) {
         let mut snapshot = self.frame_snapshot.borrow_mut();
         // `.ok()` on `record`: this operation is infallible (the histograms auto-resize).
-        for timing in timings {
-            snapshot
-                .draw
-                .record(timing.draw_duration().as_nanos() as u64)
-                .ok();
-            if let Some(dirty_to_draw) = timing.dirty_to_draw_duration() {
-                snapshot
-                    .dirty_to_draw
-                    .record(dirty_to_draw.as_nanos() as u64)
-                    .ok();
-            }
-            if timing.invalidations > 0 {
-                snapshot
-                    .invalidations_per_frame
-                    .record(timing.invalidations)
-                    .ok();
+        for event in events {
+            match event {
+                FrameEvent::Draw(timing) => {
+                    snapshot
+                        .draw
+                        .record(timing.draw_duration().as_nanos() as u64)
+                        .ok();
+                    if let Some(dirty_to_draw) = timing.dirty_to_draw_duration() {
+                        snapshot
+                            .dirty_to_draw
+                            .record(dirty_to_draw.as_nanos() as u64)
+                            .ok();
+                    }
+                    if timing.invalidations > 0 {
+                        snapshot
+                            .invalidations_per_frame
+                            .record(timing.invalidations)
+                            .ok();
+                    }
+                }
+                FrameEvent::Present(timing) => {
+                    if let Some(animation_interval) = timing.animation_interval {
+                        snapshot
+                            .present_interval
+                            .record(animation_interval.as_nanos() as u64)
+                            .ok();
+                    }
+                }
             }
         }
     }
@@ -152,6 +164,7 @@ impl BenchReport {
         eprintln!("  note: includes Criterion warmup/calibration");
         self.print_histogram("window dirty-to-draw", &frame_snapshot.dirty_to_draw);
         self.print_histogram("window draw", &frame_snapshot.draw);
+        self.print_histogram("window present interval", &frame_snapshot.present_interval);
         if !frame_snapshot.invalidations_per_frame.is_empty() {
             eprintln!(
                 "  invalidations per frame: mean {:.2}, max {}",
@@ -204,6 +217,7 @@ impl BenchReport {
 struct WindowFrameSnapshot {
     dirty_to_draw: Histogram<u64>,
     draw: Histogram<u64>,
+    present_interval: Histogram<u64>,
     invalidations_per_frame: Histogram<u64>,
 }
 
@@ -212,12 +226,13 @@ impl WindowFrameSnapshot {
         Self {
             dirty_to_draw: Histogram::new(3).expect("3 significant digits is valid"),
             draw: Histogram::new(3).expect("3 significant digits is valid"),
+            present_interval: Histogram::new(3).expect("3 significant digits is valid"),
             invalidations_per_frame: Histogram::new(3).expect("3 significant digits is valid"),
         }
     }
 
     fn is_empty(&self) -> bool {
-        self.dirty_to_draw.is_empty() && self.draw.is_empty()
+        self.dirty_to_draw.is_empty() && self.draw.is_empty() && self.present_interval.is_empty()
     }
 }
 
@@ -225,57 +240,49 @@ fn format_duration(duration: Duration) -> String {
     format!("{:.3}ms", duration.as_secs_f64() * 1000.)
 }
 
-/// Enables frame tracing for the duration of a measurement and collects the
-/// frames recorded within it. The previous tracing state is restored on drop,
-/// so a panicking measurement doesn't leave tracing enabled for unrelated code
-/// (e.g. a later benchmark in the same process).
-struct FrameTraceScope {
+/// Enables profiler tracing for a measurement and collects its frame events.
+///
+/// The previous tracing state is restored on drop, so a panicking measurement
+/// doesn't leave tracing enabled for unrelated code such as a later benchmark
+/// in the same process.
+struct TraceScope {
     collector: FrameTimingCollector,
-    was_already_enabled: bool,
+    _trace_guard: profiler::TraceGuard,
 }
 
-impl FrameTraceScope {
+impl TraceScope {
     fn start() -> Self {
-        let was_already_enabled = !profiler::set_frame_trace_enabled(true);
+        let trace_guard = profiler::trace_scope();
         Self {
             collector: FrameTimingCollector::new(),
-            was_already_enabled,
+            _trace_guard: trace_guard,
         }
     }
 
-    fn finish(mut self) -> Vec<FrameTiming> {
+    fn finish(mut self) -> Vec<FrameEvent> {
         self.collector.collect_unseen()
-        // Dropping `self` restores the previous tracing state.
-    }
-}
-
-impl Drop for FrameTraceScope {
-    fn drop(&mut self) {
-        if !self.was_already_enabled {
-            profiler::set_frame_trace_enabled(false);
-        }
     }
 }
 
 struct MeasuredTaskInput<Input> {
     input: Input,
-    frame_trace_scope: Option<FrameTraceScope>,
+    trace_scope: Option<TraceScope>,
 }
 
 struct MeasuredTaskOutput<Output> {
-    frame_trace_scope: Option<FrameTraceScope>,
+    trace_scope: Option<TraceScope>,
     report: BenchReport,
     _output: Output,
 }
 
 impl<Output> Drop for MeasuredTaskOutput<Output> {
     fn drop(&mut self) {
-        let frame_trace_scope = self
-            .frame_trace_scope
+        let trace_scope = self
+            .trace_scope
             .take()
-            .expect("measured task output should retain its frame trace scope");
+            .expect("measured task output should retain its trace scope");
         self.report
-            .record_frame_timings(frame_trace_scope.finish().iter());
+            .record_frame_timings(trace_scope.finish().iter());
     }
 }
 
@@ -460,7 +467,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// benchmark's frame report through the GPUI frame profiler.
     pub fn bench_iter(&mut self, mut benchmark: impl FnMut(&mut Self)) {
         let bencher = self.take_bencher("bench_iter");
-        let collector = FrameTraceScope::start();
+        let collector = TraceScope::start();
         let mut benchmark = || benchmark(self);
         bencher.iter(&mut benchmark);
         self.report.record_frame_timings(collector.finish().iter());
@@ -490,7 +497,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// measured. Both the setup input and task output are dropped after timing
     /// stops.
     ///
-    /// Each iteration is kept in its own Criterion batch so frame tracing and
+    /// Each iteration is kept in its own Criterion batch so profiler tracing and
     /// destruction cannot overlap adjacent measurements.
     pub fn bench_batched_task<Input, Output>(
         &mut self,
@@ -525,14 +532,14 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                 setup_context.settle();
                 MeasuredTaskInput {
                     input: setup(&mut setup_context),
-                    frame_trace_scope: Some(FrameTraceScope::start()),
+                    trace_scope: Some(TraceScope::start()),
                 }
             },
             |measured_input| {
                 let task = benchmark(&mut measured_input.input, &mut benchmark_context);
                 let output = run_task_to_completion(&foreground_executor, task);
                 MeasuredTaskOutput {
-                    frame_trace_scope: measured_input.frame_trace_scope.take(),
+                    trace_scope: measured_input.trace_scope.take(),
                     report: report.clone(),
                     _output: output,
                 }
@@ -549,8 +556,8 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// windows. The entity should be part of the window's render tree, such as the
     /// root view or a child of it.
     ///
-    /// Frame timings are collected through the GPUI frame profiler
-    /// ([`crate::profiler::record_frame_timing`]), which is enabled for the
+    /// Frame events are collected through the GPUI frame profiler
+    /// ([`crate::profiler::record_frame_event`]), which is enabled for the
     /// duration of the measurement.
     pub fn bench_renderer<V>(
         &mut self,
@@ -567,7 +574,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             .expect("cannot benchmark renderer for entity without a current window");
 
         let dispatcher = self.background_executor.dispatcher().clone();
-        let collector = FrameTraceScope::start();
+        let collector = TraceScope::start();
 
         let mut benchmark = || {
             // Work already queued at frame start delays the frame in
@@ -590,12 +597,12 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         };
         bencher.iter(&mut benchmark);
 
-        let timings = collector.finish();
-        self.report.record_frame_timings(
-            timings
-                .iter()
-                .filter(|timing| timing.window_id == window_id),
-        );
+        let events = collector.finish();
+        self.report
+            .record_frame_timings(events.iter().filter(|event| match event {
+                FrameEvent::Draw(timing) => timing.window_id == window_id,
+                FrameEvent::Present(timing) => timing.window_id == window_id,
+            }));
         self.replace_bencher(bencher);
     }
 
