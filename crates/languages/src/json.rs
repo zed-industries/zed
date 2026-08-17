@@ -32,7 +32,7 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{
     ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into,
-    paths::PathStyle, rel_path::RelPath,
+    paths::PathStyle, rel_path::RelPath, union_json_value_into,
 };
 
 use crate::PackageJsonData;
@@ -318,7 +318,7 @@ impl LspAdapter for JsonLspAdapter {
         });
 
         if let Some(override_options) = project_options {
-            merge_json_value_into(override_options, &mut config);
+            union_json_value_into(override_options, &mut config);
         }
 
         Ok(config)
