@@ -3625,20 +3625,22 @@ async fn test_autoscroll_horizontally_long_selection_tracks_cursor(cx: &mut Test
     cx.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        let scroll_position = editor.snapshot(window, cx).scroll_position();
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
         assert!(
-            scroll_position.x > 0.,
-            "expected horizontal scroll to follow the selection's end (cursor), \
-             but scroll_position.x was {}",
-            scroll_position.x
+            scroll_x <= 250.,
+            "head must not be scrolled past, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 249.,
+            "head column must be at the right edge, visible columns end at {right_edge}"
         );
     });
 }
 
 #[gpui::test]
-async fn test_autoscroll_horizontally_fitting_selection_reveals_full_span(
-    cx: &mut TestAppContext,
-) {
+async fn test_autoscroll_horizontally_padded_span_boundary_still_scrolls(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
     let window = cx.window;
@@ -3646,9 +3648,7 @@ async fn test_autoscroll_horizontally_fitting_selection_reveals_full_span(
     // Long line so scroll_width stays large and never clamps target_right,
     // isolating the case below. Viewport is tuned so a 5-char selection's
     // raw glyph span fits, but its padded span (+ gutter margin + em_advance,
-    // the same padding the final scroll guard uses) does not. Before this
-    // fix, the fallback check compared raw span only, so this case still
-    // wrongly bailed out with no scroll at all.
+    // the same padding the final scroll guard uses) does not.
     cx.simulate_window_resize(window, size(px(146.), px(300.)));
 
     let line = "x".repeat(300);
@@ -3672,14 +3672,74 @@ async fn test_autoscroll_horizontally_fitting_selection_reveals_full_span(
     cx.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        let scroll_position = editor.snapshot(window, cx).scroll_position();
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
         assert!(
-            scroll_position.x > 0.,
-            "expected scroll to reveal the selection: raw glyph span fits the \
-             viewport, but the padded span (gutter margin + em_advance) does not \
-             — autoscroll must still scroll rather than bailing out. \
-             scroll_position.x was {}",
-            scroll_position.x
+            scroll_x <= 105.,
+            "selection head must be visible, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 105.,
+            "selection head must be visible, visible columns end at {right_edge}"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_horizontally_fitting_selection_reveals_full_span(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let window = cx.window;
+
+    // Viewport wide enough to fit a short selection's full span at once.
+    cx.simulate_window_resize(window, size(px(200.), px(300.)));
+
+    let line = "x".repeat(300);
+    cx.set_state(&format!("ˇ{line}"));
+
+    // Scroll right first so the whole line is out of view.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 300)..Point::new(0, 300)]);
+        });
+    });
+    cx.run_until_parked();
+
+    let scrolled_right_x = cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        assert!(
+            scroll_x > 200.,
+            "should be scrolled far right, scroll_x = {scroll_x}"
+        );
+        scroll_x
+    });
+
+    // Select a short span in the middle of the line (e.g. simulating a
+    // search match). Since it fits within the viewport, both edges of
+    // the selection should end up visible, not just the head.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 100)..Point::new(0, 105)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x < scrolled_right_x,
+            "must scroll left towards the selection, scroll_x = {scroll_x}"
+        );
+        assert!(
+            scroll_x <= 100.5,
+            "selection start must be visible, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 105.,
+            "selection end must be visible, visible columns end at {right_edge}"
         );
     });
 }

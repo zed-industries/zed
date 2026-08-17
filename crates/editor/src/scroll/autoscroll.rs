@@ -420,10 +420,12 @@ impl Editor {
                         let head_column = head.column();
                         let head_column_clamped = cmp::min(row_line_len, head_column);
                         candidate_left = ScrollOffset::from(
-                            layout.x_for_index(head_column as usize) + self.gutter_dimensions.margin,
+                            layout.x_for_index(head_column as usize)
+                                + self.gutter_dimensions.margin,
                         );
                         candidate_right =
-                            ScrollOffset::from(layout.x_for_index(head_column_clamped as usize)) + em_advance;
+                            ScrollOffset::from(layout.x_for_index(head_column_clamped as usize))
+                                + em_advance;
                     }
 
                     target_left = target_left.min(candidate_left);
