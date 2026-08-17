@@ -2294,7 +2294,7 @@ impl FakeFs {
             state.index_contents.extend(
                 index_state
                     .iter()
-                    .map(|(path, content)| (repo_path(path), content.clone())),
+                    .map(|(path, content)| (repo_path(path), content.as_bytes().to_vec())),
             );
         })
         .unwrap();
@@ -2311,7 +2311,7 @@ impl FakeFs {
             state.head_contents.extend(
                 head_state
                     .iter()
-                    .map(|(path, content)| (repo_path(path), content.clone())),
+                    .map(|(path, content)| (repo_path(path), content.as_bytes().to_vec())),
             );
             state.refs.insert("HEAD".into(), sha.into());
         })
@@ -2324,7 +2324,7 @@ impl FakeFs {
             state.head_contents.extend(
                 contents_by_path
                     .iter()
-                    .map(|(path, contents)| (repo_path(path), contents.clone())),
+                    .map(|(path, contents)| (repo_path(path), contents.as_bytes().to_vec())),
             );
             state.index_contents = state.head_contents.clone();
         })
@@ -2345,7 +2345,7 @@ impl FakeFs {
                 .map(|n| Oid::from_bytes(n.repeat(20).as_bytes()).unwrap());
             for ((path, content), oid) in contents_by_path.iter().zip(oids) {
                 state.merge_base_contents.insert(repo_path(path), oid);
-                state.oids.insert(oid, content.clone());
+                state.oids.insert(oid, content.as_bytes().to_vec());
             }
         })
         .unwrap();
@@ -2472,10 +2472,14 @@ impl FakeFs {
                 };
 
                 if let Some(content) = index_content {
-                    state.index_contents.insert(repo_path.clone(), content);
+                    state
+                        .index_contents
+                        .insert(repo_path.clone(), content.into_bytes());
                 }
                 if let Some(content) = head_content {
-                    state.head_contents.insert(repo_path.clone(), content);
+                    state
+                        .head_contents
+                        .insert(repo_path.clone(), content.into_bytes());
                 }
             }
         }).unwrap();
