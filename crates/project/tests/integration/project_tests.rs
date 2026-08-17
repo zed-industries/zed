@@ -9416,6 +9416,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         "TailwindServer",
         "ESLintServer",
         "NoHoverCapabilitiesServer",
+        "DuplicateTypeScriptServer",
     ];
     let mut language_servers = [
         language_registry.register_fake_lsp(
@@ -9457,6 +9458,17 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
                 name: language_server_names[3],
                 capabilities: lsp::ServerCapabilities {
                     hover_provider: None,
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        ),
+        language_registry.register_fake_lsp(
+            "tsx",
+            FakeLspAdapter {
+                name: language_server_names[4],
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
                     ..lsp::ServerCapabilities::default()
                 },
                 ..FakeLspAdapter::default()
@@ -9504,6 +9516,21 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
                     ),
                 );
             }
+            "DuplicateTypeScriptServer" => {
+                servers_with_hover_requests.insert(
+                    new_server_name,
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
+                        |_, _| async move {
+                            Ok(Some(lsp::Hover {
+                                contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
+                                    "TypeScriptServer hover".to_string(),
+                                )),
+                                range: None,
+                            }))
+                        },
+                    ),
+                );
+            }
             "ESLintServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name,
@@ -9545,7 +9572,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             .map(|hover| hover.contents.iter().map(|block| &block.text).join("|"))
             .sorted()
             .collect::<Vec<_>>(),
-        "Should receive hover responses from all related servers with hover capabilities"
+        "Should receive unique hover responses from all related servers with hover capabilities"
     );
 }
 
