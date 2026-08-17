@@ -331,7 +331,7 @@ impl Render for BufferSearchBar {
                         query_focus.clone(),
                     ))
                     .when(!narrow_mode, |this| {
-                        this.child(div().ml_2().min_w(rems_from_px(40.)).child(
+                        this.child(div().ml_2().min_w(rems_from_px(40_f32)).child(
                             Label::new(match_text).size(LabelSize::Small).color(
                                 if self.active_match_index.is_some() {
                                     Color::Default
@@ -951,7 +951,7 @@ impl BufferSearchBar {
     }
 
     fn deployed_toolbar_location(&self, cx: &App) -> ToolbarItemLocation {
-        if self.needs_expand_collapse_option(cx) && !self.uses_hidden_splittable_editor(cx) {
+        if self.needs_expand_collapse_option(cx) {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Secondary
@@ -976,10 +976,11 @@ impl BufferSearchBar {
     // We provide an expand/collapse button if we are in a multibuffer
     // and not doing a project search.
     fn needs_expand_collapse_option(&self, cx: &App) -> bool {
-        self.active_searchable_item.as_ref().is_some_and(|item| {
-            item.buffer_kind(cx) == ItemBufferKind::Multibuffer
-                && !item.supported_options(cx).find_in_results
-        })
+        !self.uses_hidden_splittable_editor(cx)
+            && self.active_searchable_item.as_ref().is_some_and(|item| {
+                item.buffer_kind(cx) == ItemBufferKind::Multibuffer
+                    && !item.supported_options(cx).find_in_results
+            })
     }
 
     fn toggle_fold_all(&mut self, _: &ToggleFoldAll, window: &mut Window, cx: &mut Context<Self>) {
@@ -1043,6 +1044,11 @@ impl BufferSearchBar {
         let search = self
             .query_suggestion(seed_query_override, window, cx)
             .map(|suggestion| {
+                let suggestion = if self.default_options.contains(SearchOptions::REGEX) {
+                    regex::escape(&suggestion)
+                } else {
+                    suggestion
+                };
                 self.search(&suggestion, Some(self.default_options), true, window, cx)
             });
 
@@ -4165,6 +4171,50 @@ mod tests {
             editor.read_with(cx, |this, cx| this.text(cx)),
             "\\n100 \\n200 \\n100"
         );
+    }
+
+    #[gpui::test]
+    async fn test_seeded_query_is_escaped_in_regex_mode(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let buffer = cx.new(|cx| Buffer::local("z.d\nzed\n", cx));
+        let cx = cx.add_empty_window();
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+
+        // Select "z.d" on the first line.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([Point::new(0, 0)..Point::new(0, 3)])
+            });
+        });
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
+            search_bar.search_suggested(Some(SeedQuerySetting::Selection), window, cx);
+        });
+        cx.run_until_parked();
+
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(
+                search_bar.query(cx),
+                r"z\.d",
+                "seeded regex query must be escaped"
+            );
+        });
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.search_background_highlights(cx).len(),
+                1,
+                "only the literal 'z.d' should match, not 'zed'"
+            );
+        });
     }
 
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {

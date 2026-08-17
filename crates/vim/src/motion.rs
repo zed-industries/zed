@@ -1477,13 +1477,8 @@ impl Motion {
         text_layout_details: &TextLayoutDetails,
         forced_motion: bool,
     ) -> Option<MotionKind> {
-        let (range, kind) = self.range(
-            map,
-            selection.clone(),
-            times,
-            text_layout_details,
-            forced_motion,
-        )?;
+        let (range, kind) =
+            self.range(map, *selection, times, text_layout_details, forced_motion)?;
         selection.start = range.start;
         selection.end = range.end;
         Some(kind)

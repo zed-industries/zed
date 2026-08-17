@@ -49,34 +49,81 @@ if (typeof requestIdleCallback === "function") {
 
 function darkModeToggle() {
   var html = document.documentElement;
+  var themeColorMetaTag = document.querySelector('meta[name="theme-color"]');
+  var themeToggleButton = document.getElementById("color-scheme-toggle");
+  var themeToggleIcon = themeToggleButton
+    ? themeToggleButton.querySelector(".fa")
+    : null;
 
-  function setTheme(theme) {
+  function getStoredTheme() {
+    try {
+      return localStorage.getItem("mdbook-theme");
+    } catch {
+      return null;
+    }
+  }
+
+  function persistTheme(theme) {
+    try {
+      localStorage.setItem("mdbook-theme", theme);
+    } catch {}
+  }
+
+  function setTheme(theme, persist) {
     html.setAttribute("data-theme", theme);
     html.setAttribute("data-color-scheme", theme);
     html.className = theme;
-    localStorage.setItem("mdbook-theme", theme);
+
+    if (themeColorMetaTag) {
+      setTimeout(function () {
+        themeColorMetaTag.content = getComputedStyle(html).backgroundColor;
+      }, 0);
+    }
+
+    if (persist) {
+      persistTheme(theme);
+    }
+
+    if (themeToggleButton) {
+      var nextTheme = theme === "dark" ? "light" : "dark";
+      var label =
+        nextTheme === "dark" ? "Switch to dark theme" : "Switch to light theme";
+      themeToggleButton.setAttribute("aria-label", label);
+      themeToggleButton.setAttribute("title", label);
+    }
+
+    if (themeToggleIcon) {
+      themeToggleIcon.className =
+        theme === "dark" ? "fa fa-sun-o" : "fa fa-moon-o";
+    }
   }
 
   // Set initial theme
-  var currentTheme = localStorage.getItem("mdbook-theme");
+  var currentTheme = getStoredTheme();
   if (currentTheme) {
-    setTheme(currentTheme);
+    setTheme(currentTheme, false);
   } else {
     // If no theme is set, use the system's preference
     var systemPreference = window.matchMedia("(prefers-color-scheme: dark)")
       .matches
       ? "dark"
       : "light";
-    setTheme(systemPreference);
+    setTheme(systemPreference, false);
   }
 
   // Listen for system's preference changes
   const darkModeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   darkModeMediaQuery.addEventListener("change", function (e) {
-    if (!localStorage.getItem("mdbook-theme")) {
-      setTheme(e.matches ? "dark" : "light");
+    if (!getStoredTheme()) {
+      setTheme(e.matches ? "dark" : "light", false);
     }
   });
+
+  if (themeToggleButton) {
+    themeToggleButton.addEventListener("click", function () {
+      setTheme(html.classList.contains("dark") ? "light" : "dark", true);
+    });
+  }
 }
 
 const copyPageActions = () => {

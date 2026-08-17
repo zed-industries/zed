@@ -22,7 +22,22 @@ pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 pub const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
 
 pub fn supports_fast_mode(model_id: &str) -> bool {
-    matches!(model_id, "claude-opus-4-8")
+    matches!(model_id, "claude-opus-5" | "claude-opus-4-8")
+}
+
+/// Model IDs where adaptive thinking runs by default when a request omits the
+/// `thinking` field, and where thinking must instead be turned off with an
+/// explicit `thinking: {"type": "disabled"}`.
+///
+/// On earlier Opus models omitting `thinking` means thinking is off; Claude
+/// Opus 5 flipped that default. Claude Fable 5 and Claude Mythos 5 also think
+/// by default, but they reject `{"type": "disabled"}` with a 400 error, so
+/// they are deliberately excluded here (thinking cannot be turned off for
+/// them at all).
+///
+/// <https://platform.claude.com/docs/en/about-claude/models/migration-guide#migrating-to-claude-opus-5>
+pub fn requires_explicit_thinking_opt_out(model_id: &str) -> bool {
+    matches!(model_id, "claude-opus-5")
 }
 
 pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
@@ -168,6 +183,7 @@ impl Model {
             "claude-fable-5"
                 | "claude-mythos-5"
                 | "claude-mythos-preview"
+                | "claude-opus-5"
                 | "claude-opus-4-8"
                 | "claude-opus-4-7"
                 | "claude-opus-4-6"
@@ -244,7 +260,7 @@ pub async fn stream_completion(
     .map(|output| output.0)
 }
 
-/// A raw model entry returned by the Anthropic models listing endpoint.
+/// A validated model entry returned by the Anthropic models listing endpoint.
 #[derive(Clone, Debug, Deserialize)]
 pub struct ListModelEntry {
     pub id: String,
@@ -256,8 +272,51 @@ pub struct ListModelEntry {
 }
 
 #[derive(Debug, Deserialize)]
+struct ApiListModelEntry {
+    id: String,
+    display_name: String,
+    max_input_tokens: Option<u64>,
+    max_tokens: Option<u64>,
+    #[serde(default)]
+    capabilities: Option<ModelCapabilities>,
+}
+
+impl ApiListModelEntry {
+    fn into_listed(self) -> Option<ListModelEntry> {
+        let Self {
+            id,
+            display_name,
+            max_input_tokens,
+            max_tokens,
+            capabilities,
+        } = self;
+
+        let missing_fields = match (&max_input_tokens, &max_tokens) {
+            (None, None) => Some("`max_input_tokens` and `max_tokens`"),
+            (None, Some(_)) => Some("`max_input_tokens`"),
+            (Some(_), None) => Some("`max_tokens`"),
+            (Some(_), Some(_)) => None,
+        };
+        if let Some(missing_fields) = missing_fields {
+            log::error!(
+                "Filtering out Anthropic model `{id}` because the API returned null for {missing_fields}"
+            );
+            return None;
+        }
+
+        Some(ListModelEntry {
+            id,
+            display_name,
+            max_input_tokens: max_input_tokens?,
+            max_tokens: max_tokens?,
+            capabilities,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct ListModelsResponse {
-    data: Vec<ListModelEntry>,
+    data: Vec<ApiListModelEntry>,
 }
 
 /// Fetch the list of models available to the current API key. The returned
@@ -308,6 +367,7 @@ pub async fn list_models(
     let models = parsed
         .data
         .into_iter()
+        .filter_map(ApiListModelEntry::into_listed)
         .map(Model::from_listed)
         .collect::<Vec<_>>();
     Ok(models)
@@ -544,6 +604,15 @@ pub async fn stream_completion_with_rate_limit_info(
                             .strip_prefix("data: ")
                             .or_else(|| line.strip_prefix("data:"))?;
 
+                        // Some proxies and gateways append `data: [DONE]` as a
+                        // stream-termination sentinel (an OpenAI convention).
+                        // It is not part of the Anthropic streaming spec and is
+                        // not valid JSON, so skip it to avoid a spurious
+                        // deserialization error.
+                        if line.trim() == "[DONE]" {
+                            return None;
+                        }
+
                         match serde_json::from_str(line) {
                             Ok(response) => Some(Ok(response)),
                             Err(error) => Some(Err(AnthropicError::DeserializeResponse(error))),
@@ -644,6 +713,10 @@ pub enum RequestContent {
     #[serde(rename = "compaction")]
     Compaction {
         content: Option<Arc<str>>,
+        /// Opaque metadata from a prior compaction that must be round-tripped
+        /// verbatim for Anthropic to recognize the block.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        encrypted_content: Option<Arc<str>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
@@ -679,7 +752,11 @@ pub enum ResponseContent {
         input: serde_json::Value,
     },
     #[serde(rename = "compaction")]
-    Compaction { content: Option<Arc<str>> },
+    Compaction {
+        content: Option<Arc<str>>,
+        #[serde(default)]
+        encrypted_content: Option<Arc<str>>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -724,6 +801,10 @@ pub enum Thinking {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         display: Option<AdaptiveThinkingDisplay>,
     },
+    /// Explicitly turns thinking off. Required by models where thinking runs
+    /// by default (see [`requires_explicit_thinking_opt_out`]); only accepted
+    /// at effort `high` or below.
+    Disabled,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -932,7 +1013,11 @@ pub enum ContentDelta {
     #[serde(rename = "input_json_delta")]
     InputJsonDelta { partial_json: String },
     #[serde(rename = "compaction_delta")]
-    CompactionDelta { content: Option<Arc<str>> },
+    CompactionDelta {
+        content: Option<Arc<str>>,
+        #[serde(default)]
+        encrypted_content: Option<Arc<str>>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1146,6 +1231,47 @@ mod tests {
     }
 
     #[test]
+    fn api_list_model_entry_filters_null_token_limits() {
+        let entries: Vec<ApiListModelEntry> = serde_json::from_str(
+            r#"[
+                {
+                    "id": "valid",
+                    "display_name": "Valid",
+                    "max_input_tokens": 200000,
+                    "max_tokens": 64000
+                },
+                {
+                    "id": "null-input",
+                    "display_name": "Null Input",
+                    "max_input_tokens": null,
+                    "max_tokens": 64000
+                },
+                {
+                    "id": "null-output",
+                    "display_name": "Null Output",
+                    "max_input_tokens": 200000,
+                    "max_tokens": null
+                },
+                {
+                    "id": "null-both",
+                    "display_name": "Null Both",
+                    "max_input_tokens": null,
+                    "max_tokens": null
+                }
+            ]"#,
+        )
+        .expect("entries should deserialize");
+
+        let entries = entries
+            .into_iter()
+            .filter_map(ApiListModelEntry::into_listed)
+            .collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "valid");
+    }
+
+    #[test]
     fn from_listed_picks_adaptive_thinking_mode() {
         let entry = listed_entry(
             "claude-test-adaptive",
@@ -1197,18 +1323,17 @@ mod tests {
     }
 
     #[test]
-    fn from_listed_enables_fast_mode_for_opus_4_8() {
-        let model = Model::from_listed(listed_entry(
-            "claude-opus-4-8",
-            ModelCapabilities::default(),
-        ));
+    fn from_listed_enables_fast_mode_and_compaction_for_supported_opus_models() {
+        for model_id in ["claude-opus-5", "claude-opus-4-8"] {
+            let model = Model::from_listed(listed_entry(model_id, ModelCapabilities::default()));
 
-        assert!(model.supports_speed);
-        let beta_headers = model
-            .beta_headers()
-            .expect("model should have beta headers");
-        assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
-        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+            assert!(model.supports_speed);
+            let beta_headers = model
+                .beta_headers()
+                .expect("model should have beta headers");
+            assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
+            assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+        }
     }
 
     #[test]
