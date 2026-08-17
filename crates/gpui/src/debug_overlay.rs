@@ -6,6 +6,10 @@
 //! notifies views or schedules frames, it cannot create frame demand: it only
 //! annotates frames that were already going to be drawn, and it displays the
 //! timing of the previous completed frame.
+//!
+//! Draw durations are recorded even while the overlay is hidden, so toggling
+//! it on can display the previous frame's time immediately instead of showing
+//! a placeholder until another frame happens to be drawn.
 
 use crate::{
     BorderStyle, Bounds, ContentMask, Corners, Edges, Hsla, Pixels, Quad, ScaledPixels, Scene,
@@ -19,19 +23,20 @@ pub enum DebugFrameOverlayMode {
     /// The overlay is not shown.
     #[default]
     Hidden,
-    /// Show only FPS, computed as the reciprocal of the last frame's draw time.
-    Fps,
-    /// Show FPS, the last frame's draw time, and the 1%, 10%, and absolute
-    /// worst draw times over the recent sample window.
+    /// Show only the last frame's draw time.
+    FrameTime,
+    /// Show the last frame's draw time, the 1%, 10%, and absolute worst draw
+    /// times over the recent sample window, and the total number of frames
+    /// drawn since the window was created.
     Detailed,
 }
 
 impl DebugFrameOverlayMode {
-    /// Returns the next mode in the Hidden → Fps → Detailed cycle.
+    /// Returns the next mode in the Hidden → FrameTime → Detailed cycle.
     pub fn next(self) -> Self {
         match self {
-            Self::Hidden => Self::Fps,
-            Self::Fps => Self::Detailed,
+            Self::Hidden => Self::FrameTime,
+            Self::FrameTime => Self::Detailed,
             Self::Detailed => Self::Hidden,
         }
     }
@@ -63,6 +68,7 @@ fn panel_color() -> Hsla {
 pub(crate) struct DebugFrameOverlay {
     mode: DebugFrameOverlayMode,
     draw_durations: VecDeque<Duration>,
+    total_frame_count: u64,
 }
 
 impl DebugFrameOverlay {
@@ -70,6 +76,7 @@ impl DebugFrameOverlay {
         Self {
             mode: DebugFrameOverlayMode::default(),
             draw_durations: VecDeque::new(),
+            total_frame_count: 0,
         }
     }
 
@@ -78,10 +85,13 @@ impl DebugFrameOverlay {
     }
 
     pub(crate) fn set_mode(&mut self, mode: DebugFrameOverlayMode) {
-        if mode == DebugFrameOverlayMode::Hidden {
-            self.draw_durations.clear();
-        }
         self.mode = mode;
+    }
+
+    /// Clears the draw-duration samples, restarting the percentile window.
+    /// The total frame count is left untouched.
+    pub(crate) fn reset_stats(&mut self) {
+        self.draw_durations.clear();
     }
 
     pub(crate) fn is_enabled(&self) -> bool {
@@ -89,9 +99,7 @@ impl DebugFrameOverlay {
     }
 
     pub(crate) fn record_frame(&mut self, draw_duration: Duration) {
-        if !self.is_enabled() {
-            return;
-        }
+        self.total_frame_count += 1;
         if self.draw_durations.len() >= MAX_SAMPLES {
             self.draw_durations.pop_front();
         }
@@ -173,48 +181,45 @@ impl DebugFrameOverlay {
 
     fn lines(&self) -> Vec<String> {
         let current = self.draw_durations.back().copied();
-        let fps_line = format!("FPS {}", format_fps(current));
         match self.mode {
             DebugFrameOverlayMode::Hidden => Vec::new(),
-            DebugFrameOverlayMode::Fps => vec![fps_line],
+            DebugFrameOverlayMode::FrameTime => vec![format_ms(current)],
             DebugFrameOverlayMode::Detailed => {
                 let mut sorted: Vec<Duration> = self.draw_durations.iter().copied().collect();
                 sorted.sort_unstable();
                 let percentile = |numerator: usize| {
                     (!sorted.is_empty()).then(|| sorted[(sorted.len() - 1) * numerator / 100])
                 };
+                // Past five digits the count would break the column
+                // alignment, so it saturates instead.
+                let frame_count = if self.total_frame_count > 99_999 {
+                    "LOTS".to_string()
+                } else {
+                    self.total_frame_count.to_string()
+                };
+                // Labels are padded to a uniform width so the fixed-width
+                // durations start in the same column on every line.
                 vec![
-                    fps_line,
                     format!("CUR {}", format_ms(current)),
-                    format!("1% {}", format_ms(percentile(99))),
+                    format!("1%  {}", format_ms(percentile(99))),
                     format!("10% {}", format_ms(percentile(90))),
                     format!("MAX {}", format_ms(sorted.last().copied())),
+                    format!("FRAMES {frame_count:>5}"),
                 ]
             }
         }
     }
 }
 
-fn format_fps(draw_duration: Option<Duration>) -> String {
-    match draw_duration {
-        Some(duration) if !duration.is_zero() => {
-            format!("{:.0}", 1.0 / duration.as_secs_f32())
-        }
-        _ => "--".into(),
-    }
-}
-
+/// Formats as `abc.d MS`, right-aligned in room for three integer digits and
+/// one decimal (padded with spaces, not zeroes), so stacked readouts align.
 fn format_ms(duration: Option<Duration>) -> String {
     match duration {
         Some(duration) => {
             let ms = duration.as_secs_f32() * 1000.0;
-            if ms >= 100.0 {
-                format!("{ms:.0} MS")
-            } else {
-                format!("{ms:.1} MS")
-            }
+            format!("{ms:>5.1} MS")
         }
-        None => "-- MS".into(),
+        None => "   -- MS".into(),
     }
 }
 
@@ -292,20 +297,32 @@ fn glyph(character: char) -> Option<[u8; GLYPH_HEIGHT]> {
         'C' => [
             0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
         ],
+        'E' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
+        ],
         'F' => [
             0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000,
+        ],
+        'L' => [
+            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
         ],
         'M' => [
             0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
         ],
-        'P' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
+        'N' => [
+            0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
+        ],
+        'O' => [
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
         ],
         'R' => [
             0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
         ],
         'S' => [
             0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
+        ],
+        'T' => [
+            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
         ],
         'U' => [
             0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
@@ -327,6 +344,8 @@ mod tests {
     fn all_rendered_characters_have_glyphs() {
         let mut overlay = DebugFrameOverlay::new();
         overlay.set_mode(DebugFrameOverlayMode::Detailed);
+
+        let mut lines = Vec::new();
         for duration in [
             Duration::ZERO,
             Duration::from_micros(1),
@@ -335,22 +354,18 @@ mod tests {
             Duration::from_secs(2),
         ] {
             overlay.record_frame(duration);
-            for line in overlay.lines() {
-                for character in line.chars() {
-                    assert!(
-                        character == ' ' || glyph(character).is_some(),
-                        "no glyph for {character:?} in line {line:?}"
-                    );
-                }
-            }
+            lines.extend(overlay.lines());
         }
+        // Counts beyond five digits render as "LOTS".
+        overlay.total_frame_count = 100_000;
+        lines.extend(overlay.lines());
 
         // An enabled overlay with no samples yet renders placeholders.
-        let empty = DebugFrameOverlay {
-            mode: DebugFrameOverlayMode::Detailed,
-            draw_durations: VecDeque::new(),
-        };
-        for line in empty.lines() {
+        let mut empty = DebugFrameOverlay::new();
+        empty.set_mode(DebugFrameOverlayMode::Detailed);
+        lines.extend(empty.lines());
+
+        for line in lines {
             for character in line.chars() {
                 assert!(
                     character == ' ' || glyph(character).is_some(),
@@ -368,18 +383,65 @@ mod tests {
             overlay.record_frame(Duration::from_millis(milliseconds));
         }
         let lines = overlay.lines();
-        assert_eq!(lines[2], "1% 99.0 MS");
-        assert_eq!(lines[3], "10% 90.0 MS");
-        assert_eq!(lines[4], "MAX 100 MS");
+        assert_eq!(lines[0], "CUR 100.0 MS");
+        assert_eq!(lines[1], "1%   99.0 MS");
+        assert_eq!(lines[2], "10%  90.0 MS");
+        assert_eq!(lines[3], "MAX 100.0 MS");
+        assert_eq!(lines[4], "FRAMES   100");
     }
 
     #[test]
-    fn hiding_clears_samples() {
+    fn reset_clears_durations_but_keeps_frame_count() {
         let mut overlay = DebugFrameOverlay::new();
-        overlay.set_mode(DebugFrameOverlayMode::Fps);
+        overlay.set_mode(DebugFrameOverlayMode::Detailed);
+        for _ in 0..10 {
+            overlay.record_frame(Duration::from_millis(10));
+        }
+        overlay.reset_stats();
+        let lines = overlay.lines();
+        assert_eq!(lines[0], "CUR    -- MS");
+        assert_eq!(lines[3], "MAX    -- MS");
+        assert_eq!(lines[4], "FRAMES    10");
+        overlay.record_frame(Duration::from_millis(20));
+        let lines = overlay.lines();
+        assert_eq!(lines[0], "CUR  20.0 MS");
+        assert_eq!(lines[4], "FRAMES    11");
+    }
+
+    #[test]
+    fn frame_count_accumulates_across_mode_changes() {
+        let mut overlay = DebugFrameOverlay::new();
+        for _ in 0..3 {
+            overlay.record_frame(Duration::from_millis(10));
+        }
+        overlay.set_mode(DebugFrameOverlayMode::FrameTime);
+        assert_eq!(overlay.lines(), vec![" 10.0 MS".to_string()]);
+        overlay.set_mode(DebugFrameOverlayMode::Detailed);
         overlay.record_frame(Duration::from_millis(10));
+        assert_eq!(overlay.lines()[4], "FRAMES     4");
         overlay.set_mode(DebugFrameOverlayMode::Hidden);
-        overlay.set_mode(DebugFrameOverlayMode::Fps);
-        assert_eq!(overlay.lines(), vec!["FPS --".to_string()]);
+        overlay.record_frame(Duration::from_millis(10));
+        overlay.set_mode(DebugFrameOverlayMode::Detailed);
+        assert_eq!(overlay.lines()[4], "FRAMES     5");
+    }
+
+    #[test]
+    fn frame_count_is_right_aligned_and_saturates() {
+        let mut overlay = DebugFrameOverlay::new();
+        overlay.set_mode(DebugFrameOverlayMode::Detailed);
+        overlay.record_frame(Duration::from_millis(10));
+        assert_eq!(overlay.lines()[4], "FRAMES     1");
+        overlay.total_frame_count = 99_999;
+        assert_eq!(overlay.lines()[4], "FRAMES 99999");
+        overlay.total_frame_count = 100_000;
+        assert_eq!(overlay.lines()[4], "FRAMES  LOTS");
+    }
+
+    #[test]
+    fn toggling_on_shows_previous_frame_immediately() {
+        let mut overlay = DebugFrameOverlay::new();
+        overlay.record_frame(Duration::from_millis(10));
+        overlay.set_mode(DebugFrameOverlayMode::FrameTime);
+        assert_eq!(overlay.lines(), vec![" 10.0 MS".to_string()]);
     }
 }

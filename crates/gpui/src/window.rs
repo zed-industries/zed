@@ -2979,12 +2979,11 @@ impl Window {
         // Drain unconditionally so a stale first-invalidation timestamp can't
         // leak into a later frame across enable/disable of frame tracing.
         let frame_dirty = self.invalidator.take_frame_dirty();
-        #[cfg(feature = "frame-duration-histogram")]
+        // The draw duration is always measured: the debug overlay keeps a
+        // rolling sample even while hidden so it can show a frame time as soon
+        // as it is toggled on, and the cost of one timestamp pair per frame is
+        // negligible.
         let draw_started_at = Some(Instant::now());
-        #[cfg(not(feature = "frame-duration-histogram"))]
-        let draw_started_at = (profiler::frame_trace_enabled()
-            || self.debug_frame_overlay.is_enabled())
-        .then(Instant::now);
 
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
@@ -3192,10 +3191,17 @@ impl Window {
         self.refresh();
     }
 
-    /// Advances the debug frame overlay through its hidden, FPS-only, and
-    /// detailed modes.
+    /// Advances the debug frame overlay through its hidden, frame-time-only,
+    /// and detailed modes.
     pub fn cycle_debug_frame_overlay_mode(&mut self) {
         self.set_debug_frame_overlay_mode(self.debug_frame_overlay.mode().next());
+    }
+
+    /// Clears the debug frame overlay's frame-time statistics, except for the
+    /// total frame count, and schedules a redraw.
+    pub fn reset_debug_frame_overlay_stats(&mut self) {
+        self.debug_frame_overlay.reset_stats();
+        self.refresh();
     }
 
     fn draw_roots(&mut self, cx: &mut App) {
