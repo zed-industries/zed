@@ -957,7 +957,10 @@ impl Editor {
                     let head_x = snapshot.x_for_display_point(newest_head, &text_layout_details);
                     let screen_left_x =
                         snapshot.x_for_display_point(screen_top, &text_layout_details);
-                    head_x <= screen_left_x + em_advance * visible_columns as f32
+                    head_x
+                        <= screen_left_x
+                            + ScrollPixelOffset::from(em_advance)
+                                * visible_columns as ScrollPixelOffset
                 }
                 None => newest_head.column() <= screen_top.column() + visible_columns as u32,
             };
