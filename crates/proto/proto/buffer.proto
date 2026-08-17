@@ -119,6 +119,11 @@ enum LineEnding {
   Windows = 1;
 }
 
+message IndentOverride {
+  bool hard_tabs = 1;
+  uint32 tab_size = 2;
+}
+
 message VectorClockEntry {
   uint32 replica_id = 1;
   uint32 timestamp = 2;
@@ -144,6 +149,7 @@ message Operation {
     UpdateDiagnostics update_diagnostics = 4;
     UpdateCompletionTriggers update_completion_triggers = 5;
     UpdateLineEnding update_line_ending = 6;
+    UpdateIndentOverride update_indent_override = 7;
   }
 
   message Edit {
@@ -180,6 +186,12 @@ message Operation {
     uint32 replica_id = 1;
     uint32 lamport_timestamp = 2;
     LineEnding line_ending = 3;
+  }
+
+  message UpdateIndentOverride {
+    uint32 replica_id = 1;
+    uint32 lamport_timestamp = 2;
+    optional IndentOverride indent_override = 3;
   }
 }
 

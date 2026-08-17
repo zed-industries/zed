@@ -150,7 +150,7 @@ async fn test_multiline_regex_crlf(cx: &mut gpui::TestAppContext) {
 
     let text = Rope::from("hello\r\nworld\r\nhello\r\nworld");
     let snapshot = cx
-        .update(|app| Buffer::build_snapshot(text, None, None, None, app))
+        .update(|app| Buffer::build_snapshot(text, None, None, None, None, app))
         .await;
 
     let results = search_query.search(&snapshot, None).await;
@@ -174,7 +174,7 @@ async fn test_multiline_regex(cx: &mut gpui::TestAppContext) {
 
     let text = Rope::from("hello\nworld\nhello\nworld");
     let snapshot = cx
-        .update(|app| Buffer::build_snapshot(text, None, None, None, app))
+        .update(|app| Buffer::build_snapshot(text, None, None, None, None, app))
         .await;
 
     let results = search_query.search(&snapshot, None).await;

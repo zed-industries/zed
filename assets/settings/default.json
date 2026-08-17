@@ -1542,6 +1542,8 @@
   // Whether to indent lines using tab characters, as opposed to multiple
   // spaces.
   "hard_tabs": false,
+  // Whether to automatically detect indentation per buffer.
+  "detect_indentation": false,
   // How many columns a tab should occupy.
   "tab_size": 4,
   // Number of lines to search for modelines at the beginning and end of files.
@@ -1856,6 +1858,8 @@
     "cursor_position_button": true,
     // Whether to show active line endings button in the status bar.
     "line_endings_button": false,
+    // Whether to show the indentation button in the status bar.
+    "indentation_button": true,
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
   },

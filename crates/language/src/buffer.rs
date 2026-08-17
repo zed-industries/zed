@@ -4,8 +4,8 @@ pub mod row_chunk;
 pub use bracket_ranges::BracketMatch;
 
 use crate::{
-    ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
-    PLAIN_TEXT, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
+    ByteContent, DebuggerTextObject, DetectedIndentation, LanguageScope, ModelineSettings, Outline,
+    OutlineConfig, PLAIN_TEXT, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
@@ -137,6 +137,7 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     modeline: Option<Arc<ModelineSettings>>,
+    indent_override: Option<Arc<IndentOverride>>,
     _subscriptions: Vec<gpui::Subscription>,
     tree_sitter_data: Arc<TreeSitterData>,
     encoding: &'static Encoding,
@@ -194,6 +195,13 @@ pub struct BufferSnapshot {
     non_text_state_update_count: usize,
     pub capability: Capability,
     modeline: Option<Arc<ModelineSettings>>,
+    indent_override: Option<Arc<IndentOverride>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IndentOverride {
+    pub hard_tabs: bool,
+    pub tab_size: NonZeroU32,
 }
 
 /// The kind and amount of indentation in a particular line. For now,
@@ -293,6 +301,11 @@ pub enum Operation {
         /// The line ending type.
         line_ending: LineEnding,
         /// The buffer's lamport timestamp.
+        lamport_timestamp: clock::Lamport,
+    },
+
+    UpdateIndentOverride {
+        indent_override: Option<IndentOverride>,
         lamport_timestamp: clock::Lamport,
     },
 }
@@ -1152,6 +1165,7 @@ impl Buffer {
             has_conflict: false,
             change_bits: Default::default(),
             modeline: None,
+            indent_override: None,
             _subscriptions: Vec::new(),
             encoding: encoding_rs::UTF_8,
             has_bom: false,
@@ -1165,6 +1179,7 @@ impl Buffer {
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         modeline: Option<Arc<ModelineSettings>>,
+        indent_override: Option<Arc<IndentOverride>>,
         cx: &mut App,
     ) -> impl Future<Output = BufferSnapshot> + use<> {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
@@ -1190,6 +1205,7 @@ impl Buffer {
                 non_text_state_update_count: 0,
                 capability: Capability::ReadOnly,
                 modeline,
+                indent_override,
             }
         }
     }
@@ -1217,6 +1233,7 @@ impl Buffer {
             non_text_state_update_count: 0,
             capability: Capability::ReadOnly,
             modeline: None,
+            indent_override: None,
         }
     }
 
@@ -1248,6 +1265,7 @@ impl Buffer {
             non_text_state_update_count: 0,
             capability: Capability::ReadOnly,
             modeline: None,
+            indent_override: None,
         }
     }
 
@@ -1279,6 +1297,7 @@ impl Buffer {
             non_text_state_update_count: self.non_text_state_update_count,
             capability: self.capability,
             modeline: self.modeline.clone(),
+            indent_override: self.indent_override.clone(),
         }
     }
 
@@ -1501,6 +1520,17 @@ impl Buffer {
         self.reparse(cx, may_block);
         let has_fresh_language =
             self.language.is_some() && old_language.is_none_or(|old| old == *PLAIN_TEXT);
+
+        if self.indent_override.is_none()
+            && LanguageSettings::for_buffer(self, cx).detect_indentation
+        {
+            let indent_override = self
+                .detect_indentation()
+                .map(|detected| self.indent_override_for_detection(detected, cx));
+
+            self.set_indent_override(indent_override, cx);
+        }
+
         cx.emit(BufferEvent::LanguageChanged(has_fresh_language));
     }
 
@@ -1514,6 +1544,36 @@ impl Buffer {
 
     pub fn language_registry(&self) -> Option<Arc<LanguageRegistry>> {
         self.syntax_map.lock().language_registry()
+    }
+
+    pub fn detect_indentation(&mut self) -> Option<DetectedIndentation> {
+        let snapshot = self.snapshot();
+        let end_row = snapshot.max_point().row.min(2000);
+        crate::detect_indentation(
+            snapshot
+                .line_indents_in_row_range(0..end_row)
+                .map(|(_, line_indent)| line_indent),
+        )
+    }
+
+    fn indent_override_for_detection(
+        &self,
+        detected: DetectedIndentation,
+        cx: &App,
+    ) -> IndentOverride {
+        IndentOverride {
+            hard_tabs: detected.hard_tabs,
+            tab_size: detected
+                .tab_size
+                .unwrap_or_else(|| LanguageSettings::for_buffer(self, cx).tab_size),
+        }
+    }
+
+    pub fn redetect_indentation(&mut self, cx: &mut Context<Self>) {
+        let indent_override = self
+            .detect_indentation()
+            .map(|detected| self.indent_override_for_detection(detected, cx));
+        self.set_indent_override(indent_override, cx);
     }
 
     /// Assign the line ending type to the buffer.
@@ -1544,6 +1604,32 @@ impl Buffer {
     /// Returns the [`ModelineSettings`].
     pub fn modeline(&self) -> Option<&Arc<ModelineSettings>> {
         self.modeline.as_ref()
+    }
+
+    pub fn indent_override(&self) -> Option<&Arc<IndentOverride>> {
+        self.indent_override.as_ref()
+    }
+
+    pub fn set_indent_override(
+        &mut self,
+        indent_override: Option<IndentOverride>,
+        cx: &mut Context<Self>,
+    ) {
+        if indent_override == self.indent_override.as_deref().copied() {
+            return;
+        }
+        self.indent_override = indent_override.map(Arc::new);
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.send_operation(
+            Operation::UpdateIndentOverride {
+                indent_override,
+                lamport_timestamp,
+            },
+            true,
+            cx,
+        );
+
+        cx.notify();
     }
 
     /// Assign the buffer a new [`Capability`].
@@ -3165,7 +3251,9 @@ impl Buffer {
             Operation::UpdateSelections { selections, .. } => selections
                 .iter()
                 .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
-            Operation::UpdateCompletionTriggers { .. } | Operation::UpdateLineEnding { .. } => true,
+            Operation::UpdateCompletionTriggers { .. }
+            | Operation::UpdateLineEnding { .. }
+            | Operation::UpdateIndentOverride { .. } => true,
         }
     }
 
@@ -3235,6 +3323,13 @@ impl Buffer {
                 lamport_timestamp,
             } => {
                 self.text.set_line_ending(line_ending);
+                self.text.lamport_clock.observe(lamport_timestamp);
+            }
+            Operation::UpdateIndentOverride {
+                indent_override,
+                lamport_timestamp,
+            } => {
+                self.indent_override = indent_override.map(Arc::new);
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
@@ -4085,6 +4180,10 @@ impl BufferSnapshot {
     /// Returns the [`ModelineSettings`].
     pub fn modeline(&self) -> Option<&Arc<ModelineSettings>> {
         self.modeline.as_ref()
+    }
+
+    pub fn indent_override(&self) -> Option<&Arc<IndentOverride>> {
+        self.indent_override.as_ref()
     }
 
     /// Returns the main [`Language`].
@@ -5315,6 +5414,7 @@ impl Clone for BufferSnapshot {
             non_text_state_update_count: self.non_text_state_update_count,
             capability: self.capability,
             modeline: self.modeline.clone(),
+            indent_override: self.indent_override.clone(),
         }
     }
 }
@@ -5613,6 +5713,9 @@ impl operation_queue::Operation for Operation {
                 lamport_timestamp, ..
             }
             | Operation::UpdateLineEnding {
+                lamport_timestamp, ..
+            }
+            | Operation::UpdateIndentOverride {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
         }

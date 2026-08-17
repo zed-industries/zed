@@ -1,7 +1,8 @@
 //! Provides `language`-related settings.
 
 use crate::{
-    Buffer, BufferSnapshot, File, Language, LanguageName, LanguageServerName, ModelineSettings,
+    Buffer, BufferSnapshot, File, IndentOverride, Language, LanguageName, LanguageServerName,
+    ModelineSettings,
 };
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
@@ -63,6 +64,8 @@ pub struct LanguageSettings {
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
     pub hard_tabs: bool,
+    /// Whether to automatically detect indentation per buffer.
+    pub detect_indentation: bool,
     /// How to soft-wrap long lines of text.
     pub soft_wrap: settings::SoftWrap,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
@@ -316,6 +319,10 @@ impl LanguageSettings {
             merge_with_modeline(settings.to_mut(), modeline);
         }
 
+        if let Some(indent_override) = buffer.indent_override() {
+            merge_with_indent_override(settings.to_mut(), indent_override);
+        }
+
         settings
     }
 
@@ -340,6 +347,10 @@ impl LanguageSettings {
 
         if let Some(modeline) = buffer.modeline() {
             merge_with_modeline(settings.to_mut(), modeline);
+        }
+
+        if let Some(indent_override) = buffer.indent_override() {
+            merge_with_indent_override(settings.to_mut(), indent_override);
         }
 
         settings
@@ -591,9 +602,11 @@ impl AllLanguageSettings {
         language_name: Option<&LanguageName>,
         cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
-        let settings = language_name
-            .and_then(|name| self.languages.get(name))
-            .unwrap_or(&self.defaults);
+        let mut settings = Cow::Borrowed(
+            language_name
+                .and_then(|name| self.languages.get(name))
+                .unwrap_or(&self.defaults),
+        );
 
         let editorconfig_properties = location.and_then(|location| {
             cx.global::<SettingsStore>()
@@ -601,13 +614,12 @@ impl AllLanguageSettings {
                 .read(cx)
                 .properties(location.worktree_id, location.path)
         });
+
         if let Some(editorconfig_properties) = editorconfig_properties {
-            let mut settings = settings.clone();
-            merge_with_editorconfig(&mut settings, &editorconfig_properties);
-            Cow::Owned(settings)
-        } else {
-            Cow::Borrowed(settings)
+            merge_with_editorconfig(settings.to_mut(), &editorconfig_properties);
         }
+
+        settings
     }
 
     /// Returns whether edit predictions are enabled for the given path.
@@ -625,6 +637,11 @@ impl AllLanguageSettings {
     pub fn edit_predictions_mode(&self) -> EditPredictionsMode {
         self.edit_predictions.mode
     }
+}
+
+fn merge_with_indent_override(settings: &mut LanguageSettings, indent_override: &IndentOverride) {
+    settings.hard_tabs = indent_override.hard_tabs;
+    settings.tab_size = indent_override.tab_size;
 }
 
 fn merge_with_modeline(settings: &mut LanguageSettings, modeline: &ModelineSettings) {
@@ -731,6 +748,7 @@ impl settings::Settings for AllLanguageSettings {
             LanguageSettings {
                 tab_size: settings.tab_size.unwrap(),
                 hard_tabs: settings.hard_tabs.unwrap(),
+                detect_indentation: settings.detect_indentation.unwrap(),
                 soft_wrap: settings.soft_wrap.unwrap(),
                 preferred_line_length: settings.preferred_line_length.unwrap(),
                 show_wrap_guides: settings.show_wrap_guides.unwrap(),

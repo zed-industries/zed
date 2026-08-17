@@ -576,6 +576,7 @@ impl VsCodeSettings {
             }),
             formatter: None,
             hard_tabs: self.read_bool("editor.insertSpaces").map(|v| !v),
+            detect_indentation: self.read_bool("editor.detectIndentation"),
             indent_guides: skip_default(IndentGuideSettingsContent {
                 enabled: self.read_bool("editor.guides.indentation"),
                 ..Default::default()
@@ -806,6 +807,7 @@ impl VsCodeSettings {
             active_language_button: None,
             cursor_position_button: None,
             line_endings_button: None,
+            indentation_button: None,
             active_encoding_button: None,
         })
     }
