@@ -20,7 +20,6 @@ fn migrate_one(obj: &mut serde_json::Map<String, Value>) -> Result<()> {
     };
 
     *git_gutter_width = match git_gutter_width {
-        Value::Null => Value::String("default".to_string()),
         Value::Number(n) => {
             let width = n
                 .as_f64()
@@ -31,9 +30,7 @@ fn migrate_one(obj: &mut serde_json::Map<String, Value>) -> Result<()> {
                     .collect(),
             )
         }
-        Value::String(s) if s == "default" => return Ok(()),
-        Value::Object(o) if o.contains_key("custom") => return Ok(()),
-        _ => anyhow::bail!("Expected git_gutter_width to be null, a number, or a valid enum value"),
+        _ => return Ok(()),
     };
 
     Ok(())

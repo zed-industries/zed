@@ -5451,30 +5451,6 @@ mod tests {
     }
 
     #[test]
-    fn test_make_git_gutter_width_an_enum_from_null() {
-        assert_migrate_settings(
-            &r#"
-            {
-                "gutter": {
-                    "git_gutter_width": null
-                }
-            }
-            "#
-            .unindent(),
-            Some(
-                &r#"
-                {
-                    "gutter": {
-                        "git_gutter_width": "default"
-                    }
-                }
-                "#
-                .unindent(),
-            ),
-        );
-    }
-
-    #[test]
     fn test_make_git_gutter_width_an_enum_no_change_when_already_migrated() {
         // already "default" string — no change
         assert_migrate_settings(
