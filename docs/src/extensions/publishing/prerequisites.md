@@ -13,7 +13,7 @@ Note that maintainters will raise non-compliance during the publishing process. 
 
 - Test your extension locally at the submodule commit you are submitting it at.
 - Publish functionality that is not already available in the extension marketplace.
-  - If you face issues with an existing extension, first try contributing to the existing extension. See [the section below](#requirements-post-publishing) for more details on this requirement.
+  - If you face issues with an existing extension, first try contributing to the existing extension. See [Updating and Maintenance](./updating-and-maintenance.md#maintenance) for more details on this requirement.
 - Use an appropriate ID for your extension. The ID must:
   - be unique
   - be camel-cased
@@ -72,28 +72,6 @@ Note that maintainters will raise non-compliance during the publishing process. 
 
 Agent server and slash command extensions have been deprecated and submissions will no longer be accepted. If you intend on making an agent server available within Zed, publish it to the [ACP Registry](https://agentclientprotocol.com/registry) instead.
 
+---
+
 Passing everything on this list? Let's [get your extension published!](./publishing-guide.md)
-
-# Requirements Post Publishing
-
-After your extension has been published, there are no further requirements from our side. Thank you for enriching the Zed extension collection, we really appreciate it!
-
-However, not every extension is perfect when it is first published and issues might arise, requiring maintenance effort. While we do not demand this effort from anyone, we generally expect:
-
-- users and contributors to report issues and propose improvements in the original extension repository first, rather than publishing a competing extension
-- extension owners to get back to those users within a reasonable timeframe
-
-Now, maintaining an extension might not be everyone's cup of tea or things might have changed since publishing - that is totally fine! We fully understand that maintenance can take a lot of time and, as mentioned above, we do not require it.
-At the same time, we do not want existing extensions to go stale in a bad state, as that leaves users of that extension with a poor experience. These two goals obviously clash: we cannot both leave maintenance entirely optional and just live with stale extensions.
-
-To resolve this, in the case an extension owner no longer wants to maintain an extension or is unresponsive, we provide the following options:
-
-- The current owner may transfer ownership of the repository to a new owner.
-- A contributor may fork the extension and publish their fork as a replacement for the current extension.
-- Zed staff can fork the extension into the `zed-extensions` organization and maintenance can continue from there as a joint effort of the community and Zed staff.
-- The current owner may open an issue or pull request against `zed-industries/extensions` asking for the removal of the extension.
-
-In order for any of the options to be applicable, we require either:
-
-- written permission from the current extension owner
-- proof of the reporting contributor that the upstream extension owner has been unresponsive to change requests for at least two months
