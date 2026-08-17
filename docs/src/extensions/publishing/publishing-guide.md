@@ -10,7 +10,7 @@ description: "Submit and update extensions in the Zed Extension Registry."
 Follow each step carefully to help the publishing process go smoothly.
 
 > To keep the review queue manageable, every PR must add or update **exactly one extension**, and you may have **at most three open PRs** at any given time. PRs that do not adhere to this will be closed without further feedback.
-> Repeated violations of these limits may result in a temporary suspension or a ban from submitting to the extension registry.
+> Repeated violations of these limits may result in a temporary suspension or a ban from submitting to the extension repository.
 
 ## Forking and cloning the repo
 
