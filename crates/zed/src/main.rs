@@ -273,6 +273,51 @@ fn main() {
         paths::set_custom_data_dir(dir);
     }
 
+    // Space-Grade Headless / Daemon Mode:
+    // Execute without GPU or display initialization. Serves JSON-RPC 2.0 requests over
+    // stdin/stdout or TCP socket for AI agents, CI/CD pipelines, and headless automation.
+    if args.daemon {
+        // Space-Grade Security (Section 3.2 of Audit):
+        // Sanitize sensitive tokens from execution environment before launching daemon
+        cli::sanitize_env_for_daemon();
+
+        let auth_token = args
+            .daemon_auth_token
+            .clone()
+            .or_else(|| std::env::var("ZED_DAEMON_TOKEN").ok());
+
+        let auth_token = match auth_token {
+            Some(token) => token,
+            None => {
+                eprintln!(
+                    "Error: Daemon mode requires --daemon-auth-token or ZED_DAEMON_TOKEN environment variable"
+                );
+                std::process::exit(1);
+            }
+        };
+
+        let config = zed_daemon::DaemonConfig {
+            listen_addr: args.daemon_listen_addr.clone(),
+            max_connections: 64,
+            auth_token: Some(auth_token),
+        };
+        let registry = zed_daemon::default_registry();
+        let server = zed_daemon::DaemonServer::new(config, registry);
+
+        if args.stdio {
+            if let Err(e) = server.run_stdio() {
+                eprintln!("Daemon stdio error: {e}");
+                process::exit(1);
+            }
+        } else {
+            if let Err(e) = smol::block_on(server.run()) {
+                eprintln!("Daemon TCP server error: {e}");
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
     #[cfg(target_os = "windows")]
     match util::get_zed_cli_path() {
         Ok(path) => askpass::set_askpass_program(path),
@@ -303,10 +348,23 @@ fn main() {
     }
     ztracing::init();
 
-    let version = option_env!("ZED_BUILD_ID");
-    let app_commit_sha =
-        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
-    let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"), version, app_commit_sha.clone());
+    // Space-Grade Cold Start Optimization (Section 2.1 of Audit):
+    // Parallelize independent metadata initialization across worker threads
+    let (app_version, app_commit_sha) = rayon::join(
+        || {
+            let version = option_env!("ZED_BUILD_ID");
+            let commit_sha = option_env!("ZED_COMMIT_SHA").map(|sha| AppCommitSha::new(sha.to_string()));
+            (AppVersion::load(env!("CARGO_PKG_VERSION"), version, commit_sha.clone()), commit_sha)
+        },
+        || {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
+                .stack_size(10 * 1024 * 1024)
+                .thread_name(|ix| format!("RayonWorker{}", ix))
+                .build_global()
+                .ok();
+        },
+    ).0;
 
     if args.system_specs {
         let system_specs = system_specs::SystemSpecs::new_stateless(
@@ -319,13 +377,6 @@ fn main() {
         println!("Zed System Specs (from CLI):\n{}", system_specs);
         return;
     }
-
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
-        .stack_size(10 * 1024 * 1024)
-        .thread_name(|ix| format!("RayonWorker{}", ix))
-        .build_global()
-        .unwrap();
 
     log::info!(
         "========== starting zed version {}, sha {} ==========",
@@ -343,10 +394,15 @@ fn main() {
     let app = build_application().with_assets(Assets);
 
     let app_db = db::AppDatabase::new();
-    let system_id = app.background_executor().spawn(system_id());
-    let installation_id = app
-        .background_executor()
-        .spawn(installation_id(KeyValueStore::from_app_db(&app_db)));
+    
+    // Space-Grade Parallelized Identity & Session Loading:
+    // system_id and installation_id spawn concurrently before session synchronization
+    let (system_id, installation_id) = {
+        let sid = app.background_executor().spawn(system_id());
+        let iid = app.background_executor().spawn(installation_id(KeyValueStore::from_app_db(&app_db)));
+        (sid, iid)
+    };
+
     let session_id = Uuid::new_v4().to_string();
     let session = app.background_executor().spawn(Session::new(
         session_id.clone(),
@@ -1730,6 +1786,22 @@ struct Args {
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
+
+    /// Run zed in headless JSON-RPC 2.0 daemon mode for external AI agent and CI/CD integration.
+    #[arg(long)]
+    daemon: bool,
+
+    /// Port/address for the headless daemon mode (default: 127.0.0.1:9257).
+    #[arg(long, default_value = "127.0.0.1:9257")]
+    daemon_listen_addr: String,
+
+    /// Optional bearer authentication token for securing the daemon.
+    #[arg(long)]
+    daemon_auth_token: Option<String>,
+
+    /// Process JSON-RPC 2.0 requests over stdin/stdout (headless daemon pipe mode).
+    #[arg(long)]
+    stdio: bool,
 
     /// Prints system specs.
     ///

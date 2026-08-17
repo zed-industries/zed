@@ -33,6 +33,31 @@ use std::io::IsTerminal;
 
 const URL_PREFIX: [&'static str; 5] = ["zed://", "http://", "https://", "file://", "ssh://"];
 
+/// Environment variables that must never leak to daemon child processes
+pub fn sanitize_env_for_daemon() {
+    const SENSITIVE_VARS: &[&str] = &[
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SESSION_TOKEN",
+        "GITHUB_TOKEN",
+        "GITHUB_PAT",
+        "GH_TOKEN",
+        "OPENAI_API_KEY",
+        "OPENAI_ORG_ID",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "SSH_AUTH_SOCK",
+        "GPG_TTY",
+        "HOMEBREW_GITHUB_TOKEN",
+    ];
+
+    for var in SENSITIVE_VARS {
+        unsafe {
+            std::env::remove_var(var);
+        }
+    }
+}
+
 struct Detect;
 
 trait InstalledApp {
@@ -121,6 +146,9 @@ struct Args {
     /// Optional bearer authentication token for securing the daemon
     #[arg(long)]
     daemon_auth_token: Option<String>,
+    /// Process JSON-RPC 2.0 requests over stdin/stdout (headless daemon pipe mode)
+    #[arg(long)]
+    stdio: bool,
     /// The username and WSL distribution to use when opening paths. If not specified,
     /// Zed will attempt to open the paths directly.
     ///
@@ -557,7 +585,11 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-if args.daemon {
+    if args.daemon {
+        // Space-Grade Security (Section 3.2 of Audit):
+        // Sanitize sensitive environment variables before starting daemon to prevent leakage
+        sanitize_env_for_daemon();
+
         // Space-Grade Security: Daemon authentication is HARD ENFORCED, not optional.
         // Running `zed --daemon` without `--daemon-auth-token` or `ZED_DAEMON_TOKEN`
         // must FAIL with a clear error, not silently proceed without authentication.
@@ -580,7 +612,11 @@ if args.daemon {
         };
         let registry = zed_daemon::default_registry();
         let server = zed_daemon::DaemonServer::new(config, registry);
-        smol::block_on(server.run())?;
+        if args.stdio {
+            server.run_stdio()?;
+        } else {
+            smol::block_on(server.run())?;
+        }
         return Ok(());
     }
 

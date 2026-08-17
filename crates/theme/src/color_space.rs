@@ -74,3 +74,39 @@ fn hsla_to_linear(color: Hsla) -> LinSrgba {
     let rgba = Rgba::from(color);
     Srgba::new(rgba.r, rgba.g, rgba.b, rgba.a).into_linear()
 }
+
+/// Calculate the relative luminance of an [`Hsla`] color according to WCAG 2.1 specifications.
+pub fn relative_luminance(color: Hsla) -> f32 {
+    let rgba = Rgba::from(color);
+    let to_linear = |c: f32| -> f32 {
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let r = to_linear(rgba.r);
+    let g = to_linear(rgba.g);
+    let b = to_linear(rgba.b);
+    0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/// Calculate WCAG 2.1 contrast ratio between foreground and background colors.
+/// Returns a ratio in the range `1.0..=21.0`.
+pub fn contrast_ratio(fg: Hsla, bg: Hsla) -> f32 {
+    let l1 = relative_luminance(fg);
+    let l2 = relative_luminance(bg);
+    let lighter = l1.max(l2);
+    let darker = l1.min(l2);
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+/// Verify if a color pair meets WCAG AA standard (4.5:1 for normal text, 3.0:1 for large text).
+pub fn meets_wcag_aa(fg: Hsla, bg: Hsla, is_large_text: bool) -> bool {
+    let ratio = contrast_ratio(fg, bg);
+    if is_large_text {
+        ratio >= 3.0
+    } else {
+        ratio >= 4.5
+    }
+}

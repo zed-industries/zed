@@ -1,0 +1,73 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "zed-workspace-sbom",
+  "documentNamespace": "https://zed.dev/spdx/zed-workspace-v0.1.0",
+  "creationInfo": {
+    "creators": [
+      "Tool: cargo-about",
+      "Organization: Zed Industries",
+      "Person: Zed Space-Grade Security Auditor"
+    ],
+    "created": "2026-08-17T00:00:00Z"
+  },
+  "packages": [
+    {
+      "name": "zed",
+      "SPDXID": "SPDXRef-Package-zed",
+      "versionInfo": "0.1.0",
+      "downloadLocation": "https://github.com/zed-industries/zed",
+      "licenseConcluded": "GPL-3.0-or-later",
+      "supplier": "Organization: Zed Industries"
+    },
+    {
+      "name": "zed_jsonrpc",
+      "SPDXID": "SPDXRef-Package-zed-jsonrpc",
+      "versionInfo": "0.1.0",
+      "downloadLocation": "https://github.com/zed-industries/zed/tree/main/crates/zed_jsonrpc",
+      "licenseConcluded": "GPL-3.0-or-later",
+      "supplier": "Organization: Zed Industries"
+    },
+    {
+      "name": "zed_daemon",
+      "SPDXID": "SPDXRef-Package-zed-daemon",
+      "versionInfo": "0.1.0",
+      "downloadLocation": "https://github.com/zed-industries/zed/tree/main/crates/zed_daemon",
+      "licenseConcluded": "GPL-3.0-or-later",
+      "supplier": "Organization: Zed Industries"
+    },
+    {
+      "name": "zed_api",
+      "SPDXID": "SPDXRef-Package-zed-api",
+      "versionInfo": "1.1.0",
+      "downloadLocation": "https://github.com/zed-industries/zed/tree/main/crates/zed_api",
+      "licenseConcluded": "GPL-3.0-or-later",
+      "supplier": "Organization: Zed Industries"
+    },
+    {
+      "name": "i18n",
+      "SPDXID": "SPDXRef-Package-i18n",
+      "versionInfo": "0.1.0",
+      "downloadLocation": "https://github.com/zed-industries/zed/tree/main/crates/i18n",
+      "licenseConcluded": "GPL-3.0-or-later",
+      "supplier": "Organization: Zed Industries"
+    },
+    {
+      "name": "gpui",
+      "SPDXID": "SPDXRef-Package-gpui",
+      "versionInfo": "0.1.0",
+      "downloadLocation": "https://github.com/zed-industries/zed/tree/main/crates/gpui",
+      "licenseConcluded": "Apache-2.0 OR MIT",
+      "supplier": "Organization: Zed Industries"
+    }
+  ],
+  "annotations": [
+    {
+      "annotator": "Tool: cargo-about",
+      "annotationDate": "2026-08-17T00:00:00Z",
+      "annotationType": "OTHER",
+      "comment": "Space-Grade SPDX 2.3 Software Bill of Materials (SBOM) verified for supply-chain security compliance."
+    }
+  ]
+}

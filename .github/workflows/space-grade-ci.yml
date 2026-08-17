@@ -1,0 +1,50 @@
+name: Space-Grade Quality & Security CI
+
+on:
+  push:
+    branches: [main, release/*]
+  pull_request:
+    branches: [main]
+
+jobs:
+  security-supply-chain:
+    name: Supply Chain & Dependency Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v1
+        with:
+          command: check
+          arguments: --config deny.toml
+
+      - name: Verify SPDX SBOM Generation
+        run: |
+          chmod +x script/licenses/gen-sbom.sh
+          ./script/licenses/gen-sbom.sh
+          test -f docs/SBOM.spdx.json
+
+  mutation-testing:
+    name: Mutation Testing Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Run Invariant Property Tests
+        run: |
+          cargo test --package editor --lib proptest
+          cargo test --package zed_api
+          cargo test --package zed_jsonrpc
+
+  fuzz-smoke:
+    name: Fuzz Harness Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Execute Fuzz Harness Verification
+        run: |
+          cargo test --package editor --lib fuzz_harness

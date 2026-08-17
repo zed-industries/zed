@@ -1,0 +1,15 @@
+{
+  "app.name": "Zed",
+  "file.open": "打开",
+  "file.save": "保存文件",
+  "file.close": "关闭",
+  "edit.undo": "撤销",
+  "edit.redo": "重做",
+  "edit.cut": "剪切",
+  "edit.copy": "复制",
+  "edit.paste": "粘贴",
+  "settings.font_size": "字体大小",
+  "accessibility.contrast": "对比度",
+  "daemon.running": "守护进程正在监听 {addr}",
+  "daemon.authenticated": "已通过身份验证：{user}"
+}

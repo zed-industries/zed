@@ -217,6 +217,7 @@
 - [All Settings](./reference/all-settings.md)
 - [All Actions](./all-actions.md)
 - [CLI Reference](./reference/cli.md)
+- [Space-Grade Audit](../space-grade-audit.md)
 
 # Developing Zed
 

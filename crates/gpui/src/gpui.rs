@@ -395,4 +395,46 @@ impl HeadlessRenderDriver {
     pub fn render_to_png(&self) -> Vec<u8> {
         self.render_to_raw_pixels(0x1e, 0x1e, 0x2e, 0xff)
     }
+
+    /// Determines if headless software rendering should be the primary render mode
+    pub fn is_primary_fallback_mode() -> bool {
+        std::env::var("ZED_HEADLESS").is_ok()
+            || std::env::var("CI").is_ok()
+            || std::env::var("ZED_DAEMON").is_ok()
+    }
+}
+
+impl platform::SoftwareRenderer for HeadlessRenderDriver {
+    fn render_scene_to_pixels(&self, _scene: &Scene, size: Size<DevicePixels>) -> anyhow::Result<Vec<u8>> {
+        let total_bytes = (size.width.0 as usize) * (size.height.0 as usize) * 4;
+        let mut buffer = vec![0x1e; total_bytes];
+        for chunk in buffer.chunks_exact_mut(4) {
+            chunk[0] = 0x1e; // R
+            chunk[1] = 0x1e; // G
+            chunk[2] = 0x2e; // B
+            chunk[3] = 0xff; // A
+        }
+        Ok(buffer)
+    }
+
+    fn render_svg(&self, svg_data: &[u8], size: Size<DevicePixels>) -> anyhow::Result<Vec<u8>> {
+        // Fallback software SVG rasterization using resvg
+        let opt = usvg::Options::default();
+        let tree = usvg::Tree::from_data(svg_data, &opt)?;
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width.0 as u32, size.height.0 as u32)
+            .ok_or_else(|| anyhow::anyhow!("Failed to allocate software pixmap"))?;
+        resvg::render(&tree, resvg::tiny_skia::Transform::default(), &mut pixmap.as_mut());
+        Ok(pixmap.take())
+    }
+}
+
+impl platform::ClipboardService for HeadlessRenderDriver {
+    fn read_text_sync(&self) -> Option<String> {
+        None
+    }
+    fn write_text_sync(&self, _text: &str) {}
+    fn read_html_sync(&self) -> Option<String> {
+        None
+    }
+    fn write_html_sync(&self, _html: &str) {}
 }

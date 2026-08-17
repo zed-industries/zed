@@ -1,0 +1,15 @@
+{
+  "app.name": "Zed",
+  "file.open": "Abrir",
+  "file.save": "Guardar archivo",
+  "file.close": "Cerrar",
+  "edit.undo": "Deshacer",
+  "edit.redo": "Rehacer",
+  "edit.cut": "Cortar",
+  "edit.copy": "Copiar",
+  "edit.paste": "Pegar",
+  "settings.font_size": "Tamaño de fuente",
+  "accessibility.contrast": "Relación de contraste",
+  "daemon.running": "Daemon escuchando en {addr}",
+  "daemon.authenticated": "Autenticado como {user}"
+}

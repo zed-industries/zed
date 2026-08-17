@@ -11,6 +11,31 @@ pub struct IpcHandshake {
     pub responses: ipc::IpcReceiver<CliResponse>,
 }
 
+/// Environment variables that must never leak to daemon child processes (Section 3.2 of Space-Grade Audit)
+pub fn sanitize_env_for_daemon() {
+    const SENSITIVE_VARS: &[&str] = &[
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SESSION_TOKEN",
+        "GITHUB_TOKEN",
+        "GITHUB_PAT",
+        "GH_TOKEN",
+        "OPENAI_API_KEY",
+        "OPENAI_ORG_ID",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "SSH_AUTH_SOCK",
+        "GPG_TTY",
+        "HOMEBREW_GITHUB_TOKEN",
+    ];
+
+    for var in SENSITIVE_VARS {
+        unsafe {
+            std::env::remove_var(var);
+        }
+    }
+}
+
 /// Controls how CLI paths are opened — whether to reuse existing windows,
 /// create new ones, or add to the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

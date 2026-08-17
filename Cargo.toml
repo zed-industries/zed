@@ -247,6 +247,12 @@ members = [
     "crates/zed_daemon",
     "crates/libzed_core",
     "crates/zed_core_lib",
+    "crates/zed_api",
+    "crates/zed_jsonrpc",
+    "crates/external_editor",
+    "crates/oauth",
+    "crates/zed_proxy",
+    "crates/i18n",
     "crates/code_graph",
 
     #
@@ -376,6 +382,7 @@ http_client_tls = { path = "crates/http_client_tls" }
 http_proxy = { path = "crates/http_proxy" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
+i18n = { path = "crates/i18n" }
 edit_prediction_types = { path = "crates/edit_prediction_types" }
 edit_prediction_ui = { path = "crates/edit_prediction_ui" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }
@@ -509,6 +516,11 @@ zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zed_daemon = { path = "crates/zed_daemon" }
 zed_core_lib = { path = "crates/zed_core_lib" }
+zed_api = { path = "crates/zed_api" }
+zed_jsonrpc = { path = "crates/zed_jsonrpc" }
+external_editor = { path = "crates/external_editor" }
+oauth = { path = "crates/oauth" }
+zed_proxy = { path = "crates/zed_proxy" }
 zed_credentials_provider = { path = "crates/zed_credentials_provider" }
 zed_env_vars = { path = "crates/zed_env_vars" }
 edit_prediction = { path = "crates/edit_prediction" }

@@ -326,6 +326,32 @@ pub trait Platform: 'static {
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
+
+    /// Software renderer implementation for CPU-based rendering without GPU dependencies
+    fn software_renderer(&self) -> Option<Rc<dyn SoftwareRenderer>> {
+        None
+    }
+
+    /// Unified space-grade clipboard service interface
+    fn clipboard_service(&self) -> Option<Rc<dyn ClipboardService>> {
+        None
+    }
+}
+
+/// Unified cross-platform clipboard service interface (Section 7.3 of Space-Grade Audit)
+pub trait ClipboardService: 'static {
+    fn read_text_sync(&self) -> Option<String>;
+    fn write_text_sync(&self, text: &str);
+    fn read_html_sync(&self) -> Option<String>;
+    fn write_html_sync(&self, html: &str);
+}
+
+/// Software rendering abstraction for CPU fallback (Section 1.4 & Rec 4 of Space-Grade Audit)
+pub trait SoftwareRenderer: 'static {
+    /// Render a scene to raw RGBA pixel buffer on the CPU
+    fn render_scene_to_pixels(&self, scene: &Scene, size: Size<DevicePixels>) -> Result<Vec<u8>>;
+    /// Rasterize SVG element using resvg
+    fn render_svg(&self, svg_data: &[u8], size: Size<DevicePixels>) -> Result<Vec<u8>>;
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.

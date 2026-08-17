@@ -6511,6 +6511,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "external_editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "zed_core_lib",
+ "zed_jsonrpc",
+]
+
+[[package]]
 name = "failspot"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8895,6 +8906,18 @@ dependencies = [
  "tokio",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "i18n"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -12076,6 +12099,16 @@ dependencies = [
  "rmpv",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "oauth"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -23604,6 +23637,7 @@ dependencies = [
  "zed-reqwest",
  "zed_actions",
  "zed_credentials_provider",
+ "zed_daemon",
  "zed_env_vars",
  "zlog",
  "zlog_settings",
@@ -23632,6 +23666,21 @@ dependencies = [
  "walkdir",
  "winapi",
  "yeslogic-fontconfig-sys",
+]
+
+[[package]]
+name = "zed-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "cli",
+ "futures 0.3.32",
+ "log",
+ "serde",
+ "serde_json",
+ "smol",
+ "zed_daemon",
 ]
 
 [[package]]
@@ -23728,6 +23777,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "zed_core_lib",
+]
+
+[[package]]
 name = "zed_core_lib"
 version = "0.1.0"
 dependencies = [
@@ -23768,12 +23828,15 @@ dependencies = [
  "code_graph",
  "diagnostics",
  "editor",
+ "external_editor",
  "futures 0.3.32",
  "git",
+ "i18n",
  "ignore",
  "language",
  "log",
  "markdown_preview",
+ "oauth",
  "once_cell",
  "outline",
  "regex",
@@ -23784,7 +23847,9 @@ dependencies = [
  "smol",
  "tasks_ui",
  "workspace",
+ "zed_api",
  "zed_core_lib",
+ "zed_jsonrpc",
 ]
 
 [[package]]
@@ -23837,6 +23902,20 @@ name = "zed_html"
 version = "0.3.1"
 dependencies = [
  "zed_extension_api 0.7.0",
+]
+
+[[package]]
+name = "zed_jsonrpc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.32",
+ "log",
+ "serde",
+ "serde_json",
+ "smol",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

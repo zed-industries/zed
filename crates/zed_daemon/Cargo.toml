@@ -12,6 +12,10 @@ workspace = true
 path = "src/zed_daemon.rs"
 doctest = false
 
+[[bin]]
+name = "zed-daemon"
+path = "src/main.rs"
+
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
@@ -21,6 +25,11 @@ serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
 zed_core_lib = { path = "../zed_core_lib" }
+zed_api = { path = "../zed_api" }
+zed_jsonrpc = { path = "../zed_jsonrpc" }
+external_editor = { path = "../external_editor" }
+oauth = { path = "../oauth" }
+i18n = { path = "../i18n" }
 code_graph = { path = "../code_graph" }
 outline = { path = "../outline" }
 search = { path = "../search" }

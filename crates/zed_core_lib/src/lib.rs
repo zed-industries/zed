@@ -86,6 +86,11 @@ impl ZedEngine {
     pub fn remove_buffer(&self, id: u64) -> bool {
         safe_lock(&self.buffers).remove(&id).is_some()
     }
+
+    /// Clear all active buffers from memory (garbage collect for memory pressure release)
+    pub fn clear(&self) {
+        safe_lock(&self.buffers).clear();
+    }
 }
 
 #[cfg(test)]

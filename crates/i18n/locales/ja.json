@@ -1,0 +1,15 @@
+{
+  "app.name": "Zed",
+  "file.open": "開く",
+  "file.save": "ファイルを保存",
+  "file.close": "閉じる",
+  "edit.undo": "元に戻す",
+  "edit.redo": "やり直す",
+  "edit.cut": "切り取り",
+  "edit.copy": "コピー",
+  "edit.paste": "貼り付け",
+  "settings.font_size": "フォントサイズ",
+  "accessibility.contrast": "コントラスト比",
+  "daemon.running": "デーモンが {addr} でリッスンしています",
+  "daemon.authenticated": "{user} として認証されました"
+}

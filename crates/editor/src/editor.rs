@@ -55,6 +55,11 @@ mod edit_prediction_tests;
 mod editor_block_comment_tests;
 #[cfg(test)]
 mod editor_tests;
+#[cfg(test)]
+mod proptest_tests;
+#[cfg(test)]
+mod proptest_properties;
+pub mod fuzz_harness;
 mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
