@@ -2,7 +2,7 @@ use super::{
     Highlights,
     dimensions::RowDelta,
     fold_map::{Chunk, FoldRows},
-    invisibles::{is_invisible, replacement},
+    invisibles::{is_invisible, is_standalone_grapheme, replacement},
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
 
@@ -23,7 +23,6 @@ use std::{
 };
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
 use text::Patch;
-use unicode_segmentation::GraphemeCursor;
 
 pub use super::tab_map::TextSummary;
 pub type WrapEdit = text::Edit<WrapRow>;
@@ -140,15 +139,6 @@ impl LineFragmentBuilder {
             });
         Some(width)
     }
-}
-
-fn is_standalone_grapheme(text: &str, start: usize, end: usize) -> bool {
-    let mut cursor = GraphemeCursor::new(start, text.len(), true);
-    if cursor.is_boundary(text, 0) != Ok(true) {
-        return false;
-    }
-    cursor.set_cursor(end);
-    cursor.is_boundary(text, 0) == Ok(true)
 }
 
 pub struct WrapChunks<'a> {

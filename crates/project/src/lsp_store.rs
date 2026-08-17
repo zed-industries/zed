@@ -146,6 +146,7 @@ use util::{
     post_inc,
     redact::redact_command,
     rel_path::RelPath,
+    union_json_value_into,
 };
 
 pub use document_colors::DocumentColors;
@@ -4050,26 +4051,35 @@ impl LocalLspStore {
         delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
-        let Some(mut initialization_config) =
-            adapter.clone().initialization_options(delegate, cx).await?
-        else {
-            return Ok(None);
-        };
+        let mut initialization_config =
+            adapter.clone().initialization_options(delegate, cx).await?;
 
         for other_adapter in delegate.registered_lsp_adapters() {
             if other_adapter.name() == adapter.name() {
                 continue;
             }
-            if let Ok(Some(target_config)) = other_adapter
+            if let Some(target_config) = other_adapter
                 .clone()
                 .additional_initialization_options(adapter.name(), delegate)
                 .await
+                .with_context(|| {
+                    format!(
+                        "getting additional initialization options for {} from {}",
+                        adapter.name(),
+                        other_adapter.name()
+                    )
+                })
+                .log_err()
+                .flatten()
             {
-                merge_json_value_into(target_config.clone(), &mut initialization_config);
+                union_json_value_into(
+                    target_config,
+                    initialization_config.get_or_insert_with(|| serde_json::json!({})),
+                );
             }
         }
 
-        Ok(Some(initialization_config))
+        Ok(initialization_config)
     }
 
     async fn workspace_configuration_for_adapter(
@@ -4088,12 +4098,21 @@ impl LocalLspStore {
             if other_adapter.name() == adapter.name() {
                 continue;
             }
-            if let Ok(Some(target_config)) = other_adapter
+            if let Some(target_config) = other_adapter
                 .clone()
                 .additional_workspace_configuration(adapter.name(), delegate, cx)
                 .await
+                .with_context(|| {
+                    format!(
+                        "getting additional workspace configuration for {} from {}",
+                        adapter.name(),
+                        other_adapter.name()
+                    )
+                })
+                .log_err()
+                .flatten()
             {
-                merge_json_value_into(target_config.clone(), &mut workspace_config);
+                union_json_value_into(target_config, &mut workspace_config);
             }
         }
 
@@ -8265,7 +8284,7 @@ impl LspStore {
                 .into_iter()
                 .flatten()
                 .collect();
-                Some(hovers)
+                Some(deduplicate_hovers(hovers))
             })
         } else {
             let all_actions_task = self.request_multiple_lsp_locally(
@@ -8275,13 +8294,13 @@ impl LspStore {
                 cx,
             );
             cx.background_spawn(async move {
-                Some(
+                Some(deduplicate_hovers(
                     all_actions_task
                         .await
                         .into_iter()
                         .filter_map(|(_, hover)| remove_empty_hover_blocks(hover?))
                         .collect::<Vec<Hover>>(),
-                )
+                ))
             })
         }
     }
@@ -12169,7 +12188,14 @@ impl LspStore {
             if is_supporting {
                 supporting_diagnostics.insert(
                     (source, diagnostic.code.clone(), range),
-                    (diagnostic.severity, is_unnecessary),
+                    (
+                        diagnostic.severity,
+                        is_unnecessary,
+                        diagnostic
+                            .related_information
+                            .as_ref()
+                            .map(|infos| Arc::from(infos.as_slice())),
+                    ),
                 );
             } else {
                 let group_id = post_inc(&mut self.as_local_mut().unwrap().next_diagnostic_group_id);
@@ -12202,6 +12228,10 @@ impl LspStore {
                         underline,
                         data: diagnostic.data.clone(),
                         registration_id: registration_id.clone(),
+                        related_information: diagnostic
+                            .related_information
+                            .as_ref()
+                            .map(|infos| Arc::from(infos.as_slice())),
                     },
                 });
                 if let Some(infos) = &diagnostic.related_information {
@@ -12230,6 +12260,7 @@ impl LspStore {
                                     underline,
                                     data: diagnostic.data.clone(),
                                     registration_id: registration_id.clone(),
+                                    related_information: None,
                                 },
                             });
                         }
@@ -12242,15 +12273,18 @@ impl LspStore {
             let diagnostic = &mut entry.diagnostic;
             if !diagnostic.is_primary {
                 let source = *sources_by_group_id.get(&diagnostic.group_id).unwrap();
-                if let Some(&(severity, is_unnecessary)) = supporting_diagnostics.get(&(
-                    source,
-                    diagnostic.code.clone(),
-                    entry.range.clone(),
-                )) {
+                if let Some((severity, is_unnecessary, related_information)) =
+                    supporting_diagnostics.get(&(
+                        source,
+                        diagnostic.code.clone(),
+                        entry.range.clone(),
+                    ))
+                {
                     if let Some(severity) = severity {
-                        diagnostic.severity = severity;
+                        diagnostic.severity = *severity;
                     }
-                    diagnostic.is_unnecessary = is_unnecessary;
+                    diagnostic.is_unnecessary = *is_unnecessary;
+                    diagnostic.related_information = related_information.clone();
                 }
             }
         }
@@ -13951,6 +13985,19 @@ fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
     }
 }
 
+fn deduplicate_hovers(hovers: Vec<Hover>) -> Vec<Hover> {
+    let mut unique_hovers = Vec::with_capacity(hovers.len());
+    for hover in hovers {
+        if !unique_hovers
+            .iter()
+            .any(|unique: &Hover| unique.contents == hover.contents)
+        {
+            unique_hovers.push(hover);
+        }
+    }
+    unique_hovers
+}
+
 async fn populate_labels_for_completions(
     new_completions: Vec<CoreCompletion>,
     language: Option<Arc<Language>>,
@@ -14818,6 +14865,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
             .all_lsp_adapters()
             .into_iter()
             .map(|adapter| adapter.adapter.clone() as Arc<dyn LspAdapter>)
+            .sorted_by_key(|adapter| adapter.name())
             .collect()
     }
 

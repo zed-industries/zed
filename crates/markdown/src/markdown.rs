@@ -476,7 +476,7 @@ pub struct Markdown {
     context_menu_link: Option<SharedString>,
     context_menu_selected_text: Option<SharedString>,
     context_menu_selected_markdown: Option<SharedString>,
-    search_highlights: Vec<Range<usize>>,
+    search_highlights: Rc<[Range<usize>]>,
     active_search_highlight: Option<usize>,
 }
 
@@ -671,7 +671,7 @@ impl Markdown {
             context_menu_link: None,
             context_menu_selected_text: None,
             context_menu_selected_markdown: None,
-            search_highlights: Vec::new(),
+            search_highlights: Rc::default(),
             active_search_highlight: None,
         };
         this.parse(cx);
@@ -1021,7 +1021,7 @@ impl Markdown {
         self.pending_autoscroll = None;
         self.pending_parse = None;
         self.should_reparse = false;
-        self.search_highlights.clear();
+        self.search_highlights = Rc::default();
         self.active_search_highlight = None;
         // Don't clear parsed_markdown here - keep existing content visible until new parse completes
         self.parse(cx);
@@ -1072,7 +1072,7 @@ impl Markdown {
                 .windows(2)
                 .all(|ranges| (ranges[0].start, ranges[0].end) <= (ranges[1].start, ranges[1].end))
         );
-        self.search_highlights = highlights;
+        self.search_highlights = highlights.into();
         self.active_search_highlight =
             active.filter(|active| *active < self.search_highlights.len());
         cx.notify();
@@ -1080,7 +1080,7 @@ impl Markdown {
 
     pub fn clear_search_highlights(&mut self, cx: &mut Context<Self>) {
         if !self.search_highlights.is_empty() || self.active_search_highlight.is_some() {
-            self.search_highlights.clear();
+            self.search_highlights = Rc::default();
             self.active_search_highlight = None;
             cx.notify();
         }
@@ -2022,70 +2022,6 @@ impl MarkdownElement {
         builder.pop_div();
     }
 
-    fn paint_highlight_range(
-        start: usize,
-        end: usize,
-        color: Hsla,
-        rendered_text: &RenderedText,
-        window: &mut Window,
-    ) {
-        for bounds in rendered_text.bounds_for_source_range(start..end) {
-            window.paint_quad(quad(
-                bounds,
-                Pixels::ZERO,
-                color,
-                Edges::default(),
-                Hsla::transparent_black(),
-                BorderStyle::default(),
-            ));
-        }
-    }
-
-    fn paint_selection(&self, rendered_text: &RenderedText, window: &mut Window, cx: &mut App) {
-        let selection = self.markdown.read(cx).selection.clone();
-        Self::paint_highlight_range(
-            selection.start,
-            selection.end,
-            self.style.selection_background_color,
-            rendered_text,
-            window,
-        );
-    }
-
-    fn paint_search_highlights(
-        &self,
-        rendered_text: &RenderedText,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let markdown = self.markdown.read(cx);
-        let active_index = markdown.active_search_highlight;
-        let colors = cx.theme().colors();
-
-        let highlight_bounds = rendered_text.bounds_for_sorted_source_ranges(
-            markdown
-                .search_highlights
-                .iter()
-                .enumerate()
-                .map(|(ix, range)| (ix, range.clone())),
-        );
-        for (highlight_ix, bounds) in highlight_bounds {
-            let color = if Some(highlight_ix) == active_index {
-                colors.search_active_match_background
-            } else {
-                colors.search_match_background
-            };
-            window.paint_quad(quad(
-                bounds,
-                Pixels::ZERO,
-                color,
-                Edges::default(),
-                Hsla::transparent_black(),
-                BorderStyle::default(),
-            ));
-        }
-    }
-
     fn paint_mouse_listeners(
         &mut self,
         hitbox: &Hitbox,
@@ -2407,10 +2343,29 @@ impl Element for MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        let highlights = {
+            let markdown = self.markdown.read(cx);
+            let colors = cx.theme().colors();
+            let selection = &markdown.selection;
+            MarkdownHighlights {
+                search_highlights: markdown.search_highlights.clone(),
+                active_search_highlight: markdown.active_search_highlight,
+                search_match_color: colors.search_match_background,
+                active_search_match_color: colors.search_active_match_background,
+                selection: (selection.start < selection.end).then(|| {
+                    (
+                        selection.start..selection.end,
+                        self.style.selection_background_color,
+                    )
+                }),
+                next_search_highlight_ix: 0,
+            }
+        };
         let mut builder = MarkdownElementBuilder::new(
             &self.style.container_style,
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
+            highlights,
         );
         let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
             let markdown = self.markdown.read(cx);
@@ -3182,8 +3137,6 @@ impl Element for MarkdownElement {
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
         rendered_markdown.element.paint(window, cx);
-        self.paint_search_highlights(&rendered_markdown.text, window, cx);
-        self.paint_selection(&rendered_markdown.text, window, cx);
     }
 }
 
@@ -3468,7 +3421,7 @@ struct MetadataCellStyle {
 
 struct MarkdownElementBuilder {
     div_stack: Vec<DivStackEntry>,
-    rendered_lines: Vec<RenderedLine>,
+    rendered_lines: Vec<Rc<RenderedLine>>,
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
     rendered_image_links: Vec<RenderedImageLink>,
@@ -3483,6 +3436,61 @@ struct MarkdownElementBuilder {
     list_stack: Vec<ListStackEntry>,
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
+    highlights: MarkdownHighlights,
+}
+
+struct MarkdownHighlights {
+    /// Search highlights, sorted by range start.
+    search_highlights: Rc<[Range<usize>]>,
+    active_search_highlight: Option<usize>,
+    search_match_color: Hsla,
+    active_search_match_color: Hsla,
+    selection: Option<(Range<usize>, Hsla)>,
+    /// Index of the first search highlight that may intersect the next line.
+    next_search_highlight_ix: usize,
+}
+
+impl MarkdownHighlights {
+    /// Returns the highlighted ranges intersecting the given source range,
+    /// clamped to it, in paint order.
+    fn highlights_for_line(
+        &mut self,
+        source_range: Range<usize>,
+    ) -> SmallVec<[(Range<usize>, Hsla); 1]> {
+        let mut highlights = SmallVec::new();
+
+        self.next_search_highlight_ix += self.search_highlights[self.next_search_highlight_ix..]
+            .iter()
+            .take_while(|range| range.end <= source_range.start)
+            .count();
+
+        for (ix, range) in self
+            .search_highlights
+            .iter()
+            .enumerate()
+            .skip(self.next_search_highlight_ix)
+        {
+            if range.start >= source_range.end {
+                break;
+            }
+            let clamped = range.start.max(source_range.start)..range.end.min(source_range.end);
+            if clamped.start < clamped.end {
+                let color = if Some(ix) == self.active_search_highlight {
+                    self.active_search_match_color
+                } else {
+                    self.search_match_color
+                };
+                highlights.push((clamped, color));
+            }
+        }
+        if let Some((range, color)) = &self.selection {
+            let clamped = range.start.max(source_range.start)..range.end.min(source_range.end);
+            if clamped.start < clamped.end {
+                highlights.push((clamped, *color));
+            }
+        }
+        highlights
+    }
 }
 
 struct DivStackEntry {
@@ -3521,6 +3529,7 @@ impl MarkdownElementBuilder {
         container_style: &StyleRefinement,
         base_text_style: TextStyle,
         syntax_theme: Arc<SyntaxTheme>,
+        highlights: MarkdownHighlights,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -3543,6 +3552,7 @@ impl MarkdownElementBuilder {
             list_stack: Vec::new(),
             table: TableState::default(),
             syntax_theme,
+            highlights,
         }
     }
 
@@ -3853,7 +3863,7 @@ impl MarkdownElementBuilder {
         text_style.color = Hsla::transparent_black();
         let text = "\u{200B}";
         let styled_text = StyledText::new(text).with_runs(vec![text_style.to_run(text.len())]);
-        self.rendered_lines.push(RenderedLine {
+        self.rendered_lines.push(Rc::new(RenderedLine {
             layout: styled_text.layout().clone(),
             source_mappings: vec![SourceMapping {
                 rendered_index: 0,
@@ -3862,7 +3872,8 @@ impl MarkdownElementBuilder {
             source_end: source_range.end,
             language: None,
             text_align: TextAlign::Left,
-        });
+            highlights: SmallVec::new(),
+        }));
         div()
             .absolute()
             .top_0()
@@ -3879,15 +3890,36 @@ impl MarkdownElementBuilder {
             return;
         }
 
+        let highlights = line
+            .source_mappings
+            .first()
+            .map(|first_mapping| {
+                self.highlights
+                    .highlights_for_line(first_mapping.source_index..self.current_source_index)
+            })
+            .unwrap_or_default();
         let text = StyledText::new(line.text).with_runs(line.runs);
-        self.rendered_lines.push(RenderedLine {
+        let rendered_line = Rc::new(RenderedLine {
             layout: text.layout().clone(),
             source_mappings: line.source_mappings,
             source_end: self.current_source_index,
             language: self.code_block_stack.last().cloned().flatten(),
             text_align,
+            highlights,
         });
-        self.append_child(text.into_any());
+        if rendered_line.highlights.is_empty() {
+            self.rendered_lines.push(rendered_line);
+            self.append_child(text.into_any());
+        } else {
+            self.rendered_lines.push(rendered_line.clone());
+            self.append_child(
+                HighlightedLine {
+                    text: text.into_any(),
+                    line: rendered_line,
+                }
+                .into_any_element(),
+            );
+        }
     }
 
     fn build(mut self) -> RenderedMarkdown {
@@ -3905,15 +3937,206 @@ impl MarkdownElementBuilder {
     }
 }
 
+/// Wraps a rendered line's text and paints the line's highlight quads during the
+/// line's own paint, so the ancestor content masks clip them like they clip the
+/// glyphs themselves.
+struct HighlightedLine {
+    text: AnyElement,
+    line: Rc<RenderedLine>,
+}
+
+impl Element for HighlightedLine {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        (self.text.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        self.text.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.text.paint(window, cx);
+        self.line.paint_highlights(window);
+    }
+}
+
+impl IntoElement for HighlightedLine {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
 struct RenderedLine {
     layout: TextLayout,
     source_mappings: Vec<SourceMapping>,
     source_end: usize,
     language: Option<Arc<Language>>,
     text_align: TextAlign,
+    /// Highlighted source ranges intersecting this line, in paint order.
+    highlights: SmallVec<[(Range<usize>, Hsla); 1]>,
 }
 
 impl RenderedLine {
+    fn paint_highlights(&self, window: &mut Window) {
+        if self.highlights.is_empty() {
+            return;
+        }
+        let wrapped_line_segments = self.wrapped_line_segments();
+        if wrapped_line_segments.is_empty() {
+            return;
+        }
+
+        for (source_range, color) in &self.highlights {
+            self.for_each_bounds_in_source_range(
+                &wrapped_line_segments,
+                source_range.clone(),
+                |bounds| {
+                    window.paint_quad(quad(
+                        bounds,
+                        Pixels::ZERO,
+                        *color,
+                        Edges::default(),
+                        Hsla::transparent_black(),
+                        BorderStyle::default(),
+                    ));
+                },
+            );
+        }
+    }
+
+    fn wrapped_line_segments(&self) -> SmallVec<[WrappedLineSegment; 1]> {
+        let layout = &self.layout;
+        let line_layouts = layout.line_layouts();
+        let line_height = layout.line_height();
+        let mut row_top = layout.bounds().top();
+        let mut wrapped_line_start = 0;
+        let mut segments = SmallVec::with_capacity(line_layouts.len());
+
+        for wrapped_line in line_layouts {
+            let wrapped_line_end = wrapped_line_start + wrapped_line.len();
+            let wrapped_line_height = wrapped_line.size(line_height).height;
+            segments.push(WrappedLineSegment {
+                start: wrapped_line_start,
+                end: wrapped_line_end,
+                row_top,
+                layout: wrapped_line,
+            });
+            row_top += wrapped_line_height;
+            wrapped_line_start = wrapped_line_end + 1;
+        }
+
+        segments
+    }
+
+    fn for_each_bounds_in_source_range(
+        &self,
+        wrapped_line_segments: &[WrappedLineSegment],
+        range: Range<usize>,
+        mut f: impl FnMut(Bounds<Pixels>),
+    ) {
+        if range.start >= range.end {
+            return;
+        }
+
+        let layout = &self.layout;
+        let line_bounds = layout.bounds();
+        let line_height = layout.line_height();
+
+        let rendered_start = self.rendered_index_for_source_index(range.start);
+        let rendered_end = self.rendered_index_for_source_index(range.end);
+
+        for wrapped_line_segment in wrapped_line_segments {
+            if wrapped_line_segment.start >= rendered_end {
+                break;
+            }
+            if wrapped_line_segment.end <= rendered_start {
+                continue;
+            }
+
+            let wrapped_line = &wrapped_line_segment.layout;
+            let unwrapped_layout = &wrapped_line.unwrapped_layout;
+            let wrapped_line_start = wrapped_line_segment.start;
+            let wrapped_line_end = wrapped_line_segment.end;
+            let mut row_top = wrapped_line_segment.row_top;
+
+            let row_ends = wrapped_line
+                .wrap_boundaries()
+                .iter()
+                .map(|wrap_boundary| {
+                    let glyph =
+                        &unwrapped_layout.runs[wrap_boundary.run_ix].glyphs[wrap_boundary.glyph_ix];
+                    (wrapped_line_start + glyph.index, glyph.position.x)
+                })
+                .chain([(wrapped_line_end, unwrapped_layout.width)]);
+
+            let mut row_start = wrapped_line_start;
+            let mut row_start_x = Pixels::ZERO;
+
+            for (row_end, row_end_x) in row_ends {
+                let selection_start = rendered_start.max(row_start);
+                let selection_end = rendered_end.min(row_end);
+
+                if selection_start < selection_end {
+                    let alignment_offset = self.alignment_offset_for_segment(
+                        line_bounds.size.width,
+                        row_start_x,
+                        row_end_x,
+                    );
+                    let x_for_index = |index| {
+                        line_bounds.left()
+                            + alignment_offset
+                            + unwrapped_layout.x_for_index(index - wrapped_line_start)
+                            - row_start_x
+                    };
+                    f(Bounds::from_corners(
+                        point(x_for_index(selection_start), row_top),
+                        point(x_for_index(selection_end), row_top + line_height),
+                    ));
+                }
+
+                row_start = row_end;
+                row_start_x = row_end_x;
+                row_top += line_height;
+            }
+        }
+    }
+
     fn rendered_index_for_source_index(&self, source_index: usize) -> usize {
         if source_index >= self.source_end {
             return self.layout.len();
@@ -4096,7 +4319,7 @@ pub struct RenderedMarkdown {
 
 #[derive(Clone)]
 struct RenderedText {
-    lines: Rc<[RenderedLine]>,
+    lines: Rc<[Rc<RenderedLine>]>,
     links: Rc<[RenderedLink]>,
     image_links: Rc<[RenderedImageLink]>,
     footnote_refs: Rc<[RenderedFootnoteRef]>,
@@ -4130,164 +4353,33 @@ struct RenderedFootnoteRef {
 }
 
 impl RenderedText {
+    #[cfg(test)]
     fn bounds_for_source_range(&self, range: Range<usize>) -> Vec<Bounds<Pixels>> {
-        self.bounds_for_sorted_source_ranges([(0, range)])
-            .into_iter()
-            .map(|(_, bounds)| bounds)
-            .collect()
-    }
-
-    fn bounds_for_sorted_source_ranges(
-        &self,
-        ranges: impl IntoIterator<Item = (usize, Range<usize>)>,
-    ) -> Vec<(usize, Bounds<Pixels>)> {
-        let ranges = ranges.into_iter().collect::<Vec<_>>();
         let mut all_bounds = Vec::new();
-        let mut first_possible_range_ix = 0;
-
         for line in self.lines.iter() {
-            let line_source_start = line.source_mappings.first().unwrap().source_index;
-            while ranges
-                .get(first_possible_range_ix)
-                .is_some_and(|(_, range)| range.end <= line_source_start)
-            {
-                first_possible_range_ix += 1;
-            }
-
-            let Some((_, first_possible_range)) = ranges.get(first_possible_range_ix) else {
-                break;
+            let Some(first_mapping) = line.source_mappings.first() else {
+                continue;
             };
-            if first_possible_range.start >= line.source_end {
-                continue;
-            }
-
-            let wrapped_line_segments = Self::wrapped_line_segments(line);
-            if wrapped_line_segments.is_empty() {
-                continue;
-            }
-
-            let mut range_ix = first_possible_range_ix;
-            while let Some((highlight_ix, range)) = ranges.get(range_ix) {
-                if range.start >= line.source_end {
-                    break;
-                }
-                Self::push_bounds_for_line_source_range(
-                    &mut all_bounds,
-                    *highlight_ix,
-                    line,
-                    &wrapped_line_segments,
-                    range.start.max(line_source_start)..range.end.min(line.source_end),
-                );
-                range_ix += 1;
-            }
-        }
-
-        all_bounds
-    }
-
-    fn wrapped_line_segments(line: &RenderedLine) -> SmallVec<[WrappedLineSegment; 1]> {
-        let layout = &line.layout;
-        let line_height = layout.line_height();
-        let mut row_top = layout.bounds().top();
-        let mut wrapped_line_start = 0;
-        let mut segments = SmallVec::new();
-
-        for wrapped_line in layout.line_layouts() {
-            let wrapped_line_end = wrapped_line_start + wrapped_line.len();
-            let wrapped_line_height = wrapped_line.size(line_height).height;
-            segments.push(WrappedLineSegment {
-                start: wrapped_line_start,
-                end: wrapped_line_end,
-                row_top,
-                layout: wrapped_line,
-            });
-            row_top += wrapped_line_height;
-            wrapped_line_start = wrapped_line_end + 1;
-        }
-
-        segments
-    }
-
-    fn push_bounds_for_line_source_range(
-        all_bounds: &mut Vec<(usize, Bounds<Pixels>)>,
-        highlight_ix: usize,
-        line: &RenderedLine,
-        wrapped_line_segments: &[WrappedLineSegment],
-        range: Range<usize>,
-    ) {
-        if range.start >= range.end {
-            return;
-        }
-
-        let layout = &line.layout;
-        let line_bounds = layout.bounds();
-        let line_height = layout.line_height();
-
-        let rendered_start = line.rendered_index_for_source_index(range.start);
-        let rendered_end = line.rendered_index_for_source_index(range.end);
-
-        for wrapped_line_segment in wrapped_line_segments {
-            if wrapped_line_segment.start >= rendered_end {
+            let line_source_start = first_mapping.source_index;
+            if range.end <= line_source_start {
                 break;
             }
-            if wrapped_line_segment.end <= rendered_start {
+            if range.start >= line.source_end {
                 continue;
             }
-
-            let wrapped_line = &wrapped_line_segment.layout;
-            let unwrapped_layout = &wrapped_line.unwrapped_layout;
-            let wrapped_line_start = wrapped_line_segment.start;
-            let wrapped_line_end = wrapped_line_segment.end;
-            let mut row_top = wrapped_line_segment.row_top;
-
-            let row_ends = wrapped_line
-                .wrap_boundaries()
-                .iter()
-                .map(|wrap_boundary| {
-                    let glyph =
-                        &unwrapped_layout.runs[wrap_boundary.run_ix].glyphs[wrap_boundary.glyph_ix];
-                    (wrapped_line_start + glyph.index, glyph.position.x)
-                })
-                .chain([(wrapped_line_end, unwrapped_layout.width)]);
-
-            let mut row_start = wrapped_line_start;
-            let mut row_start_x = Pixels::ZERO;
-
-            for (row_end, row_end_x) in row_ends {
-                let selection_start = rendered_start.max(row_start);
-                let selection_end = rendered_end.min(row_end);
-
-                if selection_start < selection_end {
-                    let alignment_offset = line.alignment_offset_for_segment(
-                        line_bounds.size.width,
-                        row_start_x,
-                        row_end_x,
-                    );
-                    let x_for_index = |index| {
-                        line_bounds.left()
-                            + alignment_offset
-                            + unwrapped_layout.x_for_index(index - wrapped_line_start)
-                            - row_start_x
-                    };
-                    all_bounds.push((
-                        highlight_ix,
-                        Bounds::from_corners(
-                            point(x_for_index(selection_start), row_top),
-                            point(x_for_index(selection_end), row_top + line_height),
-                        ),
-                    ));
-                }
-
-                row_start = row_end;
-                row_start_x = row_end_x;
-                row_top += line_height;
-            }
+            let wrapped_line_segments = line.wrapped_line_segments();
+            line.for_each_bounds_in_source_range(
+                &wrapped_line_segments,
+                range.start.max(line_source_start)..range.end.min(line.source_end),
+                |bounds| all_bounds.push(bounds),
+            );
         }
+        all_bounds
     }
 
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
         let mut lines = self.lines.iter().peekable();
-        let mut fallback_line: Option<&RenderedLine> = None;
+        let mut fallback_line: Option<&Rc<RenderedLine>> = None;
 
         while let Some(line) = lines.next() {
             let line_bounds = line.layout.bounds();
@@ -4455,7 +4547,7 @@ mod tests {
     use super::*;
     use gpui::{
         Modifiers, RenderImage, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase,
-        UpdateGlobal, size,
+        UpdateGlobal, VisualTestContext, size,
     };
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::cell::RefCell;
@@ -6395,5 +6487,92 @@ mod tests {
             right_cell_after_scroll.top(),
             right_cell_before_scroll.top()
         );
+    }
+
+    #[gpui::test]
+    fn test_highlights_are_clipped_to_scrollable_code_block(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let source = indoc::indoc! {r#"
+            ```txt
+            one_extremely_long_code_line_that_overflows_the_viewport_and_keeps_going_and_going
+            ```
+        "#};
+        let code_line =
+            "one_extremely_long_code_line_that_overflows_the_viewport_and_keeps_going_and_going";
+        let code_start = source.find(code_line).expect("code line should be present");
+        let code_range = code_start..code_start + code_line.len();
+
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        markdown.update(cx, |markdown, cx| {
+            markdown.set_search_highlights(vec![code_range.clone()], None, cx);
+        });
+        let (_, cx) = cx.add_window_view(move |_, _| MarkdownTestView {
+            markdown,
+            style: MarkdownStyle {
+                code_block_overflow_x_scroll: true,
+                ..MarkdownStyle::default()
+            },
+            code_span_link: None,
+            rendered_text: Rc::new(RefCell::new(None)),
+        });
+        let window_width = px(300.);
+        cx.simulate_resize(size(window_width, px(200.)));
+        cx.run_until_parked();
+
+        let highlight_color = cx.update(|_, cx| cx.theme().colors().search_match_background);
+
+        /// Returns the unclipped bounds and the content mask of the sole
+        /// highlight quad in the last painted frame, in logical pixels.
+        fn painted_highlight(
+            cx: &mut VisualTestContext,
+            highlight_color: Hsla,
+        ) -> (Bounds<Pixels>, Bounds<Pixels>) {
+            cx.update(|window, _| {
+                let scale_factor = window.scale_factor();
+                let unscale = |bounds: Bounds<gpui::ScaledPixels>| {
+                    Bounds::new(
+                        point(
+                            px(bounds.origin.x.as_f32() / scale_factor),
+                            px(bounds.origin.y.as_f32() / scale_factor),
+                        ),
+                        size(
+                            px(bounds.size.width.as_f32() / scale_factor),
+                            px(bounds.size.height.as_f32() / scale_factor),
+                        ),
+                    )
+                };
+                let quads = window
+                    .painted_quads()
+                    .into_iter()
+                    .filter(|quad| quad.background == highlight_color.into())
+                    .collect::<Vec<_>>();
+                assert_eq!(quads.len(), 1, "expected exactly one highlight quad");
+                (
+                    unscale(quads[0].bounds),
+                    unscale(quads[0].content_mask.bounds),
+                )
+            })
+        }
+
+        let (quad_bounds, content_mask) = painted_highlight(cx, highlight_color);
+        let visible_bounds = quad_bounds.intersect(&content_mask);
+        assert!(quad_bounds.right() > window_width);
+        assert!(visible_bounds.right() <= window_width);
+        assert_eq!(visible_bounds.left(), quad_bounds.left());
+        let event_position = visible_bounds.center();
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: event_position,
+            delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        });
+        cx.run_until_parked();
+
+        let (quad_bounds, content_mask) = painted_highlight(cx, highlight_color);
+        let visible_bounds = quad_bounds.intersect(&content_mask);
+        assert!(quad_bounds.left() < px(0.));
+        assert!(visible_bounds.left() >= px(0.));
+        assert!(visible_bounds.right() <= window_width);
     }
 }

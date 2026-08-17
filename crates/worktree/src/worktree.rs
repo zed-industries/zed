@@ -3,7 +3,6 @@ mod worktree_settings;
 
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
-use chardetng::EncodingDetector;
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
@@ -32,7 +31,9 @@ use gpui::{
     Task,
 };
 pub use ignore::{IgnoreKind, IgnoreStack};
-use language::{ByteContent, DiskState, FILE_ANALYSIS_BYTES, analyze_byte_content};
+use language::{
+    ByteContent, DiskState, FILE_ANALYSIS_BYTES, analyze_byte_content, decode_text, encode_text,
+};
 
 use async_channel::{self, Sender};
 use parking_lot::Mutex;
@@ -1863,47 +1864,7 @@ impl LocalWorktree {
                     LineEnding::Windows => text_string.replace('\n', "\r\n"),
                 };
 
-                // Create the byte vector manually for UTF-16 encodings because encoding_rs encodes to UTF-8 by default (per WHATWG standards),
-                //  which is not what we want for saving files.
-                let bytes = if encoding == encoding_rs::UTF_16BE {
-                    let mut data = Vec::with_capacity(normalized_text.len() * 2 + 2);
-                    if has_bom {
-                        data.extend_from_slice(&[0xFE, 0xFF]); // BOM
-                    }
-                    let utf16be_bytes =
-                        normalized_text.encode_utf16().flat_map(|u| u.to_be_bytes());
-                    data.extend(utf16be_bytes);
-                    data.into()
-                } else if encoding == encoding_rs::UTF_16LE {
-                    let mut data = Vec::with_capacity(normalized_text.len() * 2 + 2);
-                    if has_bom {
-                        data.extend_from_slice(&[0xFF, 0xFE]); // BOM
-                    }
-                    let utf16le_bytes =
-                        normalized_text.encode_utf16().flat_map(|u| u.to_le_bytes());
-                    data.extend(utf16le_bytes);
-                    data.into()
-                } else {
-                    // For other encodings (Shift-JIS, UTF-8 with BOM, etc.), delegate to encoding_rs.
-                    let bom_bytes = if has_bom {
-                        if encoding == encoding_rs::UTF_8 {
-                            vec![0xEF, 0xBB, 0xBF]
-                        } else {
-                            vec![]
-                        }
-                    } else {
-                        vec![]
-                    };
-                    let (cow, _, _) = encoding.encode(&normalized_text);
-                    if !bom_bytes.is_empty() {
-                        let mut bytes = bom_bytes;
-                        bytes.extend_from_slice(&cow);
-                        bytes.into()
-                    } else {
-                        cow
-                    }
-                };
-
+                let bytes = encode_text(normalized_text, encoding, has_bom);
                 fs.write(&abs_path, &bytes).await
             }
         });
@@ -7239,7 +7200,7 @@ pub async fn decode_file_text(
         }
         file_first_bytes.extend_from_slice(&buf[..n]);
     }
-    let (bom_encoding, byte_content) = decode_byte_header(&file_first_bytes);
+    let (_, byte_content) = decode_byte_header(&file_first_bytes);
     anyhow::ensure!(
         byte_content != ByteContent::Binary,
         "Binary files are not supported"
@@ -7259,7 +7220,8 @@ pub async fn decode_file_text(
             content.extend_from_slice(&buf[..n]);
         }
     }
-    decode_byte_full(content, bom_encoding, byte_content)
+    let decoded = decode_text(content)?;
+    Ok((decoded.text, decoded.encoding, decoded.has_bom))
 }
 
 pub fn decode_byte_header(prefix: &[u8]) -> (Option<&'static Encoding>, ByteContent) {
@@ -7267,63 +7229,6 @@ pub fn decode_byte_header(prefix: &[u8]) -> (Option<&'static Encoding>, ByteCont
         return (Some(encoding), ByteContent::Unknown);
     }
     (None, analyze_byte_content(prefix))
-}
-
-fn decode_byte_full(
-    bytes: Vec<u8>,
-    bom_encoding: Option<&'static Encoding>,
-    byte_content: ByteContent,
-) -> Result<(String, &'static Encoding, bool)> {
-    if let Some(encoding) = bom_encoding {
-        let (cow, _) = encoding.decode_with_bom_removal(&bytes);
-        return Ok((cow.into_owned(), encoding, true));
-    }
-
-    match byte_content {
-        ByteContent::Utf16Le => {
-            let encoding = encoding_rs::UTF_16LE;
-            let (cow, _, _) = encoding.decode(&bytes);
-            return Ok((cow.into_owned(), encoding, false));
-        }
-        ByteContent::Utf16Be => {
-            let encoding = encoding_rs::UTF_16BE;
-            let (cow, _, _) = encoding.decode(&bytes);
-            return Ok((cow.into_owned(), encoding, false));
-        }
-        ByteContent::Binary => {
-            anyhow::bail!("Binary files are not supported");
-        }
-        ByteContent::Unknown => {}
-    }
-
-    fn detect_encoding(bytes: Vec<u8>) -> (String, &'static Encoding) {
-        let mut detector = EncodingDetector::new();
-        detector.feed(&bytes, true);
-
-        let encoding = detector.guess(None, true); // Use None for TLD hint to ensure neutral detection logic.
-
-        let (cow, _, _) = encoding.decode(&bytes);
-        (cow.into_owned(), encoding)
-    }
-
-    match String::from_utf8(bytes) {
-        Ok(text) => {
-            // ISO-2022-JP (and other ISO-2022 variants) consists entirely of 7-bit ASCII bytes,
-            // so it is valid UTF-8. However, it contains escape sequences starting with '\x1b'.
-            // If we find an escape character, we double-check the encoding to prevent
-            // displaying raw escape sequences instead of the correct characters.
-            if text.contains('\x1b') {
-                let (s, enc) = detect_encoding(text.into_bytes());
-                Ok((s, enc, false))
-            } else {
-                Ok((text, encoding_rs::UTF_8, false))
-            }
-        }
-        Err(e) => {
-            let (s, enc) = detect_encoding(e.into_bytes());
-            Ok((s, enc, false))
-        }
-    }
 }
 
 #[cfg(test)]
